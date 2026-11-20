@@ -727,10 +727,11 @@ One line names every writable data location of the database, Orthanc and the API
 tablespace, the image store, the EMR state, the retention ledgers and their mirror) and the backup root: `encrypted`
 when every block device under it reaches a dm-crypt (LUKS) layer, `not-detected` when one does not, `unknown` when
 this host cannot see it that way (a cloud provider's volume encryption, a network or ZFS file system, a missing path).
-It also judges the backup encryption key with the nightly backup's own check: `configured` means a backup into that
-directory accepts it (the configuration, the identity file and the age program are read, the identity is outside the
-checkout and the backup directory, and age encrypts and decrypts with it); `absent` means there is no configuration
-file; `invalid` means the backup would refuse; `unknown` means this run cannot speak for the backup - no
+It also judges the backup's destination and encryption key with the nightly backup's own admission: `configured`
+means a backup into that directory gets past it (the directory is outside the checkout and, where it exists, a
+private directory of this account; the configuration, the identity file and the age program are read; the identity is
+outside the checkout and the backup directory; age encrypts and decrypts with it); `absent` means there is no
+configuration file; `invalid` means the backup would refuse; `unknown` means this run cannot speak for the backup - no
 `--backup-root` was given, or the directory belongs to another account. The API-only preflight carries the same
 report in its observation; it does not know the backup directory, so it never says `configured`. This is a report,
 not a refusal: for a location that is not `encrypted`, the private release record names how it is protected instead
@@ -1721,10 +1722,13 @@ python3 scripts/ops_backup.py restore-wrapping /srv/kin-backups/SET --source /mn
 python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --wrapping-source /mnt/custody/SET
 ```
 
-Both commands first admit the stored set: it is complete and not thinned by rotation,
-every component it requires is there with the size and digest its manifest records, and
+Both commands first admit the stored set: it is complete and not thinned by rotation
+(its Orthanc archive removed), its manifest lists exactly the components its kind
+requires, every one of them is there with the size and digest the manifest records, and
 no component is an age file unless the manifest carries the `encryption` record. A set
-that fails this is not restored from and none of its key copies is written.
+that fails this is not restored from and none of its key copies is written. Rotation
+asks the same before it counts a set as a kept generation, together with the set's key
+copies: a set a restore would refuse never takes the place of an older one.
 
 An encrypted set (its manifest has an `encryption` record) is opened with the key it
 names: `rehearse` checks that key against the record before anything else, then

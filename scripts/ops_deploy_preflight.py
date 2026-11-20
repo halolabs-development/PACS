@@ -4,8 +4,9 @@ python scripts/ops_deploy_preflight.py request.json --request-sha256 <sha256>
 python scripts/ops_deploy_preflight.py --storage-only [--backup-root <directory>]
 The separately supplied hash binds bytes, not the identity/authority of an approver. Both report storage and backup
 encryption (one line on stderr, the report in the JSON); that report is a warning, never a refusal. The backup key is
-called `configured` only where the backup itself would accept it: by the storage-only form, given the backup root and
-run as the account that owns it (the daily backup's account); otherwise it is `unknown`, `absent` or `invalid`.
+called `configured` only where the backup itself would accept its destination and key: by the storage-only form,
+given the backup root and run as the account that owns it (the daily backup's account); otherwise it is `unknown`,
+`absent` or `invalid`.
 """
 from __future__ import annotations
 
@@ -267,20 +268,20 @@ def data_locations():
 
 
 def backup_key_state(backup_root=None, checkout=None):
-    """What the daily backup into backup_root would say of its key, by the backup's own check (ops.usable_backup_key:
-    the same configuration, the same paths, age encrypting and decrypting with the key). configured: the backup, run
-    by this account, accepts it; absent: no configuration file; invalid: the check refuses, or the configuration
-    cannot be looked at; unknown: this call cannot speak for the backup - no backup root was given (the configuration
-    and key file are then only read, nothing is run), or the backup root belongs to another account (the backup runs
-    as its owner, which may not read what this account reads). checkout: the installation's checkout when this code
-    runs from another copy."""
+    """What the daily backup into backup_root would say of its destination and key, by the backup's own admission
+    (ops.backup_admission: the destination outside the checkout and, where it exists, this account's private
+    directory; the same configuration and paths; age encrypting and decrypting with the key). configured: the backup,
+    run by this account, gets past that admission; absent: no configuration file; invalid: the admission refuses, or
+    the configuration cannot be looked at; unknown: this call cannot speak for the backup - no backup root was given
+    (the configuration and key file are then only read, nothing is run), or the backup root belongs to another
+    account (the backup runs as its owner, which may not read what this account reads). checkout: the installation's
+    checkout when this code runs from another copy."""
     try:
         if not Path(os.environ.get("KIN_BACKUP_ENCRYPTION") or ops.BACKUP_ENCRYPTION_CONFIG).exists():
             return "absent"
         if backup_root is None:
             ops.backup_key()
             return "unknown"
-        ops.usable_backup_key(backup_root, checkout=checkout)
     except Exception:
         return "invalid"
     try:
@@ -289,6 +290,10 @@ def backup_key_state(backup_root=None, checkout=None):
             return "unknown"
     except Exception:
         return "unknown"
+    try:
+        ops.backup_admission(backup_root, checkout=checkout)
+    except Exception:
+        return "invalid"
     return "configured"
 
 

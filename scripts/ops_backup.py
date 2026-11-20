@@ -361,13 +361,16 @@ def reclaim_work(root):
 
 
 @contextmanager
-def private_work(root, prefix):
-    """The one maker of a private folder for plaintext taken out of a set: what a killed run left in `root` is
-    reclaimed first; the new folder (mode 0700) gets its owner record before anything else is written into it, and is
-    removed when the caller is done."""
+def private_work(root, prefix, *, room=0):
+    """The one maker of a private folder for plaintext taken out of a set, in this order: what a killed run left in
+    `root` is reclaimed first, so the room it took is free again; then `room` bytes must be free there; then the new
+    folder (mode 0700) is made and gets its owner record before anything else is written into it. It is removed when
+    the caller is done."""
     if prefix not in WORK_PREFIXES:
         raise RuntimeError("Unknown private work folder kind")
     reclaim_work(root)
+    if room and shutil.disk_usage(root).free < room:
+        raise BackupEncryptionError("Insufficient free space in the opening workspace")
     work = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
     try:
         write_json(work / WORK_OWNER, {"host": platform.node(), "pid": os.getpid(), "started": _process_started(os.getpid())})
@@ -521,6 +524,21 @@ def usable_backup_key(backup_root=None, *, checkout=None, config_path=None):
     if age_bytes(key, age_bytes(key, KEY_PROBE), decrypt=True) != KEY_PROBE:
         raise BackupEncryptionError("Backup encryption failed")
     return key
+
+
+def backup_admission(output, *, checkout=None, config_path=None):
+    """The one admission of a new daily set's destination and key: everything backup() refuses on their account,
+    before it looks at the site. The deployment preflight reports from this same function, so `configured` there is
+    exactly "backup() gets past this point". The destination is outside the checkout; the key is usable for it
+    (usable_backup_key); an existing destination is a private directory (backup_parent_owner). Returns (the resolved
+    destination, the key, the owner as backup_parent_owner gives it). The site itself (its .env, its containers, the
+    free space its data needs) is the backup's own later check and no part of this."""
+    root = ROOT if checkout is None else Path(checkout)
+    parent = Path(output).resolve()
+    if _within(parent, root):
+        raise RuntimeError("Backups containing secrets must be outside the Git repository")
+    key = usable_backup_key(parent, checkout=root, config_path=config_path)
+    return parent, key, backup_parent_owner(parent)
 
 
 class SealedComponent:
@@ -710,8 +728,6 @@ def check_archives(directory, manifest):
     if not found_index:
         raise RuntimeError("Orthanc archive has no SQLite index")
     if "emr" in manifest:
-        if manifest.get("emr", {}).get("same_pause") is not True:
-            raise RuntimeError("EMR database/failure-spool capture was not paused together")
         with tarfile.open(directory / "emr-state.tgz", "r|gz") as archive:
             for entry in archive:
                 member = PurePosixPath(entry.name)
@@ -739,9 +755,7 @@ def opened_set(directory, manifest=None, *, config_path=None, identity=None, wor
         raise BackupEncryptionError("Opening an encrypted backup needs an existing workspace directory (configuration 'workspace')")
     if any(_within(root, other) or _within(other, root) for other in (ROOT, directory.parent)):
         raise BackupEncryptionError("The opening workspace must be outside the repository and the backup root")
-    if shutil.disk_usage(root).free < sum(plain["bytes"].values()) + OPEN_MARGIN:
-        raise BackupEncryptionError("Insufficient free space in the opening workspace")
-    with private_work(root, "kin-open-") as work:
+    with private_work(root, "kin-open-", room=sum(plain["bytes"].values()) + OPEN_MARGIN) as work:
         for name in plain["sha256"]:
             with (directory / name).open("rb") as incoming, (work / name).open("xb") as outgoing:
                 (work / name).chmod(0o600)
@@ -926,19 +940,28 @@ def prepare_backup_parent(parent):
     folder with its audit ledger). What root then creates there is given to that account at the end, so the account's own
     daily backups, rotation and ledger keep working; the parent itself is never chown/chmod-ed."""
     if parent.exists():
-        if not parent.is_dir():
-            raise RuntimeError("Backup parent is not a directory")
-        if os.name == "posix":
-            info = parent.stat()
-            if stat.S_IMODE(info.st_mode) & 0o077 or not (info.st_uid == os.geteuid() or (os.geteuid() == 0 and info.st_uid != 0)):
-                raise RuntimeError("Existing backup parent must be private and owned by the current user (or, for root, by one "
-                                   "operating account)")
-            if info.st_uid != os.geteuid():
-                return info.st_uid, info.st_gid
-    else:
-        # Never chmod an existing /tmp, home, mount or other shared directory.
-        # A racing creator also fails here; only our new leaf receives mode 700.
-        parent.mkdir(parents=True, mode=0o700)
+        return backup_parent_owner(parent)
+    # Never chmod an existing /tmp, home, mount or other shared directory.
+    # A racing creator also fails here; only our new leaf receives mode 700.
+    parent.mkdir(parents=True, mode=0o700)
+    return None
+
+
+def backup_parent_owner(parent):
+    """An existing backup parent as its writer admits it, changing nothing: None for this account's private directory,
+    the (uid, gid) of the operating account whose private parent root writes into, a refusal for anything else. None
+    also for a parent that does not exist yet (its writer makes it, private)."""
+    if not parent.exists():
+        return None
+    if not parent.is_dir():
+        raise RuntimeError("Backup parent is not a directory")
+    if os.name == "posix":
+        info = parent.stat()
+        if stat.S_IMODE(info.st_mode) & 0o077 or not (info.st_uid == os.geteuid() or (os.geteuid() == 0 and info.st_uid != 0)):
+            raise RuntimeError("Existing backup parent must be private and owned by the current user (or, for root, by one "
+                               "operating account)")
+        if info.st_uid != os.geteuid():
+            return info.st_uid, info.st_gid
     return None
 
 
@@ -1022,14 +1045,12 @@ def write_daily_set(directory, manifest, key, db, volume, state_volume, *, files
 def backup(output, ready_timeout=120):
     if not 1 <= ready_timeout <= 900:
         raise RuntimeError("Readiness timeout must be between 1 and 900 seconds")
-    parent = Path(output).resolve()
-    if parent == ROOT or ROOT in parent.parents:
-        raise RuntimeError("Backups containing secrets must be outside the Git repository")
+    # Every new daily set is encrypted. A destination inside the repository or one that is not this account's private
+    # directory, or a missing or unusable key, configuration or program refuses here, before any writer stops; the key
+    # itself is never kept with the repository or the backups.
+    parent, key, _ = backup_admission(output)
     if not (ROOT / ".env").is_file():
         raise RuntimeError("Local .env is required")
-    # Every new daily set is encrypted. A missing or unusable key, configuration or program refuses here, before any
-    # writer stops; the key itself is never kept with the repository or the backups.
-    key = usable_backup_key(parent)
     # Inspect may contain secrets; only selected fields go into the manifest.
     info = json.loads(text(["docker", "inspect", *CONTAINERS, "kin-proxy"]))
     by_name = {item["Name"].lstrip("/"): item for item in info}
@@ -1157,19 +1178,24 @@ def backup(output, ready_timeout=120):
     return directory
 
 
-def _stored_backup(directory, manifest=None, *, config_path=None, identity=None):
+def _stored_backup(directory, manifest=None, *, config_path=None, identity=None, bytes_verified=False):
     """The one admission of a stored set before anything is restored from it or its key copy is written (opened_set
-    and with it validate and rehearse; restore-wrapping): complete and not thinned by rotation (a thinned audit set
-    is not a restorable generation); its form (stored_encryption: an encrypted set's manifest authentic under its
-    key, a set without a record holding no age file); then every component its kind requires - a held capture by its
-    own table, an encrypted set exactly its table - present with the stored size and digest the manifest records.
+    and with it validate and rehearse; restore-wrapping), and what rotation asks before it counts a set as a kept
+    generation: complete; not thinned by rotation (a thinned audit set, its Orthanc archive removed, is not a
+    restorable generation - a thinning that was only planned leaves the set whole); its form (stored_encryption: an
+    encrypted set's manifest authentic under its key, a set without a record holding no age file); the manifest
+    listing exactly the components its kind requires (a held capture by its own table); an EMR set attested as one
+    pause; each component present with the stored size and digest the manifest records. What the set contains (its
+    archives, images and catalogs) is judged by the opening and the restore themselves, which read it.
+    bytes_verified: the caller has just compared every listed component's stored size and digest itself (rotation),
+    so they are not read a second time.
     Returns (directory, manifest, encryption record or None, key or None)."""
     directory = Path(directory).resolve(strict=True)
     if manifest is None:
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     if type(manifest) is not dict or manifest.get("format") != 1 or not manifest.get("complete"):
         raise StoredSetError("Backup is incomplete")
-    if (directory / THINNED_FILE).exists():
+    if (directory / THINNED_FILE).exists() and not (directory / "orthanc.tgz").is_file():
         raise StoredSetError("Backup was thinned by rotation (audit retention only); it is not a restorable set")
     record, key = stored_encryption(directory, manifest, config_path=config_path, identity=identity)
     # Snapshot validity is independent of the source application's readiness.
@@ -1186,9 +1212,13 @@ def _stored_backup(directory, manifest=None, *, config_path=None, identity=None)
         components = backup_components(manifest)
         if AUDIT_CHECKPOINT in sums:
             components = (*components, AUDIT_CHECKPOINT)
-    if record is not None and (set(sums) != set(components) or set(sizes) != set(components)):
+    # The manifest's own list is the kind's table, for every kind: a component the manifest records but the table no
+    # longer asks for (a held capture's shortened configuration list) is a changed set, not a smaller one.
+    if set(sums) != set(components) or (record is not None and set(sizes) != set(components)):
         raise StoredSetError("Backup component inventory differs")
-    for name in components:
+    if "emr" in manifest and (manifest["emr"] if type(manifest["emr"]) is dict else {}).get("same_pause") is not True:
+        raise StoredSetError("EMR database/failure-spool capture was not paused together")
+    for name in () if bytes_verified else components:
         path = directory / name
         # The stored size is compared where the manifest records one (the oldest sets record digests only).
         if (path.is_symlink() or not path.is_file() or (name in sizes and path.stat().st_size != sizes[name])
@@ -2856,11 +2886,12 @@ def _daily_whole(folder, *, completing_thin=False):
         stored_encryption(folder, manifest)
     except (BackupEncryptionError, OSError, ValueError, KeyError, TypeError):
         return "encryption record missing, unreadable or not authentic under its configured key"
-    if "wrapping_custody" in manifest:
-        try:
-            wrapping_custody_files(manifest)
-        except (OSError, ValueError, KeyError, TypeError, RuntimeError):
-            return "wrapping custody unavailable or differs from snapshot"
+    # The separate key copies, by the judgement a restore applies before its first write (declared_custody): also a set
+    # that counts stored signing keys but names no copy is not one a restore could use.
+    try:
+        declared_custody(manifest)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return "wrapping custody unavailable or differs from snapshot"
     sums, sizes = manifest.get("sha256"), manifest.get("bytes")
     if type(sums) is not dict or type(sizes) is not dict:
         return "manifest has no checksums"
@@ -2893,6 +2924,13 @@ def _daily_whole(folder, *, completing_thin=False):
         if (_rotation_link(entry) or not entry.is_file() or entry.stat().st_nlink != 1
                 or (entry.name not in allowed and not re.fullmatch(r"rehearsal-[a-f0-9]{16}\.json", entry.name))):
             return "undeclared component: " + entry.name
+    if (folder / "orthanc.tgz").is_file():
+        # A set with its archive may be counted as a kept generation, so it must be one a restore admits: the same
+        # admission is asked (the stored bytes were each compared just above and are not read again).
+        try:
+            _stored_backup(folder, manifest, bytes_verified=True)
+        except (RuntimeError, OSError, ValueError, KeyError, TypeError) as error:
+            return "a restore would not admit it: " + (str(error) if isinstance(error, StoredSetError) else type(error).__name__)
     return None
 
 

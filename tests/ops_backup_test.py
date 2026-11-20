@@ -1406,6 +1406,24 @@ class BackupEncryptionTests(unittest.TestCase):
         self.assertEqual(reported(self.host.parent), "configured")
         self.assertEqual(reported(), "unknown", "without the backup root nothing is said for the backup")
         self.backup()
+
+        def refused_without_a_command(destination):
+            self.host.events.clear()
+            with patch.object(ops, "ROOT", self.host.repo), patch.object(ops, "text", side_effect=self.host.fake_text), \
+                    patch.object(ops, "run", side_effect=self.host.fake_run):
+                with self.assertRaises(RuntimeError):
+                    ops.backup(destination)
+            self.assertEqual(self.host.events, [], "no Docker command, no writer stopped")
+        # The destination is part of the same admission: inside the checkout, or not this account's private directory.
+        destinations = {"inside the checkout": self.host.repo / "backups"}
+        if os.name == "posix":
+            destinations["readable by others"] = Path(self.temp) / "shared-backups"
+            destinations["readable by others"].mkdir()
+            destinations["readable by others"].chmod(0o755)
+        for label, destination in destinations.items():
+            with self.subTest(destination=label):
+                refused_without_a_command(destination)
+                self.assertEqual(reported(destination), "invalid")
         body = json.loads(self.config.read_text())
         broken = {
             "configuration missing": None,
@@ -1722,9 +1740,12 @@ class WrappingCustodyTests(unittest.TestCase):
         ops.write_json(folder / "manifest.json", {**manifest, "complete": False})
         refused("Backup is incomplete")
         ops.write_json(folder / "manifest.json", manifest)
+        # Thinned by rotation: the marker with the Orthanc archive gone.
         (folder / ops.THINNED_FILE).write_text("{}")
+        (folder / "orthanc.tgz").unlink()
         refused("thinned by rotation")
         (folder / ops.THINNED_FILE).unlink()
+        (folder / "orthanc.tgz").write_bytes(stored)
         # A set written before encryption: a component of the same length with other content.
         as_plaintext_set(folder)
         original = (folder / "kin.dump").read_bytes()
@@ -1733,6 +1754,31 @@ class WrappingCustodyTests(unittest.TestCase):
         (folder / "kin.dump").write_bytes(original)
         self.assertIsNone(restore_wrapping_cli(folder, destination))
         self.assertEqual((destination / "wrap-0.key").read_bytes(), bytes(range(32)))
+
+    def test_rotation_never_counts_a_set_whose_key_copies_a_restore_could_not_find(self):
+        """A set that counts stored signing keys but names no key copy is refused by a restore before its first write;
+        rotation asks the same question, so it never keeps such a set in place of an older one that can be restored."""
+        older, _ = self.backup()
+        newer, _ = self.backup()
+        manifest = as_plaintext_set(newer)
+        custody = manifest.pop("wrapping_custody")
+        ops.write_json(newer / "manifest.json", manifest)
+        workspace = Path(json.loads(self.host.encryption.read_text())["workspace"])
+        refused_before_restore(self, newer, "Wrapping custody locator is missing", workspace)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertIn("wrapping custody unavailable", result["incomplete"][newer.name])
+        self.assertEqual((result["generations"], result["would_delete"]), ([older.name], []))
+        # The same for a set whose manifest no longer attests one pause: the admission a restore passes is rotation's too.
+        manifest["wrapping_custody"] = custody
+        manifest["emr"]["same_pause"] = False
+        ops.write_json(newer / "manifest.json", manifest)
+        refused_before_restore(self, newer, "was not paused together", workspace)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertEqual(result["incomplete"][newer.name],
+                         "a restore would not admit it: EMR database/failure-spool capture was not paused together")
+        self.assertEqual((result["generations"], result["would_delete"]), ([older.name], []))
 
     def test_missing_changed_custody_and_restored_schema_count_drift_fail_rehearsal(self):
         folder, manifest = self.backup()
@@ -1819,6 +1865,27 @@ class PrivateWorkTests(unittest.TestCase):
             self.assertIn(b"synthetic-fixture", (running / ".env").read_bytes(), "a running run keeps its folder")
             self.assertEqual(list(self.workspace.iterdir()), [running])
         self.assertEqual((list(self.workspace.iterdir()), list(self.scratch.iterdir())), ([], []), "and removes it itself")
+
+    def test_the_room_a_killed_run_took_is_free_again_before_the_next_opening_measures_it(self):
+        """A caller that opens the set again itself (no command in between) is not refused for the room the killed
+        run's plaintext still takes: that is reclaimed first, the free space measured after."""
+        opened, _ = self.killed_runs()
+        actual = shutil.disk_usage
+
+        def one_set_of_room(path):
+            usage = actual(path)
+            return SimpleNamespace(total=usage.total, used=usage.used, free=0 if opened.exists() else usage.free)
+        with patch.object(ops.shutil, "disk_usage", side_effect=one_set_of_room):
+            with ops.opened_set(self.folder) as again:
+                self.assertFalse(opened.exists())
+                self.assertEqual(list(self.workspace.iterdir()), [again.path])
+            self.assertEqual(list(self.workspace.iterdir()), [])
+            # A workspace that really is too small still refuses, and leaves nothing.
+            with patch.object(ops.shutil, "disk_usage", return_value=SimpleNamespace(total=1, used=1, free=0)):
+                with self.assertRaisesRegex(ops.BackupEncryptionError, "Insufficient free space"):
+                    with ops.opened_set(self.folder):
+                        self.fail("opened without room")
+        self.assertEqual(list(self.workspace.iterdir()), [])
 
     def test_only_this_tools_dead_leftovers_are_removed(self):
         ended = subprocess.Popen([sys.executable, "-c", "pass"])

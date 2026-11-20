@@ -402,6 +402,20 @@ class HeldCaptureTests(unittest.TestCase):
                 self.assertEqual(host.commands, [], "no volume, no container, no restore")
                 self.assertEqual(list(directory.glob("rehearsal-*.json")), [])
             path.write_bytes(original)
+        # The configuration list shortened while the manifest still records the component it named, and that file gone:
+        # the manifest's own list no longer is the capture's table.
+        written = (directory / "manifest.json").read_bytes()
+        configuration = (directory / "docker-compose.monitor.yml").read_bytes()
+        (directory / "manifest.json").write_text(json.dumps({**json.loads(written), "config": []}))
+        (directory / "docker-compose.monitor.yml").unlink()
+        host.commands.clear()
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            for opening in (ops.rehearse, lambda path: ops.opened_set(path).__enter__()):
+                with self.assertRaisesRegex(ops.StoredSetError, "Backup component inventory differs"):
+                    opening(directory)
+        self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
+        (directory / "manifest.json").write_bytes(written)
+        (directory / "docker-compose.monitor.yml").write_bytes(configuration)
         with host.bound(), patch.object(ops, "remove_owned_if_present"):
             ops.rehearse(directory)
         (record,) = directory.glob("rehearsal-*.json")

@@ -489,6 +489,13 @@ class StorageEncryptionTests(unittest.TestCase):
                                      "the key is inside the installation's checkout")
                     self.assertEqual(deploy.storage_encryption(config.parent)["backup_encryption"], "invalid",
                                      "the key is inside the backup root")
+                    # The destination belongs to the same admission: a backup root inside the checkout is refused by
+                    # the backup, so it is never reported as configured.
+                    site = folder / "site"
+                    self.assertEqual(deploy.storage_encryption(site / "backups", site)["backup_encryption"], "invalid")
+                    self.assertEqual(deploy.storage_encryption(root, site)["backup_encryption"], "configured")
+                    with self.assertRaisesRegex(RuntimeError, "outside the Git repository"):
+                        ops.backup_admission(site / "backups", checkout=site)
                 if os.name == "posix":
                     # The daily backup runs as the backup root's owner; another account cannot speak for it.
                     with patch.object(deploy.os, "geteuid", return_value=os.geteuid() + 1):
