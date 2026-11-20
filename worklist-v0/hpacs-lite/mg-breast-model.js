@@ -117,10 +117,13 @@
   //   times as long as its median reach (the breast's own rounded end is not). Nothing is cut on the nipple side. A
   //   piece that nowhere reaches a tenth of the image's width from the chest wall is not a breast at all.
   // - Holes in it are part of it.
+  // - The background that shows its skin line lies beside it: the air and the padding in the grid rows the breast is
+  //   in, between it and the nipple-side border. Air or padding above or below it only (a band along the top of an
+  //   image that tissue fills) shows none.
   // No region ({ found: false, reason }) rather than a doubtful one: without the chest-wall side ('chest-wall-unknown'),
-  // for a magnification, spot or partial view (options.partial: 'partial-view'), without clear air over a twentieth of
-  // the image ('no-air': tissue fills it, or its background is not flat), with tissue that does not reach the chest wall
-  // ('not-at-chest-wall': an unexplained band between them), with only strips ('no-region').
+  // for a magnification, spot or partial view (options.partial: 'partial-view'), without such background over a
+  // twentieth of the image ('no-air': tissue fills it, or its background is not flat), with tissue that does not reach
+  // the chest wall ('not-at-chest-wall': an unexplained band between them), with only strips ('no-region').
   // values: the image's pixel values, row after row (columns × rows); MONOCHROME1 shows low values bright, so
   // options.monochrome1 reads them the other way round. Searched on a grid of at most maxSide cells a side; the box and
   // the outline are then taken from the pixels themselves. Returns { found, step, width, height, mask, box, outline,
@@ -182,7 +185,6 @@
       const at = queue[head], x = at % width;
       if (x > 0) reach(at - 1); if (x < width - 1) reach(at + 1); if (at >= width) reach(at - width); if (at + width < size) reach(at + width);
     }
-    if (tail * 20 < size) return none('no-air');
     // The pieces of tissue; the largest that reaches the chest-wall border.
     const label = new Int32Array(size);
     let body = 0, bodySize = 0, pieces = 0;
@@ -220,6 +222,18 @@
     };
     strip(top, 1); strip(bottom, -1);
     if (bodySize < size * 0.02) return none('no-region');
+    // The background beside the breast: in each grid row the breast is in, what is outside between the nipple-side
+    // border and the breast.
+    let beside = 0;
+    for (let gy = top; gy <= bottom; gy++) {
+      let out = 0;
+      for (let n = 0, gx = nippleX; n < width; n++, gx += inward) {
+        const at = gy * width + gx;
+        if (label[at] === body) { beside += out; break; }
+        if (outside[at]) out++;
+      }
+    }
+    if (beside * 20 < size) return none('no-air');
     // Holes: cells outside the region that the image border cannot be reached from (4-connected) are inside it.
     const beyond = new Uint8Array(size);
     {

@@ -107,7 +107,9 @@ CELLS = """() => {
   window.synJumps = [];
   window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'CORNERSTONE_STACK_NEW_IMAGE', CAMERA_MODIFIED: 'CORNERSTONE_CAMERA_MODIFIED', VOI_MODIFIED: 'CORNERSTONE_VOI_MODIFIED', IMAGE_RENDERED: 'CORNERSTONE_IMAGE_RENDERED' } },
     metaData: { get(type, imageId) { const { v, sop } = uidOf(imageId);
-      if (type === 'instance') return { SOPInstanceUID: sop, StudyInstanceUID: v.info.study, SeriesInstanceUID: v.series, Modality: 'MG', NumberOfFrames: 1 };
+      // synNoInstance: the cells whose image the viewer holds no instance metadata of.
+      if (type === 'instance') return window.synNoInstance?.includes(v.id) ? null
+        : { SOPInstanceUID: sop, StudyInstanceUID: v.info.study, SeriesInstanceUID: v.series, Modality: 'MG', NumberOfFrames: 1 };
       if (type === 'imagePlaneModule') { const k = Number(imageId.split(':')[2]);
         return { rowCosines: [0, 1, 0], columnCosines: [0, 0, -1], rowPixelSpacing: 0.1, columnPixelSpacing: 0.1,
           imagePositionPatient: [k, window.synPlaneShift?.[k] || 0, 0] }; }
@@ -120,6 +122,8 @@ CELLS = """() => {
   window.kinPlanarGeometry = () => ({ spacing: [0.1, 0.1], calculator: 'kin-mg-length-v1:detector' });
   // DICOMweb metadata of each image (the header mammography-model.js reads).
   const header = (v, sop) => { const tag = (vr, value) => ({ vr, Value: [].concat(value) });
+    // synSopHeaders[sop]: the header kept for that one image, whatever its cell holds by now.
+    if (window.synSopHeaders?.[sop]) return structuredClone(synSopHeaders[sop]);
     // synHeaders[cell]: another device's own header for that cell (its UIDs and size made the cell's).
     const own = window.synHeaders?.[v.id];
     if (own) return { ...structuredClone(own), '00080018': tag('UI', sop), '0020000D': tag('UI', v.info.study), '0020000E': tag('UI', v.series), '00280010': tag('US', R), '00280011': tag('US', C) };
@@ -703,6 +707,55 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(panel.locator('b')).to_have_text('Slice 2 / 12')
         self.assertEqual([0, 1], page.evaluate("() => [synViews.get('rcc').index, synViews.get('dbt').index]"))
 
+    def test_07e_tomo_does_not_take_a_cell_given_another_stack_while_the_dbt_header_was_read(self):
+        page = self.open()
+        # The DBT cell is the active one; its header (kept as it is for that image) comes late. Before it comes the cell
+        # is given three conventional images.
+        page.evaluate("""async () => { const sop = '1.2.1.1.1';
+          const item = (await (await fetch('/dicom-web/studies/1.2.1/series/1.2.1.1/instances/' + sop + '/metadata')).json())[0];
+          window.synSopHeaders = { [sop]: item }; window.synMetadataDelay = 400; synActive = 'dbt'; }""")
+        self.menu(page, 'Tomo (DBT) Slices')
+        page.evaluate("""() => { synMetadataDelay = 0; const v = synViews.get('dbt'); v.info = { study: '1.2.1', side: 'R', view: '399162004', po: ['P', 'L'] };
+          v.ids = ['img:dbt:20', 'img:dbt:21', 'img:dbt:22']; synEmit('cells', 'data', { viewportId: 'dbt' }); }""")
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        expect(panel.locator('[role=status]')).to_have_text('여는 동안 칸의 영상이 바뀌었습니다. 다시 여세요.')
+        expect(panel.locator('b')).to_have_text('Slice — / —')
+        expect(panel.get_by_role('button', name='Next ▶')).to_be_disabled()
+        # Given other images and its own again (A → B → A) while the header is read: that opening is not carried out
+        # either; opened again, it is the DBT cell.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; synActive = 'dbt'; }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        page.evaluate("""() => { synMetadataDelay = 0; const v = synViews.get('dbt'), own = v.ids;
+          v.ids = ['img:dbt:20', 'img:dbt:21']; synEmit('cells', 'data', { viewportId: 'dbt' });
+          v.ids = own; synEmit('cells', 'data', { viewportId: 'dbt' }); }""")
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        expect(panel.locator('[role=status]')).to_have_text('여는 동안 칸의 영상이 바뀌었습니다. 다시 여세요.')
+        panel.get_by_role('button', name='Close').click()
+        self.menu(page, 'Tomo (DBT) Slices')
+        expect(page.get_by_role('dialog', name='Tomo (DBT) Slices').locator('b')).to_have_text('Slice 1 / 12')
+
+    def test_07f_a_tomo_opening_overtaken_by_a_later_one_or_closed_opens_nothing_and_an_unread_header_is_said(self):
+        page = self.open()
+        # The first opening reads the DBT cell's header slowly; on another slice (its own header, read at once) Tomo is
+        # opened again and closed: the first opening's answer opens nothing.
+        page.evaluate("() => { window.synMetadataDelay = 500; synActive = 'dbt'; }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        page.evaluate("() => { synMetadataDelay = 0; synViews.get('dbt').show(4); }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        expect(panel.locator('b')).to_have_text('Slice 5 / 12')
+        panel.get_by_role('button', name='Close').click()
+        page.wait_for_timeout(800)
+        expect(page.get_by_role('dialog', name='Tomo (DBT) Slices')).to_have_count(0)
+        # The only DBT cell's header cannot be read (HTTP 503): the panel says so, not that there is no DBT cell.
+        page = self.open()
+        page.evaluate("""() => { synActive = 'dbt'; const before = window.fetch;
+          window.fetch = (url, init) => /\\/series\\/1\\.2\\.1\\.1\\//.test(String(url)) ? Promise.resolve(new Response('', { status: 503 })) : before(url, init); }""")
+        self.menu(page, 'Tomo (DBT) Slices')
+        expect(page.get_by_role('dialog', name='Tomo (DBT) Slices').locator('[role=status]')).to_have_text(
+            '영상 머리글을 읽지 못해 DBT(유방 단층) 칸인지 확인하지 못했습니다. 다시 여세요.')
+
     def test_08b_breast_wl_stays_with_its_way_back_through_the_frames_of_the_same_dbt(self):
         page = self.open()
         before = page.evaluate("() => ({ props: synViews.get('dbt').getProperties(), nodes: structuredClone(synViews.get('dbt').tf.nodes) })")
@@ -757,6 +810,30 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_role('button', name='True Size').click()
         page.wait_for_timeout(200)
         self.assertAlmostEqual(1, self.camera(page, 'rcc')['zoom'])
+
+    def test_10d_a_point_pressed_before_the_window_went_to_another_screen_is_not_carried_after_the_way_back_to_fit(self):
+        page = self.open()
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='True Size').click()
+        pitch = panel.get_by_label('Monitor pixel pitch (mm)')
+        pitch.fill('0.25'); pitch.press('Tab')
+        page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 0.8) < 1e-9")
+        panel.get_by_role('button', name='Close').click()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => !!document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        # A point is pressed while a header is still read (the DBT cell's next slice has its own). Before it is carried
+        # the window is on a screen with no value stored for it: the cells go back to Fit at once, and the point pressed
+        # before that is not carried afterwards.
+        page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(1); }")
+        self.click_cell(page, 'rcc', 50, 40)
+        page.evaluate("""() => { const s = window.screen; Object.defineProperty(window, 'screen', { configurable: true, value: {
+          width: s.width, height: s.height, availLeft: s.width, availTop: 0, addEventListener() {} } }); dispatchEvent(new Event('resize')); }""")
+        zooms = "() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).getZoom())"
+        self.assertEqual([1, 1, 1], page.evaluate(zooms))
+        page.wait_for_timeout(900)
+        self.assertEqual([1, 1, 1], page.evaluate(zooms))
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit')
     def test_08_breast_edge_and_breast_wl_with_the_way_back_to_the_stored_window_table_and_inversion(self):
         page = self.open()
         page.evaluate("() => { const v = synViews.get('rcc'); v.props.invert = true; v.props.VOILUTFunction = 'SIGMOID'; v.tf.nodes = [[0, 1, 1, 1, 0.5, 0], [100, 0.7, 0.7, 0.7, 0.5, 0], [4095, 0, 0, 0, 0.5, 0]]; }")
@@ -1118,14 +1195,15 @@ class ViewerMgDOMTest(unittest.TestCase):
     # ── A cell without a breast region is left alone ──
     # Pixels that are not a whole breast against the chest wall (400 × 300, the chest wall where the cell's side stores it):
     # 'strip': only a strip along the chest wall; 'filled': tissue fills the image (fat with its grain, dense tissue by the
-    # chest wall — no air, no skin line); 'band': a breast (fat 24 … 36, dense 600, air 10) 240 px out from a band of 0, 20 px
-    # wide, that lies between it and the chest-wall border.
+    # chest wall — no air, no skin line); 'filled-under': the same under 30 rows of 0 along the top; 'band': a breast (fat
+    # 24 … 36, dense 600, air 10) 240 px out from a band of 0, 20 px wide, that lies between it and the chest-wall border.
     PIXELS = """([id, kind]) => { const C = 400, R = 300, v = synViews.get(id), right = v.info.side === 'R', values = new Uint16Array(C * R);
       for (let y = 0; y < R; y++) for (let x = 0; x < C; x++) {
         const fromChest = right ? C - 1 - x : x, grain = 20 + ((x * 7 + y * 13) % 13) - 6;
         let value = 0;
         if (kind === 'strip') value = fromChest < 3 ? 30 : 0;
-        else if (kind === 'filled') value = fromChest < 200 ? 600 : grain;
+        else if (kind === 'filled-under' && y < 30) value = 0;
+        else if (kind === 'filled' || kind === 'filled-under') value = fromChest < 200 ? 600 : grain;
         else if (kind === 'band') { const dx = (fromChest - 20) / 240, dy = (y - 150) / 120, r = dx * dx + dy * dy;
           value = fromChest < 20 ? 0 : r <= 1 ? (r <= 0.3 ? 600 : 10 + grain) : 10; }
         values[y * C + x] = value; }
@@ -1223,6 +1301,113 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.locator('[data-mg-badge]')).to_have_count(0)
         self.assertEqual(before, page.evaluate(self.STATE, ['rcc', 'lcc', 'prcc']))
 
+    def test_09g_tissue_filling_the_image_under_a_band_of_declared_padding_has_no_region(self):
+        page = self.open()
+        # Today's L CC: tissue fills the image under 30 rows of declared padding (Pixel Padding Value 0). The padding is
+        # not beside the tissue: there is no air and no skin line, as without the band.
+        page.evaluate("() => { synViews.get('lcc').info.extra = { '00280120': { vr: 'US', Value: [0] } }; }")
+        page.evaluate(self.PIXELS, ['lcc', 'filled-under'])
+        before = page.evaluate(self.STATE, ['lcc'])
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        status = panel.locator('[role=status]')
+        panel.get_by_role('button', name='Breast Edge').click()
+        expect(status).to_have_text('경계를 찾지 못한 칸 — Current · L CC / Prior · L CC')
+        expect(page.locator('#pane-lcc .kin-mg-outline')).to_have_count(0)
+        panel.get_by_role('button', name='Breast W/L').click()
+        expect(status).to_have_text('경계를 찾지 못해 창을 바꾸지 않은 칸 — Current · L CC / Prior · L CC')
+        panel.get_by_role('button', name='Fit Breast').click()
+        expect(status).to_have_text('바꾸지 않은 칸 — Current · L CC / Prior · L CC')
+        self.assertEqual(before, page.evaluate(self.STATE, ['lcc']))
+
+    def test_09h_what_was_pressed_is_not_carried_out_on_a_cell_that_showed_another_image_meanwhile_and_the_cell_is_named(self):
+        # The DBT cell shows another slice and the first again (A → B → A) while the headers are read: what was pressed
+        # before that is carried out on the cells that stayed, not on that one, and that one is named.
+        away = "() => { synMetadataDelay = 0; const v = synViews.get('dbt'); v.show(3); v.show(0); }"
+        for name, badge in [('Breast W/L', 'wl'), ('Fit Breast', 'zoom'), ('Match Size', 'zoom')]:
+            with self.subTest(name=name):
+                page = self.open()
+                before = page.evaluate(self.STATE, ['dbt'])
+                page.evaluate("() => { window.synMetadataDelay = 400; }")
+                self.menu(page, 'Breast Display')
+                panel = page.get_by_role('dialog', name='Breast Display')
+                panel.get_by_role('button', name=name).click()
+                page.evaluate(away)
+                expect(page.locator(f'#pane-rcc [data-mg-badge={badge}]')).to_have_count(1)
+                page.wait_for_timeout(250)
+                self.assertEqual(before, page.evaluate(self.STATE, ['dbt']))
+                expect(page.locator(f'#pane-dbt [data-mg-badge={badge}]')).to_have_count(0)
+                expect(panel.locator('[role=status]')).to_contain_text('Current · R CC · 그 사이 영상이 바뀜')
+        with self.subTest(name='Quadrant Zoom'):
+            page = self.open()
+            before = page.evaluate(self.STATE, ['dbt'])
+            page.evaluate("() => { window.synMetadataDelay = 400; }")
+            self.menu(page, 'Quadrant Zoom')
+            page.evaluate(away)
+            page.wait_for_function("() => Math.abs(synViews.get('rcc').getZoom() - 4) < 1e-9"); page.wait_for_timeout(250)
+            self.assertEqual(before, page.evaluate(self.STATE, ['dbt']))
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+            expect(page.get_by_role('dialog', name='Quadrant Zoom').locator('[role=status]')).to_contain_text('Current · R CC · 그 사이 영상이 바뀜')
+        with self.subTest(name='Next Quadrant, then a new size'):
+            # The cell holds the first step; the next step is asked for while its slice's header is read, and it is away
+            # and back meanwhile: it leaves the step (no mark for a quadrant it does not show), so a new size afterwards
+            # draws nothing on it.
+            page = self.open()
+            self.menu(page, 'Quadrant Zoom')
+            quadrant = page.get_by_role('dialog', name='Quadrant Zoom')
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_contain_text('Q1 Upper-Outer')
+            page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(5); }")
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_contain_text('Q1 Upper-Outer')
+            before = page.evaluate(self.STATE, ['dbt'])
+            quadrant.get_by_role('button', name='Next Quadrant').click()
+            page.evaluate("() => { synMetadataDelay = 0; const v = synViews.get('dbt'); v.show(3); v.show(5); }")
+            expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_contain_text('Q2 Upper-Inner')
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+            expect(quadrant.locator('[role=status]')).to_contain_text('Current · R CC · 그 사이 영상이 바뀜')
+            page.evaluate("() => { for (const v of synViews.values()) v.element.style.width = '120px'; }")
+            page.wait_for_timeout(500)
+            self.assertEqual(before, page.evaluate(self.STATE, ['dbt']))
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+
+    def test_09i_a_cell_whose_header_cannot_be_read_is_named_and_what_was_done_is_not_said_of_it(self):
+        page = self.open()
+        # Only the prior R CC's header cannot be read (HTTP 503): that cell is left as it is, and every command says so.
+        page.evaluate("""() => { const before = window.fetch;
+          window.fetch = (url, init) => /\\/series\\/1\\.2\\.2\\.5\\//.test(String(url)) ? Promise.resolve(new Response('', { status: 503 })) : before(url, init); }""")
+        before = page.evaluate(self.STATE, ['prcc'])
+        unread = 'Prior · 영상 머리글을 읽지 못함'
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        status = panel.locator('[role=status]')
+        panel.get_by_role('button', name='Breast Edge').click()
+        expect(status).to_have_text('경계를 찾지 못한 칸 — ' + unread + ' / Prior · L CC')
+        expect(page.locator('.kin-mg-outline')).to_have_count(4)
+        panel.get_by_role('button', name='Breast W/L').click()
+        expect(status).to_have_text('경계를 찾지 못해 창을 바꾸지 않은 칸 — ' + unread + ' / Prior · L CC')
+        panel.get_by_role('button', name='Fit Breast').click()
+        expect(status).to_have_text('바꾸지 않은 칸 — ' + unread + ' / Prior · L CC')
+        panel.get_by_role('button', name='Match Size').click()
+        expect(status).to_have_text('바꾸지 않은 칸 — ' + unread + ' / Prior · L CC')
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Match Size')
+        panel.get_by_role('button', name='1:1').click()
+        expect(status).to_have_text('바꾸지 않은 칸 — ' + unread)
+        self.assertEqual(before, page.evaluate(self.STATE, ['prcc']))
+        expect(page.locator('#pane-prcc [data-mg-badge]')).to_have_count(0)
+        # Quadrant Zoom and Mirrored name it too.
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.get_by_role('dialog', name='Quadrant Zoom').locator('[role=status]')).to_contain_text('확대하지 않은 칸 — ' + unread)
+        self.menu(page, 'Mirrored')
+        expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_have_text('연동하지 않는 칸 — ' + unread + ' / Prior · L CC: orientation unverified')
+        self.assertEqual(before, page.evaluate(self.STATE, ['prcc']))
+        # A cell whose image the viewer itself holds no instance metadata of is named likewise (its role is not known).
+        page = self.open()
+        page.evaluate("() => { window.synNoInstance = ['prcc']; }")
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='1:1').click()
+        expect(panel.locator('[role=status]')).to_have_text('바꾸지 않은 칸 — ? · 영상 머리글을 읽지 못함')
+        self.assertAlmostEqual(2, self.camera(page, 'rcc')['zoom']); self.assertAlmostEqual(1, self.camera(page, 'prcc')['zoom'])
+
     # ── What the reader asked for while the image headers were still being read ──
     HEADERS_READ = "() => !!document.querySelector('#pane-plcc [data-mg-badge=mirrored]')"
 
@@ -1293,6 +1478,101 @@ class ViewerMgDOMTest(unittest.TestCase):
         together.uncheck(); together.check()
         page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
         self.assertEqual([True, False, False], page.evaluate("() => ['rcc', 'lcc', 'prcc'].map(id => synViews.get(id).props.invert)"))
+
+    def test_03h_a_change_or_a_point_in_a_cell_that_carries_nothing_does_not_stop_what_was_asked_before_it(self):
+        zooms = "ids => ids.map(id => Math.round(synViews.get(id).getZoom() * 1e6) / 1e6)"
+        cells = ['rcc', 'lcc', 'prcc', 'plcc', 'rmlo']
+        # Before the headers are read the reader zooms today's R CC and then the prior L CC, which has no stored
+        # orientation and is not linked: the R CC's change is carried to its view all the same.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        page.evaluate("""() => { synViews.get('rcc').setCamera({ parallelScale: 50, focalPoint: [100, 100, 0] });
+          synViews.get('plcc').setCamera({ parallelScale: 100 }); }""")
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([3, 3, 3, 1.5, 1], page.evaluate(zooms, cells))
+        # A change in a cell of another view (the R MLO, alone in its view) does not stop it either.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        page.evaluate("""() => { synViews.get('rcc').setCamera({ parallelScale: 50, focalPoint: [100, 100, 0] });
+          synViews.get('rmlo').setCamera({ parallelScale: 75 }); }""")
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([3, 3, 3, 1, 2], page.evaluate(zooms, cells))
+        # Nor does a point pressed in the cell that is not linked, after a point in today's R CC.
+        page = self.open()
+        page.evaluate("() => { window.synMetadataDelay = 400; }")
+        self.menu(page, 'Mirrored')
+        self.click_cell(page, 'rcc', 50, 40)
+        self.click_cell(page, 'plcc', 50, 40)
+        page.wait_for_function(self.HEADERS_READ); page.wait_for_timeout(250)
+        self.assertEqual([2, 2, 2, 1, 1], page.evaluate(zooms, cells))
+        self.assertNear(self.camera(page, 'lcc')['focal'], [299.5, 79.5])
+
+    def test_02e_the_marks_of_the_cells_not_linked_are_those_of_the_latest_reading_of_the_cells(self):
+        page = self.open()
+        # The header of the image the prior R CC holds now comes late (the others at once).
+        page.evaluate("""() => { const before = window.fetch;
+          window.fetch = async (url, init) => { if (/\\/instances\\/1\\.2\\.2\\.5\\.1\\/metadata$/.test(String(url))) await new Promise(resolve => setTimeout(resolve, 500));
+            return before(url, init); }; }""")
+        self.menu(page, 'Mirrored')
+        # Before it comes, that cell is given another image, one without a stored orientation: it is marked not linked.
+        page.evaluate("""() => { const v = synViews.get('prcc'); v.ids = ['img:prcc:5']; v.info = { ...v.info, po: null };
+          synEmit('cells', 'data', { viewportId: 'prcc' }); synEmit('grid', 'gridState'); }""")
+        mark = page.locator('#pane-prcc [data-mg-badge=mirrored]')
+        status = page.get_by_role('dialog', name='Mirrored').locator('[role=status]')
+        expect(mark).to_have_text('Mirrored: orientation unverified — not linked')
+        expect(status).to_contain_text('Prior · R CC: orientation unverified')
+        # The reading begun for the image it held before ends afterwards: the mark and the panel's line stay.
+        page.wait_for_timeout(800)
+        expect(mark).to_have_text('Mirrored: orientation unverified — not linked')
+        expect(status).to_contain_text('Prior · R CC: orientation unverified')
+        # The Magnifier's press layers likewise: turned on while a slow header is read, the cell given another image
+        # meanwhile keeps the layer the later reading gave it.
+        page = self.open()
+        page.evaluate("""() => { const before = window.fetch;
+          window.fetch = async (url, init) => { if (/\\/instances\\/1\\.2\\.2\\.5\\.1\\/metadata$/.test(String(url))) await new Promise(resolve => setTimeout(resolve, 500));
+            return before(url, init); }; }""")
+        self.menu(page, 'Magnifier')
+        page.evaluate("""() => { const v = synViews.get('prcc'); v.ids = ['img:prcc:5'];
+          synEmit('cells', 'data', { viewportId: 'prcc' }); synEmit('grid', 'gridState'); }""")
+        expect(page.locator('#pane-prcc .kin-mg-capture[data-mode=lens]')).to_have_count(1)
+        page.wait_for_timeout(800)
+        expect(page.locator('#pane-prcc .kin-mg-capture[data-mode=lens]')).to_have_count(1)
+        expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(6)
+        # With no change of the grid at all: the prior R CC is given an image without a stored orientation (marked), and
+        # the DBT cell goes on to a slice whose header cannot be read (named, and its press layer goes).
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function(self.HEADERS_READ)
+        self.menu(page, 'Magnifier')
+        expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(6)
+        page.evaluate("""() => { const v = synViews.get('prcc'); v.ids = ['img:prcc:5']; v.info = { ...v.info, po: null };
+          synEmit('cells', 'data', { viewportId: 'prcc' }); }""")
+        expect(page.locator('#pane-prcc [data-mg-badge=mirrored]')).to_have_text('Mirrored: orientation unverified — not linked')
+        page.evaluate("""() => { const before = window.fetch;
+          window.fetch = (url, init) => /\\/instances\\/1\\.2\\.1\\.1\\.5\\/metadata$/.test(String(url)) ? Promise.resolve(new Response('', { status: 503 })) : before(url, init);
+          synViews.get('dbt').show(4); }""")
+        expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_contain_text('Current · 영상 머리글을 읽지 못함')
+        expect(page.locator('#pane-dbt .kin-mg-capture')).to_have_count(0)
+        expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(5)
+
+    def test_03i_the_readers_way_back_to_the_very_camera_this_module_set_is_followed(self):
+        page = self.open()
+        # Fit sets every cell's camera. With Mirrored on the reader zooms today's R CC to 3× and then back to that very
+        # camera: the view follows both.
+        self.menu(page, 'Breast Display')
+        display = page.get_by_role('dialog', name='Breast Display')
+        display.get_by_role('button', name='Fit', exact=True).click()
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit')
+        display.get_by_role('button', name='Close').click()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function(self.HEADERS_READ)
+        fit = page.evaluate("() => synViews.get('rcc').getCamera()")
+        page.evaluate("() => synViews.get('rcc').setCamera({ parallelScale: 50 })")
+        page.wait_for_function("() => ['lcc', 'prcc'].every(id => Math.abs(synViews.get(id).getZoom() - 3) < 1e-9)")
+        page.evaluate("camera => synViews.get('rcc').setCamera(camera)", fit)
+        page.wait_for_function("() => ['lcc', 'prcc'].every(id => Math.abs(synViews.get(id).getZoom() - 1) < 1e-9)")
 
     def test_08e_breast_wl_pressed_twice_while_the_headers_are_read_changes_nothing_and_off_gives_the_readers_window_back(self):
         page = self.open()
@@ -1386,7 +1666,8 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.locator('#pane-rcc .kin-mg-capture[data-mode=lens]')).to_have_count(1)
         box = page.locator('#pane-rcc .viewport-element').bounding_box()
         # The DBT cell's next slice has its own header: the linked lenses wait for it, the pressed cell's own does not.
-        unread = "k => { synMetadataDelay = 400; synViews.get('dbt').show(k); }"
+        # (Its header is asked for when the slice is shown, for Mirrored's marks: 700 ms leave the presses below their time.)
+        unread = "k => { synMetadataDelay = 700; synViews.get('dbt').show(k); }"
         lenses = "() => Object.fromEntries([...document.querySelectorAll('.kin-mg-lens')].map(lens => [lens.closest('[data-cy=viewport-pane]').id.slice(5), lens.dataset.at]))"
         # Let go before the headers come: no lens then, and none when they come.
         page.evaluate(unread, 1)

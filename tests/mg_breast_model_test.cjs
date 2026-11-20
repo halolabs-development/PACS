@@ -257,6 +257,22 @@ test('detect: no region rather than a doubtful one; declared padding is no pixel
   assert.ok(M.regionWindow(blanked, columns, rows, r).lower >= 14);
   // Padding declared but tissue filling what is left: still no air, no region.
   assert.equal(M.detect(filled, columns, rows, { chest: 'right', padding: { low: 4000, high: 4095 } }).found, false);
+  // The background that shows a skin line lies beside the breast, between it and the nipple-side border. A band along
+  // the top of an image that tissue fills below it is none — declared as padding (80 rows of 4095), or flat and dark
+  // as air is (160 rows of 0): the tissue stands at the nipple-side border in every row it is in.
+  for (const [band, value, padding] of [[80, 4095, { low: 4095, high: 4095 }], [160, 0, undefined]]) {
+    const under = filled.slice();
+    for (let y = 0; y < band; y++) for (let x = 0; x < columns; x++) under[y * columns + x] = value;
+    assert.deepEqual(M.detect(under, columns, rows, { chest: 'right', padding }), { found: false, reason: 'no-air' }, 'band of ' + value);
+    // Nor when the band runs on down the chest-wall side (60 columns): what is outside there is not between the
+    // nipple-side border and the tissue.
+    for (let y = 0; y < rows; y++) for (let x = columns - 60; x < columns; x++) under[y * columns + x] = value;
+    assert.equal(M.detect(under, columns, rows, { chest: 'right', padding }).found, false, 'band of ' + value + ' and down the chest-wall side');
+  }
+  // The same band of padding over a breast with its air beside it changes nothing of the breast found.
+  const topped = fattyPhantom(columns, rows);
+  for (let y = 0; y < 30; y++) for (let x = 0; x < columns; x++) topped[y * columns + x] = 4095;
+  assert.deepEqual(M.detect(topped, columns, rows, { chest: 'right', padding: { low: 4095, high: 4095 } }).box, M.detect(plain, columns, rows, { chest: 'right' }).box);
 });
 
 test('regionWindow: 1–99 percentiles of the region pixels only (the background and the marker do not count)', () => {
