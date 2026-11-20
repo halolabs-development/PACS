@@ -1676,8 +1676,10 @@ when the key cannot be used. Install a private JSON configuration at `/etc/kin-d
   its own.
 - `current`: the key ID new sets are written with. To change keys, add the new identity under a new ID, make it
   `current`, and keep the old ID in `files` until the sets that name it have rotated out.
-- `workspace`: a directory outside the backup root (on encrypted storage, or volatile space large enough for one set)
-  where a rehearsal or restore opens an encrypted set. It needs the free space of one set's plaintext.
+- `workspace`: a directory outside the backup root (on encrypted storage, or volatile space large enough for two
+  sets) where a rehearsal or restore opens an encrypted set. A rehearsal needs the free space of one set's plaintext;
+  a rollback needs two: it keeps B open (and rehearses B from that same opening) while it preserves and rehearses the
+  stopped N.
 
 While writers are paused, each component (database dumps, the Orthanc and EMR-state archives, catalogs, `.env` and
 the Compose files) goes through age as it is produced; no plaintext component is written into the backup root. The
@@ -1717,8 +1719,9 @@ python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --encryption-key /mn
 
 A set written before encryption existed has no `encryption` record and is validated
 and rehearsed as before, without a key. A restore into a rollback project reads an
-encrypted B the same way, through `ops_backup.opened_set` (its `.env`, dumps and
-archives come from the opened folder; the hold, records and custody stay with B).
+encrypted B the same way, through `ops_backup.opened_set`, once (its `.env`, dumps and
+archives come from the opened folder, and its rehearsal is `ops_backup.rehearse_opened`
+on that same opening; the hold, records and custody stay with B).
 
 The first command checks the custody files against the snapshot and prints only
 the restored ID/path mapping. It reads every custody file before creating the

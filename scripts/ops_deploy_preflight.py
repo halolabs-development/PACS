@@ -265,10 +265,11 @@ def data_locations():
 
 
 def backup_key_state():
-    path = Path(os.environ.get("KIN_BACKUP_ENCRYPTION") or ops.BACKUP_ENCRYPTION_CONFIG)
-    if not path.exists():
-        return "absent"
+    """configured: the backup itself would accept its key, configuration and age program (ops.backup_key, the one
+    check); absent: no configuration file; invalid: anything else, also a path this account cannot look at."""
     try:
+        if not Path(os.environ.get("KIN_BACKUP_ENCRYPTION") or ops.BACKUP_ENCRYPTION_CONFIG).exists():
+            return "absent"
         ops.backup_key()
     except Exception:
         return "invalid"

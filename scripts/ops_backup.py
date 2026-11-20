@@ -382,7 +382,7 @@ def backup_key(key_id=None, *, config_path=None, identity=None):
             raise BackupEncryptionError("No backup key is configured for this set's key ID " + key_id)
         identity = config["files"][key_id]
     program = config["age"] if config else shutil.which("age")
-    if not program or not Path(program).is_file():
+    if not program or not Path(program).is_file() or not os.access(program, os.X_OK):
         raise BackupEncryptionError("The age program is unavailable")
     identity = Path(identity)
     try:
@@ -530,6 +530,24 @@ def encryption_record(manifest):
     return record
 
 
+def stored_encryption(directory, manifest, *, config_path=None, identity=None):
+    """The one admission of a stored set's encryption, for every path that acts on its manifest (open, rotate, restore
+    custody). None: a set written before encryption - and then no component may be an age file (a removed record).
+    Otherwise the record, with the set's key, after the manifest is authenticated under that key."""
+    record = encryption_record(manifest)
+    if record is None:
+        for name in manifest.get("sha256") or {}:
+            path = Path(directory) / name
+            if path.is_file():
+                with path.open("rb") as handle:
+                    if handle.read(len(AGE_HEADER)) == AGE_HEADER:
+                        raise BackupEncryptionError("Encrypted components without an encryption record")
+        return None, None
+    key = backup_key(record["key_id"], config_path=config_path, identity=identity)
+    authenticate(manifest, key)
+    return record, key
+
+
 def authenticate(manifest, key):
     """The key is this set's and the manifest's restore inputs are the ones the backup wrote."""
     record = encryption_record(manifest)
@@ -595,17 +613,11 @@ def opened_set(directory, manifest=None, *, config_path=None, identity=None, wor
     directory = Path(directory).resolve(strict=True)
     if manifest is None:
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    record = encryption_record(manifest)
+    record, key = stored_encryption(directory, manifest, config_path=config_path, identity=identity)
     if record is None:
-        # Only a set written before encryption has no record; age files under a removed record are refused, not read.
-        for name in manifest.get("sha256") or {}:
-            with (directory / name).open("rb") as handle:
-                if handle.read(len(AGE_HEADER)) == AGE_HEADER:
-                    raise BackupEncryptionError("Encrypted components without an encryption record")
         check_archives(directory, manifest)
         yield OpenedSet(directory, directory, manifest)
         return
-    key = backup_key(record["key_id"], config_path=config_path, identity=identity)
     plain = plaintext_manifest(manifest, key)
     root = Path(workspace) if workspace is not None else key.workspace
     if root is None or not root.is_absolute() or not root.is_dir():
@@ -849,6 +861,52 @@ const {verifyRuntimeConnection}=require('/app/dist/emr-runtime/manifest');
     run(['docker', 'exec', 'kin-api', 'node', '-e', script], timeout=timeout)
 
 
+def write_daily_set(directory, manifest, key, db, volume, state_volume, *, files_root=None, stage=None):
+    """The one writer of a new daily set's contents at its pause (backup() and the live restore test write through
+    it): every component streamed from its producer into its age file (no plaintext file in the set), the separate
+    wrapping custody, then the sealed and authenticated record. db: the database container; volume, state_volume:
+    the Orthanc and EMR state volumes; files_root: where .env and the Compose files are read (the installation);
+    stage: told the name of each stage as it begins."""
+    files_root = ROOT if files_root is None else Path(files_root)
+    stage = stage or (lambda name: None)
+    plaintext = {}
+    component = lambda name: sealed_component(directory, name, key, plaintext)
+    with component("emr-catalog.json") as sink:
+        sink.write((json.dumps(emr_catalog(db, "kin"), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    # D23: the cluster's roles, memberships, databases, tablespaces and schemas at the same pause, so that rehearse
+    # rebuilds them by the catalog replay (as the held captures do) instead of replaying pg_dumpall's GRANTED BY
+    # statements, which PostgreSQL 16 refuses in a cluster whose bootstrap superuser is not kin. Kept in the sealed
+    # metadata of the encryption record (it holds role and database comments and settings): the set's component
+    # files stay exactly the ones its consumers (validation, rotation, export inventory) know.
+    roles = role_catalog(db)
+    with component("cluster-roles.sql") as sink:
+        run(["docker", "exec", db, "pg_dumpall", "-U", "kin", "--encoding=UTF8", "--roles-only", "--no-role-passwords"], output=sink)
+    for database in ("kin", "keycloak"):
+        stage("dump " + database)
+        manifest["counts"][database] = counts(db, database, "kin")
+        with component(database + ".dump") as sink:
+            run(["docker", "exec", db, "pg_dump", "-U", "kin", "-d", database, "--encoding=UTF8", "-Fc", "--create"], output=sink)
+    stage("archive Orthanc")
+    # The Docker helper runs as root on Linux. Stream to a host-owned file
+    # instead of creating a root-owned archive in a writable host bind mount.
+    with component("orthanc.tgz") as sink:
+        temporary_run(["--network", "none", "--read-only",
+             "--mount", f"type=volume,source={volume},target=/source,readonly",
+             "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."],
+            timeout=1800, output=sink)
+    stage("archive EMR failure spool at the same pause")
+    with component("emr-state.tgz") as sink:
+        temporary_run(["--network", "none", "--read-only", "--mount", f"type=volume,source={state_volume},target=/source,readonly",
+                       "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."], timeout=1800, output=sink)
+    stage("copy configuration and checksum")
+    capture_wrapping_custody(directory, manifest, db)
+    for name in FILES[3:]:
+        with component(name) as sink:
+            sink.write((files_root / name).read_bytes())
+    stage("seal encryption record")
+    seal_record(directory, manifest, key, plaintext, roles)
+
+
 def backup(output, ready_timeout=120):
     if not 1 <= ready_timeout <= 900:
         raise RuntimeError("Readiness timeout must be between 1 and 900 seconds")
@@ -919,58 +977,24 @@ def backup(output, ready_timeout=120):
         metadata = json.loads(text(["docker", "image", "inspect", image["id"]]))[0]
         image["repo_digests"] = metadata.get("RepoDigests") or []
     write_json(directory / "manifest.json", manifest)
-    plaintext = {}
-    component = lambda name: sealed_component(directory, name, key, plaintext)
     pause_started = time.monotonic()
-    stage = "stop writers"
+    progress = {"stage": "stop writers"}
     try:
         if initial_running:
             run(["docker", "stop", "--time", "45", *initial_running], timeout=180)
         for name in initial_running:
             if text(["docker", "inspect", "--format", "{{.State.Running}}", name]) != "false":
                 raise RuntimeError("A write service is still running")
-        stage = "check EMR writers and preserve catalog"
+        progress["stage"] = "check EMR writers and preserve catalog"
         active = text(["docker", "exec", "kin-db", "psql", "-X", "-U", "kin", "-d", "kin", "-qAt", "-c",
                        "SELECT count(*) FROM pg_stat_activity WHERE datname='kin' AND backend_type='client backend' AND pid<>pg_backend_pid();"])
         if active != "0":
             raise RuntimeError("Database clients remain after stopping writers")
-        with component("emr-catalog.json") as sink:
-            sink.write((json.dumps(emr_catalog("kin-db", "kin"), ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-        # D23: the cluster's roles, memberships, databases, tablespaces and schemas at the same pause, so that rehearse
-        # rebuilds them by the catalog replay (as the held captures do) instead of replaying pg_dumpall's GRANTED BY
-        # statements, which PostgreSQL 16 refuses in a cluster whose bootstrap superuser is not kin. Kept in the sealed
-        # metadata of the encryption record (it holds role and database comments and settings): the set's component
-        # files stay exactly the ones its consumers (validation, rotation, export inventory) know.
-        roles = role_catalog("kin-db")
-        with component("cluster-roles.sql") as sink:
-            run(["docker", "exec", "kin-db", "pg_dumpall", "-U", "kin", "--encoding=UTF8", "--roles-only", "--no-role-passwords"], output=sink)
-        for database in ("kin", "keycloak"):
-            stage = "dump " + database
-            manifest["counts"][database] = counts("kin-db", database, "kin")
-            with component(database + ".dump") as sink:
-                run(["docker", "exec", "kin-db", "pg_dump", "-U", "kin", "-d", database, "--encoding=UTF8", "-Fc", "--create"], output=sink)
-        stage = "archive Orthanc"
-        # The Docker helper runs as root on Linux. Stream to a host-owned file
-        # instead of creating a root-owned archive in a writable host bind mount.
-        with component("orthanc.tgz") as sink:
-            temporary_run(["--network", "none", "--read-only",
-                 "--mount", f"type=volume,source={volume},target=/source,readonly",
-                 "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."],
-                timeout=1800, output=sink)
-        stage = "archive EMR failure spool at the same pause"
-        with component("emr-state.tgz") as sink:
-            temporary_run(["--network", "none", "--read-only", "--mount", f"type=volume,source={state_volume},target=/source,readonly",
-                           "--entrypoint", "tar", manifest["postgres_image"], "-czf", "-", "-C", "/source", "."], timeout=1800, output=sink)
-        stage = "copy configuration and checksum"
-        capture_wrapping_custody(directory, manifest, "kin-db")
-        for name in FILES[3:]:
-            with component(name) as sink:
-                sink.write((ROOT / name).read_bytes())
-        stage = "seal encryption record"
-        seal_record(directory, manifest, key, plaintext, roles)
+        write_daily_set(directory, manifest, key, "kin-db", volume, state_volume,
+                        stage=lambda name: progress.__setitem__("stage", name))
         manifest["complete"] = True
     except BaseException as error:
-        manifest["backup_error"] = {"stage": stage, "type": type(error).__name__}
+        manifest["backup_error"] = {"stage": progress["stage"], "type": type(error).__name__}
         raise
     finally:
         resume_failures = []
@@ -999,6 +1023,10 @@ def backup(output, ready_timeout=120):
                 manifest["ready"] = False
                 manifest["readiness_error"] = "Application readiness deadline exceeded"
         manifest["resume_failures"] = resume_failures
+        if resume_failures:
+            # The snapshot can still be complete (and restorable); the source application is not ready.
+            manifest["ready"] = False
+            manifest["readiness_error"] = "Write services did not resume"
         if not resume_failures and 'kin-api' in initial_running:
             try:
                 resumed_ledger_ready(ready_timeout)
@@ -1218,18 +1246,25 @@ def rehearse(directory, *, wrapping_source=None, config_path=None, identity=None
     """The stored set checked (digests, images), then opened (opened_set: an encrypted set's key and every decrypted
     component checked before any rehearsal container or volume exists), then restored from the opened components; the
     result is written beside the stored set. identity/workspace: see opened_set."""
-    directory, stored, record = _stored_backup(directory)
-    encryption = "none" if record is None else record["key_id"]
+    directory, stored, _ = _stored_backup(directory)
     with opened_set(directory, stored, config_path=config_path, identity=identity, workspace=workspace) as opened:
-        backup_images(stored)
-        source, manifest = opened.path, opened.manifest
-        if manifest.get("kind") == HELD_KIND:
-            return rehearse_held(source, manifest, wrapping_source=wrapping_source, record=directory, encryption=encryption)
-        if "emr" in manifest and manifest.get("role_catalog") is not None:
-            # D23: a daily EMR set made since its role catalog is captured: the catalog replay of the held path.
-            return rehearse_held(source, manifest, daily=True, wrapping_source=wrapping_source, record=directory,
-                                 encryption=encryption)
-        return _rehearse_legacy(source, manifest, record=directory, wrapping_source=wrapping_source, encryption=encryption)
+        return rehearse_opened(opened, stored, wrapping_source=wrapping_source)
+
+
+def rehearse_opened(opened, stored, *, wrapping_source=None):
+    """The isolated restore check of a set its caller opened (opened_set) and keeps open - one opening, one workspace,
+    for a caller that also restores from it. stored: the set's stored manifest (its digests checked by the caller)."""
+    record = encryption_record(stored)
+    encryption = "none" if record is None else record["key_id"]
+    backup_images(stored)
+    source, manifest, directory = opened.path, opened.manifest, opened.origin
+    if manifest.get("kind") == HELD_KIND:
+        return rehearse_held(source, manifest, wrapping_source=wrapping_source, record=directory, encryption=encryption)
+    if "emr" in manifest and manifest.get("role_catalog") is not None:
+        # D23: a daily EMR set made since its role catalog is captured: the catalog replay of the held path.
+        return rehearse_held(source, manifest, daily=True, wrapping_source=wrapping_source, record=directory,
+                             encryption=encryption)
+    return _rehearse_legacy(source, manifest, record=directory, wrapping_source=wrapping_source, encryption=encryption)
 
 
 def _rehearse_legacy(directory, manifest, *, record, wrapping_source=None, encryption="none"):
@@ -2679,11 +2714,9 @@ def _daily_whole(folder, *, completing_thin=False):
     # An encrypted set counts as a generation only when its record is authentic under its configured key: a set the
     # installation could not open never replaces an older one that it can.
     try:
-        record = encryption_record(manifest)
-        if record is not None:
-            authenticate(manifest, backup_key(record["key_id"]))
+        stored_encryption(folder, manifest)
     except (BackupEncryptionError, OSError, ValueError, KeyError, TypeError):
-        return "encryption record unreadable or not authentic under its configured key"
+        return "encryption record missing, unreadable or not authentic under its configured key"
     if "wrapping_custody" in manifest:
         try:
             wrapping_custody_files(manifest)
@@ -3006,6 +3039,7 @@ def main():
     custody_parser.add_argument("directory", help="Database backup directory containing manifest.json")
     custody_parser.add_argument("--source", help="Relocated separate custody directory for this snapshot")
     custody_parser.add_argument("--destination", required=True, help="New directory outside the repository and database storage")
+    custody_parser.add_argument("--encryption-key", help="Identity file of this encrypted set's key, instead of the configured one")
     rotate_parser = commands.add_parser("rotate")
     rotate_parser.add_argument("--root", required=True, help="The backup root holding the daily sets")
     rotate_parser.add_argument("--keep", type=int, default=DAILY_GENERATIONS)
@@ -3017,6 +3051,8 @@ def main():
         manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
         if not manifest.get("complete"):
             raise RuntimeError("Backup is incomplete")
+        # The custody locator and digests of an encrypted set count only once its manifest is authentic.
+        stored_encryption(directory, manifest, identity=args.encryption_key)
         destination = Path(args.destination).resolve()
         if any(destination == root or root in destination.parents for root in (ROOT.resolve(), directory.parent)):
             raise RuntimeError("Restore wrapping secrets outside the repository and database backup root")

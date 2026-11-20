@@ -452,6 +452,27 @@ class StorageEncryptionTests(unittest.TestCase):
                 self.assertEqual(deploy.backup_key_state(), "invalid")
                 with patch.object(ops, "backup_key"):
                     self.assertEqual(deploy.backup_key_state(), "configured")
+            # A configuration path this account cannot look at is reported, never raised out of the warning.
+            with patch.object(deploy.Path, "exists", side_effect=PermissionError("denied")):
+                self.assertEqual(deploy.backup_key_state(), "invalid")
+                with patch.object(deploy.sys, "platform", "win32"):
+                    self.assertTrue(deploy.storage_valid(deploy.storage_encryption("/srv/backups")))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
+    def test_an_age_program_that_cannot_run_is_not_configured(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            program = folder / "age"
+            program.write_bytes(b"#!/bin/sh\nexit 0\n")
+            program.chmod(0o600)
+            (folder / "backup.key").write_text("AGE-SECRET-KEY-1" + "Q" * 58 + "\n")
+            config = folder / "backup-encryption.json"
+            config.write_text(json.dumps({"format": 1, "age": str(program), "current": "k1",
+                                          "files": {"k1": str(folder / "backup.key")}}))
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual(deploy.backup_key_state(), "invalid")
+                program.chmod(0o700)
+                self.assertEqual(deploy.backup_key_state(), "configured")
 
     def test_storage_only_cli_reports_without_request_or_lock(self):
         with tempfile.TemporaryDirectory() as folder:

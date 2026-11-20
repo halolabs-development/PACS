@@ -1103,8 +1103,9 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
             self.assertTrue(receipt['success']);self.assertEqual(receipt['cleanup_failures'],[])
             return dict(observed),receipt
         def encrypted_copy(source,target,plain,role_catalog=None):
-            """The set as a new daily backup writes it, through the product's writer: each dump straight from pg_dump into
-            age, every other component streamed from the plaintext set, then the sealed and authenticated record."""
+            """A set of the older daily shape (no role catalog; no current writer makes one) encrypted with the product's
+            component writer: each dump straight from pg_dump into age, every other component streamed from the
+            plaintext set, then the sealed and authenticated record."""
             key=ops.backup_key()
             target.mkdir()
             written={}
@@ -1189,8 +1190,36 @@ class PgLedgerNativeRestoreLive(PgLedgerFixture):
         daily_observed,receipt=rehearse_observed(daily)
         self.assertEqual((receipt['shape'],receipt['roles'],receipt['encryption']),('post','catalog replay','none'))
         self.assertEqual(daily_observed,{**legacy_observed,'attachment_sha256':hashlib.sha256(image).hexdigest()})
+        def volume_from(archive,suffix):
+            # The daily set's Orthanc storage or EMR state as a volume, as the writer archives it at a backup's pause.
+            name='kin-b22-'+self.token[:12]+'-'+suffix
+            self.command(['docker','volume','create','--label','kin.b2r='+self.token,name])
+            self.addCleanup(self.command,['docker','volume','rm','-f',name],check=False)
+            self.command(['docker','run','--rm','--network','none','--label','kin.b2r='+self.token,
+                          '--mount','type=volume,source='+name+',target=/target',
+                          '--mount','type=bind,source='+str(archive.parent)+',target=/archive,readonly',
+                          '--entrypoint','tar','postgres:16-alpine','-xzf','/archive/'+archive.name,'-C','/target'],timeout=300)
+            return name
+        def written_daily(target):
+            """A new daily set written by the product's writer, ops.write_daily_set (what backup() runs at its pause):
+            this database's catalogs, roles and dumps, the Orthanc and EMR state volumes, the daily .env and Compose
+            files, each streamed into age, then the sealed and authenticated record. The manifest's other fields are the
+            daily set's (backup() reads them from the running installation)."""
+            key=ops.backup_key()
+            target.mkdir()
+            stored={name:value for name,value in current.items() if name not in ('sha256','bytes','role_catalog')}
+            stored['encryption']=ops.new_record(key)
+            stored['counts']={}
+            ops.write_daily_set(target,stored,key,self.container,volume_from(daily/'orthanc.tgz','orthanc'),
+                                volume_from(daily/'emr-state.tgz','state'),files_root=daily)
+            ops.write_json(target/'manifest.json',stored)
+            self.assertEqual(sorted(path.name for path in target.iterdir()),sorted([*components,'manifest.json']))
+            for path in target.iterdir():
+                if path.name!='manifest.json':
+                    self.assertTrue(path.read_bytes().startswith(ops.AGE_HEADER),path.name)
+            return stored
         with patch.dict(os.environ,{'KIN_BACKUP_ENCRYPTION':str(config)}):
-            stored=encrypted_copy(daily,evidence/'encrypted-daily',current,role_catalog)
+            stored=written_daily(evidence/'encrypted-daily')
             self.assertNotIn('role_catalog',stored,'role and database comments and settings stay sealed')
             got,receipt=rehearse_observed(evidence/'encrypted-daily')
         self.assertEqual((receipt['shape'],receipt['roles'],receipt['encryption']),('post','catalog replay','b22-live'))

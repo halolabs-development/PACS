@@ -1416,6 +1416,69 @@ class BackupEncryptionTests(unittest.TestCase):
         self.assertEqual(result["generations"], [folders[1].name])
         self.assertNotIn(folders[-1].name, result["would_delete"])
 
+    def test_rotation_never_counts_age_files_whose_record_was_removed(self):
+        folders = [self.backup()[0] for _ in range(2)]
+        manifest = json.loads((folders[-1] / "manifest.json").read_text())
+        manifest.pop("encryption")
+        ops.write_json(folders[-1] / "manifest.json", manifest)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertIn("encryption record missing", result["incomplete"][folders[-1].name])
+        self.assertEqual((result["generations"], result["would_delete"]), ([folders[0].name], []))
+        self.refused_before_restore(folders[-1], "Encrypted components without an encryption record")
+
+    def test_custody_restore_of_an_encrypted_set_needs_its_authentic_manifest(self):
+        folder, manifest = self.backup()
+        changed = copy.deepcopy(manifest)
+        changed["wrapping_custody"] = {"directory": str(Path(self.temp) / "elsewhere"), "files": {"wrap-1": {"file": "wrap-0.key", "sha256": "0" * 64, "bytes": 32}}}
+        ops.write_json(folder / "manifest.json", changed)
+        destination = Path(self.temp) / "restored-custody"
+        with patch.object(sys, "argv", ["ops_backup.py", "restore-wrapping", str(folder), "--destination", str(destination)]):
+            with self.assertRaisesRegex(ops.BackupEncryptionError, "does not match this set, or its manifest was changed"):
+                ops.main()
+        self.assertFalse(destination.exists())
+
+    def test_a_set_whose_writers_did_not_resume_is_not_ready_but_restores(self):
+        original = self.host.fake_run
+
+        def failing_start(args, **kwargs):
+            if list(args[:3]) == ["docker", "start", "kin-api"]:
+                raise RuntimeError("simulated start failure")
+            return original(args, **kwargs)
+        with patch.object(self.host, "fake_run", side_effect=failing_start):
+            folder, manifest, error = self.host.backup(self.answer)
+        self.assertIn("need recovery", str(error))
+        self.assertEqual((manifest["complete"], manifest["ready"], manifest["resume_failures"]), (True, False, ["kin-api"]))
+        result, error, _, _ = self.host.rehearse(folder, self.answer)
+        self.assertIsNone(error, error)
+        self.assertTrue(result["success"])
+
+    def test_a_caller_that_keeps_a_set_open_rehearses_it_without_opening_it_again(self):
+        """A rollback opens its B once and restores from it: its rehearsal uses that opening (one set's workspace)."""
+        folder, manifest = self.backup()
+        workspace = self.keys / "open"
+        with ops.opened_set(folder) as opened:
+            held = set(workspace.iterdir())
+            self.assertEqual(len(held), 1)
+            with patch.object(ops, "opened_set", side_effect=AssertionError("opened a second time")), \
+                    patch.object(ops, "rehearse", side_effect=lambda directory, **options: ops.rehearse_opened(opened, manifest)):
+                result, error, _, _ = self.host.rehearse(folder, self.answer)
+            self.assertIsNone(error, error)
+            self.assertTrue(result["success"])
+            self.assertEqual((result["backup"], result["encryption"]), (folder.name, "key-a"))
+            self.assertEqual(set(workspace.iterdir()), held)
+        self.assertEqual(list(workspace.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
+    def test_an_age_program_that_cannot_run_is_unusable(self):
+        program = self.keys / "age-not-executable"
+        shutil.copyfile(age_program(), program)
+        program.chmod(0o600)
+        body = json.loads(self.config.read_text())
+        self.config.write_text(json.dumps({**body, "age": str(program)}))
+        with self.assertRaisesRegex(ops.BackupEncryptionError, "age program is unavailable"):
+            ops.backup_key()
+
     def test_the_audit_verifier_compares_an_external_checkpoint_with_the_plaintext_dump(self):
         folder, manifest = self.backup()
         with ops.opened_set(folder) as opened:
