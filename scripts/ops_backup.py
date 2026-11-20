@@ -7,7 +7,8 @@ Usage: python scripts/ops_backup.py backup --output <outside-repository-director
        python scripts/ops_backup.py rotate --root <backup-root> [--keep N] [--protect NAME ...] [--dry-run]
 The running write services pause during backup and are resumed in finally. New backups need no audit seal.
 Every new daily set is encrypted with the operator's age key (BACKUP_ENCRYPTION_CONFIG, or KIN_BACKUP_ENCRYPTION); sets
-written before encryption existed are still validated and rehearsed as they are (see opened_set).
+written before encryption existed are still validated and rehearsed as they are (see opened_set). Every command first
+removes the private plaintext folders a killed earlier run left behind (reclaim_work).
 For older archives that declare audit-checkpoint.json, rehearse still verifies the restored copy against that checkpoint.
 
 The EMR-introduction release mode (scripts/ops_emr_introduction.py) uses capture_held() instead of backup(): it captures a
@@ -30,6 +31,7 @@ import hmac
 import json
 import os
 from pathlib import Path, PurePosixPath
+import platform
 import re
 import shutil
 import ssl
@@ -229,30 +231,43 @@ def recover_process_lock(path):
         guard.unlink()
 
 
+def _process_alive(pid):
+    """False only when no process has this PID; a process this account may not query counts as running."""
+    if os.name == 'nt':
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if handle:
+            code = ctypes.c_ulong()
+            try:
+                return not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259
+            finally:
+                ctypes.windll.kernel32.CloseHandle(handle)
+        return ctypes.windll.kernel32.GetLastError() != 87
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _process_started(pid):
+    """What tells a process from a later one that was given its PID: on Linux its start time within this boot. None
+    where that cannot be read (the PID alone then decides)."""
+    try:
+        fields = Path("/proc/%d/stat" % pid).read_text(encoding="ascii", errors="replace").rpartition(")")[2].split()
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip() + ":" + fields[19]
+    except (OSError, IndexError):
+        return None
+
+
 def _recover_dead_owner(path):
     try:
         owner = path.read_text()
         pid = int(owner.partition(':')[0])
-        if pid <= 0:
+        if pid <= 0 or _process_alive(pid):
             return
-        if os.name == 'nt':
-            import ctypes
-            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
-            if handle:
-                code = ctypes.c_ulong()
-                try:
-                    if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) or code.value == 259:
-                        return
-                finally:
-                    ctypes.windll.kernel32.CloseHandle(handle)
-            elif ctypes.windll.kernel32.GetLastError() != 87:
-                return
-        else:
-            try:
-                os.kill(pid, 0)
-                return
-            except ProcessLookupError:
-                pass
         if path.read_text() != owner:
             return
         path.unlink()
@@ -304,16 +319,88 @@ def digest(path):
     return sha.hexdigest()
 
 
+# ── Private work folders (plaintext taken out of a set for a restore) ──
+# An opened encrypted set (its dumps and .env) and a rehearsal's wrapping keys exist as plaintext only inside a folder
+# private_work() makes; its caller removes it when done. A run that is killed cannot, so the next run reclaims it.
+WORK_PREFIXES = ("kin-open-", "kin-wrapping-restore-")
+WORK_OWNER = ".kin-work-owner.json"
+
+
+def reclaim_work(root):
+    """Remove what a killed run left in `root`. A folder is this tool's own leftover when it carries one of the two
+    prefixes, is a real directory of this account and holds the owner record private_work() wrote before anything
+    else (host, PID, process start), and the process that record names no longer runs (no such PID, or the PID now
+    belongs to a process started at another time). The folder of a run that is still alive, of another host or
+    without a readable record is left alone. Returns the removed names."""
+    removed = []
+    try:
+        entries = [entry for entry in os.scandir(root) if entry.name.startswith(WORK_PREFIXES)]
+    except OSError:
+        return removed
+    for entry in entries:
+        path = Path(entry.path)
+        try:
+            if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                continue
+            if os.name == "posix" and entry.stat(follow_symlinks=False).st_uid != os.geteuid():
+                continue
+            owner = json.loads((path / WORK_OWNER).read_text(encoding="utf-8"))
+            pid, started = owner["pid"], owner["started"]
+            if owner["host"] != platform.node() or type(pid) is not int or pid <= 0:
+                continue
+            if _process_alive(pid) and (started is None or _process_started(pid) in (None, started)):
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        if path.exists():
+            print("An earlier run's private work folder could not be removed: " + str(path), file=sys.stderr, flush=True)
+        else:
+            removed.append(entry.name)
+    return removed
+
+
+@contextmanager
+def private_work(root, prefix):
+    """The one maker of a private folder for plaintext taken out of a set: what a killed run left in `root` is
+    reclaimed first; the new folder (mode 0700) gets its owner record before anything else is written into it, and is
+    removed when the caller is done."""
+    if prefix not in WORK_PREFIXES:
+        raise RuntimeError("Unknown private work folder kind")
+    reclaim_work(root)
+    work = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+    try:
+        write_json(work / WORK_OWNER, {"host": platform.node(), "pid": os.getpid(), "started": _process_started(os.getpid())})
+        yield work
+    finally:
+        shutil.rmtree(work)
+
+
+def work_roots(*given):
+    """Where this installation's runs make private work folders: the temporary directory (a rehearsal's wrapping keys),
+    the configured opening workspace, and any directory the operator gave instead."""
+    roots = [tempfile.gettempdir(), *given]
+    try:
+        roots.append(encryption_config().get("workspace"))
+    except BackupEncryptionError:
+        pass
+    return [Path(root) for root in dict.fromkeys(str(root) for root in roots if root)]
+
+
 # ── Daily backup encryption ──
-# One rule: whether a set is encrypted is decided by its manifest's `encryption` record alone, and every reader of a
-# component's bytes goes through opened_set(). For an encrypted set that checks the key against the record before any
-# workspace exists, decrypts every component into a private workspace outside the backup root, compares each plaintext
-# with its recorded digest and size and checks the archives; only then is that workspace handed to a restore. A set
-# without the record (written before encryption existed) is read as it is. A new daily set is always encrypted: each
-# component is written by `age` while its producer streams, so no plaintext component is written into the backup root.
-# The manifest keeps the digests and sizes of the stored (encrypted) bytes, so rotation, monitoring and export keep
-# comparing what is on disk; the plaintext digests and the role catalog are sealed inside the record, and the record
-# with every restore input of the manifest is authenticated with a key derived from the set's identity.
+# Each judgement has one place. What form a stored set has: stored_encryption() - its manifest's `encryption` record,
+# authentic under the set's key; without a record the set's own folder must hold no age file. Whether a stored set may
+# be restored from, or its key copy written: _stored_backup() - complete, that form, every required component stored
+# with its recorded size and digest. Every reader of a component's bytes goes through opened_set(), which admits the
+# set that way before any workspace exists, decrypts every component of an encrypted set into a private folder outside
+# the backup root (private_work), compares each plaintext with its sealed digest and size and checks the archives; only
+# then is that folder handed to a restore. A set without the record (written before encryption existed) is read as it
+# is. Whether a key can write a new set: usable_backup_key(), for the backup and for the preflight's report alike.
+# A new daily set is always encrypted: each component is written by `age` while its producer streams, so no plaintext
+# component is written into the backup root. The manifest keeps the digests and sizes of the stored (encrypted) bytes,
+# so rotation, monitoring and export keep comparing what is on disk; the plaintext digests and the role catalog are
+# sealed inside the record, and the record with every restore input of the manifest is authenticated with a key
+# derived from the set's identity.
 BACKUP_ENCRYPTION_CONFIG = Path("/etc/kin-deploy/backup-encryption.json")
 ENCRYPTION_FORMAT = "kin-backup-age-v1"
 ENCRYPTION_FIELDS = frozenset(("format", "key_id", "set_id", "sealed", "auth"))
@@ -331,6 +418,10 @@ class BackupEncryptionError(RuntimeError):
     """A refusal of the backup encryption rule. Its message never carries a key or a file's content."""
 
 
+class StoredSetError(RuntimeError):
+    """A stored set refused by its admission (_stored_backup): incomplete, thinned, or a component missing or changed."""
+
+
 @dataclass(frozen=True)
 class BackupKey:
     key_id: str
@@ -345,6 +436,7 @@ class OpenedSet:
     origin: Path       # the stored set: its name, its manifest, its rehearsal results and holds
     path: Path         # where the verified plaintext components are read
     manifest: dict     # the manifest a restore reads: plaintext digests and sizes, the role catalog
+    stored: dict       # the stored set's own manifest, as admitted (the stored digests, the encryption record)
 
 
 def encryption_config(path=None):
@@ -402,11 +494,33 @@ def _within(path, root):
 
 
 def age_bytes(key, data, *, decrypt=False):
-    result = subprocess.run([str(key.age), "--decrypt" if decrypt else "--encrypt", "-i", str(key.identity)], input=data,
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300)
+    try:
+        result = subprocess.run([str(key.age), "--decrypt" if decrypt else "--encrypt", "-i", str(key.identity)], input=data,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300)
+    except (OSError, subprocess.TimeoutExpired):
+        raise BackupEncryptionError("The age program did not run") from None
     if result.returncode:
         raise BackupEncryptionError("Backup " + ("decryption" if decrypt else "encryption") + " failed")
     return result.stdout
+
+
+KEY_PROBE = b"kin backup key check"
+
+
+def usable_backup_key(backup_root=None, *, checkout=None, config_path=None):
+    """The one admission of the key a new daily set is written with. backup() refuses through it before any writer
+    stops, and the deployment preflight reports from it, so the report never says more than the backup accepts: the
+    configured current key, its identity file and the age program read (backup_key); the identity kept outside the
+    installation's checkout and the backup root; age encrypting to it and decrypting again to the same bytes.
+    backup_root: the actual backup root (None: the caller does not know it and must not call the key usable for a
+    backup); checkout: the installation's checkout, when this module was loaded from another copy of the code."""
+    key = backup_key(config_path=config_path)
+    roots = [ROOT if checkout is None else Path(checkout), *([] if backup_root is None else [Path(backup_root)])]
+    if any(_within(key.identity, other) for other in roots):
+        raise BackupEncryptionError("The backup key must be kept outside the repository and the backup root")
+    if age_bytes(key, age_bytes(key, KEY_PROBE), decrypt=True) != KEY_PROBE:
+        raise BackupEncryptionError("Backup encryption failed")
+    return key
 
 
 class SealedComponent:
@@ -531,13 +645,15 @@ def encryption_record(manifest):
 
 
 def stored_encryption(directory, manifest, *, config_path=None, identity=None):
-    """The one admission of a stored set's encryption, for every path that acts on its manifest (open, rotate, restore
-    custody). None: a set written before encryption - and then no component may be an age file (a removed record).
-    Otherwise the record, with the set's key, after the manifest is authenticated under that key."""
+    """The one admission of a stored set's form, for every path that acts on its manifest (open, restore, restore
+    custody, rotate). A manifest without an encryption record is a set written before encryption only when the set's
+    folder says so too: every file actually there is opened, and one age file refuses (a removed record) - whatever
+    the manifest lists. Otherwise the record, with the set's key, after the manifest is authenticated under that key.
+    Whether the components are all there and unchanged is _stored_backup's question (rotation asks its own, which
+    lets a thinned audit set finish its transition)."""
     record = encryption_record(manifest)
     if record is None:
-        for name in manifest.get("sha256") or {}:
-            path = Path(directory) / name
+        for path in sorted(Path(directory).iterdir()):
             if path.is_file():
                 with path.open("rb") as handle:
                     if handle.read(len(AGE_HEADER)) == AGE_HEADER:
@@ -605,18 +721,17 @@ def check_archives(directory, manifest):
 
 @contextmanager
 def opened_set(directory, manifest=None, *, config_path=None, identity=None, workspace=None):
-    """The one way to a set's component bytes. A set without an encryption record is its own directory (archives
-    checked). An encrypted set: its key and authenticated manifest first (a wrong key creates nothing), then every
-    component decrypted into a new private folder of the workspace and compared with its recorded plaintext digest and
-    size, then the archives; the folder is removed when the caller is done. identity/workspace: the operator's
-    replacement for the configured key file of that set and for the configured workspace."""
-    directory = Path(directory).resolve(strict=True)
-    if manifest is None:
-        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    record, key = stored_encryption(directory, manifest, config_path=config_path, identity=identity)
+    """The one way to a set's component bytes, for a caller that restores from them. The stored set is admitted first
+    (_stored_backup: complete, its form, every required component's stored size and digest - a wrong key or a missing
+    or changed component creates nothing). A set without an encryption record is then its own directory (archives
+    checked). An encrypted set: every component decrypted into a new private folder of the workspace
+    (private_work) and compared with its sealed plaintext digest and size, then the archives; the folder is removed
+    when the caller is done. manifest: the set's manifest when the caller already read it; identity/workspace: the
+    operator's replacement for the configured key file of that set and for the configured workspace."""
+    directory, manifest, record, key = _stored_backup(directory, manifest, config_path=config_path, identity=identity)
     if record is None:
         check_archives(directory, manifest)
-        yield OpenedSet(directory, directory, manifest)
+        yield OpenedSet(directory, directory, manifest, manifest)
         return
     plain = plaintext_manifest(manifest, key)
     root = Path(workspace) if workspace is not None else key.workspace
@@ -626,8 +741,7 @@ def opened_set(directory, manifest=None, *, config_path=None, identity=None, wor
         raise BackupEncryptionError("The opening workspace must be outside the repository and the backup root")
     if shutil.disk_usage(root).free < sum(plain["bytes"].values()) + OPEN_MARGIN:
         raise BackupEncryptionError("Insufficient free space in the opening workspace")
-    work = Path(tempfile.mkdtemp(prefix="kin-open-", dir=root))
-    try:
+    with private_work(root, "kin-open-") as work:
         for name in plain["sha256"]:
             with (directory / name).open("rb") as incoming, (work / name).open("xb") as outgoing:
                 (work / name).chmod(0o600)
@@ -637,9 +751,7 @@ def opened_set(directory, manifest=None, *, config_path=None, identity=None, wor
                     or digest(work / name) != plain["sha256"][name]):
                 raise BackupEncryptionError("Backup component did not decrypt to its recorded content: " + name)
         check_archives(work, plain)
-        yield OpenedSet(directory, work, plain)
-    finally:
-        shutil.rmtree(work)
+        yield OpenedSet(directory, work, plain, manifest)
 
 
 def counts(container, database, user):
@@ -763,7 +875,7 @@ def rehearse_wrapping_custody(directory, manifest, container, user="kin", *, sou
     rows = signing_keys(container, user) if has_keys else []
     if not rows and "wrapping_custody" not in manifest:
         return {"keys": 0, "custody": "not configured; no stored signing keys"}
-    with tempfile.TemporaryDirectory(prefix="kin-wrapping-restore-") as temporary:
+    with private_work(tempfile.gettempdir(), "kin-wrapping-restore-") as temporary:
         restored = restore_wrapping_custody(manifest, Path(temporary) / "secrets", source=source)
         if any(row["wrapped"]["wrappingKeyId"] not in restored for row in rows):
             raise RuntimeError("Restored signing key has no wrapping custody file")
@@ -917,11 +1029,7 @@ def backup(output, ready_timeout=120):
         raise RuntimeError("Local .env is required")
     # Every new daily set is encrypted. A missing or unusable key, configuration or program refuses here, before any
     # writer stops; the key itself is never kept with the repository or the backups.
-    key = backup_key()
-    if any(_within(key.identity, other) for other in (ROOT, parent)):
-        raise BackupEncryptionError("The backup key must be kept outside the repository and the backup root")
-    if age_bytes(key, age_bytes(key, b"kin backup key check"), decrypt=True) != b"kin backup key check":
-        raise BackupEncryptionError("Backup encryption failed")
+    key = usable_backup_key(parent)
     # Inspect may contain secrets; only selected fields go into the manifest.
     info = json.loads(text(["docker", "inspect", *CONTAINERS, "kin-proxy"]))
     by_name = {item["Name"].lstrip("/"): item for item in info}
@@ -1049,34 +1157,52 @@ def backup(output, ready_timeout=120):
     return directory
 
 
-def _stored_backup(directory):
-    """The stored set: complete, not thinned, every declared component's stored bytes as the manifest records them, and
-    its encryption record (None: a set written before encryption)."""
+def _stored_backup(directory, manifest=None, *, config_path=None, identity=None):
+    """The one admission of a stored set before anything is restored from it or its key copy is written (opened_set
+    and with it validate and rehearse; restore-wrapping): complete and not thinned by rotation (a thinned audit set
+    is not a restorable generation); its form (stored_encryption: an encrypted set's manifest authentic under its
+    key, a set without a record holding no age file); then every component its kind requires - a held capture by its
+    own table, an encrypted set exactly its table - present with the stored size and digest the manifest records.
+    Returns (directory, manifest, encryption record or None, key or None)."""
     directory = Path(directory).resolve(strict=True)
-    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("format") != 1 or not manifest.get("complete"):
-        raise RuntimeError("Backup is incomplete")
+    if manifest is None:
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    if type(manifest) is not dict or manifest.get("format") != 1 or not manifest.get("complete"):
+        raise StoredSetError("Backup is incomplete")
     if (directory / THINNED_FILE).exists():
-        raise RuntimeError("Backup was thinned by rotation (audit retention only); it is not a restorable set")
+        raise StoredSetError("Backup was thinned by rotation (audit retention only); it is not a restorable set")
+    record, key = stored_encryption(directory, manifest, config_path=config_path, identity=identity)
     # Snapshot validity is independent of the source application's readiness.
     # A failed restart is exactly when an intact snapshot must remain usable.
-    # A declared audit checkpoint is a component like the others; an undeclared one is not trusted or required.
-    components = backup_components(manifest)
-    declared = (*components, AUDIT_CHECKPOINT) if AUDIT_CHECKPOINT in manifest.get("sha256", {}) else components
-    for name in declared:
+    sums, sizes = manifest.get("sha256"), manifest.get("bytes")
+    sums, sizes = sums if type(sums) is dict else {}, sizes if type(sizes) is dict else {}
+    if manifest.get("kind") == HELD_KIND:
+        extra = manifest.get("config") or []
+        if type(extra) is not list or not all(type(name) is str and CONFIG_NAME.fullmatch(name) for name in extra):
+            raise StoredSetError("Held capture components differ from its shape")
+        components = held_components(manifest, extra)
+    else:
+        # A declared audit checkpoint is a component like the others; an undeclared one is not trusted or required.
+        components = backup_components(manifest)
+        if AUDIT_CHECKPOINT in sums:
+            components = (*components, AUDIT_CHECKPOINT)
+    if record is not None and (set(sums) != set(components) or set(sizes) != set(components)):
+        raise StoredSetError("Backup component inventory differs")
+    for name in components:
         path = directory / name
-        if path.is_symlink() or not path.is_file() or digest(path) != manifest.get("sha256", {}).get(name):
-            raise RuntimeError("Backup component checksum mismatch: " + name)
-    return directory, manifest, encryption_record(manifest)
+        # The stored size is compared where the manifest records one (the oldest sets record digests only).
+        if (path.is_symlink() or not path.is_file() or (name in sizes and path.stat().st_size != sizes[name])
+                or digest(path) != sums.get(name)):
+            raise StoredSetError("Backup component checksum mismatch: " + name)
+    return directory, manifest, record, key
 
 
 def validate_backup(directory, *, config_path=None, identity=None, workspace=None):
-    """The stored set whole: every stored component's digest, its images, and its contents - a set without an
-    encryption record by its archives here, an encrypted one by opening it completely (opened_set)."""
-    directory, manifest, _ = _stored_backup(directory)
-    with opened_set(directory, manifest, config_path=config_path, identity=identity, workspace=workspace):
-        backup_images(manifest)
-    return directory, manifest
+    """The stored set whole: its admission (_stored_backup), its contents - a set without an encryption record by its
+    archives, an encrypted one by opening it completely (opened_set) - and its images."""
+    with opened_set(directory, config_path=config_path, identity=identity, workspace=workspace) as opened:
+        backup_images(opened.stored)
+    return opened.origin, opened.stored
 
 
 def backup_images(manifest):
@@ -1243,19 +1369,32 @@ def rehearse_held(directory, manifest, *, daily=False, wrapping_source=None, rec
 
 
 def rehearse(directory, *, wrapping_source=None, config_path=None, identity=None, workspace=None):
-    """The stored set checked (digests, images), then opened (opened_set: an encrypted set's key and every decrypted
-    component checked before any rehearsal container or volume exists), then restored from the opened components; the
-    result is written beside the stored set. identity/workspace: see opened_set."""
-    directory, stored, _ = _stored_backup(directory)
-    with opened_set(directory, stored, config_path=config_path, identity=identity, workspace=workspace) as opened:
-        return rehearse_opened(opened, stored, wrapping_source=wrapping_source)
+    """The stored set opened (opened_set: admitted, and an encrypted set's every decrypted component checked, before
+    any rehearsal container or volume exists), then restored from the opened components; the result is written beside
+    the stored set. identity/workspace: see opened_set."""
+    with opened_set(directory, config_path=config_path, identity=identity, workspace=workspace) as opened:
+        return rehearse_opened(opened, wrapping_source=wrapping_source)
 
 
-def rehearse_opened(opened, stored, *, wrapping_source=None):
+def declared_custody(manifest, source=None):
+    """Before the first restore write: the separate wrapping copies this set's restore will need are all there (at
+    `source`, the operator's relocated custody, when given) with the length and digest the manifest records. A set
+    that counts stored signing keys but names no copy cannot be restored with them and refuses here too."""
+    try:
+        keys = signing_key_count(manifest)
+    except (KeyError, TypeError, AttributeError):
+        keys = 0   # an unreadable count is the restore comparison's to refuse
+    if "wrapping_custody" in manifest or keys > 0:
+        wrapping_custody_files(manifest, source)
+
+
+def rehearse_opened(opened, stored=None, *, wrapping_source=None):
     """The isolated restore check of a set its caller opened (opened_set) and keeps open - one opening, one workspace,
-    for a caller that also restores from it. stored: the set's stored manifest (its digests checked by the caller)."""
+    for a caller that also restores from it. stored: the set's stored manifest (the opening's own when not given)."""
+    stored = opened.stored if stored is None else stored
     record = encryption_record(stored)
     encryption = "none" if record is None else record["key_id"]
+    declared_custody(opened.manifest, wrapping_source)
     backup_images(stored)
     source, manifest, directory = opened.path, opened.manifest, opened.origin
     if manifest.get("kind") == HELD_KIND:
@@ -3046,13 +3185,13 @@ def main():
     rotate_parser.add_argument("--protect", action="append", default=[], help="A set name never to delete")
     rotate_parser.add_argument("--dry-run", action="store_true", help="List what would be deleted; change nothing")
     args = parser.parse_args()
+    # Whatever this run is: plaintext a killed earlier run left in a private work folder is removed first.
+    for root in work_roots(getattr(args, "workspace", None)):
+        reclaim_work(root)
     if args.action == "restore-wrapping":
-        directory = Path(args.directory).resolve(strict=True)
-        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-        if not manifest.get("complete"):
-            raise RuntimeError("Backup is incomplete")
-        # The custody locator and digests of an encrypted set count only once its manifest is authentic.
-        stored_encryption(directory, manifest, identity=args.encryption_key)
+        # The custody locator and digests count only for an admitted set: complete, its manifest authentic when it is
+        # encrypted, every component it requires stored unchanged (the same admission a restore passes).
+        directory, manifest, _, _ = _stored_backup(args.directory, identity=args.encryption_key)
         destination = Path(args.destination).resolve()
         if any(destination == root or root in destination.parents for root in (ROOT.resolve(), directory.parent)):
             raise RuntimeError("Restore wrapping secrets outside the repository and database backup root")

@@ -233,6 +233,11 @@ class RunnerTests(unittest.TestCase):
         report = good["storage_encryption"]
         for status in ("encrypted", "not-detected", "unknown"):
             runner.check_observation({**good, "storage_encryption": {**report, "status": status}}, plan)
+        # This observation is made without a backup root, so the backup key is never called configured by it.
+        for state in ("unknown", "absent", "invalid"):
+            runner.check_observation({**good, "storage_encryption": {**report, "backup_encryption": state}}, plan)
+        with self.assertRaises(RuntimeError):
+            runner.check_observation({**good, "storage_encryption": {**report, "backup_encryption": "fine"}}, plan)
         missing = dict(good)
         missing.pop("storage_encryption")
         for label, observation in (("missing", missing), ("status", {**good, "storage_encryption": {**report, "status": "fine"}}),

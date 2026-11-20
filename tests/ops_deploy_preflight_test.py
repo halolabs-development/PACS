@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,25 @@ def compose_api(name):
 STORAGE_REPORT = {"status": "not-detected", "backup_encryption": "configured", "locations": [
     {"location": "kin-db:/var/lib/postgresql/data", "status": "not-detected", "detail": "/dev/sdb1"},
     {"location": "backup root", "status": "unknown", "detail": "no host path"}]}
+
+
+def age_program():
+    """The pinned age the backup encrypts with (CI: KIN_TEST_AGE); its age-keygen sits beside it."""
+    program = os.environ.get("KIN_TEST_AGE") or shutil.which("age")
+    if not program:
+        raise RuntimeError("Set KIN_TEST_AGE to the pinned age program: the backup key is judged by encrypting with it")
+    return Path(program).absolute()
+
+
+def backup_configuration(config, **changes):
+    """A test-only backup encryption configuration at `config`, with a new age identity beside it."""
+    age = age_program()
+    key = config.with_name("backup-key.txt")
+    key.unlink(missing_ok=True)
+    subprocess.run([str(age.with_name("age-keygen" + age.suffix)), "-o", str(key)], check=True, capture_output=True)
+    body = {"format": 1, "age": str(age), "current": "k1", "files": {"k1": str(key)}, **changes}
+    config.write_text(json.dumps(body), encoding="utf-8")
+    return body
 
 
 def lsblk(*chain):
@@ -444,35 +464,68 @@ class StorageEncryptionTests(unittest.TestCase):
                 self.assertEqual(deploy.backup_key_state(), "invalid")
 
     def test_backup_key_state(self):
-        with tempfile.TemporaryDirectory() as folder:
-            config = Path(folder) / "backup-encryption.json"
-            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
-                self.assertEqual(deploy.backup_key_state(), "absent")
-                config.write_text("{}")
-                self.assertEqual(deploy.backup_key_state(), "invalid")
-                with patch.object(ops, "backup_key"):
-                    self.assertEqual(deploy.backup_key_state(), "configured")
-            # A configuration path this account cannot look at is reported, never raised out of the warning.
-            with patch.object(deploy.Path, "exists", side_effect=PermissionError("denied")):
-                self.assertEqual(deploy.backup_key_state(), "invalid")
-                with patch.object(deploy.sys, "platform", "win32"):
-                    self.assertTrue(deploy.storage_valid(deploy.storage_encryption("/srv/backups")))
-
-    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
-    def test_an_age_program_that_cannot_run_is_not_configured(self):
+        """`configured` is the backup's own verdict (ops.usable_backup_key) for the actual backup root and checkout:
+        never said of a key the backup would refuse, and never without the backup root."""
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
-            program = folder / "age"
-            program.write_bytes(b"#!/bin/sh\nexit 0\n")
-            program.chmod(0o600)
-            (folder / "backup.key").write_text("AGE-SECRET-KEY-1" + "Q" * 58 + "\n")
-            config = folder / "backup-encryption.json"
-            config.write_text(json.dumps({"format": 1, "age": str(program), "current": "k1",
-                                          "files": {"k1": str(folder / "backup.key")}}))
+            config, root = folder / "keys" / "backup-encryption.json", folder / "backups"
+            root.mkdir()
+            config.parent.mkdir()
             with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
-                self.assertEqual(deploy.backup_key_state(), "invalid")
+                self.assertEqual((deploy.backup_key_state(root), deploy.backup_key_state()), ("absent", "absent"))
+                config.write_text("{}")
+                self.assertEqual((deploy.backup_key_state(root), deploy.backup_key_state()), ("invalid", "invalid"))
+                body = backup_configuration(config)
+                self.assertEqual(deploy.backup_key_state(root), "configured")
+                # Without the backup root the configuration and key are only read: nothing is run, nothing is said.
+                with patch.object(ops, "age_bytes", side_effect=AssertionError("age was run")):
+                    self.assertEqual(deploy.backup_key_state(), "unknown")
+                    with patch.object(deploy.sys, "platform", "win32"):
+                        self.assertEqual(deploy.storage_encryption()["backup_encryption"], "unknown")
+                # The report passes the actual backup root and checkout on to that one check.
+                with patch.object(deploy.sys, "platform", "win32"):
+                    self.assertEqual(deploy.storage_encryption(root)["backup_encryption"], "configured")
+                    self.assertEqual(deploy.storage_encryption(root, config.parent)["backup_encryption"], "invalid",
+                                     "the key is inside the installation's checkout")
+                    self.assertEqual(deploy.storage_encryption(config.parent)["backup_encryption"], "invalid",
+                                     "the key is inside the backup root")
+                if os.name == "posix":
+                    # The daily backup runs as the backup root's owner; another account cannot speak for it.
+                    with patch.object(deploy.os, "geteuid", return_value=os.geteuid() + 1):
+                        self.assertEqual(deploy.backup_key_state(root), "unknown")
+                # A well-formed identity that age refuses (a mistyped key): the backup refuses it, so does the report.
+                Path(body["files"]["k1"]).write_text("AGE-SECRET-KEY-1" + "Q" * 58 + "\n")
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
+                with self.assertRaisesRegex(ops.BackupEncryptionError, "Backup encryption failed"):
+                    ops.usable_backup_key(root)
+                self.assertEqual(deploy.backup_key_state(), "unknown")
+            # A configuration path this account cannot look at is reported, never raised out of the warning.
+            with patch.object(deploy.Path, "exists", side_effect=PermissionError("denied")):
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
+                with patch.object(deploy.sys, "platform", "win32"):
+                    self.assertTrue(deploy.storage_valid(deploy.storage_encryption("/srv/backups")))
+        for state in deploy.BACKUP_KEY_STATES:
+            self.assertTrue(deploy.storage_valid({**STORAGE_REPORT, "backup_encryption": state}))
+        self.assertFalse(deploy.storage_valid({**STORAGE_REPORT, "backup_encryption": "usable"}))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
+    def test_an_age_program_that_cannot_run_or_does_not_encrypt_is_not_configured(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            root = folder / "backups"
+            root.mkdir()
+            (folder / "keys").mkdir()
+            program = folder / "keys" / "age-copy"
+            shutil.copyfile(age_program(), program)
+            program.chmod(0o600)
+            config = folder / "keys" / "backup-encryption.json"
+            backup_configuration(config, age=str(program))
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
                 program.chmod(0o700)
-                self.assertEqual(deploy.backup_key_state(), "configured")
+                self.assertEqual(deploy.backup_key_state(root), "configured")
+                program.write_bytes(b"#!/bin/sh\nexit 0\n")
+                self.assertEqual(deploy.backup_key_state(root), "invalid", "a program that runs but does not encrypt")
 
     def test_storage_only_cli_reports_without_request_or_lock(self):
         with tempfile.TemporaryDirectory() as folder:

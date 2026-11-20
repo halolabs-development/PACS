@@ -715,21 +715,28 @@ kernel or Docker update restarts the stack), never between the judgement and the
 
 ### Storage encryption
 
-Before the window, read where the site's data is stored, changing nothing:
+Before the window, read where the site's data is stored, changing nothing. Run it in the site's checkout, as the
+account that runs the nightly backup and with that job's environment (the nightly job clears it), naming the
+directory the nightly job writes to:
 
 ```sh
-python3 scripts/ops_deploy_preflight.py --storage-only --backup-root <backup-directory>
+env -i PATH="$PATH" HOME="$HOME" python3 scripts/ops_deploy_preflight.py --storage-only --backup-root <backup-directory>
 ```
 
 One line names every writable data location of the database, Orthanc and the API (the database files, the EMR
 tablespace, the image store, the EMR state, the retention ledgers and their mirror) and the backup root: `encrypted`
 when every block device under it reaches a dm-crypt (LUKS) layer, `not-detected` when one does not, `unknown` when
 this host cannot see it that way (a cloud provider's volume encryption, a network or ZFS file system, a missing path).
-It also says whether the backup encryption key is `configured`. The API-only preflight reports the same in its
-observation. This is a report, not a refusal: for a location that is not `encrypted`, the private release record
-names how it is protected instead (for example the provider's volume encryption, with its evidence) or the separate
-maintenance window in which it will be moved onto encrypted storage. Never re-partition or encrypt a disk inside this
-procedure. A backup configuration that is not `configured` stops the nightly backup (Nightly job).
+It also judges the backup encryption key with the nightly backup's own check: `configured` means a backup into that
+directory accepts it (the configuration, the identity file and the age program are read, the identity is outside the
+checkout and the backup directory, and age encrypts and decrypts with it); `absent` means there is no configuration
+file; `invalid` means the backup would refuse; `unknown` means this run cannot speak for the backup - no
+`--backup-root` was given, or the directory belongs to another account. The API-only preflight carries the same
+report in its observation; it does not know the backup directory, so it never says `configured`. This is a report,
+not a refusal: for a location that is not `encrypted`, the private release record names how it is protected instead
+(for example the provider's volume encryption, with its evidence) or the separate maintenance window in which it will
+be moved onto encrypted storage. Never re-partition or encrypt a disk inside this procedure. A backup key that is not
+`configured` stops the nightly backup (Nightly job): settle it before the window.
 
 ### The host declaration
 
@@ -1677,9 +1684,18 @@ when the key cannot be used. Install a private JSON configuration at `/etc/kin-d
 - `current`: the key ID new sets are written with. To change keys, add the new identity under a new ID, make it
   `current`, and keep the old ID in `files` until the sets that name it have rotated out.
 - `workspace`: a directory outside the backup root (on encrypted storage, or volatile space large enough for two
-  sets) where a rehearsal or restore opens an encrypted set. A rehearsal needs the free space of one set's plaintext;
-  a rollback needs two: it keeps B open (and rehearses B from that same opening) while it preserves and rehearses the
-  stopped N.
+  sets) where a rehearsal or restore opens an encrypted set. A rehearsal needs the free space of one set's plaintext.
+  A rollback needs two: P1 opens B once while validating it and closes it, then opens it again and keeps it; P2
+  reuses that opening. Only one opening of B exists at a time, and at R1 the workspace holds B and N together.
+
+An opened set's plaintext, and the wrapping key copies a rehearsal checks, exist only in a private folder
+(`kin-open-*` in the workspace, `kin-wrapping-restore-*` in the temporary directory) that the run removes when it
+ends. A run that is killed cannot: the next `ops_backup.py` command of the same account (the nightly backup included)
+and the next opening in that workspace remove what it left, recognised by the owner record in the folder (host,
+process ID and start time) whose process no longer runs; a folder of a run that is still going is not touched. After
+killing a rehearsal or a rollback, do not wait for that: run any `ops_backup.py` command, for example
+`python3 scripts/ops_backup.py rotate --root <backup-directory> --dry-run`, and check that both places are empty. A
+workspace given only on the command line (`--workspace`) is cleared by the next run that is given the same one.
 
 While writers are paused, each component (database dumps, the Orthanc and EMR-state archives, catalogs, `.env` and
 the Compose files) goes through age as it is produced; no plaintext component is written into the backup root. The
@@ -1705,6 +1721,11 @@ python3 scripts/ops_backup.py restore-wrapping /srv/kin-backups/SET --source /mn
 python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --wrapping-source /mnt/custody/SET
 ```
 
+Both commands first admit the stored set: it is complete and not thinned by rotation,
+every component it requires is there with the size and digest its manifest records, and
+no component is an age file unless the manifest carries the `encryption` record. A set
+that fails this is not restored from and none of its key copies is written.
+
 An encrypted set (its manifest has an `encryption` record) is opened with the key it
 names: `rehearse` checks that key against the record before anything else, then
 decrypts every component into a new folder of the configured `workspace` and compares
@@ -1719,9 +1740,11 @@ python3 scripts/ops_backup.py rehearse /srv/kin-backups/SET --encryption-key /mn
 
 A set written before encryption existed has no `encryption` record and is validated
 and rehearsed as before, without a key. A restore into a rollback project reads an
-encrypted B the same way, through `ops_backup.opened_set`, once (its `.env`, dumps and
-archives come from the opened folder, and its rehearsal is `ops_backup.rehearse_opened`
-on that same opening; the hold, records and custody stay with B).
+encrypted B the same way, through `ops_backup.opened_set`: P1 opens B once while
+validating it and closes it, then opens it again and keeps it; P2 reuses that opening
+(`ops_backup.rehearse_opened`). Only one opening of B exists at a time, and at R1 the
+workspace needs room for two sets, B and N. B's `.env`, dumps and archives come from the
+opened folder; the hold, records and custody stay with B.
 
 The first command checks the custody files against the snapshot and prints only
 the restored ID/path mapping. It reads every custody file before creating the
@@ -1730,10 +1753,12 @@ stack with the restored `c2-wrap-v1` file as `compose_for`'s `secret_file`, and
 name the restored files in the custody configuration before R's first backup.
 The command refuses to overwrite an existing destination.
 
-Rehearsal restores its own temporary custody copy using that same locator, checks
+Rehearsal first reads the set's custody copies at that same locator (or at
+`--wrapping-source`): a missing or changed copy stops it before its isolated restore
+starts. It then restores its own temporary custody copy, checks
 all restored table counts and calls the existing product key-unwrapping function
-for every restored private key using the recorded API image. Missing or wrong
-custody fails rehearsal. Before the restored copy counts as verified it runs the
+for every restored private key using the recorded API image. A copy that cannot
+unwrap a restored key fails the rehearsal. Before the restored copy counts as verified it runs the
 existing `emr_access.restore_expiry_sweep`: access and failure rows past their
 period (개인정보의 안전성 확보조치 기준 제8조제1항, 2 years) are removed unless a hold
 or open duty request keeps them, and history rows without ending evidence are kept

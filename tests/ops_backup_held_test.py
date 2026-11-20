@@ -382,6 +382,31 @@ class HeldCaptureTests(unittest.TestCase):
         self.assertEqual(len(restores), 2)
         self.assertTrue(all("--create" in command and "--no-owner" not in command and "--no-privileges" not in command for command in restores))
 
+    def test_14_a_held_capture_that_lost_or_changed_a_component_of_its_own_starts_no_restore(self):
+        """A held capture rehearsed through ops.rehearse is admitted by its own component table: its values, catalog
+        and configuration components are checked before any volume or container exists, like its dumps."""
+        host = FakeHost(self.folder)
+        directory = host.capture()
+        for name, changed in (("values.json", None), ("catalog.json", b"{}"), ("docker-compose.monitor.yml", None)):
+            path = directory / name
+            original = path.read_bytes()
+            if changed is None:
+                path.unlink()
+            else:
+                path.write_bytes(changed)
+            host.commands.clear()
+            with self.subTest(component=name), host.bound(), patch.object(ops, "remove_owned_if_present"):
+                with self.assertRaises(RuntimeError) as refused:
+                    ops.rehearse(directory)
+                self.assertEqual(str(refused.exception), "Backup component checksum mismatch: " + name)
+                self.assertEqual(host.commands, [], "no volume, no container, no restore")
+                self.assertEqual(list(directory.glob("rehearsal-*.json")), [])
+            path.write_bytes(original)
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            ops.rehearse(directory)
+        (record,) = directory.glob("rehearsal-*.json")
+        self.assertTrue(json.loads(record.read_text())["success"])
+
     def test_13_a_restore_whose_row_values_differ_is_refused_with_equal_counts(self):
         """IRT2-24: the held restore check compares every table's value digest of both databases (any schema) with the
         capture's values.json: a changed Keycloak value, a changed row of the kin database, or a table of another schema

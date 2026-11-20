@@ -3,7 +3,9 @@
 python scripts/ops_deploy_preflight.py request.json --request-sha256 <sha256>
 python scripts/ops_deploy_preflight.py --storage-only [--backup-root <directory>]
 The separately supplied hash binds bytes, not the identity/authority of an approver. Both report storage and backup
-encryption (one line on stderr, the report in the JSON); that report is a warning, never a refusal.
+encryption (one line on stderr, the report in the JSON); that report is a warning, never a refusal. The backup key is
+called `configured` only where the backup itself would accept it: by the storage-only form, given the backup root and
+run as the account that owns it (the daily backup's account); otherwise it is `unknown`, `absent` or `invalid`.
 """
 from __future__ import annotations
 
@@ -187,7 +189,7 @@ def observe(body):
 # tablespace, the Orthanc storage, the EMR state, the retention ledgers and their mirror), and the backup root.
 STORAGE_CONTAINERS = ("kin-db", "kin-orthanc", "kin-api")
 STORAGE_STATES = ("encrypted", "not-detected", "unknown")
-BACKUP_KEY_STATES = ("configured", "absent", "invalid")
+BACKUP_KEY_STATES = ("configured", "absent", "invalid", "unknown")
 
 
 def _read(args):
@@ -264,20 +266,36 @@ def data_locations():
     return rows
 
 
-def backup_key_state():
-    """configured: the backup itself would accept its key, configuration and age program (ops.backup_key, the one
-    check); absent: no configuration file; invalid: anything else, also a path this account cannot look at."""
+def backup_key_state(backup_root=None, checkout=None):
+    """What the daily backup into backup_root would say of its key, by the backup's own check (ops.usable_backup_key:
+    the same configuration, the same paths, age encrypting and decrypting with the key). configured: the backup, run
+    by this account, accepts it; absent: no configuration file; invalid: the check refuses, or the configuration
+    cannot be looked at; unknown: this call cannot speak for the backup - no backup root was given (the configuration
+    and key file are then only read, nothing is run), or the backup root belongs to another account (the backup runs
+    as its owner, which may not read what this account reads). checkout: the installation's checkout when this code
+    runs from another copy."""
     try:
         if not Path(os.environ.get("KIN_BACKUP_ENCRYPTION") or ops.BACKUP_ENCRYPTION_CONFIG).exists():
             return "absent"
-        ops.backup_key()
+        if backup_root is None:
+            ops.backup_key()
+            return "unknown"
+        ops.usable_backup_key(backup_root, checkout=checkout)
     except Exception:
         return "invalid"
+    try:
+        root = Path(backup_root)
+        if os.name == "posix" and root.exists() and root.stat().st_uid != os.geteuid():
+            return "unknown"
+    except Exception:
+        return "unknown"
     return "configured"
 
 
-def storage_encryption(backup_root=None):
-    """The report: {"status", "locations": [{"location", "status", "detail"}], "backup_encryption"}."""
+def storage_encryption(backup_root=None, checkout=None):
+    """The report: {"status", "locations": [{"location", "status", "detail"}], "backup_encryption"}. backup_root: the
+    actual backup root (its storage is reported, and the backup key is judged for a backup into it); checkout: the
+    installation's checkout when this code runs from another copy (see backup_key_state)."""
     if not sys.platform.startswith("linux"):
         locations = [{"location": "host", "status": "unknown", "detail": "not Linux"}]
     else:
@@ -287,7 +305,8 @@ def storage_encryption(backup_root=None):
             locations.append({"location": label, "status": status, "detail": detail})
     states = {row["status"] for row in locations}
     status = "encrypted" if states == {"encrypted"} else "not-detected" if "not-detected" in states else "unknown"
-    return {"status": status, "locations": locations, "backup_encryption": backup_key_state()}
+    return {"status": status, "locations": locations,
+            "backup_encryption": backup_key_state(backup_root or None, checkout)}
 
 
 def storage_valid(report):

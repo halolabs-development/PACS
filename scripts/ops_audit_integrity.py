@@ -1048,8 +1048,9 @@ def verify_backup(directory, checkpoint=None):
                 return verify(checkpoint, snapshot_source(opened.path, opened.manifest))
         except InputError as error:
             return 2, {"exit": 2, "error": str(error)}
-        except (ops.BackupEncryptionError, OSError, ValueError, KeyError, TypeError) as error:
-            return 2, {"exit": 2, "error": str(error) if isinstance(error, ops.BackupEncryptionError) else "Unreadable backup"}
+        except (ops.BackupEncryptionError, ops.StoredSetError, OSError, ValueError, KeyError, TypeError) as error:
+            refused = isinstance(error, (ops.BackupEncryptionError, ops.StoredSetError))
+            return 2, {"exit": 2, "error": str(error) if refused else "Unreadable backup"}
     try:
         declared_digest = manifest.get("sha256", {}).get(CHECKPOINT)
         source = snapshot_source(directory, manifest)
