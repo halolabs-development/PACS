@@ -10024,12 +10024,12 @@
     }
 
     const LOGOUT_TITLES = { waiting: "Logging Out", saving: "Saving Draft", failed: "Draft Not Saved", closing: "Logging Out",
-      ended: "Session Ended" };
+      ended: "Draft Not Saved" };
     const LOGOUT_NOTES = {
       waiting: "진행 중인 저장 또는 초안 버리기가 끝나는 대로 로그아웃을 이어 갑니다. 다시 누를 필요가 없습니다.",
       saving: "작성 중인 판독문 초안을 저장한 뒤 로그아웃합니다. 저장을 확인하면 바로 이어 갑니다.",
       closing: "로그아웃하는 중입니다. 업무 화면은 닫혔습니다.",
-      ended: "로그인 세션이 끝나 판독문 초안을 저장하지 못했습니다. 입력한 내용은 이 창의 메모리에만 있고 새로고침하거나 창을 닫으면 "
+      ended: "업무 화면이 닫혀 판독문 초안을 저장하지 못했습니다. 입력한 내용은 이 창의 메모리에만 있고 새로고침하거나 창을 닫으면 "
         + "사라집니다. 다른 창에서 같은 계정으로 다시 로그인한 뒤 Recover Draft를 누르면 저장을 다시 시도합니다.",
     };
     const LOGOUT_FAILED = {
@@ -15819,7 +15819,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const note = document.createElement("p");
       note.className = "kin-closed-note";
       note.setAttribute("role", "status");
-      note.textContent = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…";
+      // 서버가 종료를 확인하기 전에도 참인 글만 쓴다: 닫힌 것은 이 업무 화면이고, 로그인 세션의 끝은 랜딩이 서버의 답으로 말한다.
+      kinWrite(note, kinSay("업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"));
       document.body.append(note);
     }
     onCommonEnd(closeWork);

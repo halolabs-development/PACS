@@ -200,7 +200,7 @@ CODES = {
 }
 STATUSES = {400: "서버가 입력을 거절했습니다.", 403: "서버가 이 동작을 거절했습니다."}
 NO_SERVER = "서버에 연결하지 못했습니다."
-CLOSING = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
+CLOSING = "업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
 # B2-COMMIT 503 answers of a clinical write (emr-clinical routes): (code, server message, whether the write was stored).
 # Both are about the write itself: not committed, or a COMMIT that could not be told (stored here). The page cannot tell
 # which, so each is an unknown outcome kept for Retry with the same request.
