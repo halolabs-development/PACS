@@ -414,14 +414,18 @@ c.Module({controllers:[Probe],providers:[PrismaService]})(ProbeModule);
     def test_07_production_ssl_cert_preset_is_what_the_image_uses_unset(self):
         """exp-node-sigsegv: docker-compose.prod.yml presets SSL_CERT_FILE/SSL_CERT_DIR for the API so the Prisma library
         engine's setenv on its first TLS connector updates them in place instead of adding them under the server's
-        environment reads. The preset must change nothing else: it is this image's OpenSSL default (OPENSSLDIR) and what
-        the engine writes itself when nothing is set, and both paths exist with certificates. A base image that moves
-        them fails here instead of a deployment pinning a stale path. The values are the API service's environment as Compose
-        resolves the production files (test_08)."""
+        environment reads. The image carries the same two values for every other node process started from it (docker run
+        children, backup recovery). The preset must change nothing else: it is this image's OpenSSL default (OPENSSLDIR)
+        and what the engine writes itself when nothing is set, and both paths exist with certificates. A base image that
+        moves them fails here instead of a deployment pinning a stale path. The values are the API service's environment
+        as Compose resolves the production files (test_08)."""
         file, directory = api_ssl_preset(production_compose((ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")))
         script = """
 const fs=require('fs'), path=require('path'), assert=require('assert'), {execFileSync}=require('child_process');
 const [file,dir,url]=process.argv.slice(1);
+// The image's own values are the Compose preset; then both are removed so the engine below shows what it writes itself.
+assert.deepStrictEqual([process.env.SSL_CERT_FILE,process.env.SSL_CERT_DIR],[file,dir]);
+delete process.env.SSL_CERT_FILE; delete process.env.SSL_CERT_DIR;
 assert.strictEqual(process.env.SSL_CERT_FILE,undefined); assert.strictEqual(process.env.SSL_CERT_DIR,undefined);
 const openssldir=/^OPENSSLDIR: "([^"]+)"$/m.exec(execFileSync('openssl',['version','-d'],{encoding:'utf8'}))[1];
 assert.deepStrictEqual([file,dir],[path.posix.join(openssldir,'cert.pem'),path.posix.join(openssldir,'certs')]);

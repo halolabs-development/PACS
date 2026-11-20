@@ -14,6 +14,14 @@ ENV KIN_PURPOSE_LEDGER_DIR=/var/lib/kin-purpose
 RUN apt-get update -y \
  && apt-get install -y --no-install-recommends openssl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+# The in-process Prisma engine sets these two variables on its first database connection. When they do not exist
+# yet, that setenv grows the environment array while a node thread may be reading it, and the process dies with
+# SIGSEGV (Node 22 + Prisma 5 library engine; measured 29 in 1500 starts, 0 with both preset). Preset, the engine
+# only updates them in place. The values are this image's OpenSSL defaults, which the engine writes itself, so the
+# trust store is unchanged (tests/production_image_test.py test_07). Compose sets the same values for the API
+# service; this covers every other node process started from the image (docker run, backup recovery, tests).
+ENV SSL_CERT_FILE=/usr/lib/ssl/cert.pem \
+    SSL_CERT_DIR=/usr/lib/ssl/certs
 
 # Film / DICOM Print: the DICOM print helper (print/film_print.py, started by the API per job) runs on Debian's Python
 # with pydicom and pynetdicom from print/requirements.txt, hash-pinned, in a virtual environment of its own.

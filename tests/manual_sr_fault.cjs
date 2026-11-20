@@ -23,6 +23,12 @@ const raw = x => Buffer.from(JSON.stringify(x));
 let phase = 'setup';
 const watchdog = setTimeout(() => { console.error('SR timeout at '+phase); process.exit(1); }, 55000);
 const prepare = requestId => service.prepare(uid, raw({ requestId: requestId || randomUUID(), items }), caller);
+// The running API shares this database and sweeps every study's rows older than 24 h every 15 s. Rows this script
+// ages are made 23 h old, which that sweep leaves alone; only this process's clock runs 1 h 1 s ahead while it
+// expires them, so they are 24 h 1 s old to it - the same boundary as before - and every expiry asserted below is
+// this process's own.
+const realNow = Date.now, aged = () => new Date(realNow() - 23 * 3600000);
+async function ahead(work) { Date.now = () => realNow() + 3601000; try { return await work(); } finally { Date.now = realNow; } }
 
 async function run() {
   // Only admission facts are synthetic in this direct fault process. C2 reads
@@ -67,7 +73,7 @@ async function run() {
   const count = await prisma.manualSr.count({ where: { studyUid: uid, attemptedAt: null, dicom: { not: null } } });
   for (let i = count; i < 32; i++) await prepare();
   await assert.rejects(prepare(), e => e.getStatus() === 409);
-  await prisma.manualSr.updateMany({ where: { studyUid: uid, attemptedAt: null }, data: { createdAt: new Date(Date.now()-86401000) } });
+  await prisma.manualSr.updateMany({ where: { studyUid: uid, attemptedAt: null }, data: { createdAt: aged() } });
   let resumeExpiry, enteredExpiry, delayExpiry = true;
   const expiryPause = new Promise(resolve => { resumeExpiry=resolve; }), expiryEntry = new Promise(resolve => { enteredExpiry=resolve; });
   prisma.$use(async (params, next) => {
@@ -76,13 +82,17 @@ async function run() {
     }
     return next(params);
   });
-  const preparing = prepare();
-  try {
-    await expiryEntry;
-    await prisma.$transaction(async tx => { await tx.$queryRaw`SELECT uid FROM "StudyState" WHERE uid = ${uid} FOR UPDATE NOWAIT`; });
-  } finally { resumeExpiry(); }
-  const next = await preparing; assert.notEqual(next.id, expiring.id);
-  for (let i=0;i<4;i++) await service.expire(uid);
+  const next = await ahead(async () => {
+    const preparing = prepare();
+    try {
+      await expiryEntry;
+      await prisma.$transaction(async tx => { await tx.$queryRaw`SELECT uid FROM "StudyState" WHERE uid = ${uid} FOR UPDATE NOWAIT`; });
+    } finally { resumeExpiry(); }
+    const prepared = await preparing;
+    for (let i=0;i<4;i++) await service.expire(uid);
+    return prepared;
+  });
+  assert.notEqual(next.id, expiring.id);
   const expired = await prisma.manualSr.findUniqueOrThrow({ where: { id: expiring.id } });
   assert.equal(expired.dicom, null); assert.equal(expired.dataset, null); assert.equal(expired.sha256, expiring.sha256);
   const expiration = await prisma.auditLog.findMany({ where: { target: uid, action: 'manualSr.expire' } });
@@ -101,11 +111,11 @@ async function run() {
       throw new Error('synthetic maintenance failure');
     return next(params);
   });
-  await prisma.manualSr.update({ where: { id: next.id }, data: { createdAt: new Date(Date.now()-86401000) } });
-  const afterFailure=await prepare(); assert.ok(afterFailure.dicom);
+  await prisma.manualSr.update({ where: { id: next.id }, data: { createdAt: aged() } });
+  const afterFailure=await ahead(() => prepare()); assert.ok(afterFailure.dicom);
   assert.ok((await prisma.manualSr.findUnique({ where: { id: next.id } })).dicom);
   assert.equal(await prisma.auditLog.count({ where: { target: uid, action: 'manualSr.expire-deferred' } }),1);
-  failExpiry=false; await service.recoverPending();
+  failExpiry=false; await ahead(() => service.recoverPending());
   assert.equal((await prisma.manualSr.findUnique({ where: { id: next.id } })).dicom,null);
 
   phase = 'aggregate source deadline';
