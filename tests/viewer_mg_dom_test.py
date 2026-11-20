@@ -68,16 +68,29 @@ CELLS = """() => {
       getImageIds() { return this.ids; }, getCurrentImageIdIndex() { return this.index; }, getCurrentImageId() { return this.ids[this.index]; },
       getImageData() { return { dimensions: [C, R, 1], spacing: [1, 1, 1], imageData: this.imageDataObject }; },
       getCamera() { return structuredClone(this.camera); },
-      setCamera(c) { Object.assign(this.camera, structuredClone(c)); synCameraSets[id]++; event(element, 'CORNERSTONE_CAMERA_MODIFIED', id); },
+      // As Cornerstone: a flip turns the camera to the other side of the image (a vertical one turns viewUp too), mirrors
+      // the pan about the image's middle and toggles the flag the orientation markers read; the image is drawn from the
+      // camera's geometry (position, viewUp), not from the flag — so a camera put back without its flag can show the
+      // image one way and the markers the other.
+      flip(axis) { const c = this.camera, k = axis === 'x' ? 0 : 1, f = c.focalPoint, d = c.position[2] - f[2];
+        f[k] = 2 * center[k] - f[k]; c.position = [f[0], f[1], f[2] - d];
+        if (k) { c.viewUp = c.viewUp.map(n => -n); c.flipVertical = !c.flipVertical; } else c.flipHorizontal = !c.flipHorizontal; },
+      setCamera(c) { const { flipHorizontal, flipVertical, ...rest } = structuredClone(c);
+        if (flipHorizontal !== undefined && flipHorizontal !== this.camera.flipHorizontal) this.flip('x');
+        if (flipVertical !== undefined && flipVertical !== this.camera.flipVertical) this.flip('y');
+        Object.assign(this.camera, rest); synCameraSets[id]++; event(element, 'CORNERSTONE_CAMERA_MODIFIED', id); },
+      // How the image lies on the canvas now: +1 / -1 along x and along y.
+      drawn() { const c = this.camera, up = -Math.sign(c.viewUp[1]); return [Math.sign(c.focalPoint[2] - c.position[2]) * up, up]; },
       getZoom() { return BASE / this.camera.parallelScale; },
       setZoom(z) { this.setCamera({ parallelScale: BASE / z }); },
-      setPan([x, y]) { const f = [center[0] - x, center[1] - y, 0]; this.setCamera({ focalPoint: f, position: [f[0], f[1], -1000] }); },
+      setPan([x, y]) { const c = this.camera, f = [center[0] - x, center[1] - y, 0];
+        this.setCamera({ focalPoint: f, position: c.position.map((n, i) => n + f[i] - c.focalPoint[i]) }); },
       getViewPresentation: () => ({}),
       scale() { return (H / 2) / this.camera.parallelScale; },
-      worldToCanvas(w) { const s = this.scale(), f = this.camera.focalPoint;
-        return [W / 2 + (this.camera.flipHorizontal ? -1 : 1) * (w[0] - f[0]) * s, H / 2 + (this.camera.flipVertical ? -1 : 1) * (w[1] - f[1]) * s]; },
-      canvasToWorld(p) { const s = this.scale(), f = this.camera.focalPoint;
-        return [f[0] + (this.camera.flipHorizontal ? -1 : 1) * (p[0] - W / 2) / s, f[1] + (this.camera.flipVertical ? -1 : 1) * (p[1] - H / 2) / s, 0]; },
+      worldToCanvas(w) { const s = this.scale(), f = this.camera.focalPoint, [x, y] = this.drawn();
+        return [W / 2 + x * (w[0] - f[0]) * s, H / 2 + y * (w[1] - f[1]) * s]; },
+      canvasToWorld(p) { const s = this.scale(), f = this.camera.focalPoint, [x, y] = this.drawn();
+        return [f[0] + x * (p[0] - W / 2) / s, f[1] + y * (p[1] - H / 2) / s, 0]; },
       getProperties() { return structuredClone(this.props); },
       setProperties(p) { Object.assign(this.props, structuredClone(p)); event(element, 'CORNERSTONE_VOI_MODIFIED', id); },
       setVOI(range) { this.props.voiRange = { ...range }; this.tf.nodes = [[range.lower, 0, 0, 0, 0.5, 0], [range.upper, 1, 1, 1, 0.5, 0]]; event(element, 'CORNERSTONE_VOI_MODIFIED', id); },
@@ -1690,6 +1703,48 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.assertEqual([2, 2], page.evaluate(zooms))
         reset.click()
         self.assertEqual([1, 5], page.evaluate(zooms))
+
+    def test_03k_reset_gives_back_the_zoom_pan_and_invert_mirrored_set_and_a_flip_stays_with_the_image_as_its_markers_say(self):
+        # A cell now: its zoom and centre, the flips its orientation markers show (the flags), how the image itself lies
+        # on the canvas (+1 / -1 along x and y), its inversion, and where the camera stands from the centre.
+        state = """id => { const v = synViews.get(id), c = v.camera;
+          return { zoom: v.getZoom(), focal: c.focalPoint.slice(0, 2), flags: [c.flipHorizontal, c.flipVertical], drawn: v.drawn(),
+            invert: v.props.invert, offset: c.position.map((n, i) => n - c.focalPoint[i]), up: c.viewUp }; }"""
+        page = self.open()
+        entered = {cell: page.evaluate(state, cell) for cell in ('rcc', 'lcc')}
+        self.menu(page, 'Mirrored')
+        reset = page.get_by_role('dialog', name='Mirrored').get_by_role('button', name='Reset')
+        # Mirrored → a horizontal flip of R CC → Reset: zoom, centre and inversion come back; the flip stays, and the
+        # image lies as the markers say.
+        self.click_cell(page, 'rcc', 50, 40)
+        page.evaluate("() => { synActive = 'rcc'; synToolbar.invoke('invert'); }")
+        page.evaluate("() => synViews.get('rcc').setCamera({ flipHorizontal: true })")
+        flipped = page.evaluate(state, 'rcc')
+        self.assertEqual([-1, 1], flipped['drawn'])
+        reset.click()
+        now = page.evaluate(state, 'rcc')
+        self.assertAlmostEqual(1, now['zoom'])
+        self.assertEqual(entered['rcc']['focal'], now['focal'])
+        self.assertFalse(now['invert'])
+        self.assertEqual([True, False], now['flags'])
+        self.assertEqual([-1, 1], now['drawn'])
+        # Only the pan is given back: the camera moves with its centre, on the side and the way up it stood.
+        self.assertEqual([flipped['offset'], flipped['up']], [now['offset'], now['up']])
+        self.assertEqual({'zoom': 1, 'focal': entered['lcc']['focal'], 'invert': False, 'drawn': [1, 1]},
+                         {k: v for k, v in page.evaluate(state, 'lcc').items() if k in ('zoom', 'focal', 'invert', 'drawn')})
+        # Mirrored → a vertical flip of L CC → Reset: the image's left and right do not turn; the vertical flip stays, as
+        # its marker says.
+        self.click_cell(page, 'rcc', 50, 40)
+        page.evaluate("() => synViews.get('lcc').setCamera({ flipVertical: true })")
+        self.assertEqual([1, -1], page.evaluate(state, 'lcc')['drawn'])
+        reset.click()
+        now = page.evaluate(state, 'lcc')
+        self.assertAlmostEqual(1, now['zoom'])
+        self.assertEqual(entered['lcc']['focal'], now['focal'])
+        self.assertEqual([False, True], now['flags'])
+        self.assertEqual([1, -1], now['drawn'])
+        self.assertEqual([True, False], page.evaluate(state, 'rcc')['flags'])
+        self.assertEqual([-1, 1], page.evaluate(state, 'rcc')['drawn'])
 
     def test_02e_the_table_takes_a_header_only_for_the_image_the_cell_holds_and_asks_again_at_the_next_press_for_one_not_read(self):
         captures = '.kin-mg-capture[data-mode=lens]'

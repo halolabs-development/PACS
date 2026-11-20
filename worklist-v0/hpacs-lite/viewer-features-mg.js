@@ -329,7 +329,7 @@
       invert.type = 'checkbox'; invert.checked = mirror.invert; invert.setAttribute('aria-label', 'Invert together'); element('span', 'Invert together', label);
       invert.onchange = () => { mirror.invert = invert.checked; };
       const row = element('div', '', panel.body, 'kin-mg-row');
-      button('Reset', row, () => resetMirrored(), '켜기 전의 보기로 되돌립니다');
+      button('Reset', row, () => resetMirrored(), '켜기 전의 배율·위치·반전으로 되돌립니다(뒤집기·회전은 그대로)');
       mirror.status = statusLine(panel.body);
       // Close turns the link off and leaves the views as they are; the lenses of the linked cells go with it (the cell
       // pressed keeps its own while it is pressed).
@@ -343,8 +343,8 @@
       markUnlinked(cellsPressed());
     }
     // The link itself, kept in one place (keepLink — whenever the table changes and before anything Mirrored writes):
-    // mirror.before holds, for each cell in the link, the view Reset gives back — { viewport, stack, camera, invert,
-    // out }. A cell enters the link (an MG cell read and linkable) with the view it has then: the views Mirrored was
+    // mirror.before holds, for each cell in the link, the view Reset gives back — { viewport, stack, camera (its
+    // zoom and centre), invert, out }. A cell enters the link (an MG cell read and linkable) with the view it has then: the views Mirrored was
     // turned on with for the cells linked from the start, its view then for one that enters later (its image read
     // later, another stack, another viewport). It keeps that view through the slices of one stack. Out of the link
     // for a while with the same images (a slice being read), it is marked with its view on leaving (out); back in, it
@@ -354,7 +354,10 @@
     function keepLink(list) {
       const linked = new Map(list.filter(cell => !M.unlinkable(cell)).map(cell => [cell.id, cell]));
       const enter = v => {
-        try { mirror.before.set(v.id, { viewport: v, stack: stackKey(v), camera: structuredClone(v.getCamera()), invert: !!invertOf(v), out: null }); } catch (_) {}
+        try {
+          const { parallelScale, focalPoint } = v.getCamera();
+          mirror.before.set(v.id, { viewport: v, stack: stackKey(v), camera: { parallelScale, focalPoint: [...focalPoint] }, invert: !!invertOf(v), out: null });
+        } catch (_) {}
       };
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
@@ -380,10 +383,12 @@
       }
       if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : list.length ? '' : NO_MG;
     }
-    // Reset: every cell in the link, back to the camera and inversion it entered with. A cell Mirrored names as not
-    // linked (not read, no verified orientation) and a cell of another modality were never in it: they are the
-    // reader's own and are not touched — nor is a cell out of the link for a while whose view the reader changed
-    // meanwhile. A point still pressed is dropped.
+    // Reset: every cell in the link, back to the zoom, the centre and the inversion it entered with — what Mirrored
+    // itself sets on a cell, and nothing else of its view. A flip or a rotation stays: the camera is moved with its
+    // centre and keeps the side and the way up it stands now (the image then lies as its orientation markers say).
+    // A cell Mirrored names as not linked (not read, no verified orientation) and a cell of another modality were never
+    // in it: they are the reader's own and are not touched — nor is a cell out of the link for a while whose view the
+    // reader changed meanwhile. A point still pressed is dropped.
     function resetMirrored() {
       pointer.press = null;
       markUnlinked(cellsPressed());
@@ -391,8 +396,8 @@
         const v = viewportOf(id);
         if (!sameImages(before, v) || (before.out !== null && before.out !== viewOf(v))) continue;
         steer(v, () => {
-          const { flipHorizontal, flipVertical, ...camera } = before.camera;
-          v.setCamera({ ...camera, flipHorizontal, flipVertical });
+          v.setCamera({ parallelScale: before.camera.parallelScale });
+          centerOn(v, before.camera.focalPoint);
           if (!!v.getProperties().invert !== before.invert) v.setProperties({ invert: before.invert });
         });
         if (before.out !== null) before.out = viewOf(v);
