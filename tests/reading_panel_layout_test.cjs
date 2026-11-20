@@ -39,6 +39,22 @@ test('RESTORE: smaller windows clamp rendered sizes without replacing durable la
   assert.deepEqual(panels.resolve(saved, { width: 1800, height: 1200, workHeight: 1000 }), large);
 });
 
+test('REPORT ROOM: a measured report column bounds the related panel in a short window, down to its own floor only', () => {
+  const saved = { ...panels.defaults(), relatedHeight: 400 };
+  const before = JSON.stringify(saved);
+  // A laptop Chrome window: the work row is 477px and the column keeps 287px (its rows, five Findings lines, the frame).
+  const short = panels.resolve(saved, { width: 1366, height: 640, workHeight: 477, reportMin: 287 });
+  assert.equal(short.ranges.relatedHeight.max, 211); assert.equal(short.effective.relatedHeight, 211);
+  assert.equal(short.effective.relatedListHeight, 125);
+  // Room for both: the stored height up to what the column leaves; the default where it fits.
+  assert.equal(panels.resolve(saved, { width: 1366, height: 900, workHeight: 640, reportMin: 287 }).effective.relatedHeight, 353);
+  assert.equal(panels.resolve(panels.defaults(), { width: 1366, height: 768, workHeight: 595, reportMin: 287 }).effective.relatedHeight, 245);
+  // Stacked, or not measured: the work row's 621px floor and the column's 376px as before.
+  assert.equal(panels.resolve(saved, { width: 800, height: 640, workHeight: 477, reportMin: 287 }).effective.relatedHeight, 245);
+  assert.equal(panels.resolve(saved, { width: 1366, height: 640, workHeight: 477 }).effective.relatedHeight, 245);
+  assert.equal(JSON.stringify(saved), before, 'the stored size is not rewritten');
+});
+
 test('ACCESS: wrapped related controls reserve visible rows and a usable prior report', () => {
   const saved = { ...panels.defaults(), relatedHeight: 1, relatedListHeight: 16384, relatedHidden: true };
   const { effective, ranges } = panels.resolve(saved, { width: 600, height: 600, workHeight: 621, listMin: 195.5 });
