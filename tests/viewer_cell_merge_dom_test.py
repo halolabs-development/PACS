@@ -65,9 +65,10 @@ function makeViewport(id,seed){
   const element=document.createElement('div');element.dataset.cell=id;element.style.cssText='position:absolute;background:#234;color:#fff';
   element.textContent=id;host.append(element);
   // What the pinned viewer attaches to every enabled viewport element (1185.bundle initDoubleClick and
-  // initContextMenu): a double click runs toggleOneUp, a right click the context menu command. Inert
+  // initContextMenu): a double click runs toggleOneUp - a plain one: with Alt, Ctrl or Shift it looks for a
+  // command of that name and the viewer has none - and a right click the context menu command. Inert
   // unless a test installs the command manager.
-  element.addEventListener('dblclick',()=>window.nativeCommands?.run({commandName:'toggleOneUp',commandOptions:{}}));
+  element.addEventListener('dblclick',event=>{if(!event.altKey&&!event.ctrlKey&&!event.shiftKey)window.nativeCommands?.run({commandName:'toggleOneUp',commandOptions:{}});});
   element.addEventListener('contextmenu',event=>{if(!window.nativeCommands)return;event.preventDefault();
     window.nativeCommands.run({commandName:'showCornerstoneContextMenu',commandOptions:{}});});
   return {id,type:'stack',element,current:'wadors:'+id+':0',index:0,renders:0,

@@ -634,6 +634,25 @@ test('cells tied by hand (Compare > Manual Sync) neither lead nor follow positio
   finish(w);
 });
 
+test('the images a series export shows on its way lead no position sync; that cell syncs again once the export is over', async () => {
+  const w = world();
+  await flush();
+  const exporting = new Set(['vp-a']);
+  w.sandbox.KinViewerExport = { moving: id => exporting.has(id) };
+  const sync = w.sync();
+  const before = w.at('vp-b'), asked = w.log.length;
+  await w.scroll(sync, 'vp-a', 4);
+  await w.scroll(sync, 'vp-a', 6);
+  await flush();
+  assert.deepEqual(w.at('vp-b'), before, 'the target is not moved');
+  assert.deepEqual(w.moves, []);
+  assert.equal(w.log.length, asked, 'nothing is asked for those images');
+  exporting.clear();
+  await w.scroll(sync, 'vp-a', 4);
+  assert.deepEqual(w.at('vp-b'), { index: 2, z: 8 }, 'the export over, the pair syncs again');
+  finish(w);
+});
+
 test('late answers: Sync OFF, series replacement, account change, logout and A->B->A never move the target', async () => {
   const held = async (setup, act, expectText) => {
     const w = world();
