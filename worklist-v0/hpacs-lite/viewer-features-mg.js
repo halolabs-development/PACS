@@ -55,7 +55,8 @@
     function rawOf(instance) {
       const sop = instance?.SOPInstanceUID, study = instance?.StudyInstanceUID, series = instance?.SeriesInstanceUID;
       if (![study, series, sop].every(uid => typeof uid === 'string' && uid.length <= 64 && UID.test(uid))) return Promise.resolve(null);
-      if (failed.has(sop) && Date.now() - failed.get(sop) > 3000) { failed.delete(sop); raws.delete(sop); }
+      const again = failed.has(sop) && Date.now() - failed.get(sop) > 3000;
+      if (again) { failed.delete(sop); raws.delete(sop); }
       if (!raws.has(sop)) {
         if (raws.size > 200) { const oldest = raws.keys().next().value; raws.delete(oldest); failed.delete(oldest); }
         raws.set(sop, fetch('/dicom-web/studies/' + study + '/series/' + series + '/instances/' + sop + '/metadata',
@@ -63,7 +64,8 @@
           .then(response => response.ok ? response.json() : null)
           .then(json => { const item = Array.isArray(json) ? json[0] : null; return item && typeof item === 'object' ? item : null; })
           .catch(() => null)
-          .then(item => { if (!item) failed.set(sop, Date.now()); return item; }));
+          // Read after all: what was drawn of the cells while it could not be read (Mirrored's marks, the press layers) is drawn again.
+          .then(item => { if (!item) failed.set(sop, Date.now()); else if (again && !ended) cellsChanged(); return item; }));
       }
       return raws.get(sop);
     }
@@ -372,14 +374,17 @@
     // The act is taken down when the camera event is heard; it is carried a frame later, after the headers.
     const pendingCamera = new Map();  // source cell → its latest act
     let cameraFrame = 0;
-    function cameraChanged(event) {
-      const id = event.detail?.viewportId;
-      if (!id || applying.has(id)) return;
-      const v = viewportOf(id);
-      // The camera this module last set on the cell is not the reader's change, however late it is heard; once the cell
-      // has had another camera, the same camera again is a change like any other (back to 1× after 3×).
-      if (!v || lastSet.get(id) === signature(v)) return;
+    // A camera event heard on a cell: the cell (viewport) when it is a change that is not this module's — not while this
+    // module sets that cell's camera, and not the camera it last set there, however late that is heard. Once the cell
+    // has had another camera, the same camera again is a change like any other (back to 1× after 3×).
+    function foreignCamera(id) {
+      const v = !applying.has(id) && viewportOf(id);
+      if (!v || lastSet.get(id) === signature(v)) return null;
       lastSet.delete(id);
+      return v;
+    }
+    function cameraChanged(v) {
+      const id = v.id;
       if (!mirror.on || ruled(id)) return;
       pendingCamera.set(id, mirrorAct(v, 'camera'));
       if (!cameraFrame) cameraFrame = requestAnimationFrame(() => { cameraFrame = 0; const acts = [...pendingCamera.values()]; pendingCamera.clear(); acts.forEach(act => followCamera(act)); });
@@ -507,7 +512,11 @@
       const want = new Map();
       if (lens.on) for (const cell of list) want.set(cell.id, 'lens');
       if (tomo.slabbed) want.set(tomo.slabbed.id, lens.on ? 'lens' : 'slab');
-      for (const [id, entry] of layers) if (!want.has(id) && entry.capture) { entry.capture.remove(); entry.capture = null; }
+      for (const [id, entry] of layers) if (!want.has(id) && entry.capture) {
+        // The layer of the cell being pressed goes with its press (no release would be heard on it): the lenses go too.
+        if (lens.pressed && lens.last?.id === id) lensUp();
+        entry.capture.remove(); entry.capture = null;
+      }
       for (const [id, mode] of want) {
         const v = viewportOf(id), entry = v && layerOf(v); if (!entry) continue;
         if (!entry.capture) {
@@ -549,10 +558,11 @@
     // ── Quadrant Zoom ──
     // Every step and every Close is a camera command (cameraAct): an earlier one still reading image headers then changes
     // nothing, and neither writes a cell whose camera was changed meanwhile.
-    // marks: the cells the step holds ({ viewport, stack, zoom, width, height, clipped, text }). A cell leaves the step when
-    // its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the reader): its badge then no
-    // longer says what it shows, and nothing of the step is drawn there again. A pan keeps it (the way to an edge at 4×).
-    // A held cell whose size changes (window, layout) has its step worked out again for the new size.
+    // marks: the cells the step holds ({ viewport, stack, step, mode, zoom, width, height, clipped, label }). A cell leaves
+    // the step when its zoom, stack or viewport is changed by anything else (Breast Display, Mirrored, the reader): its
+    // badge then no longer says what it shows, and nothing of the step is drawn there again. A pan keeps it (the way to
+    // an edge at 4×). A held cell whose size changes (window, layout) has the step it holds worked out again for the new
+    // size — the step and zoom choice drawn there, not one asked for since and still waiting.
     const quad = { panel: null, step: 0, marks: new Map(), apply: null, paint: null, resized: new Set(), timer: 0 };
     const QUAD_ZOOM_LABELS = { '4x': '4×', fill: 'Fill Quadrant' };
     const quadSizes = typeof ResizeObserver === 'function' ? new ResizeObserver(entries => {
@@ -568,9 +578,11 @@
       }, 150);
       timers.add(quad.timer);
     }) : null;
+    // A cell leaves the step: what the step's badge said there goes (a warning too), and its mark.
     function dropQuadrant(id) {
+      badge({ id }, 'quadrant', null);
       const mark = quad.marks.get(id); if (!mark) return;
-      quad.marks.delete(id); quad.resized.delete(id); badge(mark.viewport, 'quadrant', null);
+      quad.marks.delete(id); quad.resized.delete(id);
       if (![...quad.marks.values()].some(other => other.viewport.element === mark.viewport.element)) quadSizes?.unobserve(mark.viewport.element);
       quad.paint?.();
     }
@@ -618,25 +630,25 @@
         const clipped = [...quad.marks.values()].filter(mark => mark.clipped).map(mark => mark.label);
         status.textContent = [...notes, clipped.length ? '4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — ' + clipped.join(' / ') : ''].filter(Boolean).join('. ');
       };
-      // The step on one cell: zoomed and centred, held (marked) and badged; false when it could not be drawn.
+      // A step on one cell: zoomed and centred, held (marked) and badged; false when it could not be drawn.
       // act: the step's command (none for a cell's new size).
-      function place(cell, mode, act) {
-        const region = regionOf(cell), q = M.quadrant(quad.step, cell, region.found ? region.box : null), size = cellSize(cell.v);
+      function place(cell, step, mode, act) {
+        const region = regionOf(cell), q = M.quadrant(step, cell, region.found ? region.box : null), size = cellSize(cell.v);
         const z = M.quadrantZoom({ mode, zoom: zoomOf(cell.v), perPixel: perPixel(cell.v), ...size, width: q.box.x1 - q.box.x0, height: q.box.y1 - q.box.y0 });
         const world = toWorld(cell.v, [(q.box.x0 + q.box.x1) / 2, (q.box.y0 + q.box.y1) / 2]);
         dropQuadrant(cell.id);
         if (!z || !world || !steer(cell.v, () => { cell.v.setZoom(z.zoom); centerOn(cell.v, world); }, act)) { badge(cell.v, 'quadrant', 'Quadrant: not zoomed'); return false; }
         // The cell's zoom is the quadrant's now: a Breast Display zoom mode no longer holds there.
         dropZoomMode(cell.id);
-        quad.marks.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), zoom: zoomOf(cell.v) ?? z.zoom, width: size.cellWidth, height: size.cellHeight,
+        quad.marks.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), step, mode, zoom: zoomOf(cell.v) ?? z.zoom, width: size.cellWidth, height: size.cellHeight,
           clipped: z.clipped, label: labelOf(cell) });
         quadSizes?.observe(cell.v.element);
-        badge(cell.v, 'quadrant', `Q${quad.step + 1} ${q.name} · ${QUAD_ZOOM_LABELS[mode]}` + (region.found ? '' : ' · whole image') + (z.clipped ? ' · edges outside' : ''));
+        badge(cell.v, 'quadrant', `Q${step + 1} ${q.name} · ${QUAD_ZOOM_LABELS[mode]}` + (region.found ? '' : ' · whole image') + (z.clipped ? ' · edges outside' : ''));
         return true;
       }
-      async function show(step) {
-        const act = cameraAct(), mode = carry.quadrantZoom;
-        quad.step = ((step % 4) + 4) % 4;
+      async function show(next) {
+        const act = cameraAct(), mode = carry.quadrantZoom, step = ((next % 4) + 4) % 4;
+        quad.step = step;
         heading.textContent = `Quadrant ${quad.step + 1}/4: ${M.QUADRANTS[quad.step]} (R/L matched)`;
         const skipped = [], failed = [];
         const list = await mgCells();
@@ -649,23 +661,25 @@
           if (!cameraHolds(act, cell.id)) { dropQuadrant(cell.id); continue; }
           const reason = M.unlinkable(cell);
           if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
-          if (!place(cell, mode, act)) failed.push(labelOf(cell));
+          if (!place(cell, step, mode, act)) failed.push(labelOf(cell));
         }
         notes = [list.left.length ? '확대하지 않은 칸 — ' + leftOut(list).join(' / ') : '',
           skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '',
           failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
         paint();
       }
-      // Held cells whose size changed: the same step and zoom choice again, for those cells only (a command received
-      // meanwhile wins, and a cell whose camera was changed meanwhile is left). The answer is taken down when it is
-      // worked out, a moment after the size changed: the viewer's own camera changes for the new size come before it,
-      // and cannot be told from the reader's.
+      // Held cells whose size changed: the step and zoom choice each holds again, for those cells only (a command
+      // received meanwhile wins, and a cell whose camera was changed meanwhile is left). The answer is taken down when
+      // it is worked out, a moment after the size changed: the viewer's own camera changes for the new size come
+      // before it, and cannot be told from the reader's.
       quad.apply = async ids => {
-        const act = cameraAct(false), mode = carry.quadrantZoom;
+        const act = cameraAct(false);
         const list = await mgCells();
         if (quad.panel !== panel || !cameraHolds(act)) return;
-        for (const cell of list) if (ids.includes(cell.id) && quad.marks.get(cell.id)?.viewport === cell.v && cameraHolds(act, cell.id) && !place(cell, mode)) {
-          notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
+        for (const cell of list) {
+          const mark = quad.marks.get(cell.id);
+          if (ids.includes(cell.id) && mark?.viewport === cell.v && cameraHolds(act, cell.id) && !place(cell, mark.step, mark.mode))
+            notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
         }
         paint();
       };
@@ -781,9 +795,11 @@
     async function openTomo(viewportId) {
       const opening = ++tomo.opening;
       let v = null, unread = false, changed = false;
-      const candidates = [viewportOf(viewportId), ...cellIds().map(viewportOf)].filter((view, i, list) => view && list.indexOf(view) === i && idsOf(view).length > 1);
-      for (const view of candidates) {
-        const stack = stackKey(view), given = countOf(stacks, view.id), cell = await describe(view).catch(() => null);
+      // (every candidate as it stands now, when the opening is asked for)
+      const candidates = [viewportOf(viewportId), ...cellIds().map(viewportOf)].filter((view, i, list) => view && list.indexOf(view) === i && idsOf(view).length > 1)
+        .map(view => ({ view, stack: stackKey(view), given: countOf(stacks, view.id) }));
+      for (const { view, stack, given } of candidates) {
+        const cell = await describe(view).catch(() => null);
         if (ended || opening !== tomo.opening) return;
         if (viewportOf(view.id) !== view || stackKey(view) !== stack || countOf(stacks, view.id) !== given) { changed = true; continue; }
         if (!cell) { unread = true; continue; }
@@ -1104,6 +1120,12 @@
       show.status = statusLine(panel.body);
       panel.onClose(() => { if (show.panel !== panel) return; show.panel = show.status = show.pitchRow = null; });
     }
+    // What was only said of the image a cell held (no region found there, not zoomed) is not said of the one it is given.
+    function cellSaid(id) {
+      if (!show.wl.has(id)) badge({ id }, 'wl', null);
+      if (!show.edge) badge({ id }, 'edge', null);
+      if (!quad.marks.has(id)) badge({ id }, 'quadrant', null);
+    }
     // A cell given another image drops what was drawn for the earlier one.
     const stackKey = v => { const ids = idsOf(v); return ids.length + '|' + (ids[0] || '') + '|' + (ids[ids.length - 1] || ''); };
     function cellImage(id) {
@@ -1185,13 +1207,14 @@
     const listen = (type, fn) => { if (type) document.addEventListener(type, fn, { capture: true, signal }); };
     listen(events.IMAGE_RENDERED, lensRedraw);
     listen(events.CAMERA_MODIFIED, event => {
-      const id = event.detail?.viewportId;
-      // A camera change this module did not make (the reader's, the viewer's): an act received before it leaves that cell.
-      if (id && !applying.has(id)) stamps.set(id, ++turn.received);
-      cameraChanged(event); if (id) quadrantCamera(id); if (show.edge) drawEdges();
+      const id = event.detail?.viewportId, v = id && foreignCamera(id);
+      // A camera change this module did not make (the reader's, the viewer's): an act received before it leaves that
+      // cell, and Mirrored carries it.
+      if (v) { stamps.set(id, ++turn.received); cameraChanged(v); }
+      if (id) quadrantCamera(id); if (show.edge) drawEdges();
     });
     window.addEventListener('kin-viewer-tool-run', event => { invertRun(event).catch(error => console.error(error)); }, { signal });
-    listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) { changes.set(id, countOf(changes, id) + 1); cellImage(id); cellsChanged(); } });
+    listen(events.STACK_NEW_IMAGE, event => { tomoImage(event); const id = event.detail?.viewportId; if (id) { changes.set(id, countOf(changes, id) + 1); cellImage(id); cellSaid(id); cellsChanged(); } });
     window.addEventListener('resize', screenChanged, { signal });
     try { window.screen.addEventListener?.('change', screenChanged, { signal }); } catch (_) {}
     const subscriptions = [];
@@ -1200,7 +1223,7 @@
     subscribe(cellService, cellService?.EVENTS?.VIEWPORT_DATA_CHANGED, event => {
       tomoCell(event?.viewportId ? [event.viewportId] : null);
       const id = event?.viewportId;
-      if (id) { changes.set(id, countOf(changes, id) + 1); stacks.set(id, countOf(stacks, id) + 1); cellImage(id); }
+      if (id) { changes.set(id, countOf(changes, id) + 1); stacks.set(id, countOf(stacks, id) + 1); cellImage(id); cellSaid(id); }
       cellsChanged();
     });
     subscribe(services.cineService, services.cineService?.EVENTS?.CINE_STATE_CHANGED, cineChanged);

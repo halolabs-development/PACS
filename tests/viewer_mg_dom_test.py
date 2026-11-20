@@ -755,6 +755,18 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.menu(page, 'Tomo (DBT) Slices')
         expect(page.get_by_role('dialog', name='Tomo (DBT) Slices').locator('[role=status]')).to_have_text(
             '영상 머리글을 읽지 못해 DBT(유방 단층) 칸인지 확인하지 못했습니다. 다시 여세요.')
+        # The active cell holds three conventional images and its header comes late; while it is read, the DBT cell (the
+        # next one asked) is given other images and its own again: every cell counts as it stood when Tomo was opened.
+        page = self.open()
+        page.evaluate("""() => { const v = synViews.get('rcc'); v.ids = ['img:rcc:0', 'img:rcc:1', 'img:rcc:2']; synActive = 'rcc';
+          const before = window.fetch;
+          window.fetch = async (url, init) => { if (/\\/instances\\/1\\.2\\.1\\.2\\.1\\/metadata$/.test(String(url))) await new Promise(resolve => setTimeout(resolve, 500));
+            return before(url, init); }; }""")
+        self.menu(page, 'Tomo (DBT) Slices')
+        page.evaluate("""() => { const v = synViews.get('dbt'), own = v.ids;
+          v.ids = ['img:dbt:20', 'img:dbt:21']; synEmit('cells', 'data', { viewportId: 'dbt' });
+          v.ids = own; synEmit('cells', 'data', { viewportId: 'dbt' }); }""")
+        expect(page.get_by_role('dialog', name='Tomo (DBT) Slices').locator('[role=status]')).to_have_text('여는 동안 칸의 영상이 바뀌었습니다. 다시 여세요.')
 
     def test_08b_breast_wl_stays_with_its_way_back_through_the_frames_of_the_same_dbt(self):
         page = self.open()
@@ -1368,6 +1380,23 @@ class ViewerMgDOMTest(unittest.TestCase):
             page.wait_for_timeout(500)
             self.assertEqual(before, page.evaluate(self.STATE, ['dbt']))
             expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+        with self.subTest(name='a new size while the next step waits'):
+            # The next step still waits for a header when the cells become narrower: the new size is answered with the
+            # step each cell holds (the first), not with the one waiting. The DBT cell, on another slice by then, is left
+            # out of the next step when it comes: it shows the first step still, and no mark.
+            page = self.open()
+            self.menu(page, 'Quadrant Zoom')
+            quadrant = page.get_by_role('dialog', name='Quadrant Zoom')
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_contain_text('Q1 Upper-Outer')
+            page.evaluate("() => { synMetadataDelay = 600; synViews.get('dbt').show(5); }")
+            quadrant.get_by_role('button', name='Next Quadrant').click()
+            page.evaluate("() => { synMetadataDelay = 0; synViews.get('dbt').show(6); for (const v of synViews.values()) v.element.style.width = '120px'; }")
+            expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_contain_text('Q2 Upper-Inner')
+            page.wait_for_timeout(300)
+            expect(page.locator('#pane-dbt [data-mg-badge=quadrant]')).to_have_count(0)
+            expect(quadrant.locator('[role=status]')).to_contain_text('Current · R CC · 그 사이 영상이 바뀜')
+            self.assertClose(self.camera(page, 'dbt')['focal'], self.centre(self.quarter('dbt', 0)))
+            self.assertClose(self.camera(page, 'rcc')['focal'], self.centre(self.quarter('rcc', 1)))
 
     def test_09i_a_cell_whose_header_cannot_be_read_is_named_and_what_was_done_is_not_said_of_it(self):
         page = self.open()
@@ -1407,6 +1436,52 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_role('button', name='1:1').click()
         expect(panel.locator('[role=status]')).to_have_text('바꾸지 않은 칸 — ? · 영상 머리글을 읽지 못함')
         self.assertAlmostEqual(2, self.camera(page, 'rcc')['zoom']); self.assertAlmostEqual(1, self.camera(page, 'prcc')['zoom'])
+        # A cell that leaves a Quadrant Zoom step keeps nothing the step said of the image it held before: the prior
+        # L CC's warning goes when the cell, given such an image, is left out of the next step.
+        page = self.open()
+        self.menu(page, 'Quadrant Zoom')
+        quadrant = page.get_by_role('dialog', name='Quadrant Zoom')
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
+        page.evaluate("() => { window.synNoInstance = ['plcc']; const v = synViews.get('plcc'); v.ids = ['img:plcc:5']; synEmit('cells', 'data', { viewportId: 'plcc' }); }")
+        quadrant.get_by_role('button', name='Next Quadrant').click()
+        expect(quadrant.locator('[role=status]')).to_contain_text('확대하지 않은 칸 — ? · 영상 머리글을 읽지 못함')
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_count(0)
+
+    def test_09k_what_was_only_said_of_the_image_a_cell_held_is_not_said_of_the_one_it_is_given(self):
+        page = self.open()
+        page.evaluate(self.PIXELS, ['lcc', 'filled'])
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='Breast W/L').click()
+        expect(page.locator('#pane-lcc [data-mg-badge=wl]')).to_have_text('Breast W/L: 경계를 찾지 못했습니다')
+        panel.get_by_role('button', name='Fit Breast').click()
+        expect(page.locator('#pane-lcc [data-mg-badge=edge]')).to_have_text('경계를 찾지 못했습니다')
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_text('Quadrant: orientation unverified')
+        # Both cells are given another image: what was said of the earlier ones goes; the other cells keep their window
+        # and their step.
+        page.evaluate("() => { for (const id of ['lcc', 'plcc']) { const v = synViews.get(id); v.ids = ['img:' + id + ':5']; synEmit('cells', 'data', { viewportId: id }); } }")
+        expect(page.locator('#pane-lcc [data-mg-badge=wl]')).to_have_count(0)
+        expect(page.locator('#pane-lcc [data-mg-badge=edge]')).to_have_count(0)
+        expect(page.locator('#pane-lcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-plcc [data-mg-badge=quadrant]')).to_have_count(0)
+        expect(page.locator('#pane-rcc [data-mg-badge=wl]')).to_have_text('Breast W/L')
+        expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_contain_text('Q1 Upper-Outer')
+
+    def test_09j_a_late_notice_of_the_camera_this_module_set_is_no_change_of_the_cell(self):
+        page = self.open()
+        self.menu(page, 'Breast Display')
+        panel = page.get_by_role('dialog', name='Breast Display')
+        panel.get_by_role('button', name='Fit', exact=True).click()
+        expect(page.locator('#pane-rcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: Fit')
+        # 1:1 is pressed while a header is read (the DBT cell's next slice has its own); meanwhile the viewer announces
+        # today's R CC's camera once more, unchanged — the very camera Fit set. That is no change: 1:1 is carried out there.
+        page.evaluate("() => { synMetadataDelay = 400; synViews.get('dbt').show(1); }")
+        panel.get_by_role('button', name='1:1').click()
+        page.evaluate("() => synViews.get('rcc').element.dispatchEvent(new CustomEvent('CORNERSTONE_CAMERA_MODIFIED', { bubbles: true, detail: { viewportId: 'rcc' } }))")
+        expect(page.locator('#pane-lcc [data-mg-badge=zoom]')).to_have_text('Zoom mode: 1:1')
+        self.assertEqual([2, 2], page.evaluate("() => ['rcc', 'lcc'].map(id => synViews.get(id).getZoom())"))
+        expect(panel.locator('[role=status]')).to_have_text('')
 
     # ── What the reader asked for while the image headers were still being read ──
     HEADERS_READ = "() => !!document.querySelector('#pane-plcc [data-mg-badge=mirrored]')"
@@ -1556,6 +1631,40 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_contain_text('Current · 영상 머리글을 읽지 못함')
         expect(page.locator('#pane-dbt .kin-mg-capture')).to_have_count(0)
         expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(5)
+        # A header that could not be read is read after all, a few seconds later, when the reader's next act asks for it:
+        # the cell is linked, and the marks and the press layers are drawn again with it.
+        page = self.open()
+        page.evaluate("""() => { window.synFail = true; const before = window.fetch;
+          window.fetch = (url, init) => synFail && /\\/series\\/1\\.2\\.2\\.5\\//.test(String(url)) ? Promise.resolve(new Response('', { status: 503 })) : before(url, init); }""")
+        self.menu(page, 'Mirrored')
+        status = page.get_by_role('dialog', name='Mirrored').locator('[role=status]')
+        expect(status).to_contain_text('Prior · 영상 머리글을 읽지 못함')
+        self.menu(page, 'Magnifier')
+        expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(5)
+        page.evaluate("() => { synFail = false; }")
+        page.wait_for_timeout(3200)
+        page.evaluate("() => synViews.get('rcc').setCamera({ parallelScale: 50 })")
+        page.wait_for_function("() => Math.abs(synViews.get('prcc').getZoom() - 3) < 1e-9")
+        expect(status).to_have_text('연동하지 않는 칸 — Prior · L CC: orientation unverified')
+        expect(page.locator('.kin-mg-capture[data-mode=lens]')).to_have_count(6)
+
+    def test_04g_the_lenses_go_when_the_cell_pressed_loses_its_press_layer(self):
+        page = self.open()
+        self.menu(page, 'Mirrored')
+        page.wait_for_function("() => !!document.querySelector('#pane-plcc [data-mg-badge=mirrored]')")
+        self.menu(page, 'Magnifier')
+        expect(page.locator('#pane-rcc .kin-mg-capture[data-mode=lens]')).to_have_count(1)
+        box = page.locator('#pane-rcc .viewport-element').bounding_box()
+        page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
+        page.wait_for_function("() => document.querySelectorAll('.kin-mg-lens').length === 4")
+        # While it is held, the cell pressed is given an image the module can read no header of: its press layer goes,
+        # and the press with it — no lens stays, though no release is heard on a layer that is gone.
+        page.evaluate("() => { window.synNoInstance = ['rcc']; const v = synViews.get('rcc'); v.ids = ['img:rcc:5']; synEmit('cells', 'data', { viewportId: 'rcc' }); }")
+        expect(page.locator('#pane-rcc .kin-mg-capture')).to_have_count(0)
+        expect(page.locator('.kin-mg-lens')).to_have_count(0)
+        page.mouse.up()
+        page.wait_for_timeout(200)
+        expect(page.locator('.kin-mg-lens')).to_have_count(0)
 
     def test_03i_the_readers_way_back_to_the_very_camera_this_module_set_is_followed(self):
         page = self.open()
