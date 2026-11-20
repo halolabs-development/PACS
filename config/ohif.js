@@ -5389,7 +5389,7 @@ function kinCreateDicomPdf() {
      알림도 남기지 않는다.
    - 실패는 URL 순서의 검사 번호와 HTTP 상태로만 알린다. UID·환자 정보는 쓰지 않는다. 사유는 상태 패널의 줄과 영상 위의
      보이는 줄(#kin-viewer-open-status — 환자 탭 줄 안, 컨트롤을 덮지 않음)에 같이 쓴다. 이 문서가 권한 없음 화면을 세웠으면(환자 탭, body의
-     kin-open-refused) 그 화면의 한 줄만 남긴다: 영상 위 줄과 이 확장의 알림을 감추고 뒤늦은 실패도 보이지 않는다.
+     kin-open-refused) 그 화면의 한 줄만 남긴다: 상태 패널 줄·영상 위 줄과 이 확장의 알림을 감추고 뒤늦은 실패도 쓰지 않는다.
    - 실패한 검사는 이 문서가 사는 동안 기억한다(kinViewerFailedStudies): OHIF가 그 거절을 문서 수명 동안 다시 쓰므로,
      그 검사를 다시 보이려면 새 문서여야 한다(목록의 창 열기와 환자 탭이 이것을 읽는다).
    - 배치: 목록을 못 받은 검사는 OHIF의 검사 목록에 빈 값으로 남아 배치가 예외로 멈춘다(Route Error Boundary). 문서 수명
@@ -5428,7 +5428,8 @@ function kinCreateSeriesMetadataRecovery() {
   // 다른 확장이 함께 쓰는 #kin-viewer-layout-status 문구를 덮지 않도록 같은 상태 패널 안의 자기 줄만 쓴다.
   function say(text) {
     let node = document.querySelector('#kin-series-metadata-status');
-    if (!text) { node?.remove(); return; }
+    // As show() below: under a refusal screen its one line is all that stays, here too (this line is an alert).
+    if (!text || refusedScreen()) { node?.remove(); return; }
     if (!node) {
       const panel = document.querySelector('#kin-viewer-layout'); if (!panel) return;
       node = document.createElement('p'); node.id = 'kin-series-metadata-status'; node.setAttribute('role', 'alert');
@@ -5455,7 +5456,7 @@ function kinCreateSeriesMetadataRecovery() {
   }
   // A refusal screen stands (the patient tabs announce it): only its one line stays, whichever answer came first.
   function quiet() {
-    show('');
+    say(''); show('');
     for (const id of notices) try { services?.uiNotificationService?.hide?.(id); } catch (_) {}
     notices.clear();
   }

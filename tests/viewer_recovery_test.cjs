@@ -569,16 +569,18 @@ test('Open failures L3: once the refusal screen stands only its line shows - a p
   // The prior's failure first, then the refusal screen: its line and its notice are taken back.
   const h = recovery(); h.enter();
   h.list(PRIOR); h.lists[0].reject(http(503)); await flush(); h.fire(); h.lists[1].reject(http(503)); await flush();
-  assert.match(h.shown(), /^2번째 검사/); assert.equal(h.notices.length, 1);
+  assert.match(h.shown(), /^2번째 검사/); assert.match(h.text(), /^2번째 검사/); assert.equal(h.notices.length, 1);
   h.refuseScreen();
-  assert.equal(h.shown(), null); assert.deepEqual(h.hidden, [1]);
+  // The status panel's line (an alert) too, though the screen covers it.
+  assert.equal(h.shown(), null); assert.equal(h.text(), null); assert.deepEqual(h.hidden, [1]);
   // The refusal screen first, then the prior's failure: no line, no notice.
   const r = recovery(); r.enter(); r.refuseScreen();
   r.list(PRIOR); r.lists[0].reject(http(403)); await flush();
-  assert.equal(r.shown(), null); assert.equal(r.notices.length, 0);
+  assert.equal(r.shown(), null); assert.equal(r.text(), null); assert.equal(r.notices.length, 0);
   // A normal comparison screen keeps the prior's reason.
   const n = recovery(); n.enter(); n.list(PRIOR); n.lists[0].reject(http(403)); await flush();
   assert.match(n.shown(), /^2번째 검사의 영상 정보에 접근할 수 없습니다/);
+  assert.equal(n.text(), n.shown());
 });
 
 test('Open failures L4: a slow prior is waited for; no deadline, no time-made failure', async () => {
