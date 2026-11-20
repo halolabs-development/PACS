@@ -103,6 +103,18 @@
       appState[uid] = { ...appState[uid], qc: st.qc };
       return true;
     }
+    /**
+     * Between a list answer and the list's redraw, the surfaces that show a QC mark or a study's DICOM values are brought to
+     * that list at once: the QC cells already drawn (a row the list no longer has shows nothing), the open QC window, and
+     * the Info panel's study, QC line and Protocol & Dose.
+     */
+    function qcFollowsList() {
+      for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
+        const s = studies.find(x => x.uid === cell.dataset.qcUid);
+        cell.innerHTML = s ? qcCellHtml(s) : "";
+      }
+      syncQcWindow(); renderViewedInfo();
+    }
     /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
     function applyQcRow(s) {
       const mark = shownQc(s.uid);
@@ -1089,19 +1101,17 @@
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
           $('#err').textContent = '';
           applied = true;
+          // The list is drawn below, after the storage read answers. What shows a QC mark or a study's DICOM does not wait
+          // for that: it follows this list now (a row it no longer has, a row that cannot be read now).
+          try { qcFollowsList(); } catch (e2) { console.error(e2); }
         });
         if (!applied) return;
-        // The list is drawn as soon as it is applied, not after the storage read below answers: what the new list no longer
-        // has (a row, the QC mark of a row that cannot be read now) leaves the screen at once. The storage line paints
-        // itself when its own answer comes; this read still ends after both.
-        const storage = refreshStorage(at);
+        await refreshStorage(at);
         // 그리기 실패는 그리기 실패라고 말한다. 데이터는 이미 들어와 있고, 버리지 않는다.
-        const drawn = work.commit(at, () => {
+        return work.commit(at, () => {
           try { render(); refreshRight(); worklistStartup?.afterList(); autoPreload?.afterList(); }
           catch (e2) { console.error(e2); toast("화면 그리기 오류: " + e2.message, "err"); }
-        });
-        await storage;
-        return drawn ? true : undefined;
+        }) ? true : undefined;
       } catch (e) {
         if (!work.admits(at) || loadSequence !== listLoadSequence) return;
         // 목록 읽기가 "계정이 바뀌었다"고 했다. 이 세션에 묶어 한 번 확인해 정말 다른 계정의 답일 때만 세션 교체로 닫는다.

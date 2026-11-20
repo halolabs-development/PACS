@@ -38,13 +38,14 @@
 
     /**
      * The Info panel after the list changed (render(): a poll, a Refresh, a tab change). The block that names the study and
-     * the two blocks under it are always of the same viewed() study: when another study is viewed now than the one the
-     * block names (a Related study left the list, so the reading target is viewed again; the selected study left it), the
-     * whole panel is drawn again; otherwise only the two blocks a poll can change.
+     * the two blocks under it are always of the same viewed() study: when the study the block names has left the list (a
+     * Related study, so the reading target is viewed again; or the selected study), the whole panel is drawn again for
+     * what is viewed now; otherwise only the two blocks a poll can change. (A move to another listed study draws the whole
+     * panel itself, right after the list.)
      */
     function renderViewedInfo() {
       const s = viewed(), named = $("#clinical .clinical-scope")?.dataset.viewed ?? "";
-      if (named !== (s?.uid ?? "")) { renderClinical(); return; }
+      if (named && named !== (s?.uid ?? "") && !studies.some(x => x.uid === named)) { renderClinical(); return; }
       renderQcInfo(); renderAcquisition();
     }
 

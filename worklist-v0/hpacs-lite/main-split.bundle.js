@@ -1034,12 +1034,16 @@
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
+    function qcCellHtml(s) {
+      return s.qc === "Flagged" ? `<span class="qc-flag">Flagged</span> <span class="qc-reason" translate="no" data-kin-keep="title" title="${esc(s.qcMark.reason)}">${esc(s.qcMark.reason)}</span>`
+        : s.qc === "Unknown" ? `<span class="qc-unknown">Unknown</span>` : "";
+    }
     const CELL = {
       assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
       techNote: s => { const chip = noteChip(s.uid, s.id); return `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(chip.aria)}" title="${esc(chip.title)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${esc(chip.label)}</button>`; },
       // QC Flag: the word, and when flagged the reason (data: never translated or read as markup); the full reason is the title.
-      qc: s => s.qc === "Flagged" ? `<span class="qc-flag">Flagged</span> <span class="qc-reason" translate="no" data-kin-keep="title" title="${esc(s.qcMark.reason)}">${esc(s.qcMark.reason)}</span>`
-        : s.qc === "Unknown" ? `<span class="qc-unknown">Unknown</span>` : "",
+      // The cell names its study so it can be drawn again by itself (qcFollowsList, worklist-data.js).
+      qc: s => `<span data-qc-uid="${esc(s.uid)}">${qcCellHtml(s)}</span>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
@@ -1565,6 +1569,18 @@
       if (Object.hasOwn(kept, "qc")) return false;
       appState[uid] = { ...appState[uid], qc: st.qc };
       return true;
+    }
+    /**
+     * Between a list answer and the list's redraw, the surfaces that show a QC mark or a study's DICOM values are brought to
+     * that list at once: the QC cells already drawn (a row the list no longer has shows nothing), the open QC window, and
+     * the Info panel's study, QC line and Protocol & Dose.
+     */
+    function qcFollowsList() {
+      for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
+        const s = studies.find(x => x.uid === cell.dataset.qcUid);
+        cell.innerHTML = s ? qcCellHtml(s) : "";
+      }
+      syncQcWindow(); renderViewedInfo();
     }
     /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
     function applyQcRow(s) {
@@ -2552,19 +2568,17 @@
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
           $('#err').textContent = '';
           applied = true;
+          // The list is drawn below, after the storage read answers. What shows a QC mark or a study's DICOM does not wait
+          // for that: it follows this list now (a row it no longer has, a row that cannot be read now).
+          try { qcFollowsList(); } catch (e2) { console.error(e2); }
         });
         if (!applied) return;
-        // The list is drawn as soon as it is applied, not after the storage read below answers: what the new list no longer
-        // has (a row, the QC mark of a row that cannot be read now) leaves the screen at once. The storage line paints
-        // itself when its own answer comes; this read still ends after both.
-        const storage = refreshStorage(at);
+        await refreshStorage(at);
         // 그리기 실패는 그리기 실패라고 말한다. 데이터는 이미 들어와 있고, 버리지 않는다.
-        const drawn = work.commit(at, () => {
+        return work.commit(at, () => {
           try { render(); refreshRight(); worklistStartup?.afterList(); autoPreload?.afterList(); }
           catch (e2) { console.error(e2); toast("화면 그리기 오류: " + e2.message, "err"); }
-        });
-        await storage;
-        return drawn ? true : undefined;
+        }) ? true : undefined;
       } catch (e) {
         if (!work.admits(at) || loadSequence !== listLoadSequence) return;
         // 목록 읽기가 "계정이 바뀌었다"고 했다. 이 세션에 묶어 한 번 확인해 정말 다른 계정의 답일 때만 세션 교체로 닫는다.
@@ -3215,13 +3229,14 @@
 
     /**
      * The Info panel after the list changed (render(): a poll, a Refresh, a tab change). The block that names the study and
-     * the two blocks under it are always of the same viewed() study: when another study is viewed now than the one the
-     * block names (a Related study left the list, so the reading target is viewed again; the selected study left it), the
-     * whole panel is drawn again; otherwise only the two blocks a poll can change.
+     * the two blocks under it are always of the same viewed() study: when the study the block names has left the list (a
+     * Related study, so the reading target is viewed again; or the selected study), the whole panel is drawn again for
+     * what is viewed now; otherwise only the two blocks a poll can change. (A move to another listed study draws the whole
+     * panel itself, right after the list.)
      */
     function renderViewedInfo() {
       const s = viewed(), named = $("#clinical .clinical-scope")?.dataset.viewed ?? "";
-      if (named !== (s?.uid ?? "")) { renderClinical(); return; }
+      if (named && named !== (s?.uid ?? "") && !studies.some(x => x.uid === named)) { renderClinical(); return; }
       renderQcInfo(); renderAcquisition();
     }
 

@@ -435,6 +435,35 @@ class QcFollowsTheListDOM(QcBase):
         self.assertEqual([], self.site.patches)
         self.assertEqual([], self.errors)
 
+    def test_what_shows_the_mark_follows_a_list_answer_before_the_list_itself_is_drawn_again(self):
+        page = self.open_flagged()
+        self.open_window()
+        release = lambda: [route.fulfill(status=404, json={}) for route in self.site.held_gets.pop('/statistics')]
+        # The list's redraw waits for the storage read, which is held here: the list answer is in, the rows are not redrawn.
+        self.site.held_gets['/statistics'] = []
+        self.site.unavailable.add(auth.UID)
+        self.reread()
+        expect(self.window()).to_be_hidden()
+        expect(page.locator('#study-qc')).to_contain_text('QC Flag: Unknown')
+        expect(self.qc_cell()).to_have_text('Unknown')
+        self.assert_nothing_of_the_mark()
+        self.assertTrue(self.site.held_gets['/statistics'], 'the storage read was not held: the case shows nothing')
+        release()
+        # The same for a row the list no longer has: its cell is emptied before the row itself goes.
+        self.site.unavailable.clear()
+        page.locator('#m-refresh').click()
+        expect(self.qc_cell()).to_contain_text(self.REASON)
+        self.site.held_gets['/statistics'] = []
+        self.site.gone.add(auth.UID)
+        self.reread()
+        expect(self.qc_cell()).to_have_text('')
+        expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(1)
+        self.assert_nothing_of_the_mark()
+        self.assertTrue(self.site.held_gets['/statistics'], 'the storage read was not held: the case shows nothing')
+        release()
+        expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(0)
+        self.assertEqual([], self.errors)
+
     def test_a_404_empties_and_closes_the_window_before_the_list_is_read_again(self):
         page = self.open_flagged()
         self.open_window()
