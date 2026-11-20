@@ -131,6 +131,7 @@ REGRESSION_SUITES = {
         tests/viewer_header_focus_dom_test.py
         tests/viewer_identity_fields_dom_test.py
         tests/viewer_identity_position_dom_test.py
+        tests/viewer_study_display_dom_test.py
         tests/viewer_image_text_dom_test.py
         tests/viewer_image_text_loader_dom_test.py
         tests/viewer_images_only_dom_test.py

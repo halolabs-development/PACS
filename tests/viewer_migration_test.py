@@ -483,6 +483,50 @@ report(async()=>{
         self.sql('tech_note_before',f'''DELETE FROM "StudyState" WHERE uid='{self.uid}' ''',success=False)
         self.assertEqual(original(),before)
 
+    def test_study_referred_closes_existing_rows_and_opens_later_ones(self):
+        """Worklist Referred: every study row that exists when the migration runs is closed - a row the Gateway announce
+        created with its creation time, every other row blank - and a row created afterwards waits for its first announce.
+        A failed or repeated apply changes nothing, and a dump/restore keeps each row's two values and the new default."""
+        index=next(i for i,p in enumerate(transfer.MIGRATIONS) if '20261120120000_study_referred_at' in p)
+        db='referred_before';self.create(db)
+        for source in self.sources[:index]:self.sql(db,source)
+        gateway,direct,imported,held,later=(self.uid+'.'+str(n) for n in range(1,6))
+        created={gateway:'2026-11-01 01:02:03.456',direct:'2026-11-01 04:05:06.789',imported:'2026-11-01 07:08:09.012',held:'2026-11-01 10:11:12.345'}
+        self.sql(db,'INSERT INTO "StudyState" (uid,"institutionId",origin,"createdAt","updatedAt") VALUES '
+            f"('{gateway}','SYNTHETIC-hospital','gateway','{created[gateway]}','2026-11-02'),"
+            f"('{direct}','SYNTHETIC-hospital','dicom','{created[direct]}','2026-11-02'),"
+            f"('{imported}','SYNTHETIC-hospital','local-import','{created[imported]}','2026-11-02'),"
+            f"('{held}',NULL,'dicom','{created[held]}','2026-11-02')")
+        # Every other column of every row, before and after: the migration only adds the two.
+        def others(name=db):return self.sql(name,'''SELECT (to_jsonb(s)-'referredAt'-'referredOpen')::text FROM "StudyState" s ORDER BY uid COLLATE "C"''')
+        def referred(name=db):
+            return dict(line.split('|',1) for line in self.sql(name,'''SELECT concat_ws('|',uid,
+                COALESCE(to_char("referredAt",'YYYY-MM-DD HH24:MI:SS.MS'),'blank')||' '||CASE WHEN "referredOpen" THEN 'open' ELSE 'closed' END)
+                FROM "StudyState" ORDER BY uid COLLATE "C"''').splitlines())
+        before=others()
+        columns='''SELECT count(*) FROM information_schema.columns WHERE table_name='StudyState' AND column_name IN ('referredAt','referredOpen')'''
+        broken=self.sources[index].decode().replace('COMMIT;','SELECT * FROM synthetic_nonexistent_relation; COMMIT;')
+        self.sql(db,broken,success=False)
+        self.assertEqual(self.sql(db,columns),'0');self.assertEqual(others(),before)
+        self.sql(db,self.sources[index])
+        closed={gateway:created[gateway]+' closed',direct:'blank closed',imported:'blank closed',held:'blank closed'}
+        self.assertEqual(referred(),closed);self.assertEqual(others(),before)
+        # A row created from now on, by any path that does not name the two fields, waits for its first announce.
+        self.sql(db,f'''INSERT INTO "StudyState" (uid,"institutionId","updatedAt") VALUES ('{later}','SYNTHETIC-hospital','2026-11-21')''')
+        after={**closed,later:'blank open'}
+        self.assertEqual(referred(),after)
+        # A second apply is refused whole: it neither closes the row created since nor copies a time again.
+        self.sql(db,self.sources[index],success=False);self.assertEqual(referred(),after)
+        self.create('referred_restored')
+        with tempfile.TemporaryDirectory(prefix='kin-referred-restore-') as folder:
+            path=Path(folder)/'synthetic.dump'
+            with path.open('wb') as out:subprocess.run(['docker','exec',self.db,'pg_dump','-U','postgres','-Fc',db],stdout=out,check=True,timeout=60)
+            with path.open('rb') as incoming:subprocess.run(['docker','exec','-i',self.db,'pg_restore','-U','postgres','-d','referred_restored',
+                '--exit-on-error'],stdin=incoming,check=True,timeout=60)
+        self.assertEqual(referred('referred_restored'),after)
+        self.sql('referred_restored',f'''INSERT INTO "StudyState" (uid,"institutionId","updatedAt") VALUES ('{self.uid}.6','SYNTHETIC-hospital','2026-11-21')''')
+        self.assertEqual(referred('referred_restored')[self.uid+'.6'],'blank open')
+
     @classmethod
     def setUpClass(cls):
         cls.token=uuid.uuid4().hex
