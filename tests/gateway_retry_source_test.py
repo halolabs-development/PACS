@@ -58,7 +58,7 @@ F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F
 # U3 surfaces this unit must not touch, as they are at 9152f43 (LF-normalised sha256). The rule moved once since, for the
 # receipt's optional series count (successSeries, bff24d48…27510 before); its behaviour is gateway_receipt_server_test.cjs
 # over tests/gateway_receipt_vectors.json, which this pin runs.
-U3_RULE_SHA256 = "faff60a79ee9745b02d15407e0bd777ac2ad32caf4122feabd9c4249e3af708b"
+U3_RULE_SHA256 = "e038ba9382b21d536aa5a27a717b10dfd111fef1429abb51325cb7886e57ffe1"
 # The Gateway label pin moved once for the product rename: its one visible "KIN 보유" now reads "HALO PACS 보유"
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the

@@ -81,9 +81,12 @@ export function parseGatewayReceipt(body: unknown): GatewayReceipt {
   } else if (errorCode !== null) throw new GatewayReceiptInputError('errorCode');
   if (typeof epoch !== 'string' || !EPOCH.test(epoch)) throw new GatewayReceiptInputError('epoch');
   // Every sent image is in one series: no more series than images, and none exactly when no image was sent.
-  const series = successSeries === undefined ? null : successSeries;
-  if (series !== null && (!count(series) || series > successCount || (series === 0) !== (successCount === 0)))
-    throw new GatewayReceiptInputError('successSeries');
+  let series: number | null = null;
+  if (successSeries !== undefined && successSeries !== null) {
+    if (!count(successSeries) || successSeries > successCount || (successSeries === 0) !== (successCount === 0))
+      throw new GatewayReceiptInputError('successSeries');
+    series = successSeries;
+  }
   return { studyUid, phase, attempt, successCount, localCount, errorCode: code, epoch, seq, successSeries: series };
 }
 
