@@ -192,9 +192,25 @@ class RowMenuRightsDOM(unittest.TestCase):
         self.assertEqual([], self.errors)
         # clinician + radiologist: Physician opens Clinician Home.
         page = self.open({**auth.RAD, 'roles': ['radiologist', 'clinician']})
+        page.locator('#toolbar-more > summary').click()
+        expect(page.locator('#worklist-alerts-open')).to_be_visible()
+        expect(page.locator('#work-mode-more')).to_be_hidden()
+        page.locator('#toolbar-more > summary').click()
         page.locator('#work-mode-open').click()
         self.assertEqual([['Physician', 'false', None, ''], ['Radiologist', 'true', None, ''], ['Technician', 'false', None, '']],
                          self.mode_items())
+        with page.expect_request(lambda r: r.url.split('?')[0].endswith('/clinician.html')):
+            page.locator('#work-mode-menu [data-mode=physician]').click()
+        # Up to 1199px the bar folds the mark away: More's Mode entry opens the same menu (hidden on a wide bar, above).
+        page = self.open({**auth.RAD, 'roles': ['radiologist', 'clinician']}, width=1024, height=768)
+        expect(page.locator('.menubar .brand')).to_be_hidden()
+        page.locator('#toolbar-more > summary').click()
+        page.locator('#work-mode-more').click()
+        expect(page.locator('#work-mode-menu')).to_be_visible()
+        self.assertEqual([['Physician', 'false', None, ''], ['Radiologist', 'true', None, ''], ['Technician', 'false', None, '']],
+                         self.mode_items())
+        box = page.locator('#work-mode-menu').bounding_box()
+        self.assertTrue(box['y'] >= 0 and box['x'] >= 0 and box['x'] + box['width'] <= 1024, box)
         with page.expect_request(lambda r: r.url.split('?')[0].endswith('/clinician.html')):
             page.locator('#work-mode-menu [data-mode=physician]').click()
 

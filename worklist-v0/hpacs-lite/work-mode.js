@@ -5,7 +5,9 @@
  * from the landing rule (KinAuth.home: a clinician-only account lands on Clinician Home and its worklist is not opened)
  * and from the clinician read routes' role (clinician, or admin).
  *
- * mount({ host, current, choose, leaving, trigger }):
+ * mount({ host, current, choose, leaving, trigger, openers }):
+ *   openers          more controls that open the same menu under themselves (the worklist's More entry, where the
+ *                    narrow bar has folded the mark away);
  *   trigger          an element already on the bar that opens the menu (the worklist's HALO PACS mark: the bar has no width
  *                    for one more button); without it the menu has its own button that names the mode;
  *   current()        'physician' | 'radiologist' | 'technician' - the mode the page shows now;
@@ -46,7 +48,7 @@
     return { physician, radiologist: main, technician: main };
   }
 
-  function mount({ host, current, choose, leaving, trigger }) {
+  function mount({ host, current, choose, leaving, trigger, openers = [] }) {
     const doc = host.ownerDocument;
     const make = (tag, className) => { const node = doc.createElement(tag); if (className) node.className = className; return node; };
     const own = !trigger;
@@ -126,8 +128,12 @@
       }
     }
     function hideAsk() { pending = null; ask.hidden = true; askText.textContent = ''; }
+    let anchor = open;
     function place() {
-      const box = open.getBoundingClientRect();
+      let box = anchor.getBoundingClientRect();
+      // An opener inside a menu that has just closed has no box: the menu opens under that menu's own title.
+      const title = !box.width && anchor.closest('details') ? anchor.closest('details').querySelector('summary') : null;
+      if (title) box = title.getBoundingClientRect();
       menu.style.top = Math.round(box.bottom + 4) + 'px';
       menu.style.left = Math.round(Math.max(8, Math.min(box.left, (root.innerWidth || 0) - 300))) + 'px';
     }
@@ -146,15 +152,23 @@
       menu.hidePopover();
       choose(mode);
     }
-    open.addEventListener('click', () => {
+    function toggleFrom(from) {
+      anchor = from;
       refresh();
       hideAsk();
       place();
       menu.togglePopover();
-    });
+    }
+    open.addEventListener('click', () => toggleFrom(open));
+    for (const other of openers) {
+      if (!other) continue;
+      other.setAttribute('aria-haspopup', 'menu');
+      other.setAttribute('aria-controls', 'work-mode-menu');
+      other.addEventListener('click', () => toggleFrom(other));
+    }
     menu.addEventListener('toggle', event => {
       const shown = event.newState === 'open';
-      open.setAttribute('aria-expanded', String(shown));
+      for (const control of [open, ...openers]) if (control) control.setAttribute('aria-expanded', String(shown && control === anchor));
       if (shown) (items.get(current()) || items.get('physician')).item.focus();
       else hideAsk();
     });

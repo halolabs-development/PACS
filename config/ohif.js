@@ -3567,12 +3567,14 @@ function kinHangingProtocolDisplaySets(values) {
 function kinViewerClinicianOnly(me) {
   const roles = me && me.kind === 'member' && Array.isArray(me.roles) ? me.roles : [];
   const app = roles.filter(role => ['radiologist', 'technician', 'admin', 'clinician'].includes(role));
-  // B14: a window opened from the Physician mode (Clinician Home) reads as a clinician's for every account — a radiologist
-  // who also holds the clinician role annotates from the Radiologist screen (config/ohif/session.js keeps the mode).
-  return app.length > 0 && (app.every(role => role === 'clinician') || kinViewerPhysicianMode());
+  return app.length > 0 && app.every(role => role === 'clinician');
 }
 
-/** Whether this viewer tab was opened from the Physician mode (the last hand-off said so). */
+/**
+ * B14: whether this viewer tab was opened from the Physician mode (Clinician Home; the last hand-off said so, and
+ * config/ohif/session.js keeps it for the tab's reloads). The document's role verdict below then is read-only for every
+ * account - a radiologist who also holds the clinician role annotates from the Radiologist screen.
+ */
 function kinViewerPhysicianMode() {
   try { return sessionStorage.getItem('kin-viewer-mode') === 'physician'; } catch (_) { return false; }
 }
@@ -3611,7 +3613,7 @@ const kinViewerSession = (() => {
     const who = account(me);
     if (who !== null && owner !== null && who !== owner) return state();
     if (who !== null && owner === null) owner = who;
-    return who === null ? settle('unconfirmed') : settle(kinViewerClinicianOnly(me) ? 'read-only' : 'writer');
+    return who === null ? settle('unconfirmed') : settle(kinViewerClinicianOnly(me) || kinViewerPhysicianMode() ? 'read-only' : 'writer');
   }
   // F02: the document's own logout receivers, for its whole life (a panel's listener leaves with the panel at mode exit).
   const loggedOut = () => { settle('refused', 'logout'); };

@@ -1053,6 +1053,9 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             ("Lee^Soojin", {"fullName": "Soojin Lee"}, False),
             ("홍^길동", {"fullName": "홍길동"}, True), ("Hong^Gildong=홍^길동", {"fullName": "홍길동"}, True),
             ("홍^길동", {"fullName": "홍 길동"}, False), ("길동^홍", {"fullName": "홍길동"}, False),
+            # Both sides split the name: the parts decide (a two-syllable family name is not another split).
+            ("남궁^민", {"familyName": "남", "givenName": "궁민"}, False), ("남궁^민", {"familyName": "남궁", "givenName": "민"}, True),
+            ("남궁민", {"familyName": "남궁", "givenName": "민"}, True), ("남궁^민", {"fullName": "남궁민"}, True),
         ]
         seen = self.page.evaluate("cases => cases.map(([pn, me]) => KinPhysicianName.matches(pn, me))", [[pn, who] for pn, who, _ in cases])
         self.assertEqual([want for _, _, want in cases], seen, [(pn, want) for pn, _, want in cases])
@@ -1087,8 +1090,15 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                  "sources": [{"studyUid": uid(1), "series": {"mode": "all", "uids": []}}]}
         rows = {r["uid"]: r for r in self.rows}
         rows[uid(1)]["exam"] = {"id": "SYN-G1", "active": False, "baseUid": uid(1), "readable": True, "studies": [uid(1)],
-                                "scope": None, "reports": [{"uid": uid(1), "version": 2, "scope": scope}]}
+                                "scope": None, "reports": [{"uid": uid(1), "version": 2, "scope": scope},
+                                                           {"uid": uid(1), "version": 4, "scope": scope},
+                                                           {"uid": uid(1), "version": 5, "scope": scope}]}
         self.reports[uid(1) + "?version=2"] = final_report(1, 2, "addendum", "SYN-A v2 findings", "SYN-A v2 conclusion", "", [])
+        # v4: a stored version whose state the server answers alone (P: no version number, no text, keys null).
+        self.reports[uid(1) + "?version=4"] = open_report(1, "P")
+        # v5: a stored unsigned Save the server lets this clinician read.
+        self.reports[uid(1) + "?version=5"] = {"uid": uid(1), "report": {"final": False, "rs": "T", "action": "save", "version": 5,
+            "repDoc": "syn-rad", "confirm": None, "findings": "SYN-A v5 saved", "conclusion": "", "recommendation": ""}, "keys": [], "scope": scope}
         self.open_home()
         self.pick(1)
         expect(self.row(1).locator("td[data-report] .status")).to_have_text("Final")
@@ -1100,6 +1110,48 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                          self.page.locator("#report-target").text_content())
         expect(self.row(1).locator("td[data-report] .status")).to_have_text("Final")
         self.assertIn(uid(1) + "?version=2", self.report_requests)
+        # The P version: its state and which version it is, not a version error.
+        self.page.locator("#exam-note button", has_text="v4").click()
+        expect(self.page.locator("#report-state")).to_have_attribute("data-state", "status")
+        self.assertEqual(("Preliminary", True, KEYS_WITHHELD), (self.report()["status"], self.report()["bodyHidden"], self.report()["keysState"]))
+        self.assertEqual("저장된 판 v4을 표시합니다. 이 검사의 지금 판독 상태는 목록의 Report 칸에 있습니다.",
+                         self.page.locator("#report-target").text_content())
+        # The unsigned v5: Open Viewer asks the images of that stored version, not the exam as it is now.
+        self.page.locator("#exam-note button", has_text="v5").click()
+        expect(self.page.locator("#report-state")).to_have_attribute("data-state", "open")
+        asked = []
+        self.page.route("**/api/studies/*/exam-scope*", lambda route: (asked.append(route.request.url),
+                        route.fulfill(status=404, json={"statusCode": 404, "message": "SYN no scope"}))[1])
+        self.page.evaluate("() => { window.open = () => ({ location: { replace() {} }, focus() {} }); }")
+        self.page.locator("#open-viewer").click()
+        self.wait_until(lambda: asked, "the stored scope read")
+        self.assertIn("purpose=stored", asked[0])
+        self.assertIn("version=5", asked[0])
+
+    def test_f35_compare_opens_the_exam_the_newer_read_confirmed(self):
+        """F35 / B14 (Astra's review): the picked study's newer read is the row's state - its exam scope too. Study 2 was an
+        ordinary study in the list; its read says it is now read as one merged exam with another original. Comparing
+        study 1 with it opens that whole exam, not the two list rows alone."""
+        other = PREFIX + ".77"
+        merged = {"reportUid": uid(2), "groupId": "SYN-G2", "kind": "merge", "part": None, "active": True, "generation": "SYN-GEN-2",
+                  "sources": [{"studyUid": uid(2), "series": {"mode": "all", "uids": []}}, {"studyUid": other, "series": {"mode": "all", "uids": []}}]}
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(2)]["sourcePatientKey"] = rows[uid(1)]["sourcePatientKey"]
+        answer = copy.deepcopy(REPORTS[uid(2)])
+        answer["scope"] = merged
+        self.reports[uid(2)] = answer
+        self.open_home()
+        self.pick(2)
+        self.pick(1)
+        self.page.route("**/api/studies/*/exam-scope*", lambda route: route.fulfill(json={"scope": merged if uid(2) in route.request.url else
+            {"reportUid": uid(1), "groupId": None, "kind": "single", "part": None, "active": True, "generation": "SYN-GEN-1",
+             "sources": [{"studyUid": uid(1), "series": {"mode": "all", "uids": []}}]}}))
+        self.page.evaluate("""() => { window.synUrls = []; window.open = (url) => { if (url) window.synUrls.push(url);
+          return { set name(v) {}, get name() { return ''; }, location: { replace(u) { window.synUrls.push(u); } }, focus() {} }; }; }""")
+        self.page.locator(f'#compare-list li[data-uid="{uid(2)}"] button').click()
+        self.wait_until(lambda: self.page.evaluate("window.synUrls.length"), "the viewer address")
+        url = self.page.evaluate("window.synUrls.at(-1)")
+        self.assertIn(other, unquote(url), url)
 
     def menu(self):
         return self.page.evaluate("""() => [...document.querySelectorAll('#work-mode-menu [role=menuitemradio]')].map(b =>

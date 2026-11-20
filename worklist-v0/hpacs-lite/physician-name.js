@@ -9,8 +9,9 @@
  *
  * A representation matches when its family name equals the account's family name and its given name (with the middle
  * name) equals the account's given name, each compared after Unicode compatibility folding, lower case and dropping
- * spaces, dots, hyphens, commas and apostrophes. The boundary between the two is kept: Lee^Kim is not Kim Lee. Hangul
- * names are also compared written together (홍^길동 and 홍길동). The prefix (Dr.) is ignored; a representation with a
+ * spaces, dots, hyphens, commas and apostrophes. The boundary between the two is kept: Lee^Kim is not Kim Lee, and
+ * 남궁^민 is not 남 궁민. A Hangul name the study writes as one part (홍길동) is compared with the account's name written
+ * together. The prefix (Dr.) is ignored; a representation with a
  * suffix (Jr., III) never matches - the account cannot say which generation it is. Anything missing is not a match.
  */
 (function (root, factory) {
@@ -50,9 +51,11 @@
     if (!who) return false;
     return representations(pn).some(name => {
       if (who.joined) return HANGUL_ONLY.test(name.family + name.given) && name.family + name.given === who.joined;
-      if (name.family && name.given && name.family === who.family && name.given === who.given) return true;
-      const together = name.family + name.given, mine = who.family + who.given;
-      return HANGUL_ONLY.test(together) && HANGUL_ONLY.test(mine) && together === mine;
+      // Both sides say where the family name ends: the parts decide (남궁^민 is not 남 궁민).
+      if (name.family && name.given) return name.family === who.family && name.given === who.given;
+      // A study name written as one Hangul part (홍길동) is compared with the account's name written together.
+      const mine = who.family + who.given;
+      return HANGUL_ONLY.test(name.family) && HANGUL_ONLY.test(mine) && name.family === mine;
     });
   }
 

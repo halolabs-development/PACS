@@ -608,8 +608,10 @@
   function syncRowStatus(uid, view) {
     const row = byUid.get(uid);
     if (!row || !studies.includes(row)) return;
+    // The exam scope of that same read too: Compare and the viewer open the exam the read just confirmed.
     row.report = { ...row.report, final: view.final, rs: view.final ? 'A' : view.rs,
-      action: view.action ?? null, version: view.version ?? null, repDoc: view.repDoc ?? null, confirm: view.confirm ?? null };
+      action: view.action ?? null, version: view.version ?? null, repDoc: view.repDoc ?? null, confirm: view.confirm ?? null,
+      ...(view.scope ? { scope: view.scope } : {}) };
     const cell = document.querySelector(`#studies tr[data-uid="${CSS.escape(uid)}"] td[data-report]`);
     if (cell) paintRowStatus(cell, row);
   }
@@ -1086,6 +1088,9 @@
       let view;
       try {
         view = readReport(reportUid, body);
+        // A stored version the server answers with its state only (P: no version, no text) is still that version: the
+        // route refuses a version that is not there.
+        if (version && !view.final && view.version === null) view.version = version;
         if(version && view.version !== version)throw new Error("요청한 판독 버전과 다릅니다.");
       } catch (error) {
         setReport('failed', TEXT.reportFailed, describe(error));
@@ -1093,6 +1098,9 @@
         return;
       }
       paintReport(view);
+      // A stored version opens its own images (purpose stored, that version), signed or not; the latest read opens the
+      // exam as it is now.
+      if (version) displayedReport = { uid: reportUid, version: view.version };
       if (reportTarget) {
         // A stored version or another study's report: the panel says which one; the row keeps its own current status.
         const base = reportUid === uid ? null : byUid.get(reportUid);

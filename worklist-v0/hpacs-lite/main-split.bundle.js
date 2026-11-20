@@ -15665,7 +15665,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const host = $("#work-mode-host");
       if (!host || !window.KinWorkMode || host.firstChild) return;
       const tabs = document.querySelector(".tabs");
-      const menu = KinWorkMode.mount({ host, trigger: document.querySelector(".menubar .brand") || undefined,
+      // Up to 1199px the bar folds the mark away; More's Mode entry opens the same menu there (and closes More).
+      const more = $("#work-mode-more");
+      more?.addEventListener("click", () => { const panel = more.closest("details"); if (panel) panel.open = false; });
+      const menu = KinWorkMode.mount({ host, trigger: document.querySelector(".menubar .brand") || undefined, openers: [more],
         current: () => mode === "Technician" ? "technician" : "radiologist",
         choose: chosen => {
           if (chosen === "physician") { location.assign("clinician.html"); return; }
