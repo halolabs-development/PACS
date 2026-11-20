@@ -1431,6 +1431,18 @@ class BackupEncryptionTests(unittest.TestCase):
             with self.subTest(destination=label):
                 refused_without_a_command(destination)
                 self.assertEqual(reported(destination), "invalid")
+        # A destination that holds the configured wrapping custody (the backup writes that custody after the writers
+        # stop): refused by the same admission; the same custody beside it is accepted.
+        holding = Path(self.temp) / "holding-custody"
+        holding.mkdir(mode=0o700)
+        custody = Path(self.temp) / "custody.json"
+        custody.write_text(json.dumps({"backup_root": str(holding / "wrapping"), "files": {}}))
+        with patch.dict(os.environ, {"KIN_EMR_WRAPPING_CUSTODY": str(custody)}):
+            with self.subTest(destination="holds the wrapping custody"):
+                refused_without_a_command(holding)
+                self.assertEqual(reported(holding), "invalid")
+            custody.write_text(json.dumps({"backup_root": str(Path(self.temp) / "wrapping"), "files": {}}))
+            self.assertEqual(reported(holding), "configured")
         body = json.loads(self.config.read_text())
         broken = {
             "configuration missing": None,
@@ -1481,6 +1493,18 @@ class BackupEncryptionTests(unittest.TestCase):
         (plain / "kin.dump").unlink()
         refused(plain, "checksum mismatch: kin.dump")
         (plain / "kin.dump").write_bytes(original)
+        # Its manifest lost one component's size (that form records every size): refused; the oldest form, which
+        # records no size, is still admitted by its digests.
+        written = (plain / "manifest.json").read_bytes()
+        changed = json.loads(written)
+        changed["bytes"].pop("kin.dump")
+        ops.write_json(plain / "manifest.json", changed)
+        refused(plain, "inventory differs")
+        changed["bytes"] = {}
+        ops.write_json(plain / "manifest.json", changed)
+        with ops.opened_set(plain):
+            pass
+        (plain / "manifest.json").write_bytes(written)
         with ops.opened_set(plain) as opened:
             self.assertEqual((opened.path, opened.manifest), (plain.resolve(), opened.stored))
         # An encrypted set that lost a component file while its manifest stayed as written.

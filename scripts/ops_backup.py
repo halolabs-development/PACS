@@ -529,7 +529,8 @@ def usable_backup_key(backup_root=None, *, checkout=None, config_path=None):
 def backup_admission(output, *, checkout=None, config_path=None):
     """The one admission of a new daily set's destination and key: everything backup() refuses on their account,
     before it looks at the site. The deployment preflight reports from this same function, so `configured` there is
-    exactly "backup() gets past this point". The destination is outside the checkout; the key is usable for it
+    exactly "backup() gets past this point". The destination is outside the checkout and apart from the configured
+    wrapping custody (wrapping_custody_root); the key is usable for it
     (usable_backup_key); an existing destination is a private directory (backup_parent_owner). Returns (the resolved
     destination, the key, the owner as backup_parent_owner gives it). The site itself (its .env, its containers, the
     free space its data needs) is the backup's own later check and no part of this."""
@@ -537,6 +538,8 @@ def backup_admission(output, *, checkout=None, config_path=None):
     parent = Path(output).resolve()
     if _within(parent, root):
         raise RuntimeError("Backups containing secrets must be outside the Git repository")
+    # The wrapping custody the backup will write into is kept apart from this destination (and the repository).
+    wrapping_custody_root(parent, checkout=root)
     key = usable_backup_key(parent, checkout=root, config_path=config_path)
     owner = backup_parent_owner(parent)
     # This account can write there: into the destination, or - where it does not exist yet - into the nearest
@@ -796,25 +799,36 @@ def signing_key_count(manifest):
     return tables.get("emr_signing.private_key", 0)
 
 
-def capture_wrapping_custody(directory, manifest, container):
-    """Keep wrapping bytes outside the database backup, with an exact per-snapshot locator."""
-    has_keys = signing_key_count(manifest) > 0
+def wrapping_custody_root(backup_root, *, checkout=None):
+    """The configured wrapping custody (its resolved root and its configuration; (None, None) when none is
+    configured), its root separate from the repository and the database backup root. capture_wrapping_custody writes
+    into it, and backup_admission asks the same before any writer stops."""
     config_path = os.environ.get("KIN_EMR_WRAPPING_CUSTODY")
     # The installed release entry clears its environment before invoking held capture.
     if not config_path and WRAPPING_CUSTODY_CONFIG.is_file():
         config_path = WRAPPING_CUSTODY_CONFIG
     if not config_path:
-        if has_keys:
-            raise RuntimeError("Signing keys require wrapping custody configuration before backup")
-        return
+        return None, None
     config = json.loads(Path(config_path).read_text(encoding="utf-8"))
     root = Path(config["backup_root"])
     if not root.is_absolute():
         raise RuntimeError("Wrapping custody backup_root must be absolute")
     root = root.resolve()
-    backup_root = directory.parent.resolve()
-    if any(root == other or other in root.parents or root in other.parents for other in (ROOT.resolve(), backup_root)):
+    repository = (ROOT if checkout is None else Path(checkout)).resolve()
+    if any(root == other or other in root.parents or root in other.parents
+           for other in (repository, Path(backup_root).resolve())):
         raise RuntimeError("Wrapping custody must be separate from the repository and database backup root")
+    return root, config
+
+
+def capture_wrapping_custody(directory, manifest, container):
+    """Keep wrapping bytes outside the database backup, with an exact per-snapshot locator."""
+    has_keys = signing_key_count(manifest) > 0
+    root, config = wrapping_custody_root(directory.parent)
+    if config is None:
+        if has_keys:
+            raise RuntimeError("Signing keys require wrapping custody configuration before backup")
+        return
     sources = config["files"]
     if not isinstance(sources, dict) or not sources:
         raise RuntimeError("Wrapping custody files are required")
@@ -1220,8 +1234,10 @@ def _stored_backup(directory, manifest=None, *, config_path=None, identity=None,
             components = (*components, AUDIT_CHECKPOINT)
     # The manifest's own lists are the kind's table, for every kind: a component the manifest records anywhere (its
     # digests or its sizes) but the table no longer asks for - a held capture's shortened configuration list - is a
-    # changed set, not a smaller one. Only the oldest daily sets record no size for a component.
-    exact_sizes = record is not None or manifest.get("kind") == HELD_KIND
+    # changed set, not a smaller one. A set records the size of every component; only the oldest daily sets record
+    # none of their table's (an audit checkpoint attached to one later records its own).
+    exact_sizes = (record is not None or manifest.get("kind") == HELD_KIND
+                   or bool(set(sizes) - {AUDIT_CHECKPOINT}))
     if (set(sums) != set(components) or not set(sizes) <= set(components)
             or (exact_sizes and set(sizes) != set(components))):
         raise StoredSetError("Backup component inventory differs")
