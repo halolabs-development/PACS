@@ -149,10 +149,11 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
         return rgb[0] - rgb[1] > 60 and abs(rgb[1] - rgb[2]) < 30
 
     def length_on(self, page):
+        # Between two points of the image itself (below the overlay's bars), wherever the cell puts the image on the screen: a
+        # place on the cell's canvas may lie outside the image, which the viewer refuses to measure.
         select_image_tool(page, 'Length')
-        box = self.canvas_box(page)
-        x, y = box['x'] + box['width'] * .3, box['y'] + box['height'] * .8
-        self.drag_path(page, [(x, y), (x + 90, y)])
+        start, end = page.evaluate(ON_PAGE, [[80, 215], [176, 215]])
+        self.drag_path(page, [tuple(start), tuple(end)])
         page.wait_for_function('() => / mm/.test((%s)())' % SVG_TEXT)
 
     def bulk_requests(self, page):
@@ -382,7 +383,11 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
             self.assertFalse([r for r in rows if 'mm' in str(r[0])], rows)
             ring = next(r for r in rows if r[0] != '0 px²')
             self.assertAlmostEqual(float(ring[0].split()[0]), outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=rows)
-            self.assertEqual('px²', ring[2][ring[1].index('Unit')], ring)
+            columns, values = ring[1], ring[2]
+            self.assertIn('px²', values, ring)
+            self.assertFalse([v for v in values if 'mm' in str(v)], ring)
+            if 'Area' in columns:
+                self.assertAlmostEqual(values[columns.index('Area')], outlines[True][1], delta=max(1, outlines[True][1] * .01), msg=ring)
             # The words only: the measurement the tool keeps is as the pinned tool made it.
             kept = page.evaluate('''() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.metadata.toolName === 'PlanarFreehandROI')
                 .map(a => Object.values(a.data.cachedStats)[0]).map(s => s.unit ?? null)''')

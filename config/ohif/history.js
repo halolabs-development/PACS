@@ -348,12 +348,15 @@ function kinCreateViewerHistory() {
       return { ...m, displayText: { ...m.displayText, primary: [Math.round((found.area ?? 0) * 100) / 100 + ' px²', ...primary] },
         getReport: () => {
           // Read when the CSV is made, from the outline as it is then.
-          const report = m.getReport?.() || { columns: [], values: [] }, values = [...report.values], now = measure();
-          report.columns.forEach((column, i) => {
-            if (column === 'Area') values[i] = now?.unit === 'px' && now.area !== undefined ? now.area : 'not available';
-            if (column === 'Unit') values[i] = now?.unit === 'px' ? 'px²' : 'not available';
+          // The area column holds this area and its unit column ("Unit" or an area unit) px²; one is added when there is none.
+          const report = m.getReport?.() || { columns: [], values: [] }, columns = [...report.columns], values = [...report.values], now = measure();
+          const px = now?.unit === 'px', unit = name => /^unit$|area.*unit/i.test(String(name));
+          columns.forEach((column, i) => {
+            if (/^area$/i.test(String(column))) values[i] = px && now.area !== undefined ? now.area : 'not available';
+            else if (unit(column)) values[i] = px ? 'px²' : 'not available';
           });
-          return { ...report, values };
+          if (!columns.some(unit)) { columns.push('Area unit'); values.push(px ? 'px²' : 'not available'); }
+          return { ...report, columns, values };
         } };
     }
     function projectMeasurement(m) {
