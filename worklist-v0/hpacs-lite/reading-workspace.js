@@ -704,6 +704,9 @@ window.KinReadingWorkspace = function (app) {
     const openedFrame = frame;
     return { status: 'accepted', isOpen: () => !ended && active && frame === openedFrame && sameTarget() && shown?.viewingSet === set.opening };
   }
+  function refreshViewerDisplay() {
+    try { frame?.contentWindow?.kinViewerStudyDisplay?.refreshAll(); } catch (_) {}
+  }
   // The frame's viewer document holds a failed image read of a study it shows (series-recovery.js kinViewerFailedStudies):
   // the fixed OHIF reuses that failure for the document's life, so the same request opens a new frame.
   function frameFailed() {
@@ -718,7 +721,10 @@ window.KinReadingWorkspace = function (app) {
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
     pending = r; active = true; layout(); identify();
     if (frame && !failed && !frameFailed() && JSON.stringify(shown) === JSON.stringify(r)) {
-      frame.hidden = false; recovery.hidden = true; pending = null; identify(); return true;
+      frame.hidden = false; recovery.hidden = true; pending = null; identify();
+      // Shown again: the viewer reads again what it shows, so a Match or Unmatch since the frame opened shows.
+      refreshViewerDisplay();
+      return true;
     }
     const state = viewerState();
     if (state.busy || state.dirty && !abandon) {
@@ -816,6 +822,7 @@ window.KinReadingWorkspace = function (app) {
     document.body.classList.remove('reading-list-open'); list.setAttribute('aria-expanded', 'false');
     if (shown?.reportUid === uid && frame) {
       frame.hidden = false;
+      if (!failed && app.allowed()) refreshViewerDisplay();
       redrawRetainedViewer();
       if (!failed) { pending = null; recovery.hidden = true; kinWrite(status, loaded ? kinSay('기존 영상 작업으로 돌아왔습니다.') : kinSay('영상 작업공간을 불러오는 중…')); }
       identify(); return;

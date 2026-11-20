@@ -3,7 +3,7 @@ window.KinViewerPatientTabs = (() => {
   // controllers still enter/exit normally for each URL; no second grid exists.
   const tabs = [], listeners = new Set();
   let current = null, explicitlyClosed = false, session, services, refreshChrome, host, status, sequence = 0, pending = false, mounted = false;
-  let controller, pendingHref, restoreSubscription, dataSubscription, dataReady, mountEpoch = 0, focusAfterMount = false;
+  let controller, pendingHref, restoreSubscription, dataSubscription, displaySubscription, stopShowing, dataReady, mountEpoch = 0, focusAfterMount = false;
   // The saved view of the tab shown that is being put back now ({ tab, epoch }), until its cells are back (restore).
   let viewRestore = null;
   // A refused open (KinSessionTransport.openFailure 'denied'): no permission, or no such study for this account - one line
@@ -468,41 +468,84 @@ window.KinViewerPatientTabs = (() => {
     if (screen && !before) window.dispatchEvent(new CustomEvent('kin-viewer-open-refused'));
     renderLeave();
   }
-  async function resolve(href, signal) {
-    const exam = await window.kinPrepareExamViewer?.(href);
-    const wanted = exam?.studyUids || studies(href), found = new Map(), listed = new Set();
-    if (session.state() === 'unconfirmed') await session.decide();
-    const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
-    // Match only the open studies through the existing scoped endpoint. The
-    // source UID lookup accepts at most 100 UIDs per request.
-    for (let offset = 0; offset < wanted.length; offset += 100) {
-      const query = new URLSearchParams({ uids: wanted.slice(offset, offset + 100).join(',') });
-      const response = await fetch(endpoint + '?' + query, { credentials: 'same-origin', signal });
-      if (!response.ok) {
-        if (window.KinSessionTransport?.openFailure?.(response) === 'denied') throw refusal();
-        throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.');
+  // The tab, the rendered cells, and restored comparison cells share the opening's single read.
+  async function resolve(href, signal, extra = [], valid = () => true) {
+    const display = window.kinViewerStudyDisplay, openingRole = session.state();
+    const release = display?.hold([...new Set([...studies(href), ...extra])]);
+    try {
+      const exam = await window.kinPrepareExamViewer?.(href);
+      const wanted = exam?.studyUids || studies(href);
+      if (!valid() || openingRole !== 'unconfirmed' && openingRole !== session.state()) throw new Error('로그인 상태가 바뀌었습니다.');
+      const requested = [...new Set([...wanted, ...extra])];
+      let result;
+      if (display) result = await display.lookup(requested, { signal, role: session, valid });
+      else {
+        if (session.state() === 'unconfirmed') await session.decide();
+        const role = session.state(), studies = [], unlistedUids = new Set(wanted);
+        const current = () => valid() && !signal?.aborted && role === session.state() && !session.ended?.();
+        for (let offset = 0; offset < wanted.length; offset += 100) {
+          const endpoint = session.readOnly() ? '/api/clinician/studies' : '/api/studies';
+          const response = await fetch(endpoint + '?' + new URLSearchParams({ uids: wanted.slice(offset, offset + 100).join(',') }),
+            { credentials: 'same-origin', signal });
+          if (!current()) throw new Error('로그인 상태가 바뀌었습니다.');
+          if (!response.ok) throw new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.', { cause: response });
+          for (const row of (await response.json()).studies) {
+            studies.push(row);
+            unlistedUids.delete(row.uid);
+            for (const source of row.sourceMetadata || []) unlistedUids.delete(source.uid);
+          }
+        }
+        result = { studies, unlistedUids, current };
       }
-      const result = await response.json();
-      for (const row of result.studies || []) {
-        // A merged or split exam answers for its originals inside its row: those are listed (visible) too.
-        listed.add(row.uid); for (const source of row.sourceMetadata || []) listed.add(source?.uid);
-        if (wanted.includes(row.uid)) found.set(row.uid, row);
-        if (exam) for (const source of row.sourceMetadata || []) if (wanted.includes(source.uid))
-          found.set(source.uid,{...row,...source,sourcePatientKey:row.sourcePatientKey});
+      // Only the current exam's absence from the authorized selection refuses the open.
+      // A missing prior or an unconfirmed display identity keeps the ordinary tab failure below.
+      const opened = exam?.current?.sources?.map(source => source.studyUid).filter(uid => wanted.includes(uid));
+      if (result.current() && (opened?.length ? opened : wanted.slice(0, 1)).some(uid => result.unlistedUids.has(uid))) throw refusal();
+      const entries = result.studies;
+      const keyFor = uid => {
+        const keys = new Set(entries.filter(row => row.uid === uid || row.displaySources?.some(s => s.studyUid === uid) ||
+          row.sourceMetadata?.some(s => s.uid === uid)).map(row => row.sourcePatientKey));
+        return keys.size === 1 ? [...keys][0] : null;
+      };
+      const key = keyFor(wanted[0]), reportUid = exam?.reportUid || wanted[0];
+      if (!result.current() || !key || wanted.some(uid => keyFor(uid) !== key))
+        throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
+      const row = entries.find(item => item.uid === reportUid) || entries[0];
+      const value = display ? display.row(reportUid, key) : row;
+      const patient = patientOf(value);
+      if (!display) {
+        const born = text(row.birth).replace(/-/g, ''), date = text(row.date).replace(/-/g, '');
+        const age = /^\d{8}$/.test(born) && /^\d{8}$/.test(date) ? Math.floor((Number(date) - Number(born)) / 10000) : -1;
+        if (age >= 0) patient.age = age + 'Y';
       }
+      return { key: key + (exam ? '|' + JSON.stringify([exam.key, exam.prior && window.KinExamScope.key(exam.prior)]) : ''),
+        href: new URL(href, location.origin).href, studies: wanted, patientKey: key, ...(exam ? { exam } : {}),
+        patient, admitted: result.current };
+    } catch (error) {
+      if (error.cause && window.KinSessionTransport?.openFailure?.(error.cause) === 'denied') throw refusal();
+      throw error;
+    } finally { release?.(); }
+  }
+  const patientOf = shown => ({ name: text(shown?.name) || 'Unknown', id: text(shown?.id) || 'Unknown',
+    age: text(shown?.age) || 'Unknown', sex: text(shown?.sex) || 'Unknown' });
+  function renamed() {
+    let changed = false;
+    for (const tab of tabs) {
+      const next = patientOf(window.kinViewerStudyDisplay.row(tab.exam?.reportUid || tab.studies[0], tab.patientKey));
+      if (Object.keys(next).some(field => next[field] !== tab.patient[field])) { tab.patient = next; changed = true; }
     }
-    const rows = wanted.map(uid => found.get(uid));
-    // The account's own scoped lookup does not return the study being opened (another institution's, a cancelled request's,
-    // or no such study): refused. A missing prior alone stays the identity check below (the current study may be shown).
-    const opened = exam?.current?.sources?.map(source => source.studyUid).filter(uid => wanted.includes(uid));
-    if ((opened?.length ? opened : wanted.slice(0, 1)).some(uid => !listed.has(uid))) throw refusal();
-    if (!rows.length || rows.some(row => !row?.sourcePatientKey) || rows.some(row => row.sourcePatientKey !== rows[0].sourcePatientKey))
-      throw new Error('같은 환자의 검사인지 확인할 수 없어 현재 화면을 유지합니다.');
-    const row = rows[0], born = String(row.birth || '').replace(/-/g, ''), date = String(row.date || '').replace(/-/g, '');
-    const years = /^\d{8}$/.test(born) && /^\d{8}$/.test(date) ? Math.floor((Number(date) - Number(born)) / 10000) : -1;
-    return { key: row.sourcePatientKey+(exam ? '|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]) : ''),
-      href: new URL(href, location.origin).href, studies: wanted, ...(exam?{exam,patientKey:row.sourcePatientKey}:{}),
-      patient: { name: text(row.name) || 'Unknown', id: text(row.id) || 'Unknown', age: years >= 0 ? years + 'Y' : 'Unknown', sex: text(row.sex) || 'Unknown' } };
+    // Navigation subscribers tear down open reports. Changing a label leaves that navigation intact.
+    if (changed) render();
+  }
+  function shownStudies() {
+    if (explicitlyClosed && !current) return [];
+    const uids = [...(current?.studies || studies(location.href))];
+    for (const cell of services.viewportGridService?.getState()?.viewports?.values() || [])
+      for (const id of cell.displaySetInstanceUIDs || []) {
+        const uid = services.displaySetService?.getDisplaySetByUID?.(id)?.StudyInstanceUID;
+        if (uid) uids.push(uid);
+      }
+    return uids;
   }
   function navigate(tab, opening) {
     // The tab's new opening is taken before its scope is exposed, so every read it starts names that opening.
@@ -527,6 +570,9 @@ window.KinViewerPatientTabs = (() => {
     const url = new URL(href, location.origin);
     if (url.origin !== location.origin || url.pathname !== '/ohif/viewer') return false;
     if (current && openingKey(href) === openingKey(current.href)) {
+      // Opened again (from the list, another window): every study this viewer has asked about is read again, so a Match or
+      // Unmatch since shows - also in cells added after the opening. Another opening reads its own studies in its lookup.
+      window.kinViewerStudyDisplay?.refreshAll();
       if (current.exam) try { await window.KinViewerExamScope.resolve(href,{signal}); } catch (error) { status.textContent=error.message;return false; }
       if (!holds()) return false;
       if (pending) { sequence++; controller?.abort(); pending = false; render(); publish(); }
@@ -547,13 +593,17 @@ window.KinViewerPatientTabs = (() => {
     };
     signal?.addEventListener('abort', cancel, { once: true });
     try {
-      const resolved = await resolve(url.href, controller.signal);
+      const returning = tabs.find(tab => openingKey(tab.href) === openingKey(href));
+      const extra = returning?.view?.cells.map(cell => cell.study).filter(Boolean) || [];
+      const resolved = await resolve(url.href, controller.signal, extra, () => holds() && ticket === sequence);
+      if (returning && returning.patientKey !== resolved.patientKey) throw new Error('검사의 원본 환자가 바뀌었습니다. 현재 화면을 유지합니다.');
       if (signal?.aborted || ticket !== sequence || !holds() || !guard(true)) return false;
       // Showing these studies is a new opening of each (opening contract 2026-10-29). One this document showed before is
       // read live for it first, so its 열람 is recorded before pixels still held here can show; when it cannot be, the
       // current screen stays. A same-scope Open returned above and keeps its opening.
       const opening = await (window.KinViewerSessionBoundary?.reenter(resolved.studies, controller.signal) ?? { commit() {} });
       if (signal?.aborted || ticket !== sequence || !holds()) return false;
+      if (!resolved.admitted()) return false;
       if (!opening) { status.textContent = '영상 열람 기록을 저장하지 못해 환자를 전환하지 않았습니다. 다시 시도하세요.'; return false; }
       capture();
       let tab = tabs.find(tab => tab.key === resolved.key);
@@ -591,6 +641,8 @@ window.KinViewerPatientTabs = (() => {
   async function mount(options) {
     services = options.services; session = options.session; refreshChrome = options.refreshChrome; mounted = true; const epoch = ++mountEpoch;
     dataReady = new Set();
+    stopShowing?.(); stopShowing = window.kinViewerStudyDisplay?.showing(shownStudies);
+    displaySubscription?.(); displaySubscription = window.kinViewerStudyDisplay?.subscribe(renamed) || null;
     dataSubscription = services.cornerstoneViewportService.subscribe(
       services.cornerstoneViewportService.EVENTS.VIEWPORT_DATA_CHANGED, ({ viewportId }) => {
         dataReady.add(viewportId);
@@ -612,8 +664,9 @@ window.KinViewerPatientTabs = (() => {
       const ticket = sequence;
       retry.hidden = true;
       try {
-      const resolved = current?.href === location.href ? current : await resolve(location.href);
-      if (!mounted || epoch !== mountEpoch || ticket !== sequence) return;
+      const resolved = current?.href === location.href ? current : await resolve(location.href, undefined, shownStudies(),
+        () => mounted && epoch === mountEpoch && ticket === sequence);
+      if (!mounted || epoch !== mountEpoch || ticket !== sequence || resolved !== current && !resolved.admitted()) return;
       // Its images were refused while the lookup was on its way: the refusal stands, no tab names the study.
       if (refused) { render(); document.body.classList.remove('kin-patient-switching'); return; }
       let tab = tabs.find(tab => tab.key === resolved.key);
@@ -649,13 +702,13 @@ window.KinViewerPatientTabs = (() => {
     return true;
   }
   function dispose() {
-    mounted = false; mountEpoch++; dataSubscription?.unsubscribe(); dataSubscription = null; dataReady = null; restoreSubscription?.(); restoreSubscription = null; host?.remove(); host = null;
+    mounted = false; mountEpoch++; stopShowing?.(); stopShowing = null; displaySubscription?.(); displaySubscription = null; dataSubscription?.unsubscribe(); dataSubscription = null; dataReady = null; restoreSubscription?.(); restoreSubscription = null; host?.remove(); host = null;
     viewRestore = null;
   }
   // The shown tab's saved view (its grid, and each cell's image, frame and camera) is still to be put back or is being
   // put back: a layout change by another module meanwhile would be built over by it or would break it (viewer-display-span.js waits).
   const settling = () => !!mounted && !!current && (!!current.view && !!current.restorePending || viewRestore?.tab === current && viewRestore.epoch === mountEpoch);
-  return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, imagesRefused, moving: () => !!moving, settling,
+  return { mount, dispose, refresh, open, guard, snapshot, resolve, list, unsaved, next, imagesRefused, moving: () => !!moving, pending: () => pending, settling,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     end() { turn.take(); sequence++; controller?.abort(); tabs.length = 0; current = null; explicitlyClosed = false; focusAfterMount = false; publish(); dispose(); delete window.kinViewerOpenPatient;
       leaving = null; announced.clear(); for (const wait of [...waits.values()]) wait.finish(); link?.close(); link = null; } };
