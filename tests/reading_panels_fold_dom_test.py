@@ -574,6 +574,102 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
         for key in ('imageReport', 'clinical', 'template'):
             self.assert_folded(page, key)
 
+    # In a narrow landscape window (601-899 px wide) a selected study stacks the work area and the band was held at a
+    # 48 px strip: the open Clinical Information panel kept 42 px, its button row cut and its text out of sight. The
+    # band's panel row now takes what its open panels hold up to the band's own floor (140 px, the least a reader can
+    # drag it to), each panel scrolling past that, with the folded names and AI Report tab rows added as they are; the
+    # Clinical text keeps its first lines. Judged on what is drawn: the element at each button's centre is that button
+    # and the element at the Clinical text's first line is the Clinical text. 600 px and less, wider and portrait windows
+    # keep their band; the band's handle is not offered while the height follows the content, so a stored height stays.
+    NARROW_CLINICAL = '''() => { const band = document.querySelector('.right > .rw'), b = band.getBoundingClientRect();
+      const section = band.querySelector(':scope > .s-clinical'), sb = section.getBoundingClientRect();
+      const top = Math.max(b.top + band.clientTop, sb.top + section.clientTop);
+      const bottom = Math.min(b.top + band.clientTop + band.clientHeight, sb.top + section.clientTop + section.clientHeight, innerHeight);
+      const drawn = (r, n) => { if (!(r.height > 0 && r.top >= top - 0.5 && r.bottom <= bottom + 0.5 && r.left >= b.left - 0.5
+        && r.right <= b.right + 0.5)) return false; const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!at && (at === n || n.contains(at)); };
+      const clinical = document.getElementById('clinical');
+      const walker = document.createTreeWalker(clinical, NodeFilter.SHOW_TEXT, { acceptNode: t => t.data.trim() ? 1 : 3 });
+      const node = walker.nextNode(), range = document.createRange();
+      let line = null, words = '';
+      if (node) { const start = node.data.search(/\\S/); range.setStart(node, start); range.setEnd(node, Math.min(node.data.length, start + 1));
+        line = range.getClientRects()[0] || null; words = node.data.trim().slice(0, 40); }
+      return { band: Math.round(b.height), panel: Math.round(sb.height), scroll: [band.scrollTop, section.scrollTop], words,
+        buttons: ['#sr-open', '#tech-note-open', '#clinical-copy', '#clinical-paste', '[data-fold="clinical"]']
+          .filter(q => { const n = section.querySelector(q); return !drawn(n.getBoundingClientRect(), n); }),
+        firstLine: !!line && drawn(line, clinical) }; }'''
+
+    def open_narrow(self, width, height, init):
+        page, _ = self.open(width=width, height=height, init=init)
+        page.locator('#rows tr[data-uid]').first.click()
+        settle(page)
+        self.assertTrue(page.evaluate("() => document.body.classList.contains('workspace-narrow')"))
+        self.assert_open(page, 'clinical')
+        return page
+
+    def test_21_a_narrow_window_shows_the_open_clinical_information_buttons_and_text(self):
+        cases = (('first use', None),
+                 ('folded names and AI Report tab', plant(record(collapsed=('thumbnail', 'imageReport', 'template')))))
+        for width, height in ((840, 768), (800, 768), (860, 700)):
+            for label, init in cases:
+                with self.subTest(width=width, height=height, case=label):
+                    page, tag = self.open_narrow(width, height, init), f'{width}x{height} {label}'
+                    seen = page.evaluate(self.NARROW_CLINICAL)
+                    self.assertEqual([], seen['buttons'], f'{tag}: button row cut {seen}')
+                    self.assertTrue(seen['firstLine'], f'{tag}: Clinical text out of sight {seen}')
+                    self.assertEqual([0, 0], seen['scroll'], f'{tag}: something scrolled {seen}')
+                    self.assertLessEqual(seen['panel'], 140.5, f'{tag}: the panel row past the band floor {seen}')
+                    if init:
+                        expect(self.unfold(page, 'template')).to_be_in_viewport()
+                    expect(page.locator('#resize-top')).to_be_hidden()
+                    # The report is still reached by the stacked work area's scroll.
+                    for control in ('#findings', '#b-save'):
+                        page.locator(control).scroll_into_view_if_needed()
+                        expect(page.locator(control)).to_be_in_viewport()
+                    if (width, height) == (840, 768):
+                        page.screenshot(path=str(OUT / f'panels-narrow-clinical-{len(label)}.png'))
+                    self.doCleanups()
+
+    def test_22_a_narrow_window_with_every_panel_open_reaches_the_clinical_text_by_the_wheel(self):
+        page = self.open_narrow(840, 768, plant(record()))
+        section = page.locator('.right > .rw > .s-clinical').bounding_box()
+        seen = page.evaluate(self.NARROW_CLINICAL)
+        for _ in range(20):
+            if seen['firstLine']:
+                break
+            page.mouse.move(section['x'] + section['width'] / 2, section['y'] + min(section['height'], 140) / 2)
+            page.mouse.wheel(0, 30)
+            page.wait_for_timeout(60)
+            seen = page.evaluate(self.NARROW_CLINICAL)
+        self.assertTrue(seen['firstLine'], f'the wheel over Clinical brings its text {seen}')
+        self.assertLessEqual(seen['panel'], 140.5, seen)
+        for control in ('#findings', '#b-save'):
+            page.locator(control).scroll_into_view_if_needed()
+            expect(page.locator(control)).to_be_in_viewport()
+
+    def test_23_other_windows_keep_their_band_and_a_stored_band_height_stays(self):
+        # 600 px and less stacks the panels at their own heights (Clinical 180 px).
+        page, _ = self.open(width=600, height=500)
+        page.locator('#rows tr[data-uid]').first.click()
+        settle(page)
+        self.assertAlmostEqual(180, self.geometry(page)['clinical']['h'], delta=0.5)
+        self.doCleanups()
+        # A wider window keeps its band.
+        page, _ = self.open(width=1366, height=640)
+        page.locator('#rows tr[data-uid]').first.click()
+        settle(page)
+        self.assertAlmostEqual(215, self.geometry(page)['band']['h'], delta=0.5)
+        expect(page.locator('#resize-top')).to_be_visible()
+        self.doCleanups()
+        # A stored band height: the narrow sheet does not offer the handle and leaves the record as it was.
+        value = record()
+        value['portrait'] = {'top': 260}
+        page = self.open_narrow(840, 768, plant(value))
+        expect(page.locator('#resize-top')).to_be_hidden()
+        page.keyboard.press('ArrowDown')
+        settle(page)
+        self.assertEqual(260, self.stored(page)['portrait'].get('top'))
+
 
 if __name__ == '__main__':
     unittest.main()
