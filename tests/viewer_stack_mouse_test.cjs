@@ -250,22 +250,28 @@ test('A1 04-3: wheel steps, wraparound and Ctrl+wheel zoom act once on a stack c
   const mouse = f.window.kinViewerStackMouse, left = f.views.get('left');
   assert.deepEqual(f.views.get('mpr').element.listeners, [], 'no wheel handling on an MPR cell');
   assert.equal(left.element.listeners.filter(entry => entry.type === 'wheel' && entry.options.capture && !entry.options.passive).length, 1);
+  // A step this handler takes for the image is said as the reader's work on the images; one it leaves alone is not
+  // (a Ctrl+wheel left to the browser is the browser's own zoom).
+  let work = 0; f.window.kinViewerImageWork = () => { work++; };
   // Defaults: the native scroll and the native nothing on Ctrl+wheel.
   let event = f.wheel('left', 100);
   assert.equal(event.prevented || event.stopped, false); assert.deepEqual(f.scrolls, []);
   event = f.wheel('left', -100, { ctrlKey: true });
   assert.equal(event.stopped, false); assert.equal(left.camera.parallelScale, 100);
+  assert.equal(work, 0);
   mouse.configure({ wheelStep: 3, wrap: true, ctrlZoom: 10 });
   event = f.wheel('left', 100);
   assert.equal(event.prevented && event.stopped, true, 'taken before the native scroll, so one step runs once');
   assert.equal(left.index, 3);
+  assert.equal(work, 1);
   for (let n = 0; n < 4; n++) f.wheel('left', 100);
   assert.equal(left.index, 15, 'a step past the end stops on the last image');
   f.wheel('left', 100); assert.equal(left.index, 0, 'from the last image it goes round to the first');
   f.wheel('left', -100); assert.equal(left.index, 15, 'and backwards from the first to the last');
   f.wheel('left', 0.5); assert.equal(left.index, 15, 'a wheel event without a step does nothing');
   // Ctrl+wheel up: 10 % larger around the pointer (150,100 -> world 50,0); down undoes it.
-  f.wheel('left', -100, { ctrlKey: true });
+  work = 0; f.wheel('left', -100, { ctrlKey: true });
+  assert.equal(work, 1, 'the image was enlarged: work on the images');
   assert.ok(Math.abs(left.camera.parallelScale - 100 / 1.1) < 1e-9);
   assert.ok(Math.abs(left.camera.focalPoint[0] - 50 * (1 - 1 / 1.1)) < 1e-9);
   assert.equal(left.camera.position[0], left.camera.focalPoint[0]);

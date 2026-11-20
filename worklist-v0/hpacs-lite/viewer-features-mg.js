@@ -620,6 +620,10 @@
       if (v === tomo.v && JSON.stringify(idsOf(v)) === JSON.stringify(tomo.imageIds)) return;
       stopPlay(); restoreSlab(); tomo.v = null; tomo.sync?.();
     }
+    // For what needs a cell's own slices (a series export): whether a slab is chosen for the cell. Each slice then
+    // stands on the cell for a moment before its slab is drawn over it.
+    const slabApi = { on: id => !!tomo.panel && !!tomo.v && tomo.id === id && tomo.slab > 1 };
+    window.kinMgSlab = slabApi;
 
     // ── Breast Display ──
     const PITCH_KEY = 'kin-mg-monitor-pitch:v1';
@@ -936,6 +940,7 @@
 
     return () => {
       ended = true;
+      if (window.kinMgSlab === slabApi) delete window.kinMgSlab;
       if (carry.listener === listener) carry.listener = null;
       try { stopTabs?.(); } catch (_) {}
       stopPlay(); restoreSlab(); wlOff(); endQuadrant();

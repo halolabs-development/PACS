@@ -431,7 +431,13 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
   // Cells that already show a multi-frame image when the toolbar comes.
   try { grid?.getState?.().viewports?.forEach?.((view, id) => { assigned.set(id, setsOf(view)); opened(id); }); } catch (_) {}
 
+  // For what needs a cell to show its stack one image at a time (a series export): how the cell is laid out, if it is
+  // ('tile' or 'unfolded'), else null.
+  const api = { laid: id => { const cell = cells.get(id); return cell && laid(cell) ? cell.mode : null; } };
+  window.kinNavigate = api;
+
   return () => {
+    if (window.kinNavigate === api) delete window.kinNavigate;
     abort.abort(); resized.disconnect();
     for (const subscription of subscriptions) try { subscription?.unsubscribe?.(); } catch (_) {}
     for (const cell of [...cells.values()]) drop(cell);

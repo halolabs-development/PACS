@@ -408,6 +408,21 @@ class ServedClinicalPages(unittest.TestCase):
                          (created['state'], created['reason'], created['recipientSub']))
         self.assertEqual(len(B2_ANSWERS) + 1, len(self.site.consultations), 'one consultation per request')
         expect(self.page.locator('#co-current-state')).to_contain_text('Requested')
+        # The reason is optional, as the page says: a request with only the consultant chosen is sent with an empty reason.
+        self.page.locator('#co-new').click()
+        expect(status).to_contain_text('수신자와 의뢰 사유')
+        self.page.locator('#co-reader').select_option(h.RAD_OTHER['sub'])
+        expect(self.page.locator('#co-reason')).to_have_value('')
+        posts = len(self.site.consultation_posts)
+        self.site.consultation_answers = []
+        self.page.locator('#co-send').click()
+        expect(status).to_have_text('자문 요청을 저장했습니다. 목록은 Reload로 갱신할 수 있습니다.')
+        self.assertEqual(posts + 1, len(self.site.consultation_posts), 'one request')
+        path, blank = self.site.consultation_posts[-1]
+        self.assertEqual((f'/api/studies/{h.UID}/consultations', '', h.RAD_OTHER['sub']), (path, blank['reason'], blank['recipientSub']))
+        self.assertEqual(('Requested', ''), tuple(self.site.consultations[blank['requestId']][k] for k in ('state', 'reason')))
+        expect(self.page.locator('#co-current-state')).to_contain_text('Requested')
+        expect(self.page.locator('#co-original')).to_have_text('')
 
     def test_assignment_and_consultation_answers_marked_access_record_are_saved_with_one_line(self):
         # B6 (2026-11-05): the write committed and its saved result is sent although its 열람 record did not commit or

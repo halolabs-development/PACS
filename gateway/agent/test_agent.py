@@ -42,7 +42,7 @@ def setUpModule():
 
 def tearDownModule():
     _SETTINGS_PATCH.stop()
-RECEIPT_KEYS = {"studyUid", "phase", "attempt", "successCount", "localCount", "errorCode", "epoch", "seq"}
+RECEIPT_KEYS = {"studyUid", "phase", "attempt", "successCount", "localCount", "errorCode", "epoch", "seq", "successSeries"}
 EPOCH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -170,6 +170,10 @@ class AgentUnitTests(unittest.TestCase):
                    "/instances/one/metadata?expand": {"RemoteAET": "ACTUAL_CALLER", "Origin": "DicomProtocol"}}
         orthanc.request = lambda method, path: FakeResponse(200, answers[path])
         self.assertEqual(orthanc.instances("1.2", "study")[2][0]["source_ae"], "ACTUAL_CALLER")
+        # The series is Orthanc's ParentSeries of the instance; an answer without it is an unknown series, never a guess.
+        self.assertEqual(orthanc.instances("1.2", "study")[2][0]["series"], "")
+        answers["/studies/study/instances"][0]["ParentSeries"] = "orthanc-series-a"
+        self.assertEqual(orthanc.instances("1.2", "study")[2][0]["series"], "orthanc-series-a")
 
     def test_batches_never_exceed_budget(self):
         budget = 24 * 1024 * 1024
@@ -390,7 +394,8 @@ class ReceiptQueueTests(unittest.TestCase):
         body = queue.receipt("1.2.3")
         self.assertEqual(set(body), RECEIPT_KEYS)
         self.assertEqual(body, {"studyUid": "1.2.3", "phase": "announcing", "attempt": 0, "successCount": 0,
-                                "localCount": 12, "errorCode": None, "epoch": queue.epoch, "seq": body["seq"]})
+                                "localCount": 12, "errorCode": None, "epoch": queue.epoch, "seq": body["seq"],
+                                "successSeries": None})
         reason = "STOW HTTP 503 SYNTHETIC^PATIENT free text"
         queue.retry("1.2.3", reason, 1, 10, error_code(GatewayError("STOW HTTP 503")))
         body = queue.receipt("1.2.3")
@@ -532,6 +537,137 @@ class ReceiptDeliveryTests(unittest.TestCase):
         self.assertEqual(seqs, sorted(set(seqs)))
         self.assertTrue(all(set(b) == RECEIPT_KEYS and b["epoch"] == agent.queue.epoch for b in sent))
         self.assertEqual(agent.queue.unreported(), [])
+
+
+class SeriesOrthanc(FakeOrthanc):
+    """Instances as Orthanc lists them, each with its series (ParentSeries); `series` maps SOP -> series id."""
+
+    def __init__(self, series):
+        super().__init__(series)
+        self.series = dict(series)
+
+    def instances(self, uid, preferred_id):
+        return "orthanc-id", {"MainDicomTags": {"InstitutionName": "SYNTHETIC"}}, [
+            {"sop": sop, "id": "id-" + sop, "size": 16, "series": self.series[sop]} for sop in sorted(self.series)]
+
+
+class SeriesCountTests(unittest.TestCase):
+    """The receipt's successSeries: distinct series of the SOPs KIN accepted, counted with successCount in one seq."""
+
+    def agent(self, orthanc, stow) -> tuple[Agent, list]:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        # A 700-byte budget holds one 16-byte instance per batch, so every SOP is its own batch.
+        agent = Agent(config(str(Path(directory.name) / "queue.db"), byte_budget=700))
+        self.addCleanup(agent.queue.close)
+        sent = []
+        agent.orthanc = orthanc
+        agent.cloud = FakeCloud(lambda body: sent.append(dict(body)) or FakeResponse(200, {"result": "stored"}))
+        agent.cloud.stow = stow
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 1)
+        return agent, sent
+
+    def test_sent_series_counts_distinct_series_of_the_given_success_set_only(self):
+        held = [{"sop": "a1", "series": "A"}, {"sop": "a2", "series": "A"}, {"sop": "b1", "series": "B"},
+                {"sop": "c1", "series": "C"}]
+        self.assertEqual(agent_module.sent_series(held, {"a1", "a2", "b1", "c1"}), 3)
+        self.assertEqual(agent_module.sent_series(held, {"a1", "a2"}), 1, "one series over two SOPs is one")
+        self.assertEqual(agent_module.sent_series(held, set()), 0)
+        self.assertEqual(agent_module.sent_series(held, {"a1", "gone"}), 1, "a sent SOP no longer held is not counted")
+        unknown = held + [{"sop": "d1", "series": ""}]
+        self.assertIsNone(agent_module.sent_series(unknown, {"a1", "d1"}), "a counted SOP without a series: unknown")
+        self.assertEqual(agent_module.sent_series(unknown, {"a1", "b1"}), 2, "an unsent SOP's missing series hides nothing")
+
+    def test_a_failed_batch_retry_and_restart_count_each_series_once(self):
+        orthanc = SeriesOrthanc({"1.2.3.1": "A", "1.2.3.2": "A", "1.2.3.3": "B", "1.2.3.4": "C"})
+        failing = {"1.2.3.3"}
+
+        def stow(uid, body, content_type, source_ae, before_send):
+            before_send()
+            text = body.read()
+            return {sop for sop in failing if sop.encode() in text}
+
+        agent, sent = self.agent(orthanc, stow)
+        with patch.object(agent_module, "multipart", side_effect=self.multipart):
+            with self.assertRaises(GatewayError):
+                agent.process(agent.queue.due())
+            agent.queue.retry("1.2.3", "STOW failed SOP count=1", 1, 10, "stow_sop_failed")
+            self.assertEqual((agent.queue.receipt("1.2.3")["successCount"], agent.queue.receipt("1.2.3")["successSeries"]),
+                             (2, 1), "two SOPs of series A were accepted before the failure")
+            failing.clear()
+            agent.queue.db.execute("UPDATE studies SET next_at=0")
+            agent.process(agent.queue.due())
+            agent.flush_receipts()
+        final = agent.queue.receipt("1.2.3")
+        self.assertEqual((final["phase"], final["successCount"], final["successSeries"]), ("complete", 4, 3))
+        self.assertTrue(all(b["successSeries"] is not None and b["successSeries"] <= b["successCount"]
+                            and (b["successSeries"] == 0) == (b["successCount"] == 0) for b in sent))
+        self.assertEqual(max(b["successSeries"] for b in sent), 3, "a retry never counts a series twice")
+        # A late SOP of a new series reopens the study: the new series counts only once KIN accepted it.
+        orthanc.series["1.2.3.5"] = "D"
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 2)
+        sent.clear()
+        with patch.object(agent_module, "multipart", side_effect=self.multipart):
+            agent.process(agent.queue.due())
+        agent.flush_receipts()
+        self.assertEqual([(b["phase"], b["successCount"], b["successSeries"]) for b in sent],
+                         [("announcing", 4, 3), ("sending", 5, 4), ("complete", 5, 4)])
+
+    def test_a_receipt_keeps_the_series_of_its_seq_so_a_resend_is_the_same_body(self):
+        orthanc = SeriesOrthanc({"1.2.3.1": "A", "1.2.3.2": "B"})
+        agent, _sent = self.agent(orthanc, lambda uid, body, ct, ae, before_send: before_send() or set())
+        agent.process(agent.queue.due())
+        first = agent.queue.receipt("1.2.3")
+        agent.queue.retry("1.2.3", "STOW HTTP 503", 1, 10, "stow_http")   # retry and fail never recount
+        retry = agent.queue.receipt("1.2.3")
+        self.assertEqual((first["successSeries"], retry["successSeries"]), (2, 2))
+        self.assertEqual(agent.queue.receipt("1.2.3"), retry, "the same seq is the same body, series included")
+
+    def test_an_installed_receipt_queue_upgrades_to_an_unknown_series_and_resends_the_same_state(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = str(Path(directory.name) / "queue.db")
+        db = sqlite3.connect(path)
+        db.executescript("""
+          CREATE TABLE studies (
+            uid TEXT PRIMARY KEY, orthanc_id TEXT NOT NULL, phase TEXT NOT NULL DEFAULT 'pending',
+            batch_index INTEGER NOT NULL DEFAULT 0, successful_sops TEXT NOT NULL DEFAULT '[]',
+            attempt INTEGER NOT NULL DEFAULT 0, next_at REAL NOT NULL DEFAULT 0, last_error TEXT,
+            updated_at REAL NOT NULL, seq INTEGER NOT NULL DEFAULT 0, local_count INTEGER,
+            success_count INTEGER NOT NULL DEFAULT 0, error_code TEXT, announced INTEGER NOT NULL DEFAULT 0,
+            reported_seq INTEGER NOT NULL DEFAULT 0);
+          CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          INSERT INTO studies(uid, orthanc_id, phase, successful_sops, attempt, next_at, updated_at, seq, local_count,
+                              success_count, error_code, announced, reported_seq)
+            VALUES ('1.2.3', 'orthanc-id', 'retry', '["1.2.3.1"]', 1, 9e12, 1, 5, 3, 1, 'stow_http', 1, 5);
+          INSERT INTO meta(key, value) VALUES ('epoch', '0a1b2c3d-0000-4000-8000-00000000000a');
+        """)
+        db.commit()
+        db.close()
+        queue = Queue(path)
+        self.addCleanup(queue.close)
+        body = queue.receipt("1.2.3")
+        self.assertEqual(body, {"studyUid": "1.2.3", "phase": "retry", "attempt": 1, "successCount": 1, "localCount": 3,
+                                "errorCode": "stow_http", "epoch": "0a1b2c3d-0000-4000-8000-00000000000a", "seq": 5,
+                                "successSeries": None})
+        self.assertEqual(queue.unreported(), [], "the upgrade allocates no new seq and owes nothing")
+
+    def test_a_series_id_orthanc_does_not_give_is_unknown_and_never_changes_the_transfer(self):
+        agent, sent = self.agent(FakeOrthanc(["1.2.3.1", "1.2.3.2"]), lambda uid, body, ct, ae, before_send: before_send() or set())
+        agent.process(agent.queue.due())
+        agent.flush_receipts()
+        self.assertEqual([(b["phase"], b["successCount"], b["successSeries"]) for b in sent][-1], ("complete", 2, None))
+
+    @staticmethod
+    def multipart(batch, copy_file, copy_lossless=None):
+        """The real multipart with each part's SOP UID in its bytes, so the fake STOW can name a failed SOP."""
+        def named(instance_id, sink):   # 16 bytes, the size the fake Orthanc lists
+            sink.write(instance_id.removeprefix("id-").encode().ljust(16, b" "))
+            return 16
+        return REAL_MULTIPART(batch, named, copy_lossless)
+
+
+REAL_MULTIPART = multipart
 
 
 UID = "1.2.3"
@@ -1505,6 +1641,32 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(set(agent.orthanc.held), original, "every local SOP remains after both deliveries")
         self.assertIn(("modality", "kin-route-" + PEER), agent.orthanc.calls)
         self.assertEqual(agent.cloud.stowed, [self.UID], "the peer's delivery sent nothing more to KIN")
+
+    def test_a_peer_success_is_never_counted_as_a_kin_series_and_the_copies_stay(self):
+        agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))
+        for index, sop in enumerate(sorted(agent.orthanc.held)):
+            agent.orthanc.held[sop]["series"] = "series-%d" % index
+        original = set(agent.orthanc.held)
+
+        def refused(*args):
+            args[-1]()
+            raise GatewayError("STOW HTTP 503")
+
+        agent.cloud.stow = refused
+        with self.assertRaises(GatewayError):
+            self.kin(agent)
+        agent.queue.retry(self.UID, "STOW HTTP 503", 1, 10, "stow_http")
+        self.forward(agent)
+        self.assertEqual(self.forward_row(agent)["phase"], "complete")
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["successCount"], receipt["successSeries"]), ("retry", 0, 0),
+                         "the peer holding both series is not KIN holding them")
+        self.assertEqual(set(agent.orthanc.held), original, "KIN is still owed, so every local copy stays")
+        agent.cloud.stow = RouteCloud().stow
+        agent.queue.db.execute("UPDATE studies SET next_at=0")
+        self.kin(agent)
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["successCount"], receipt["successSeries"]), ("complete", 2, 2))
 
     def test_a_partial_store_answer_is_not_success(self):
         agent = self.agent(settings_answer([rule("CT", None, "kin", PEER)]))

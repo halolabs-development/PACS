@@ -43,6 +43,7 @@ on:
           - report-window
           - display-set-presets
           - monitor-hanging
+          - two-monitor-layout
           - image-report
           - auto-save-view
           - mark-autosave
@@ -138,6 +139,7 @@ jobs:
             tests/e2e/artifacts/report-window-ci/
             tests/e2e/artifacts/display-set-presets-ci/
             tests/e2e/artifacts/monitor-hanging-ci/
+            tests/e2e/artifacts/two-monitor-layout-ci/
             tests/e2e/artifacts/image-report-ci/
             tests/e2e/artifacts/auto-save-view-ci/
             tests/e2e/artifacts/mark-autosave-ci/
