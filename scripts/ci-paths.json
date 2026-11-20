@@ -2264,6 +2264,7 @@
       "tests/viewer_cell_text_dom_test.py",
       "tests/viewer_cell_tools_dom_test.py",
       "tests/viewer_panels_dom_test.py",
+      "tests/viewer_dock_autohide_dom_test.py",
       "tests/viewer_display_dom_test.py",
       "tests/viewer_display_set_presets_dom_test.py",
       "tests/viewer_auto_save_view_dom_test.py",
