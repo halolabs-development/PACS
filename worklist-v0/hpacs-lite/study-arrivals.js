@@ -182,11 +182,12 @@
     // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
     // The title says why it did not compare exactly when that answer did not (count unknown, or read before this report),
     // so it never contradicts a missing-images line or a count shown beside it.
-    const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending;
+    // Comparable here is the images' answer: a series answer alone never stands in for a count that was not compared.
+    const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending&&gap.held!==null;
     if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
     return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
-      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending
+      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending&&gap.held!==null
         ?' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
 
@@ -221,20 +222,40 @@
    */
   // readSince is when the earliest row of that observation was read (its first page); without it, its observedAt.
   // While an observation fails, the answer is the last successful one's, said as such (stale), never a new answer.
+  /*
+   * Series, beside the images and apart from them: the report's successSeries is how many distinct series the images it
+   * says were sent belong to (the Gateway counts them; an older Gateway does not, and that is unknown, never 0). It is
+   * compared with the series count the same observation read for that study (0 for an own study it did not see).
+   * Each axis is answered only when both of its numbers are known; one short axis is missing images whatever the other
+   * says, and an axis that is not known is never shown as a number or as "fine". The time rule (pending) is the same.
+   */
+  const SERIES_TITLE='Gateway가 보낸 영상이 속한 series보다 HALO PACS가 가진 series가 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.';
+  const reportedSeries=receipt=>count(receipt.successSeries)&&receipt.successSeries<=receipt.successCount
+    &&(receipt.successSeries===0)===(receipt.successCount===0)?receipt.successSeries:null;
   function receiptGap(b,receipt,format=localTime){
     if(!readableReceipt(receipt)||!b||typeof b!=='object')return null;
     const stale=b.state==='observation_unavailable',seen=stale?b.last:b;
     if(!seen||typeof seen!=='object')return null;
-    const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;
-    const since=b.readSince??seen.observedAt,sent=receipt.successCount;
-    if(!count(held)||!validTime(since))return null;
+    const absent=b.state==='not_observed'||stale&&seen.notObserved===true;
+    const kept=b.state==='observed'||stale;
+    const held=absent?0:kept?seen.count:null,heldSeries=absent?0:kept?seen.series:null;
+    const since=b.readSince??seen.observedAt,sent=receipt.successCount,expected=reportedSeries(receipt);
+    const images=count(held),series=expected!==null&&count(heldSeries);
+    if(!images&&!series||!validTime(since))return null;
+    const base={held:images?held:null,sent,stale};
     // A known count read before this report: not compared yet (the next observation answers), never "missing" or "fine".
-    if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};
-    if(held>=sent)return {missing:false,held,sent,stale};
-    return {missing:true,held,sent,stale,
-      text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): Gateway 전송 {n1}건 중 HALO PACS 보유 {n2}건',format(seen.observedAt),sent,held)
-        :kinSay('Needs Check · 영상 누락: Gateway 전송 {n0}건 중 HALO PACS 보유 {n1}건',sent,held),
-      title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
+    if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))
+      return {missing:null,pending:true,...base,series:series?{held:heldSeries,sent:expected,missing:null}:null};
+    const imagesShort=images&&held<sent,seriesShort=series&&heldSeries<expected;
+    const answer={missing:imagesShort||seriesShort,...base,series:series?{held:heldSeries,sent:expected,missing:seriesShort}:null};
+    if(!answer.missing)return answer;
+    const lead=imagesShort?(stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): Gateway 전송 {n1}건 중 HALO PACS 보유 {n2}건',format(seen.observedAt),sent,held)
+        :kinSay('Needs Check · 영상 누락: Gateway 전송 {n0}건 중 HALO PACS 보유 {n1}건',sent,held))
+      :stale?kinSay('Needs Check · series 누락(관측 불가 · 마지막 관측 {0} 기준)',format(seen.observedAt)):kinSay('Needs Check · series 누락');
+    // Expected N of them held M; a count above the expected one is said as the two counts, never as "M of N".
+    const part=!series?null:heldSeries<=expected?kinSay('기대 series {n0} 가운데 {n1}',expected,heldSeries):kinSay('기대 series {n0} · 보유 {n1}',expected,heldSeries);
+    return {...answer,imagesMissing:imagesShort,text:part?kinSay('{t0} · {t1}',{t:lead},{t:part}):lead,
+      title:imagesShort?'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.':SERIES_TITLE};
   }
 
   // Missing images of one original: receiptGap of what the observation model holds for that study UID (its last observed
@@ -250,12 +271,18 @@
    * Only originals the caller can read are given here: an exam whose originals cannot all be read is said elsewhere.
    */
   function examGap(model,uids,format=localTime){
-    const originals=[...new Set(uids)],short=originals.filter(uid=>originalGap(model,uid,format)?.missing===true);
-    if(!short.length)return null;
-    const stale=model?.available===false;
-    return {missing:true,stale,originals:originals.length,short:short.length,
-      text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): 원본 검사 {n1}건 중 {n2}건',format(model.observedAt),originals.length,short.length)
-        :kinSay('Needs Check · 영상 누락: 원본 검사 {n0}건 중 {n1}건',originals.length,short.length),
+    const originals=[...new Set(uids)],gaps=originals.map(uid=>originalGap(model,uid,format)).filter(gap=>gap?.missing===true);
+    if(!gaps.length)return null;
+    const stale=model?.available===false,short=gaps.length;
+    // An original short of series only is said as such: the exam's words name images alone only when every short
+    // original holds fewer images.
+    if(gaps.some(gap=>!gap.imagesMissing))return {missing:true,stale,originals:originals.length,short,
+      text:stale?kinSay('Needs Check · 영상·series 누락(관측 불가 · 마지막 관측 {0} 기준): 원본 검사 {n1}건 중 {n2}건',format(model.observedAt),originals.length,short)
+        :kinSay('Needs Check · 영상·series 누락: 원본 검사 {n0}건 중 {n1}건',originals.length,short),
+      title:'Gateway가 보냈다고 보고한 영상이나 그 series보다 HALO PACS가 가진 것이 적은 원본 검사가 있습니다. 원본마다의 수는 Study Panel ▸ Info의 원본 검사 줄에 있습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
+    return {missing:true,stale,originals:originals.length,short,
+      text:stale?kinSay('Needs Check · 영상 누락(관측 불가 · 마지막 관측 {0} 기준): 원본 검사 {n1}건 중 {n2}건',format(model.observedAt),originals.length,short)
+        :kinSay('Needs Check · 영상 누락: 원본 검사 {n0}건 중 {n1}건',originals.length,short),
       title:'Gateway가 보냈다고 보고한 영상보다 HALO PACS가 가진 영상이 적은 원본 검사가 있습니다. 원본마다의 수는 Study Panel ▸ Info의 원본 검사 줄에 있습니다. 다음 관측에서 채워지면 이 표시는 사라집니다. 재시도 요청이나 전송 성공과는 다른 표시입니다.'};
   }
 

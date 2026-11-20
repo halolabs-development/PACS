@@ -631,5 +631,185 @@ class ReadingBoxesDOM(unittest.TestCase):
         expect(page.locator('#box-arrange-status')).to_have_text('Swapped. Remembered in this browser.')
         self.assertEqual([], page.evaluate(SWAP_CLASSES))
 
+    # Each shown cover's name (its corners and centre are the cover itself, not the bar; it lies inside the cover's
+    # on-screen part) and each bar button (its centre is itself, all of it inside the window). A cover thinner than its
+    # name (a box scrolled almost out of view) has no room for it and is only counted.
+    NAMES_CLEAR = '''() => {
+      const bad = [], hit = (x, y) => document.elementFromPoint(x, y);
+      let thin = 0;
+      const covers = [...document.querySelectorAll('#box-arrange-covers .kin-box-cover')];
+      for (const cover of covers) {
+        const n = cover.querySelector('.kin-box-name').getBoundingClientRect(), c = cover.getBoundingClientRect();
+        if (c.height < n.height + 4 || c.width < n.width + 4) { thin++; continue; }
+        const points = [[n.left + 1, n.top + 1], [n.right - 1, n.top + 1], [n.left + 1, n.bottom - 1], [n.right - 1, n.bottom - 1],
+          [(n.left + n.right) / 2, (n.top + n.bottom) / 2]];
+        const under = points.filter(([x, y]) => !cover.contains(hit(x, y))).length;
+        const inside = n.width > 0 && n.left >= c.left - 0.5 && n.right <= c.right + 0.5 && n.top >= c.top - 0.5 && n.bottom <= c.bottom + 0.5;
+        if (under || !inside) bad.push({ box: cover.dataset.box, under, inside, name: [n.left, n.top, n.right, n.bottom].map(Math.round),
+          cover: [c.left, c.top, c.right, c.bottom].map(Math.round), pad: cover.style.padding });
+      }
+      for (const b of document.querySelectorAll('#box-arrange-bar button')) {
+        const r = b.getBoundingClientRect();
+        if (hit((r.left + r.right) / 2, (r.top + r.bottom) / 2) !== b || r.left < 0 || r.top < 0 || r.right > innerWidth || r.bottom > innerHeight)
+          bad.push({ button: b.textContent, at: [r.left, r.top, r.right, r.bottom].map(Math.round) });
+      }
+      return { names: covers.map(c => c.getAttribute('aria-label')).sort(), thin, bad }; }'''
+
+    FIVE = ('Worklist', 'Related Exam', 'Clinical Information', 'Related Report', 'Report Editor')
+
+    def assert_names_clear(self, page, label, names=FIVE):
+        settle(page)
+        found = page.evaluate(self.NAMES_CLEAR)
+        # Every box that should have a cover has one (a thin one is only spared the name check).
+        self.assertEqual(sorted(names), found['names'], label)
+        self.assertEqual([], found['bad'], label)
+
+    def set_swaps(self, bar, swaps):
+        """The bar's own buttons, so the status sentence (a longer bar) is showing when the names are checked."""
+        for key in ('columns', 'list', 'side', 'report'):
+            button = bar.locator(f'[data-box-swap="{key}"]')
+            if (button.get_attribute('aria-pressed') == 'true') != (key in swaps):
+                button.click()
+                expect(button).to_have_attribute('aria-pressed', 'true' if key in swaps else 'false')
+
+    def test_22_the_bar_never_hides_a_box_name(self):
+        """Arrange Boxes: the bar lies over the top of the page, but every box's name on its cover is still seen (what a
+        drop moves is always named) — default and swapped, at the usual and a low window, both screen languages, and
+        with the Clinical Information band folded."""
+        arrangements = ([], ['columns'], ['list'], ['side'], ['report'], ['side', 'report'], ['columns', 'list', 'report'],
+                        ['columns', 'side'])
+        for width, height in ((1920, 1080), (1366, 768), (1366, 640), (1280, 600), (1024, 768), (768, 1024)):
+            page, _, _ = self.open(width=width, height=height)
+            page.locator('#rows tr[data-uid] td').first.click()
+            settle(page)
+            before = (self.boxes(page), self.stored(page))
+            bar = self.arrange(page)
+            self.assert_names_clear(page, f'{width}x{height} opened')
+            for swaps in arrangements:
+                with self.subTest(width=width, height=height, swaps=swaps):
+                    self.set_swaps(bar, swaps)
+                    # The stacked (portrait) page puts Related Report below the window when it goes under the editor
+                    # and Clinical Information stays above them.
+                    below = width < height and 'report' in swaps and 'side' not in swaps
+                    self.assert_names_clear(page, f'{width}x{height} {swaps}',
+                                            names=tuple(n for n in self.FIVE if not (below and n == 'Related Report')))
+            # A picked box says so in the bar's status line; the names stay clear.
+            self.cover(page, 'Worklist').focus()
+            page.keyboard.press('Enter')
+            expect(page.locator('#box-arrange-status')).not_to_have_text('')
+            self.assert_names_clear(page, f'{width}x{height} picked')
+            page.screenshot(path=str(OUT / f'names-clear-{width}x{height}.png'))
+            page.keyboard.press('Escape')
+            bar.locator('#box-arrange-default').click()
+            bar.locator('#box-arrange-done').click()
+            expect(bar).to_be_hidden()
+            # Opening and closing leaves the boxes' sizes as they were (the swaps went home through Default).
+            self.assertEqual(before[0], self.boxes(page), f'{width}x{height}')
+            after = self.stored(page) or {}
+            for axis in ('landscape', 'portrait'):
+                self.assertEqual((before[1] or {}).get(axis) or {}, after.get(axis) or {}, axis)
+            self.assertEqual([], (after.get('workspace') or {}).get('boxSwaps') or [])
+
+        # English captions (a different bar width and wrap) at the low window.
+        from worklist_language_dom_test import LanguageSite
+        page, _, _ = self.open(LanguageSite(), width=1366, height=640)
+        page.locator('#language-open').click()
+        dialog = page.locator('#language-dialog')
+        dialog.locator('#language-en').check()
+        for scope in ('worklist', 'reading'):
+            dialog.locator('#language-scope-' + scope).check()
+        dialog.locator('#language-apply').click()
+        expect(dialog).to_be_hidden()
+        bar = self.arrange_any_language(page)
+        for swaps in ([], ['list'], ['side'], ['columns']):
+            with self.subTest(language='en', swaps=swaps):
+                self.set_swaps(bar, swaps)
+                self.assert_names_clear(page, f'en {swaps}')
+
+        # The Clinical Information band folded to its names row (a short box at the top of the report column).
+        from reading_panels_fold_dom_test import plant, record
+        for swaps in ((), ('columns',), ('side',)):
+            with self.subTest(folded='clinical', swaps=swaps):
+                page, _, _ = self.open(width=1366, height=768, init=plant(record(collapsed=('clinical',), swaps=swaps)))
+                page.locator('#rows tr[data-uid] td').first.click()
+                self.arrange(page)
+                expect(self.cover(page, 'Clinical Information')).to_be_visible()
+                self.assert_names_clear(page, f'folded {swaps}')
+
+    def test_23_names_stay_clear_in_technician_under_a_drag_and_with_the_study_panel(self):
+        """Technician (Order List takes the editor's place, and can be at the top), a drag held over a box (its cover
+        then says what the drop would do), and the Study Panel drawer: it steps aside while arranging and is back on
+        Done; the reader opening it while arranging ends arranging."""
+        page, _, _ = self.open(width=1366, height=768)
+        page.locator('.tabs > div[data-tab="Technician"]').click()
+        expect(page.locator('.tabs > div[data-tab="Technician"]')).to_have_class('on')
+        bar = self.arrange(page)
+        for swaps in ([], ['side', 'report'], ['columns', 'list']):
+            with self.subTest(technician=swaps):
+                self.set_swaps(bar, swaps)
+                expect(self.cover(page, 'Order List')).to_be_visible()
+                self.assert_names_clear(page, f'technician {swaps}', names=self.FIVE[:4] + ('Order List',))
+        self.set_swaps(bar, [])
+        # Held over the box at the top of the report column, before the release.
+        page.mouse.move(*self.point(page, 'Worklist'))
+        page.mouse.down()
+        page.mouse.move(*self.point(page, 'Clinical Information'), steps=8)
+        expect(self.cover(page, 'Clinical Information')).to_contain_text('놓으면')
+        tech = self.FIVE[:4] + ('Order List',)
+        self.assert_names_clear(page, 'held over Clinical Information', names=tech)
+        page.mouse.move(*self.point(page, 'Related Exam'), steps=4)
+        self.assert_names_clear(page, 'held over Related Exam', names=tech)
+        page.mouse.up()
+        settle(page)
+        self.set_swaps(bar, [])
+        bar.locator('#box-arrange-done').click()
+        expect(bar).to_be_hidden()
+
+        # 800x600 with the Study Panel open: while arranging it steps aside and every name is seen; Done brings it back
+        # on the same tab.
+        page, _, _ = self.open(width=800, height=600)
+        page.locator('#rows tr[data-uid] td').first.click()
+        page.keyboard.press('Control+Alt+5')
+        drawer = page.get_by_role('complementary', name='Study Panel', exact=True)
+        expect(drawer).to_be_visible()
+        settle(page)
+        tab = page.evaluate("() => document.querySelector('#study-panel-host [role=tab][aria-selected=true]')?.textContent")
+        place = drawer.bounding_box()
+        bar = self.arrange(page)
+        expect(drawer).to_be_hidden()
+        self.assert_names_clear(page, '800x600 study panel', names=('Worklist', 'Related Exam', 'Related Report'))
+        bar.locator('#box-arrange-done').click()
+        expect(bar).to_be_hidden()
+        expect(drawer).to_be_visible()
+        self.assertEqual(place, drawer.bounding_box())
+        self.assertEqual(tab, page.evaluate("() => document.querySelector('#study-panel-host [role=tab][aria-selected=true]')?.textContent"))
+        # The reader opens the drawer while arranging (View > Study Panel): arranging ends and the drawer shows.
+        def toggle_drawer():
+            page.locator('#toolbar-view > summary').click()
+            page.get_by_role('button', name='Study Panel', exact=True).click()
+        toggle_drawer()
+        expect(drawer).to_be_hidden()
+        bar = self.arrange(page)
+        toggle_drawer()
+        expect(bar).to_be_hidden()
+        expect(drawer).to_be_visible()
+        expect(page.locator('#box-arrange-covers .kin-box-cover')).to_have_count(0)
+        # A drawer tab asked for by its shortcut while arranging (the drawer open and stepped aside): arranging ends and
+        # the drawer shows that tab.
+        bar = self.arrange(page)
+        expect(drawer).to_be_hidden()
+        page.keyboard.press('Control+Alt+T')
+        expect(bar).to_be_hidden()
+        expect(drawer).to_be_visible()
+        expect(page.locator('#study-panel-host [role=tab][aria-selected=true]')).to_contain_text('Templates')
+
+    def arrange_any_language(self, page):
+        page.locator('#m-config').click()
+        expect(page.locator('#panel-settings-dialog')).to_be_visible()
+        page.locator('#box-arrange-open').click()
+        bar = page.locator('#box-arrange-bar')
+        expect(bar).to_be_visible()
+        return bar
+
 if __name__ == '__main__':
     unittest.main()

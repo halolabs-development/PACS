@@ -116,6 +116,20 @@ test('D online exact versions, B2 result recovery and current access on PostgreS
     assert.deepEqual(reread.bodies.map(v => v.text), [first.body.reason, cancel.body.note]);
     assert.equal(JSON.stringify(reread.signatures[0].signature.envelope), originalEnvelope);
 
+    // A request without a reason (optional on the screen and in the service) opens with no text: nothing is signed, the
+    // access record is its writing, and the same request replays without a second version.
+    const blank = create(''), beforeBlankSign = signCalls, beforeBlank = await count('emr_clinical.online_version');
+    const blankSaved = await runtime.write({}, blank);
+    assert.deepEqual([blankSaved.status, blankSaved.receipt.state, blankSaved.receipt.revision], ['committed', 'Requested', 1]);
+    const blankReplay = await runtime.write({}, blank);
+    assert.equal(blankReplay.status, 'replayed');
+    assert.deepEqual(blankReplay.receipt, blankSaved.receipt);
+    assert.equal(signCalls, beforeBlankSign);
+    assert.equal(await count('emr_clinical.online_version'), beforeBlank + 1);
+    const blankHistory = await readOnlineClinicalRecord(parts, {}, 'consultation', blank.recordId, 'history');
+    assert.deepEqual([blankHistory.bodies.map(v => v.text), blankHistory.signatures.map(v => v.signature)], [[null], [null]]);
+    await assert.rejects(runtime.write({}, { ...blank, body: { ...blank.body, reason: 'synthetic reason added later' } }), /RequestIdReused/);
+
     const beforeVersions = await count('emr_clinical.online_version'), beforeProjections = await count('public.d_online_projection');
     projectFailure = true;
     await assert.rejects(runtime.write({}, create()), /SyntheticProjectionFailure/);
