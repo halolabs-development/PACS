@@ -226,7 +226,9 @@
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
-              draftEpoch:s.state?.draftEpoch??null, sourceMetadata:(s.sourceMetadata||[]).map(m=>({...m,sourceAcc:m.acc,acc:m.orderAccession||m.acc,date:fmtD(m.date),reqDate:localStamp(m.reqDate)}))});
+              draftEpoch:s.state?.draftEpoch??null, sourceMetadata:sourceMetadataView(s.sourceMetadata),
+              // Referred is fixed once the study exists; written here by the same rule as fromApi all the same.
+              ...referredFields(s)});
             if (existing) for (const field of ['count', 'series'])
               if (s[field] === null || Number.isSafeInteger(s[field]) && s[field] >= 0) existing[field] = s[field];
             updateNoteSummary(uid, s.techNote);

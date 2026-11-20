@@ -1219,6 +1219,46 @@ class ReportFlowPage(unittest.TestCase):
         self.wait(lambda: self.page.evaluate("() => { const f = document.querySelector('#reading-frame'); "
                                              "return !!f && !f.hidden && !f.inert; }"), "the usable viewer frame")
 
+    def test_return_to_kept_viewer_refreshes_current_and_added_prior(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.enter_reading_with_a_bound_viewer()
+        frame = self.page.locator("#reading-frame").element_handle().content_frame()
+        order = ["ORDER"]
+        reads = []
+
+        def display_response(route):
+            uids = route.request.url.split("uids=")[1].replace("%2C", ",").split(",")
+            reads.append(uids)
+            rows = []
+            for uid in uids:
+                values = {"id": order[0], "name": order[0], "over": ["id", "name"], "age": ""}
+                rows.append({"uid": uid, "sourcePatientKey": "institution|SOURCE", "state": {"ov": {"id": order[0]}},
+                             "displaySources": [{"sourcePatientKey": "institution|SOURCE", "studyUid": uid,
+                                                 "series": {"mode": "all", "uids": []}, "values": values}]})
+            route.fulfill(json={"studies": rows})
+
+        frame.page.route("**/api/studies?uids=*", display_response)
+        frame.add_script_tag(path=str(ROOT / "config/ohif/study-display.js"))
+        frame.evaluate("""([current, prior]) => {
+          window.kinViewerJobWorkspaceState = () => ({busy:false, dirty:true});
+          const show = () => { document.querySelector('.cornerstone-canvas').textContent = [current, prior].map(
+            uid => kinViewerStudyDisplay.of(uid, uid + '.1', 'SOURCE')?.id || 'SOURCE').join(' / '); };
+          kinViewerStudyDisplay.subscribe(show); show();
+        }""", [h.UID, UID_C])
+        canvas = frame.locator(".cornerstone-canvas")
+        expect(canvas).to_have_text("ORDER / ORDER")
+        before = len(reads)
+        order[0] = "CORRECTED"
+        if not self.row(h.PATIENT_B).is_visible():
+            self.page.get_by_role("button", name="Worklist", exact=True).click()
+        self.pick(h.PATIENT_B)
+        expect(self.page.locator("#reading-frame")).to_be_hidden()
+        self.page.get_by_role("button", name="Return to Previous Viewer", exact=True).click()
+        expect(self.page.locator("#reading-frame")).to_be_visible()
+        expect(canvas).to_have_text("CORRECTED / CORRECTED")
+        self.assertEqual([{h.UID, UID_C}], [set(uids) for uids in reads[before:]])
+
     def test_ctrl_s_in_the_bound_viewer_frame_runs_the_real_finalize_once(self):
         """D1371 end to end on the merged tree: Ctrl+S pressed in the viewer frame of the Reading Workspace approves the
         report with the typed text exactly once and prevents the browser's Save Page; once approved (A) it runs nothing

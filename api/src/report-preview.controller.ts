@@ -26,7 +26,7 @@ export class ReportPreviewController {
    */
   @Get('clinician/studies')
   clinicianStudies(@Query() query: any, @Req() req: any) {
-    return this.pacs.clinicianStudies(member(req), query);
+    return this.pacs.clinicianStudies(member(req), query, req.headers?.['x-kin-viewer-display'] === '1');
   }
 
   /** Final head (approve/addendum at RS A): that row's body and key images. Anything else: status only (S5-F5). */

@@ -282,7 +282,7 @@ export class PacsController {
   @Header('Cache-Control', 'no-store')
   async studies(@Req() req: any, @Query() query: any) {
     draftDeliveries.track(caller(req).actor, req, req.res);
-    return this.svc.readStudies(caller(req), query);
+    return this.svc.readStudies(caller(req), query, req.headers?.['x-kin-viewer-display'] === '1');
   }
 
   /** S4-U4 Now Retry 요청. 본문은 비어 있어야 하고 묶을 영수증은 서버가 정한다. 200은 "저장됨"이지 "재시도됨"이 아니다. */
