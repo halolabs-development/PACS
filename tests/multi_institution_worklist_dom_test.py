@@ -100,11 +100,11 @@ COLUMNS_KEY = "kin-worklist-columns:v1:"
 DEFAULT_ORDER = V["V01"]["expect"]["modes"]["Radiology"]["order"]
 # Studio default: partial legacy orders keep their specified prefix; missing keys
 # follow the new default order. Full stored orders are still checked against the shared vectors.
-DEFAULT_TITLES = ['No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'ID', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
+DEFAULT_TITLES = ['No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'Referred', 'ID', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
                   'Age', 'StudyDesc', 'Modality', 'Hospital']
 RESTORED_TITLES = {
-    "V03": ['Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class', 'ID', 'No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'StudyDesc', 'Modality', 'Hospital',
-            'PF', 'Tech Note', 'Viewing', 'Count', 'Series', 'EM', 'SS', 'Accession No', 'TS', 'BirthDate', 'Sex', 'PreDoc', 'PreReviewer', 'StudyTime'],
+    "V03": ['Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class', 'ID', 'No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'Referred', 'StudyDesc', 'Modality',
+            'Hospital', 'PF', 'Tech Note', 'Viewing', 'Count', 'Series', 'EM', 'SS', 'Accession No', 'TS', 'BirthDate', 'Sex', 'PreDoc', 'PreReviewer', 'StudyTime'],
     "V05": DEFAULT_TITLES + ['PF', 'Tech Note', 'Viewing', 'Count', 'Series', 'EM', 'SS', 'Accession No', 'TS', 'BirthDate', 'Sex', 'PreDoc', 'PreReviewer', 'StudyTime'],
 }
 # Words the legend, the Hospital header and the Tele label never carry (IC-09; UXR-SP-34/G-18 and S7-U1p §16.3, written
@@ -1081,11 +1081,11 @@ class MultiInstitutionWorklist(unittest.TestCase):
                     dialog.get_by_role("button", name="Close", exact=True).click()
                 screen.finish()
         # Preserving: another permutation of the stored order is kept, Hospital and then StudyTime (m51) after it; the
-        # request columns join right after Name and Confirm right after RS.
+        # request columns join right after Name, Confirm right after RS and Referred right after StudyDate.
         permuted = copy.deepcopy(V["V02"]["document"])
         permuted["modes"]["Radiology"]["order"].reverse()
         screen = self.boot(Server(rows=self.column_rows()), storage={key: json.dumps(permuted)})
-        placed = {"name": ["ReqDate", "ReqDept", "ReqDoc", "Pt Class"], "rs": ["Confirm"]}
+        placed = {"name": ["ReqDate", "ReqDept", "ReqDoc", "Pt Class"], "rs": ["Confirm"], "date": ["Referred"]}
         expected = [title for k in permuted["modes"]["Radiology"]["order"] if k not in permuted["modes"]["Radiology"]["hidden"]
                     for title in [TITLES[k]] + placed.get(k, [])] + [HOSPITAL, TITLES["time"]]
         self.assertEqual(expected, screen.heads())

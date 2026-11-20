@@ -868,6 +868,8 @@ window.KinLanguageTerms = {
     ["Referenced SOP", "참조 SOP", "l"],
     ["Referenced SOP Class", "참조 SOP 클래스", "l"],
     ["Referenced SOP Instance", "참조 SOP 인스턴스", "l"],
+    ["Referred", "병원 전송", "l"],
+    ["Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준) 비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사", "Referred: when the referring hospital's Gateway first sent this study (server time) Blank: the first Gateway reception time is not recorded for this study", "m", "병원 전송: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준) 비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사"],
     ["Refresh", "새로 고침", "l"],
     ["Refresh Body Parts", "부위 새로 고침", "l"],
     ["Refresh List", "목록 새로 고침", "l"],

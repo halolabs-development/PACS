@@ -900,6 +900,9 @@
         { k: "modality", t: "Modality", f: ["CT", "MR", "CR", "US", "SC"] },
         { k: "desc", t: "StudyDesc", f: "text" },
         { k: "date", t: "StudyDate", f: "text" },
+        // Referred: when the referring hospital's Gateway sent the study (server row referredAt, this screen's local time).
+        // Blank for a study that did not come through a Gateway. Filters like ReqDate: "2026-11", "2026-11-20", "2026-11-20 09".
+        { k: "referredAt", t: "Referred", f: "text" },
         // 예비 판독을 쓴 사람과, 최종 판독을 맡은 상급 판독의.
         // HPACS도 2025.07에 이 둘을 컬럼으로 붙였다 (교훈 §13 — 컬럼은 끝없이 늘어난다)
         { k: "preDoc", t: "PreDoc", f: "text" },
@@ -947,6 +950,11 @@
       if (!d || !Number.isFinite(d.getTime())) return "";
       const p = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    /** The same server time as a sort key (UTC ISO, seconds kept; the local stamp drops them); anything unreadable is "". */
+    function serverInstant(iso) {
+      const d = typeof iso === "string" && iso ? new Date(iso) : null;
+      return d && Number.isFinite(d.getTime()) ? d.toISOString() : "";
     }
     /**
      * Confirm cell: the approval time of an Approved report. An approval stored before its time was kept shows the stored
@@ -1150,8 +1158,10 @@
     });
 
     // Hover help for one- and two-letter headers. Only codes the screen already uses are explained (RS letters match the count bar).
+    // Referred says where its time comes from and what a blank cell means.
     const HEAD_HELP = {
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
+      referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
       pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",
@@ -1598,6 +1608,23 @@
       cancelThumbs();
       window.dispatchEvent(new CustomEvent("kin-exam-scope-changed", { detail: { uid: s.uid, previous, next } }));
     }
+    /**
+     * The original studies of a merged or split exam row (server `sourceMetadata`) as the screen keeps them. The one place
+     * both the whole-list rebuild (fromApi) and the poll that refreshes rows in place (worklist-polling.js) read them, so a
+     * column a filter compares per original (exam-scope.js projections) has the same form after either.
+     */
+    function sourceMetadataView(list) {
+      return (list || []).map(m => ({ ...m, sourceAcc: m.acc, acc: m.orderAccession || m.acc, date: fmtD(m.date),
+        reqDate: localStamp(m.reqDate), ...referredFields(m) }));
+    }
+    /**
+     * Referred (server `referredAt`): when the referring hospital's Gateway sent the study. The cell and its filter read the
+     * local "YYYY-MM-DD HH:mm"; the sort reads referredAtIso, the same time with its seconds (orderedStudies). Blank both
+     * when the server sent none. A row and each original of a merged or split exam, on a rebuild and on a poll, all pass here.
+     */
+    function referredFields(s) {
+      return { referredAt: localStamp(s?.referredAt), referredAtIso: serverInstant(s?.referredAt) };
+    }
     function fromApi(s) {
       observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
@@ -1631,14 +1658,14 @@
         gatewayReceipt: s.gatewayReceipt ?? null,
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
+        ...referredFields(s),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
         // The kind of exam in force (merge / split) this row belongs to when its originals cannot all be read now.
         examUnavailableKind: s.examUnavailable === true && ['merge', 'split'].includes(s.examUnavailableKind) ? s.examUnavailableKind : null,
         draftEpoch: s.state?.draftEpoch ?? null,
-        sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
-          acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
+        sourceMetadata: sourceMetadataView(s.sourceMetadata),
         ...(s.group ? { group: s.group } : {}),
         // A report written on a merged exam (now or before Unmerge): which studies, and whether this account may read them all.
         ...(s.reportGroup && typeof s.reportGroup === 'object' ? { reportGroup: s.reportGroup } : {}),
@@ -1993,8 +2020,9 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
-      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
-      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·"; Referred by the
+      // server time itself (its cell drops the seconds).
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : sortKey === "referredAt" ? s.referredAtIso : s[sortKey];
       if (sortDir !== 0 && sortKey)
         list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };
@@ -2633,7 +2661,8 @@
       if (c.k === 'techNote') return noteLabel(s.uid) === wanted;   // the note badge is not a row field
       // Confirm: Approved rows (with or without a stored time) are Confirmed; every other RS is Not Confirmed.
       if (c.k === 'confirm') return wanted === 'Confirmed' ? confirmedRow(s) : wanted === 'Not Confirmed' ? !confirmedRow(s) : true;
-      if (c.k === 'reqDate') return String(s.reqDate ?? '').startsWith(wanted);   // "2026-11", "2026-11-12", "2026-11-12 09"
+      // ReqDate and Referred are local "YYYY-MM-DD HH:mm": "2026-11", "2026-11-12", "2026-11-12 09".
+      if (c.k === 'reqDate' || c.k === 'referredAt') return String(s[c.k] ?? '').startsWith(wanted);
       if (c.k === 'reqDept') return String(s.reqDept ?? '').toUpperCase() === wanted.toUpperCase();   // one department, as listed
       if (c.k === 'date') {   // StudyDate: "2026-10-31" (that day or prefix), "2026-10-01..2026-10-31", "2026-10-01.." or "..2026-10-31"
         const day = String(s.date ?? ''), [from, to] = wanted.split('..');
@@ -10315,7 +10344,9 @@
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
-              draftEpoch:s.state?.draftEpoch??null, sourceMetadata:(s.sourceMetadata||[]).map(m=>({...m,sourceAcc:m.acc,acc:m.orderAccession||m.acc,date:fmtD(m.date),reqDate:localStamp(m.reqDate)}))});
+              draftEpoch:s.state?.draftEpoch??null, sourceMetadata:sourceMetadataView(s.sourceMetadata),
+              // Referred is fixed once the study exists; written here by the same rule as fromApi all the same.
+              ...referredFields(s)});
             if (existing) for (const field of ['count', 'series'])
               if (s[field] === null || Number.isSafeInteger(s[field]) && s[field] >= 0) existing[field] = s[field];
             updateNoteSummary(uid, s.techNote);

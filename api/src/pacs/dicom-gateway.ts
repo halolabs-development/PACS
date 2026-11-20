@@ -175,7 +175,9 @@ export class PacsDicomGateway {
 
   /**
    * Gateway 수신 예고. DICOM 태그는 참고 신호일 뿐이고 소유 기관은 서명된 자격증명으로 정한다.
-   * 같은 기관의 재시도는 쓰기와 감사를 모두 생략한다.
+   * 처음 보는 UID는 이 예고가 행을 만든다: 생성 시각과 Referred 시각(`referredAt`, 워크리스트 열)이 같은 한 순간이고
+   * 감사 한 건이 함께 커밋된다. 이미 행이 있는 UID는 — 먼저 조회했든 생성 경쟁에서 졌든 — `announceExisting` 한 곳이
+   * 판정한다.
    */
   async announceStudy(studyUid: string, institutionNameTag: unknown, c: Caller) {
     needExact(c, 'gateway', '검사 수신 예고');
@@ -185,23 +187,24 @@ export class PacsDicomGateway {
     if (institutionNameTag != null && typeof institutionNameTag !== 'string')
       throw new BadRequestException('institutionNameTag는 문자열이어야 합니다');
 
-    const existing = await this.prisma.studyState.findUnique({ where: { uid: studyUid } });
-    if (existing) {
-      if (existing.institutionId !== me)
-        throw new ConflictException({ code: 'STUDY_OWNERSHIP_CONFLICT' });
-      return { studyUid, institutionId: me, origin: existing.origin };
-    }
+    if (await this.prisma.studyState.findUnique({ where: { uid: studyUid }, select: { uid: true } }))
+      return this.announceExisting(studyUid, me);
 
     const resolvedTag = this.institutions.resolveInstitution(typeof institutionNameTag === 'string' ? institutionNameTag : '');
     const tagMismatch = resolvedTag != null && resolvedTag !== me;
     try {
       const saved = await this.prisma.$transaction(async tx => {
+        // One moment: the row's creation (the TAT start) and its Referred time. Recorded, so closed from the start.
+        const at = new Date();
         const created = await tx.studyState.create({ data: {
           uid: studyUid,
           institutionId: me,
           reqHosp: this.institutions.instName(me),
           ss: 'Unverified',
           origin: 'gateway',
+          createdAt: at,
+          referredAt: at,
+          referredOpen: false,
         } });
         await tx.auditLog.create({ data: {
           actor: c.actor || 'unknown',
@@ -213,13 +216,36 @@ export class PacsDicomGateway {
       });
       return { studyUid, institutionId: me, origin: saved.origin };
     } catch (error: any) {
-      // 동시 재시도는 unique 경쟁에서 진 쪽도 같은 기관이면 멱등 성공이다.
+      // A concurrent registration (another announce, a list, an import) won the unique race. The creating transaction has
+      // rolled back; the row that won is judged like any row that was already there.
       if (error?.code !== 'P2002') throw error;
-      const winner = await this.prisma.studyState.findUnique({ where: { uid: studyUid } });
-      if (!winner || winner.institutionId !== me)
-        throw new ConflictException({ code: 'STUDY_OWNERSHIP_CONFLICT' });
-      return { studyUid, institutionId: me, origin: winner.origin };
+      return this.announceExisting(studyUid, me);
     }
+  }
+
+  /**
+   * An announce of a study that already has a row, judged on the row as it is now, under its lock (the lock deletion
+   * takes): no row any more, another institution's or an unassigned one is the ownership conflict, and nothing is written.
+   * This institution's row answers 200 with its own origin. If the row still waits for its first announce (a device sent
+   * the study directly, or a local import or a Match registered it first), this is that announce: our server's time is
+   * written and the row is closed in the same statement, so retries and concurrent announces keep the first time. A closed
+   * row (recorded already, or never to be recorded) is not written. No audit row: only a row the announce creates has one.
+   * A row lock that is not free in time is 503 GATEWAY_ANNOUNCE_BUSY with nothing written (the Gateway announces again).
+   */
+  private async announceExisting(studyUid: string, me: string) {
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+      const rows = await tx.$queryRaw<any[]>`SELECT * FROM "StudyState" WHERE uid = ${studyUid} FOR UPDATE`;
+      const row = rows[0];
+      if (!row || row.institutionId !== me) throw new ConflictException({ code: 'STUDY_OWNERSHIP_CONFLICT' });
+      if (row.referredOpen === true)
+        await tx.studyState.update({ where: { uid: studyUid }, data: { referredAt: new Date(), referredOpen: false } });
+      return { studyUid, institutionId: me, origin: row.origin as string };
+    }, { isolationLevel: 'ReadCommitted', maxWait: 4000, timeout: 8000 }).catch((error: any) => {
+      if (error?.code === 'P2028' || error?.code === 'P2010' && ['55P03', '57014'].includes(error?.meta?.code))
+        throw new ServiceUnavailableException({ code: 'GATEWAY_ANNOUNCE_BUSY' });
+      throw error;
+    });
   }
 
   /**
