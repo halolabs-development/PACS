@@ -211,7 +211,8 @@ class ReportSessionPageTest(unittest.TestCase):
         if kind == 'tele':
             self.page.evaluate('uid => { void setTs(uid, "cancelled"); }', auth.UID)
         else:
-            self.page.evaluate('uid => setSs(uid, "Unverified")', auth.UID)
+            # setSs waits for the server's answer before it paints; the held answer is released below.
+            self.page.evaluate('uid => { void setSs(uid, "Unverified"); }', auth.UID)
         self.wait(lambda: len(self.site.held_patches) == 1)
 
     def unconfirmed_study_survives(self, update):
