@@ -14,7 +14,7 @@
       criticalResults?.sync();
       // S7-U4b: 보는 검사가 바뀐 때만 Clinical Context를 다시 읽는다(같은 검사면 요청도 그리기도 없다).
       clinicalContext?.sync();
-      // The block names its study (data-viewed): the lines under it are drawn for that same study (renderViewedInfo).
+      // The block names its study (data-viewed): the lines under it are drawn for that same study (viewedInfoFollowsList).
       $("#clinical").innerHTML = s ? `
         <div class="clinical-scope" data-viewed="${esc(s.uid)}"></div>
         <table>
@@ -37,16 +37,17 @@
     }
 
     /**
-     * The Info panel after the list changed (render(): a poll, a Refresh, a tab change). The block that names the study and
-     * the two blocks under it are always of the same viewed() study: when the study the block names has left the list (a
-     * Related study, so the reading target is viewed again; or the selected study), the whole panel is drawn again for
-     * what is viewed now; otherwise only the two blocks a poll can change. (A move to another listed study draws the whole
-     * panel itself, right after the list.)
+     * The Info panel after a list answer (the poll's rebuild, a list read's application). The block that names the study
+     * and the two blocks under it are always of the same viewed() study: when another study is viewed now than the one the
+     * block names - a Related study left the list or came back to it, the selected study left it - the whole panel is drawn
+     * again (true), so the study named, the QC line and Protocol & Dose are of one study. A move to another study draws
+     * the whole panel itself and does not come here.
      */
-    function renderViewedInfo() {
+    function viewedInfoFollowsList() {
       const s = viewed(), named = $("#clinical .clinical-scope")?.dataset.viewed ?? "";
-      if (named && named !== (s?.uid ?? "") && !studies.some(x => x.uid === named)) { renderClinical(); return; }
-      renderQcInfo(); renderAcquisition();
+      if (named === (s?.uid ?? "")) return false;
+      renderClinical();
+      return true;
     }
 
     /**
@@ -82,11 +83,14 @@
      *     (SOP Instance UID) and, in an enhanced object, the frame's own number. An object is named by its Instance Number only
      *     when no other object of its series has that number, a series by its number only when no other series of that
      *     original has it; otherwise the UID is shown. A value that is not a plain number is "Could not read", never converted.
-     *   - "Not in DICOM" is said only of what was read whole: every original of the scope, every series the scope names, as
-     *     many objects and frames as the archive and the object say there are, and a dose report searched to its end.
-     *     Anything less is said as not read.
-     *   - an original that refuses a read (401/403) is out of reach now: nothing read from it is shown or kept.
-     * Answers are kept per exam scope in this tab's memory only, and only while the list still has that row unchanged.
+     *   - "Not in DICOM" is said only of what was read whole: every original of the scope, as many series as the list row
+     *     counts, every series a split part names, as many objects and frames as the archive and the object say there are,
+     *     and a dose report searched to its end. Anything less is said as not read. A tag whose value is kept elsewhere or
+     *     cannot be read as a value is "Could not read", never absent.
+     *   - an original that refuses a read (401/403) or is not found is out of reach from that moment: nothing read from it
+     *     is shown or kept, whichever read learned it.
+     * The block is drawn only for a study that is a readable row of the list the server last sent (the same judge as the
+     * QC mark: qcScope). Answers are kept per exam scope in this tab's memory only, while the list has that row unchanged.
      */
     const KinAcquisition = (() => {
       const MAX_SERIES = 40, SERIES_LIMIT = 501, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20,
@@ -95,14 +99,30 @@
       // Enhanced X-Ray Radiation Dose SR: a dose report in another form, which this reader does not read. It is said as a
       // dose report that could not be read, so the exam is never said to have none.
       const OTHER_RDSR = "1.2.840.10008.5.1.4.1.1.88.76";
+      // Enhanced CT and Legacy Converted Enhanced CT: objects whose frames are described by functional groups.
+      const FRAMED = ["1.2.840.10008.5.1.4.1.1.2.1", "1.2.840.10008.5.1.4.1.1.2.2"];
       const BAD = Symbol("unreadable");
       const isItem = v => !!v && typeof v === "object" && !Array.isArray(v);
-      const first = (ds, tag) => ds?.[tag]?.Value?.[0];
-      const text = (ds, tag) => { const v = first(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
+      // An attribute whose value is not in this answer (kept elsewhere) or is not a list of values.
+      const elsewhere = a => a.BulkDataURI !== undefined || a.InlineBinary !== undefined;
+      /**
+       * The one value of an attribute as DICOM JSON carries it. undefined: the tag is not there, or is there with no value.
+       * BAD: it is there but its value cannot be read here - not an attribute object, a value kept elsewhere (BulkDataURI,
+       * InlineBinary), a Value that is not a list, or more values than the one it may have.
+       */
+      function one(ds, tag) {
+        const a = ds?.[tag];
+        if (a === undefined) return undefined;
+        if (!isItem(a) || elsewhere(a)) return BAD;
+        if (a.Value === undefined) return undefined;
+        if (!Array.isArray(a.Value) || a.Value.length > 1) return BAD;
+        return a.Value.length ? a.Value[0] : undefined;
+      }
+      const text = (ds, tag) => { const v = one(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
       // A sequence's items in their stored places: one that is not an item stays (as null), so the ones after it keep their numbers.
       const entries = (ds, tag) => Array.isArray(ds?.[tag]?.Value) ? ds[tag].Value.map(v => isItem(v) ? v : null) : [];
-      // A tag that is there but cannot be read as a list of values.
-      const broken = (ds, tag) => ds?.[tag] !== undefined && (!isItem(ds[tag]) || ds[tag].Value !== undefined && !Array.isArray(ds[tag].Value));
+      // A sequence tag that is there but cannot be read as a list of items.
+      const broken = (ds, tag) => ds?.[tag] !== undefined && (!isItem(ds[tag]) || elsewhere(ds[tag]) || ds[tag].Value !== undefined && !Array.isArray(ds[tag].Value));
       // A number as DICOM JSON carries it: a JSON number, or a decimal string (DS, IS). "0x10", "1e" or "" is not a number.
       const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
       const number = raw => { const n = typeof raw === "number" ? raw : typeof raw === "string" && DECIMAL.test(raw.trim()) ? Number(raw.trim()) : NaN; return Number.isFinite(n) ? n : null; };
@@ -155,7 +175,7 @@
         if (holder?.["00189321"] === undefined) return undefined;
         if (broken(holder, "00189321")) return [BAD];
         const list = entries(holder, "00189321");
-        return list.length ? list.map(item => item === null ? BAD : first(item, "00189345")) : undefined;
+        return list.length ? list.map(item => item === null ? BAD : one(item, "00189345")) : undefined;
       }
       // CTDIvol (0018,9345) is recorded in mGy (PS3.3 CT Exposure Macro). A value that is not a plain number is unreadable.
       function ctdiInto(answers, into, place) {
@@ -167,9 +187,11 @@
       /**
        * One series, every object the archive returned for it. Each must name this original, this series, a SOP Instance UID
        * no other object of the answer has, and its SOP Class - or the series is not read (never "absent"). Protocol Name per
-       * object; CTDIvol per object, or per frame of an enhanced object at the frame's own number: a frame item that cannot be
-       * read is unreadable at its number, and frames the object counts (Number of Frames) but does not describe are
-       * unreadable at theirs. `cut` says the object did not describe as many frames as it counts.
+       * object; CTDIvol per object, or per frame of an object with functional groups (an enhanced CT; any object carrying
+       * the shared or per-frame groups). Such an object says how many frames it has (0028,0008) and describes each: only
+       * those frames exist, each at its own number. A frame it counts and does not describe, or whose item cannot be read,
+       * is unreadable at that number; an item past the count belongs to no frame and gives no value; an object that does
+       * not say how many frames it has gives none. `cut` says an object was not described as it counts itself.
        */
       function judgeSeries(objects, expected) {
         const protocol = places(), ctdi = places(), numbers = new Map(), seen = new Map();
@@ -178,24 +200,25 @@
           const sop = isItem(ds) ? text(ds, "00080018") : "";
           if (!sop || seen.has(sop) || text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series || !text(ds, "00080016"))
             throw new Error("identity");
-          const n = number(first(ds, "00200013")), image = Number.isSafeInteger(n) ? n : null;
+          const n = number(one(ds, "00200013")), image = Number.isSafeInteger(n) ? n : null;
           seen.set(sop, image);
           if (image !== null) numbers.set(image, (numbers.get(image) ?? 0) + 1);
-          const name = first(ds, "00181030");
-          if (broken(ds, "00181030") || name !== undefined && typeof name !== "string" && typeof name !== "number") protocol.bad({ sop });
+          const name = one(ds, "00181030");
+          if (name === BAD || name !== undefined && typeof name !== "string" && typeof name !== "number") protocol.bad({ sop });
           else if (String(name ?? "").trim()) protocol.add(String(name).trim(), { sop });
           else protocol.miss({ sop });
-          const whole = [first(ds, "00189345")];
+          const whole = [one(ds, "00189345")];
+          if (ds["52009229"] === undefined && ds["52009230"] === undefined && !FRAMED.includes(text(ds, "00080016"))) {
+            ctdiInto(whole, ctdi, { sop });
+            continue;
+          }
           const shared = broken(ds, "52009229") || entries(ds, "52009229")[0] === null ? [BAD] : exposures(entries(ds, "52009229")[0]);
-          const frames = entries(ds, "52009230"), declared = count(first(ds, "00280008"));
-          if (broken(ds, "52009230")) { cut = true; ctdi.bad({ sop }); }
-          else if (frames.length) {
-            frames.forEach((frame, f) => ctdiInto(frame === null ? [BAD] : exposures(frame) ?? shared ?? whole, ctdi, { sop, frames: [f + 1, f + 1] }));
-            if (declared !== null && declared !== frames.length) {
-              cut = true;
-              if (declared > frames.length) ctdi.bad({ sop, frames: [frames.length + 1, declared] });
-            }
-          } else ctdiInto(shared ?? whole, ctdi, { sop });
+          const frames = entries(ds, "52009230"), declared = count(one(ds, "00280008"));
+          if (broken(ds, "52009230") || declared === null || declared < 1) { cut = true; ctdi.bad({ sop }); continue; }
+          if (frames.length !== declared) cut = true;
+          for (let f = 1; f <= Math.min(declared, frames.length); f++)
+            ctdiInto(frames[f - 1] === null ? [BAD] : exposures(frames[f - 1]) ?? shared ?? whole, ctdi, { sop, frames: [f, f] });
+          if (declared > frames.length) ctdi.bad({ sop, frames: [frames.length + 1, declared] });
         }
         // An object's Instance Number names it only when no other object of this series has the same number.
         const numberOf = sop => { const image = seen.get(sop); return image !== null && image !== undefined && numbers.get(image) === 1 ? image : null; };
@@ -204,10 +227,11 @@
       // Dose SR content items are judged on their DCM concept code, their value type and their UCUM unit together.
       // The concept code of an item: "" when it has none of DCM, null when its concept cannot be read.
       const concept = item => { if (broken(item, "0040A043")) return null; const c = entries(item, "0040A043")[0];
-        return c === null ? null : text(c, "00080102") === "DCM" ? text(c, "00080100") : ""; };
+        if (c === null || one(c, "00080100") === BAD || one(c, "00080102") === BAD) return null;
+        return text(c, "00080102") === "DCM" ? text(c, "00080100") : ""; };
       const typed = (item, type) => text(item, "0040A040") === type;
       function measured(item, unit) {
-        const m = entries(item, "0040A300")[0], u = entries(m, "004008EA")[0], n = number(first(m, "0040A30A"));
+        const m = entries(item, "0040A300")[0], u = entries(m, "004008EA")[0], n = number(one(m, "0040A30A"));
         return n !== null && text(u, "00080102") === "UCUM" && text(u, "00080100") === unit ? { value: String(n), unit } : { unreadable: true };
       }
       /**
@@ -218,7 +242,7 @@
         if (broken(node, "0040A730")) out.cut = true;
         for (const item of entries(node, "0040A730")) {
           const named = item === null ? null : concept(item);
-          if (named === null) { out.cut = true; if (item === null) continue; }
+          if (named === null || one(item, "0040A040") === BAD) { out.cut = true; if (item === null) continue; }
           if (named === code && typed(item, type)) out.items.push(item);
           if (depth >= MAX_DEPTH) { if (item["0040A730"] !== undefined) out.cut = true; continue; }
           find(item, code, type, out, depth + 1);
@@ -242,23 +266,32 @@
         return { totals, events: totals.length ? [] : events, cut };
       }
       const refusal = e => [401, 403].includes(e?.status);
+      const outOfReach = entry => ["refused", "gone"].includes(entry.state);
       /**
        * The one reading of an exam. Per original: its series list (read / failed / cut at the list limit / unidentified /
-       * refused) and the series the scope names that the list did not have (`missing`). Per series of the scope: its objects
-       * (read whole, read in part, failed, or not read past the limit). And the dose reports found. `complete` says every
-       * part of the scope was read whole; only then may the study be said to have no dose report. `live()` false ends the
-       * read early (its answer is not used).
+       * refused / gone) and the series the scope names that the list did not have (`missing`). Per series of the scope: its
+       * objects (read whole, read in part, failed, or not read past the limit). And the dose reports found. `listed` is the
+       * number of series of the scope the archive listed and `expected` the number the list row counts (null: it does not
+       * say). `complete` says every part of the scope was read whole; only then may the study be said to have no dose
+       * report. `live()` false ends the read early (its answer is not used). `unreachable(studyUid)` is told at once of an
+       * original that refuses a read or is not found - whatever becomes of this read.
        */
-      async function read(row, request, live = () => true) {
+      async function read(row, request, live = () => true, unreachable = () => {}) {
         const scope = KinExamScope.read(row);
         if (!scope) return { state: "unavailable" };
         const sources = [], all = [];
+        const expected = Number.isSafeInteger(row?.series) && row.series >= 0 ? row.series : null;
         for (const source of scope.sources) {
           const entry = { studyUid: source.studyUid, state: "read", missing: [] };
           sources.push(entry);
           let listed;
           try { listed = await request("/dicom-web/studies/" + encodeURIComponent(source.studyUid) + "/series?includefield=" + SERIES_FIELDS + "&limit=" + SERIES_LIMIT); }
-          catch (e) { entry.state = refusal(e) ? "refused" : "failed"; continue; }
+          catch (e) {
+            entry.state = refusal(e) ? "refused" : [404, 410].includes(e?.status) ? "gone" : "failed";
+            if (outOfReach(entry)) unreachable(source.studyUid);
+            if (!live()) return { state: "stale" };
+            continue;
+          }
           if (!live()) return { state: "stale" };
           const own = listed.filter(ds => isItem(ds) && text(ds, "0020000D") === source.studyUid && text(ds, "0020000E"));
           const uids = own.map(ds => text(ds, "0020000E"));
@@ -269,14 +302,14 @@
           for (const ds of own) {
             const seriesUid = text(ds, "0020000E");
             if (KinExamScope.allows(source, seriesUid)) all.push({ sourceUid: source.studyUid, seriesUid, modality: text(ds, "00080060"),
-              number: text(ds, "00200011"), description: text(ds, "0008103E"), known: count(first(ds, "00201209")) });
+              number: text(ds, "00200011"), description: text(ds, "0008103E"), known: count(one(ds, "00201209")) });
           }
         }
         all.sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0) || a.seriesUid.localeCompare(b.seriesUid));
         const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
         for (const s of chosen) {
           const source = sources.find(x => x.studyUid === s.sourceUid);
-          if (source.state === "refused") continue;
+          if (outOfReach(source)) continue;
           try {
             const objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
             if (!live()) return { state: "stale" };
@@ -289,17 +322,21 @@
             series.push({ ...s, state: "read", objects: objects.length, whole: s.known === objects.length && !judged.cut, ...judged });
             reports.push(...found);
           } catch (e) {
+            // A refusal is said even by a read no longer waited for; the rest of its answer is not used.
+            if (refusal(e)) { source.state = "refused"; unreachable(s.sourceUid); }
             if (!live()) return { state: "stale" };
-            if (refusal(e)) source.state = "refused"; else series.push({ ...s, state: "failed" });
+            if (!refusal(e)) series.push({ ...s, state: "failed" });
           }
         }
-        // An original that refused a read - its series list or any series - is out of reach now: what was read from it
-        // before the refusal goes with it.
-        const refused = sources.filter(x => x.state === "refused").map(x => x.studyUid), reached = x => !refused.includes(x.sourceUid);
+        // An original that refused a read - its series list or any series - or is not found is out of reach now: what was
+        // read from it before goes with it.
+        const refused = sources.filter(outOfReach).map(x => x.studyUid), reached = x => !refused.includes(x.sourceUid);
         const kept = series.filter(reached), skipped = all.length - chosen.length;
-        return { state: "done", sources, series: kept, reports: reports.filter(reached), skipped, refused,
+        return { state: "done", sources, series: kept, reports: reports.filter(reached), skipped, refused, listed: all.length, expected,
           partial: scope.sources.some(source => source.series.mode !== "all"),
-          complete: sources.every(x => x.state === "read" && !x.missing.length) && kept.every(x => x.state === "read" && x.whole) && !skipped };
+          // Whole: every original's list read, as many series as the list row counts, each read whole, none past the limit.
+          complete: sources.every(x => x.state === "read" && !x.missing.length) && expected === all.length
+            && kept.every(x => x.state === "read" && x.whole) && !skipped };
       }
       // The original study and the series of a line, for its title.
       const origin = s => [{ say: "Study {0}", args: [s.sourceUid] }, { say: "Series {0}", args: [s.seriesUid] }];
@@ -330,11 +367,18 @@
         for (const source of result.sources) {
           if (source.state !== "read") out.push({ kind: "status", parts: [...from(source.studyUid),
             { say: source.state === "cut" ? "Series list cut at {n0}: some series not read"
-              : source.state === "refused" ? "This original cannot be read now (access refused)" : "Series list could not be read", args: [SERIES_LIMIT] }] });
-          if (source.state !== "refused" && source.missing.length) out.push({ kind: "status", parts: [...from(source.studyUid),
+              : source.state === "refused" ? "This original cannot be read now (access refused)"
+              : source.state === "gone" ? "This original cannot be read now (not found)" : "Series list could not be read", args: [SERIES_LIMIT] }] });
+          if (!["refused", "gone"].includes(source.state) && source.missing.length) out.push({ kind: "status", parts: [...from(source.studyUid),
             { say: "{n0} series of this exam not in the series list (not read):", args: [source.missing.length] }, { say: " " },
             { data: source.missing.slice(0, 3).join(", ") + (source.missing.length > 3 ? ", …" : "") }] });
         }
+        // The archive listed another number of series than the list row counts for the exam (or the row does not say how
+        // many): said, and the exam is not called without a dose report.
+        if (result.sources.every(source => source.state === "read") && result.expected !== result.listed)
+          out.push({ kind: "status", parts: [result.expected === null
+            ? { say: "Series found: {n0} (the list does not say how many the exam has)", args: [result.listed] }
+            : { say: "Series found: {n0} of the {n1} the list counts", args: [result.listed, result.expected] }] });
         if (!result.series.length && result.sources.every(source => source.state === "read" && !source.missing.length))
           out.push({ kind: "status", parts: [{ say: "No series found" }] });
         // A series is named by its number only when no other series of that original has the same one; else its UID follows.
@@ -385,11 +429,16 @@
       acquisitionCache.clear(); acquisitionSeq++;
       const box = $("#study-acquisition"); if (box) box.dataset.key = "";
     }
+    /**
+     * What one answer is of: a study that is a readable row of the list the server last sent (qcScope - a row the list no
+     * longer has, one that cannot be read now, and one a command was answered 404 for have none), read one way, with its
+     * exam scope and the counts the list row says. null: nothing of this study's DICOM may be drawn now.
+     */
     function acquisitionKey(s) {
-      if (!s || s.examUnavailable) return null;
+      if (!s || s.examUnavailable || qcScope(s.uid) === null) return null;
       let scope = null;
       try { scope = KinExamScope.read(s); } catch (_) { scope = null; }
-      return scope ? s.uid + "|" + KinExamScope.screenStamp(s) + "|" + (s.count ?? "") + "|" + (s.series ?? "") : null;
+      return scope ? s.uid + "|" + qcScope(s.uid) + "|" + KinExamScope.screenStamp(s) + "|" + (s.count ?? "") + "|" + (s.series ?? "") : null;
     }
     /**
      * Kept answers follow the list the server last sent: an answer stays only while its row is listed with the scope, counts
@@ -409,17 +458,23 @@
       // A read belongs to the key the block showed when it began: whenever the block shows another key (another exam, a
       // changed or unreadable scope, a hidden block), reads still on the way are no longer used (readAcquisition).
       const showKey = key => { if ((box.dataset.key ?? "") !== key) { box.dataset.key = key; acquisitionSeq++; } };
-      if (!show) { box.replaceChildren(); showKey(""); return; }
+      if (!show) { box.replaceChildren(); acquisitionDrawn = []; showKey(""); return; }
       const key = acquisitionKey(s);
-      if (!key) { showKey(""); box.replaceChildren(...KinAcquisition.lines({ state: "unavailable" }).map(acquisitionLine)); return; }
+      if (!key) { showKey(""); drawAcquisition(box, { state: s.examUnavailable ? "unavailable" : "failed" }); return; }
       // Drawn (or being read) for this key already: nothing to do. Refresh and a session change clear the key (forgetAcquisition).
       if (box.dataset.key === key) return;
       showKey(key);
       const known = acquisitionCache.get(key);
-      if (known) { box.replaceChildren(...KinAcquisition.lines(known.result).map(acquisitionLine)); return; }
-      box.replaceChildren(...KinAcquisition.lines({ state: "reading" }).map(acquisitionLine));
+      if (known) { drawAcquisition(box, known.result); return; }
+      drawAcquisition(box, { state: "reading" });
       if (offline) return;
       readAcquisition(s, key);
+    }
+    // The originals the drawn answer read (drawAcquisition): what is drawn goes when one of them is out of reach.
+    let acquisitionDrawn = [];
+    function drawAcquisition(box, result) {
+      acquisitionDrawn = (result.sources ?? []).map(source => source.studyUid);
+      box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
     }
     /** One drawn line: its fixed words through the screen language, its values (tags' contents, series names) as data. */
     function acquisitionLine(line) {
@@ -444,8 +499,18 @@
         if (!res.ok || !Array.isArray(res.body)) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
         return res.body;
       };
+      // An original that refuses a read or is not found is out of reach from that moment, whether or not this read is
+      // still the one the block waits for (a read left behind for another exam of the same original learns it too): every
+      // kept answer that read it goes, and an answer drawn from it is read again now.
+      const unreachable = uid => work.commit(at, () => {
+        for (const [k, kept] of acquisitionCache) if (kept.sources.includes(uid)) acquisitionCache.delete(k);
+        const box = $("#study-acquisition");
+        if (seq === acquisitionSeq || !box || !acquisitionDrawn.includes(uid)) return;
+        box.dataset.key = ""; acquisitionSeq++;
+        renderAcquisition();
+      });
       let result;
-      try { result = await KinAcquisition.read(s, request, () => seq === acquisitionSeq && work.admits(at)); }
+      try { result = await KinAcquisition.read(s, request, () => seq === acquisitionSeq && work.admits(at), unreachable); }
       catch (e) { result = { state: "failed" }; }
       work.commit(at, () => {
         // Judged before anything is kept or drawn: this is still the read the block waits for (no newer read, Refresh,
@@ -453,14 +518,11 @@
         // An answer that fails this is dropped whole - it reaches neither the screen nor the kept answers.
         const box = $("#study-acquisition");
         if (seq !== acquisitionSeq || !box || box.hidden || box.dataset.key !== key || acquisitionKey(viewed()) !== key) return;
-        // An original that refused a read: no kept answer of any exam that read it stays.
-        for (const uid of result.refused ?? [])
-          for (const [k, kept] of acquisitionCache) if (kept.sources.includes(uid)) acquisitionCache.delete(k);
         // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with
         // a failure or a part not read is not kept, so the next viewing reads again.
         if (result.state === "done" && result.complete)
           acquisitionCache.set(key, { uid: s.uid, sources: result.sources.map(source => source.studyUid), result });
-        box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
+        drawAcquisition(box, result);
       });
     }
 

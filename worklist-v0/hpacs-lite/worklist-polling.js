@@ -174,6 +174,8 @@
           // 요청을 보낸 뒤 확정이 일어났다면 이 응답은 그 이전 사진이다. 버린다.
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           assertStudyOwner(r);
+          // What this answer no longer lists (or reads another way) loses its QC mark and DICOM values now, before the wait below.
+          qcHearsList(r.studies);
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           pollFails = 0;
@@ -212,6 +214,8 @@
             // 썸네일 등 오른쪽 전체를 다시 그릴 필요는 없지만, 판독문 잠금은 반영해야 한다.
             // loadReport가 값만 보호하므로 새 검사 도착과 Prelim 전환이 겹쳐도 입력은 유지된다.
             render();
+            // Another study is viewed now than the Info panel names (a Related study left the list or came back): one study.
+            viewedInfoFollowsList();
             // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
             // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
             renderObservation();
@@ -267,6 +271,7 @@
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }
           }
           render();
+          viewedInfoFollowsList();
           autoPreload?.afterList();
           if (arrivalNotice) announceArrivals(arrivalNotice);
           pollFails = 0;

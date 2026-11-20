@@ -104,16 +104,25 @@
       return true;
     }
     /**
-     * Between a list answer and the list's redraw, the surfaces that show a QC mark or a study's DICOM values are brought to
-     * that list at once: the QC cells already drawn (a row the list no longer has shows nothing), the open QC window, and
-     * the Info panel's study, QC line and Protocol & Dose.
+     * The surfaces that show a QC mark or a study's DICOM values are brought to the list at once, without waiting for the
+     * list's own redraw: the rows' QC fields (what Export List writes), the QC cells already drawn (a row the list no longer
+     * has shows nothing), the open QC window, and the Info panel's study, QC line and Protocol & Dose.
      */
     function qcFollowsList() {
+      for (const s of studies) applyQcRow(s);
       for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
         const s = studies.find(x => x.uid === cell.dataset.qcUid);
         cell.innerHTML = s ? qcCellHtml(s) : "";
       }
-      syncQcWindow(); renderViewedInfo();
+      syncQcWindow();
+      if (!viewedInfoFollowsList()) { renderQcInfo(); renderAcquisition(); }
+    }
+    /**
+     * A list answer the moment it is in hand (a list read and the poll call this before they wait for anything else): what
+     * the answer no longer lists, or reads another way, leaves the screen now - not when the list is rebuilt.
+     */
+    function qcHearsList(rows) {
+      try { hearQcList(rows); qcFollowsList(); } catch (error) { console.error(error); }
     }
     /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
     function applyQcRow(s) {
@@ -672,9 +681,9 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
-      // What shows a study's QC mark or its DICOM follows the list (a poll, a Refresh, a tab change): the Info panel's study,
-      // QC line and Protocol & Dose together (study-info-panel.js) and the open QC window (study-corrections.js).
-      renderViewedInfo(); syncQcWindow();
+      // What shows a study's QC mark or its DICOM follows the list (a poll, a Refresh, a tab change): the Info panel's QC
+      // line and Protocol & Dose (study-info-panel.js) and the open QC window (study-corrections.js).
+      renderQcInfo(); renderAcquisition(); syncQcWindow();
 
       const active = [];
       if (consultationFilter) {
@@ -1096,6 +1105,7 @@
         const r = await studyPageClient.read({ resume:!!options.resume, epoch, valid:() => !commitInFlight && epoch === commitEpoch });
         if (!work.admits(at) || loadSequence !== listLoadSequence || commitInFlight || epoch !== commitEpoch) return;
         assertStudyOwner(r);
+        qcHearsList(r.studies);
         await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
         let applied = false;
         work.commit(at, () => {

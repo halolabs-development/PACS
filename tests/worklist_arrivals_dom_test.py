@@ -149,6 +149,8 @@ $('#receipt-retry').addEventListener('click',requestGatewayRetry);
 function syncStudy(uid){const study=studies.find(item=>item.uid===uid),state=appState[uid];if(!study||!state)return;for(const key of ['rs','ss','em','holder','version'])if(state[key]!==undefined)study[key]=state[key]}
 // The Count cell is the shipped CELL.count (it carries the missing-images mark); its text stays the count.
 function render(){renders++;rows.innerHTML=studies.map(s=>`<tr data-uid="${s.uid}"><td data-count>${CELL.count(s)}</td><td data-series>${s.series}</td></tr>`).join('')}
+// The page's QC and Info-panel redraws after a list answer are its own (tests/technician_qc_dose_dom_test.py): no-ops here.
+function qcHearsList(){}function viewedInfoFollowsList(){return false}
 function loadReport(){loadReports++}function updateReportButtons(){buttonUpdates++}function toast(message,type){toasts.push({message,type})}
 START
 window.runPoll=()=>pollCallback();window.start=startPolling;window.setReply=value=>{nextReply=value};window.holdRead=()=>{readResolver=true};

@@ -131,6 +131,8 @@ class QcSite(auth.Site):
         self.tele = set()         # rows this institution only receives for tele-reading now (another institution's study)
         self.scopes = {}          # uid -> examScope of the row
         self.one_patient = False  # both rows are one patient's studies (Related)
+        self.listed = {}          # study -> the Series Instance UIDs its archive holds (archive())
+        self.series_said = {}     # uid -> the number of series the list row says, when not the archive's (None: unknown)
 
     def mark(self, uid, account):
         mark = self.qc.get(uid) or {'reason': None, 'by': None, 'at': None, 'revision': 0}
@@ -150,7 +152,18 @@ class QcSite(auth.Site):
             row['examScope'] = self.scopes[uid]
         if self.one_patient:
             row['sourcePatientKey'] = auth.INSTITUTION + '|SYN-P-001'
+        row['series'] = self.series_said[uid] if uid in self.series_said else self.series_of(uid, row['series'])
         return row
+
+    def series_of(self, uid, default):
+        """The number of series of the row's exam, as the server counts it: every series the archive holds of each original
+        of its scope, a split part's own series only."""
+        sources = self.scopes[uid]['sources'] if uid in self.scopes else [{'studyUid': uid, 'series': {'mode': 'all', 'uids': []}}]
+        if not any(source['studyUid'] in self.listed for source in sources):
+            return default
+        allowed = lambda source, series: source['series']['mode'] == 'all' or \
+            (series in source['series']['uids']) == (source['series']['mode'] == 'include')
+        return sum(1 for source in sources for series in self.listed.get(source['studyUid'], []) if allowed(source, series))
 
     def list_body(self, account, rename=None):
         body = super().list_body(account, rename)
@@ -464,6 +477,31 @@ class QcFollowsTheListDOM(QcBase):
         expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(0)
         self.assertEqual([], self.errors)
 
+    def test_a_list_answer_is_heard_before_the_read_waits_for_anything_else(self):
+        page = self.open_flagged()
+        self.open_window()
+        # After its answer is in, a list read waits for the favorites and tag lists before it rebuilds the list: that wait
+        # is held here.
+        held = page.evaluate("""() => { const target = favoriteList || studyTagList; if (!target) return false;
+            const original = target.refresh.bind(target);
+            target.refresh = async (...args) => { await new Promise(resolve => { window.synRelease = resolve; }); return original(...args); };
+            return target.refresh !== original; }""")
+        self.assertTrue(held, 'neither list is mounted: the case shows nothing')
+        self.site.gone.add(auth.UID)
+        self.reread()
+        expect(self.window()).to_be_hidden()
+        expect(self.qc_cell()).to_have_text('Unknown')
+        expect(page.locator('#study-qc')).to_contain_text('QC Flag: Unknown')
+        self.assert_nothing_of_the_mark()
+        # The list itself is not rebuilt yet (the row is still drawn), and a file exported now carries no reason.
+        expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(1)
+        self.assertTrue(page.evaluate('() => typeof window.synRelease === "function"'), 'the wait was not reached')
+        self.open_export('csv')
+        self.assertNotIn(self.REASON, self.export('csv'))
+        page.evaluate('() => window.synRelease()')
+        expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(0)
+        self.assertEqual([], self.errors)
+
     def test_a_404_empties_and_closes_the_window_before_the_list_is_read_again(self):
         page = self.open_flagged()
         self.open_window()
@@ -672,6 +710,7 @@ def archive(site, study, *series):
         rows.append(series_row(study, uid, number, modality, description, listed[0] if listed else len(objects)))
         site.gets['/dicom-web/studies/%s/series/%s/metadata' % (study, uid)] = (200, objects)
     site.gets['/dicom-web/studies/%s/series' % study] = (200, rows)
+    site.listed[study] = [row[0] for row in series]
 
 
 RDSR = '1.2.840.10008.5.1.4.1.1.88.67'
@@ -964,6 +1003,61 @@ class AcquisitionSourceDOM(AcquisitionBase):
         self.assertFalse(any(line.endswith(': Not in DICOM') for line in lines), lines)
         self.assertEqual([], self.errors)
 
+    def test_frames_are_those_the_object_counts_and_a_value_kept_elsewhere_is_not_absent(self):
+        site = self.site()
+        a = auth.UID
+        s5, s6, s7 = a + '.5', a + '.6', a + '.7'
+        archive(site, a,
+                # Three frames counted, none described: nothing is known of any of them.
+                (s5, '5', 'CT', 'SYN ENH NONE', [instance(a, s5, s5 + '.1', sop_class=ENHANCED, protocol='SYN ENH',
+                                                          extra={'00280008': tag('IS', 3)})]),
+                # Two frames counted, three described: the third item is of no frame.
+                (s6, '6', 'CT', 'SYN ENH MORE', [instance(a, s6, s6 + '.1', sop_class=ENHANCED, protocol='SYN ENH',
+                    extra={'52009230': tag('SQ', frame(4), frame(5), frame(6)), '00280008': tag('IS', 2)})]),
+                # A value that is not a list of values, and one kept outside this answer.
+                (s7, '7', 'CT', 'SYN CT ODD', [
+                    instance(a, s7, s7 + '.1', protocol='SYN P', extra={'00189345': {'vr': 'FD', 'Value': '12.4'}}),
+                    instance(a, s7, s7 + '.2', protocol='SYN P', extra={'00189345': {'vr': 'FD', 'BulkDataURI': 'https://syn.test/bulk/1'}}),
+                    instance(a, s7, s7 + '.3', extra={'00181030': {'vr': 'LO', 'BulkDataURI': 'https://syn.test/bulk/2'}}, ctdi=7.5)]))
+        self.start(site)
+        expect(self.box()).to_contain_text('SYN CT ODD')
+        lines = self.lines()
+        self.assertIn('CTDIvol (0018,9345): Could not read (image 1: frames 1–3)', lines)
+        self.assertIn('CTDIvol (0018,9345): 4 mGy (image 1: frame 1), 5 mGy (image 1: frame 2)', lines)
+        self.assertNotIn('6 mGy', ' '.join(lines))
+        self.assertNotIn('frame 3)', ' '.join(line for line in lines if '4 mGy' in line))
+        self.assertIn('CTDIvol (0018,9345): 7.5 mGy (image 3) · Could not read (images 1–2)', lines)
+        self.assertIn('Protocol (0018,1030): SYN P (images 1–2) · Could not read (image 3)', lines)
+        self.assertNotIn('1 mGy', ' '.join(lines).replace('1 mGy.cm', ''))
+        self.assertFalse(any(line.endswith(': Not in DICOM') and not line.startswith('DLP') for line in lines), lines)
+        # Objects not described as they count themselves are not a whole reading: the exam is not said to have no dose report.
+        self.assertIn('DLP (Dose SR): Not found in the series read', lines)
+        self.assertEqual([], self.errors)
+
+    def test_fewer_series_than_the_list_row_counts_is_not_a_whole_reading(self):
+        site = self.site()
+        a = auth.UID
+        s2 = a + '.2'
+        archive(site, a, (s2, '2', 'CT', 'SYN CHEST', [instance(a, s2, s2 + '.1', protocol='SYN P', ctdi=4)]))
+        # The list row counts two series of the exam; the archive lists one.
+        site.series_said[a] = 2
+        self.start(site)
+        expect(self.box()).to_contain_text('SYN CHEST')
+        lines = self.lines()
+        self.assertIn('Series found: 1 of the 2 the list counts', lines)
+        self.assertIn('DLP (Dose SR): Not found in the series read', lines)
+        self.assertNotIn('DLP (Dose SR): Not in DICOM', lines)
+        # A row that does not say how many series it has is not vouched for either.
+        site.series_said[a] = None
+        self.page.locator('#m-refresh').click()
+        expect(self.box()).to_contain_text('the list does not say how many')
+        self.assertIn('DLP (Dose SR): Not found in the series read', self.lines())
+        # As many as the row counts: read whole.
+        site.series_said[a] = 1
+        self.page.locator('#m-refresh').click()
+        expect(self.box()).to_contain_text('DLP (Dose SR): Not in DICOM')
+        self.assertEqual([], self.errors)
+
     def test_a_dose_report_not_searched_to_its_end_is_not_called_absent(self):
         site = self.site()
         a, s9 = auth.UID, auth.UID + '.900'
@@ -1070,6 +1164,72 @@ class AcquisitionAccessDOM(AcquisitionBase):
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
         self.assertEqual([], self.errors)
 
+    def test_a_study_answered_404_loses_its_protocol_and_dose_before_the_list_is_read_again(self):
+        site = self.site()
+        self.start(site)
+        expect(self.box()).to_contain_text('312.4 mGy.cm')
+        self.page.locator('#t-qc-flag').click()
+        self.window().get_by_label('Reason').fill('SYN not sent')
+        site.patch_answers.append((404, {'statusCode': 404, 'message': 'SYN 검사를 찾을 수 없습니다'}))
+        site.held_lists = []
+        self.window().get_by_role('button', name='Flag', exact=True).click()
+        expect(self.window()).to_be_hidden()
+        expect(self.box()).to_contain_text('Protocol & Dose: Could not read')
+        self.assertNotIn('312.4', self.box().inner_text())
+        self.assertNotIn('SYN CHEST ROUTINE', self.box().inner_text())
+        for _ in range(50):
+            if site.held_lists:
+                break
+            self.page.wait_for_timeout(100)
+        self.assertTrue(site.held_lists, 'the list was not read again after the 404')
+        # The list says the study is still this account's: it is read again, not taken from memory.
+        calls = len(site.dicom_calls)
+        held, site.held_lists = site.held_lists, None
+        for route, account in held:
+            route.fulfill(json=site.list_body(account))
+        expect(self.box()).to_contain_text('312.4 mGy.cm')
+        self.assertTrue(self.reads_of(auth.UID, calls), 'the exam was not read again')
+        self.assertEqual([], self.errors)
+
+    def test_a_refusal_that_arrives_for_a_read_left_behind_still_takes_the_original_out_of_reach(self):
+        site = self.site()
+        a, b = auth.UID, auth.UID_B
+        s3 = a + '.3'
+        # One original split in two exams: the first part is every series but the thin one, the second part the thin one.
+        site.scopes[a] = split(a, 'exclude', [s3])
+        site.scopes[b] = dict(split(a, 'include', [s3], part=1), reportUid=b)
+        path = '/dicom-web/studies/%s/series/%s/metadata' % (a, s3)
+        held = []
+        self.open(TECH, site)
+        self.context.route('**' + path, lambda route: held.append(route))
+        self.go()
+        self.technician_tab()
+        # The first part is read whole and kept.
+        self.page.locator('#rows tr[data-uid="%s"]' % a).click()
+        expect(self.box()).to_contain_text('312.4 mGy.cm')
+        # The second part is being read (its series held) when the person goes back to the first part.
+        self.page.locator('#rows tr[data-uid="%s"]' % b).click()
+        for _ in range(50):
+            if held:
+                break
+            self.page.wait_for_timeout(100)
+        self.assertTrue(held, 'the read of the second part was not sent')
+        self.page.locator('#rows tr[data-uid="%s"]' % a).click()
+        expect(self.box()).to_contain_text('312.4 mGy.cm')
+        # The original now refuses: the read left behind learns it. What the first part shows came from that original.
+        site.gets['/dicom-web/studies/%s/series' % a] = (403, {'code': 'SYN'})
+        calls = len(site.dicom_calls)
+        held[0].fulfill(status=403, json={'code': 'SYN'})
+        expect(self.box()).to_contain_text('access refused')
+        self.assertNotIn('312.4', self.box().inner_text())
+        self.assertTrue(self.reads_of(a, calls), 'the first part was not read again')
+        # Leaving the tab and coming back shows nothing kept from before the refusal.
+        self.page.locator('[data-tab="Radiology"]').click()
+        self.technician_tab()
+        expect(self.box()).to_contain_text('access refused')
+        self.assertNotIn('312.4', self.box().inner_text())
+        self.assertEqual([], self.errors)
+
     def test_a_late_answer_of_an_exam_no_longer_viewed_is_not_kept(self):
         site = self.site()
         a, b, s9 = auth.UID, auth.UID_B, auth.UID + '.900'
@@ -1126,6 +1286,15 @@ class AcquisitionAccessDOM(AcquisitionBase):
         expect(self.box()).to_contain_text('312.4 mGy.cm')
         expect(self.page.locator('#clinical tr', has_text='Study UID').locator('td').nth(1)).to_have_text(a)
         self.assertNotIn(b, self.page.locator('#clinical').inner_text())
+        # B comes back to the list in a later poll and is the viewed study again: the panel is B's as a whole.
+        site.gone.clear()
+        self.poll()
+        expect(self.page.locator('#rows tr[data-uid="%s"]' % b)).to_have_count(1)
+        expect(self.page.locator('#clinical tr', has_text='Study UID').locator('td').nth(1)).to_have_text(b)
+        expect(self.page.locator('#study-qc')).to_contain_text('QC Flag: None')
+        expect(self.box()).to_contain_text('Se 1 · CR · SYN CHEST PA')
+        self.assertNotIn('SYN mark of the target', self.page.locator('#study-qc').inner_text())
+        self.assertNotIn('312.4', self.box().inner_text())
         self.assertEqual([], self.errors)
 
 

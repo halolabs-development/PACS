@@ -123,6 +123,16 @@
       const listed = new Set(rows.map(s => s.uid));
       for (const uid of [...qcScopes().keys()]) if (!listed.has(uid)) loseQc(uid);
     }
+    /**
+     * A list answer the moment it is in hand - before the read waits for anything else, and before the list is rebuilt
+     * from it: a UID it does not list, or reads another way than this page holds, has no mark here from now on. The
+     * answer's own marks are taken when it is applied (observeQcScope); an answer that is then not applied leaves those
+     * rows Unknown until the next list - never showing what an earlier reading held.
+     */
+    function hearQcList(rows) {
+      const said = new Map(rows.map(s => [s.uid, s.examUnavailable === true ? null : qcReading(s.state)]));
+      for (const [uid, held] of [...qcScopes()]) if (!said.has(uid) || said.get(uid) !== held) loseQc(uid);
+    }
     function qcScope(uid) { return qcScopes().get(uid) ?? null; }
     /** The mark this page may show for a study now; null (shown as Unknown) when it is not a readable row of the last list. */
     function shownQc(uid) { return qcScope(uid) === null ? null : qcMark(appState[uid]); }
