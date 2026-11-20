@@ -150,7 +150,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261118120000_gateway_settings/migration.sql',
               'api/prisma/migrations/20261118120000_institution_critical_result_inbox/migration.sql',
               'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
-              'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql']
+              'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
+              'api/prisma/migrations/20261120120000_study_referred_at/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -298,6 +299,9 @@ def expected_rows(uid):
         # FC-034: the approval round's lookup values travel as they are (two set, two NULL).
         approvedAt=STAMP, approvedBySub='SYNTHETIC-reader-sub', amendedAt=STAMP, addendumAt=None, preDoc=None, preReviewer=None, preDocSub="SYNTHETIC-author-sub", preReviewerSub="SYNTHETIC-reviewer-sub",
         ov=None, orig=None, orderOid=None, holder=None, holderInstitutionId=None, heldAt=None,
+        # Worklist Referred: a study registered directly and then announced. The first Gateway announce time and the closed
+        # mark are values of the row (written once, together), kept as they are: a restore never re-opens the row.
+        referredAt=STAMP, referredOpen=False,
         # S7-U5: the draft epoch is a value of the row (rotated by a forced release), not something a restore may re-draw.
         draftEpoch='00000000-0000-4000-8000-0000000000d1', reportUnit='disposal:00000000-0000-4000-8000-0000000000d2',
         updatedAt=STAMP, createdAt=STAMP)]
