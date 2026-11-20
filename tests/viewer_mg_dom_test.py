@@ -770,7 +770,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         expect(panel.locator('b')).to_have_text('Slice 2 / 12')
         self.assertEqual([0, 1], page.evaluate("() => [synViews.get('rcc').index, synViews.get('dbt').index]"))
 
-    def test_07e_tomo_opened_while_the_dbt_cell_is_being_read_names_it_and_opens_nothing_when_its_header_comes(self):
+    def test_07e_tomo_opened_while_a_dbt_cell_is_being_read_names_it_takes_no_other_cell_and_opens_nothing_when_its_header_comes(self):
         page = self.open(setup=self.held('dbt'), read=False)
         self.read_but(page, 'dbt')
         page.evaluate("() => { synActive = 'dbt'; }")
@@ -799,6 +799,34 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.evaluate("() => { synActive = 'dbt'; }")
         self.menu(page, 'Tomo (DBT) Slices')
         expect(page.get_by_role('dialog', name='Tomo (DBT) Slices').locator('[role=status]')).to_have_text(unknown + self.UNREAD + '. 다시 여세요.')
+        # Two DBT cells (today's, and the prior R CC as one), today's chosen and still being read: Tomo does not take
+        # the prior one in its place — nothing is opened, and today's cell is named.
+        second = "const p = synViews.get('prcc'); p.info.slices = 12; p.ids = Array.from({ length: 12 }, (_, k) => 'img:prcc:' + k);"
+        page = self.open(setup="() => { " + second + " synHeld = ['dbt']; }", read=False)
+        self.read_but(page, 'dbt')
+        page.evaluate("() => { synActive = 'dbt'; }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        expect(panel.locator('[role=status]')).to_have_text(unknown + self.READING + '. 다시 여세요.')
+        expect(panel.locator('b')).to_have_text('Slice — / —')
+        self.assertEqual([0, 0], page.evaluate("() => ['dbt', 'prcc'].map(id => synViews.get(id).index)"))
+        # Read, and opened again: Next steps the cell chosen, not the other.
+        self.release(page)
+        panel.get_by_role('button', name='Close').click()
+        self.menu(page, 'Tomo (DBT) Slices')
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        panel.get_by_role('button', name='Next ▶').click()
+        expect(panel.locator('b')).to_have_text('Slice 2 / 12')
+        self.assertEqual([1, 0], page.evaluate("() => ['dbt', 'prcc'].map(id => synViews.get(id).index)"))
+        # The cell chosen is a DBT cell that is read; the other DBT cell is still being read: the chosen one is taken.
+        page = self.open(setup="() => { " + second + " synHeld = ['prcc']; }", read=False)
+        self.read_but(page, 'prcc')
+        page.evaluate("() => { synActive = 'dbt'; }")
+        self.menu(page, 'Tomo (DBT) Slices')
+        panel = page.get_by_role('dialog', name='Tomo (DBT) Slices')
+        expect(panel.locator('b')).to_have_text('Slice 1 / 12')
+        panel.get_by_role('button', name='Next ▶').click()
+        self.assertEqual([1, 0], page.evaluate("() => ['dbt', 'prcc'].map(id => synViews.get(id).index)"))
 
     def test_08b_breast_wl_stays_with_its_way_back_through_the_frames_of_the_same_dbt(self):
         page = self.open()
@@ -1756,6 +1784,8 @@ class ViewerMgDOMTest(unittest.TestCase):
         self.menu(page, 'Mirrored'); self.menu(page, 'Magnifier')
         captures = page.locator('.kin-mg-capture[data-mode=lens]')
         expect(captures).to_have_count(5)
+        # Turned on, the Magnifier says which cell it is not on yet.
+        self.assertIn('영상을 읽은 뒤에 걸리는 칸 — Prior · R CC' + self.READING, page.evaluate("() => synNotes.at(-1).message"))
         box = page.locator('#pane-rcc .viewport-element').bounding_box()
         lenses = "() => Object.fromEntries([...document.querySelectorAll('.kin-mg-lens')].map(lens => [lens.closest('[data-cy=viewport-pane]').id.slice(5), lens.dataset.at]))"
         page.mouse.move(box['x'] + 50, box['y'] + 40); page.mouse.down()
@@ -1818,7 +1848,7 @@ class ViewerMgDOMTest(unittest.TestCase):
         page.wait_for_timeout(200)
         self.assertEqual([1, 1], page.evaluate("() => ['lcc', 'prcc'].map(id => synViews.get(id).getZoom())"))
 
-    def test_19_an_image_the_viewer_itself_calls_another_modality_is_never_asked_for_and_takes_no_part(self):
+    def test_19_an_image_the_viewer_itself_calls_another_modality_is_never_asked_for_takes_no_part_and_is_left_as_the_reader_has_it(self):
         page = self.open(setup="() => { synViews.get('rmlo').info.modality = 'CT'; }")
         self.assertIsNone(page.locator('#pane-rmlo').get_attribute('data-kin-mg-image'))
         expect(page.locator('[data-kin-mg-image=read]')).to_have_count(5)
@@ -1834,21 +1864,42 @@ class ViewerMgDOMTest(unittest.TestCase):
         panel.get_by_role('button', name='1:1').click()
         expect(page.locator('[data-mg-badge=zoom]')).to_have_count(5)
         expect(panel.locator('[role=status]')).to_have_text('')
+        panel.get_by_role('button', name='Fit', exact=True).click()
         self.menu(page, 'Mirrored'); self.menu(page, 'Magnifier')
         expect(page.locator('.kin-mg-capture')).to_have_count(5)
-        expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_have_text('연동하지 않는 칸 — Prior · L CC: orientation unverified')
+        mirrored = page.get_by_role('dialog', name='Mirrored')
+        expect(mirrored.locator('[role=status]')).to_have_text('연동하지 않는 칸 — Prior · L CC: orientation unverified')
+        self.menu(page, 'Magnifier')
         self.menu(page, 'Quadrant Zoom')
         expect(page.locator('#pane-rcc [data-mg-badge=quadrant]')).to_contain_text('Q1 Upper-Outer')
         self.assertEqual(before, page.evaluate(self.STATE, ['rmlo']))
         expect(page.locator('#pane-rmlo [data-mg-badge]')).to_have_count(0)
         self.assertNotIn('rmlo', page.evaluate("synAsked"))
-        # With no MG image in any cell nothing is asked for, and the buttons say that there is none.
+        page.get_by_role('dialog', name='Quadrant Zoom').get_by_role('button', name='Close').evaluate('b => b.click()')
+        # With Mirrored on the reader zooms and inverts that cell, and today's R CC: Reset gives the MG cells their
+        # views back — the other cell is the reader's own, and stays as the reader has it.
+        page.evaluate("""() => { const ct = synViews.get('rmlo'); ct.setZoom(3); ct.setProperties({ invert: true });
+          synViews.get('rcc').setCamera({ parallelScale: 50, focalPoint: [100, 100, 0] }); }""")
+        self.assertEqual([3, 3], page.evaluate("() => ['rcc', 'lcc'].map(id => synViews.get(id).getZoom())"))
+        mirrored.get_by_role('button', name='Reset').evaluate('b => b.click()')
+        self.assertEqual([1, 1], page.evaluate("() => ['rcc', 'lcc'].map(id => synViews.get(id).getZoom())"))
+        self.assertEqual([3, True], page.evaluate("() => [synViews.get('rmlo').getZoom(), synViews.get('rmlo').props.invert]"))
+        # With no MG image in any cell nothing is asked for, and every panel says that there is none.
         page = self.open(setup="() => { for (const v of synViews.values()) v.info.modality = 'CT'; }")
+        before = page.evaluate(self.STATE, self.ALL)
         self.menu(page, 'Breast Display')
         panel = page.get_by_role('dialog', name='Breast Display')
         for name in ['Breast W/L', 'Fit Breast']:
             panel.get_by_role('button', name=name).click()
             expect(panel.locator('[role=status]')).to_have_text('MG 영상이 있는 칸이 없습니다. 바꾼 것이 없습니다.')
+        self.menu(page, 'Quadrant Zoom')
+        expect(page.get_by_role('dialog', name='Quadrant Zoom').locator('[role=status]')).to_have_text('MG 영상이 있는 칸이 없습니다. 바꾼 것이 없습니다.')
+        self.menu(page, 'Mirrored')
+        expect(page.get_by_role('dialog', name='Mirrored').locator('[role=status]')).to_have_text('MG 영상이 있는 칸이 없습니다.')
+        self.menu(page, 'Magnifier')
+        self.assertEqual('Magnifier: MG 영상이 있는 칸이 없습니다.', page.evaluate("() => synNotes.at(-1).message"))
+        expect(page.locator('.kin-mg-capture, [data-mg-badge]')).to_have_count(0)
+        self.assertEqual(before, page.evaluate(self.STATE, self.ALL))
         self.assertEqual([], page.evaluate("synAsked"))
 
     # ── The lens against the screen ──

@@ -203,7 +203,11 @@
     function cellsPressed() { const list = cellsNow(); askAgain(list); return list; }
     const leftOut = list => list.left.map(entry => entry.label);
     // What to say when nothing was done: the cells not read, or that there is no MG cell.
-    const nothingDone = list => list.left.length ? '바꾼 것이 없습니다. 영상을 읽지 못한 칸 — ' + leftOut(list).join(' / ') : 'MG 영상이 있는 칸이 없습니다. 바꾼 것이 없습니다.';
+    const NO_MG = 'MG 영상이 있는 칸이 없습니다.';
+    const nothingDone = list => list.left.length ? '바꾼 것이 없습니다. 영상을 읽지 못한 칸 — ' + leftOut(list).join(' / ') : NO_MG + ' 바꾼 것이 없습니다.';
+    // A cell this module leaves alone whatever is pressed: not a mammography image (by the viewer's metadata, or by
+    // its header once read), or no image.
+    const notMg = id => { const entry = look(id); return !entry || entry.state === 'other' || (entry.state === 'read' && !entry.cell.mg); };
 
     // ── Geometry of a cell: image points (pixel edges 0 … columns), world points and the camera ──
     function toImage(v, world) {
@@ -359,15 +363,15 @@
         badge(cell.v, 'mirrored', 'Mirrored: ' + (REASONS[reason] || reason) + ' — not linked');
         lines.push(labelOf(cell) + ': ' + (REASONS[reason] || reason));
       }
-      if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : '';
+      if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : list.length ? '' : NO_MG;
     }
-    // Reset: every cell that still holds the image it held then, back to its camera and inversion; a point still
-    // pressed is dropped.
+    // Reset: every MG cell that still holds the image it held then, back to its camera and inversion — a cell of
+    // another modality is the reader's own throughout. A point still pressed is dropped.
     function resetMirrored() {
       pointer.press = null;
       for (const [id, before] of mirror.before) {
         const v = viewportOf(id);
-        if (v !== before.viewport || imageIdOf(v) !== before.imageId) continue;
+        if (v !== before.viewport || imageIdOf(v) !== before.imageId || notMg(id)) continue;
         steer(v, () => {
           const { flipHorizontal, flipVertical, ...camera } = before.camera;
           v.setCamera({ ...camera, flipHorizontal, flipVertical });
@@ -542,11 +546,14 @@
       if (lens.on || tomo.slabbed) pressLayers();
       if (edges && show.edge) drawEdges();
     }
+    // Turned on, it says which MG cells it is not on yet (their images not read: it comes to them when they are).
     function setMagnifier(on) {
       lens.on = on; lensUp();
-      if (on) cellsPressed();
+      const list = on ? cellsPressed() : null;
       pressLayers();
-      ui.toast(on ? 'Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.' : 'Magnifier를 껐습니다.');
+      ui.toast(!on ? 'Magnifier를 껐습니다.' : !list.length && !list.left.length ? 'Magnifier: ' + NO_MG
+        : 'Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.'
+          + (list.left.length ? ' 영상을 읽은 뒤에 걸리는 칸 — ' + leftOut(list).join(' / ') : ''));
     }
 
     // ── Quadrant Zoom ──
@@ -649,19 +656,18 @@
           if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
           if (!place(cell, step, mode)) failed.push(labelOf(cell));
         }
-        notes = [list.left.length ? '확대하지 않은 칸 — ' + leftOut(list).join(' / ') : '',
+        notes = [list.left.length ? '확대하지 않은 칸 — ' + leftOut(list).join(' / ') : list.length ? '' : nothingDone(list),
           skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '',
           failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
         paint();
       }
-      // Held cells whose size changed: the step and zoom choice each holds, again, for those cells only. A cell that
-      // cannot be worked out again (its image not read now) leaves the step.
+      // Held cells whose size changed: the step and zoom choice each holds, again, for those cells only. A cell whose
+      // image is not read just then keeps the step as it is drawn (and its way back by Close).
       quad.apply = ids => {
         const list = cellsNow();
         for (const id of ids) {
           const mark = quad.marks.get(id), cell = list.find(c => c.id === id);
-          if (!mark) continue;
-          if (!cell || mark.viewport !== cell.v) { dropQuadrant(id); continue; }
+          if (!mark || !cell || mark.viewport !== cell.v) continue;
           if (!place(cell, mark.step, mark.mode)) notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
         }
         paint();
@@ -769,16 +775,16 @@
       tomo.sync?.();
     }
     // The DBT cell: the active cell when the classifier confirms it holds a breast tomosynthesis stack, else the first such
-    // cell, of the cells read now; a CT, MR or other multi-image stack is never a Tomo cell. A cell with several images
-    // whose image is not read cannot be told yet: it is named, and Tomo is opened again for it.
+    // cell; a CT, MR or other multi-image stack is never a Tomo cell. A cell with several images whose image is not read
+    // cannot be told yet: unless the active cell itself is a DBT cell, no cell is taken — the cells not read are named,
+    // and Tomo is opened again.
     function openTomo(viewportId) {
-      const list = cellsPressed(), unread = [];
-      let v = null;
-      for (const view of [viewportOf(viewportId), ...cellIds().map(viewportOf)].filter((view, i, all) => view && all.indexOf(view) === i && idsOf(view).length > 1)) {
-        const cell = list.find(c => c.id === view.id), left = list.left.find(entry => entry.id === view.id);
-        if (left) unread.push(left.label);
-        if (cell && (cell.kind === 'dbt' || cell.basis === 'ct-breast-tomosynthesis')) { v = view; break; }
-      }
+      const list = cellsPressed(), active = viewportOf(viewportId);
+      const many = [active, ...cellIds().map(viewportOf)].filter((view, i, all) => view && all.indexOf(view) === i && idsOf(view).length > 1);
+      const isDbt = view => { const cell = list.find(c => c.id === view.id); return !!cell && (cell.kind === 'dbt' || cell.basis === 'ct-breast-tomosynthesis'); };
+      const unread = many.map(view => list.left.find(entry => entry.id === view.id)?.label).filter(Boolean);
+      // (with a cell still unknown the first DBT cell found could be another than the one the reader means)
+      const v = many.includes(active) && isDbt(active) ? active : unread.length ? null : many.find(isDbt) || null;
       const panel = ui.panel({ id: 'tomo', title: 'Tomo (DBT) Slices' });
       if (!panel || panel === tomo.panel) return;
       tomo.panel = panel; tomo.v = v; tomo.id = v?.id ?? null; tomo.imageIds = v ? idsOf(v) : null; tomo.step = 1; tomo.slab = 1;
