@@ -548,6 +548,56 @@ class ViewerFeaturesDOMTest(unittest.TestCase):
         self.assertFalse(page.evaluate("synUI.invoke('Length', { viewportId: 'right' })"))
         self.assertEqual(['left', []], page.evaluate("[synActive, synActivated]"))
 
+    # ── A feature action that starts, and a control of a feature's window, are the reader working on the images ──
+    def test_15_a_feature_action_and_a_control_of_a_feature_window_say_work_on_the_images(self):
+        # Whatever waits for a screen nobody touched ends on that word (kinViewerImageWork): counted here.
+        page = self.open()
+        page.evaluate("() => { window.synWork = 0; window.kinViewerImageWork = () => { synWork++; }; }")
+        work = lambda: page.evaluate("(() => { const n = synWork; synWork = 0; return n; })()")
+        # Opening a menu is not work on the images; the item run from it is.
+        page.get_by_role('button', name='Display ▾').click()
+        self.assertEqual(0, work())
+        page.get_by_role('menu', name='Display').get_by_role('menuitem', name='Zoom…').click()
+        self.assertEqual(1, work())
+        # A feature's toolbar button.
+        page.get_by_role('button', name='Prior ›').click()
+        self.assertEqual(1, work())
+        # An action that is refused starts nothing.
+        self.assertFalse(page.evaluate("KinViewerFeatures.run('synOff')"))
+        self.assertEqual(0, work())
+        # A feature's window, as one that was opened earlier and stays open: its controls change the image at once.
+        page.evaluate("""() => {
+          const panel = synUI.panel({ id: 'zoom', title: 'Zoom' }); window.synZoom = [];
+          const note = document.createElement('p'); note.textContent = 'At 100%, the image fits the cell.';
+          const preset = document.createElement('button'); preset.type = 'button'; preset.textContent = '200%'; preset.onclick = () => synZoom.push(2);
+          const input = document.createElement('input'); input.type = 'number'; input.setAttribute('aria-label', 'Zoom percent');
+          input.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); synZoom.push(Number(input.value) / 100); } };
+          const select = document.createElement('select'); select.setAttribute('aria-label', 'Zoom mode');
+          select.append(new Option('Fit', 'fit'), new Option('Fill', 'fill')); select.onchange = () => synZoom.push(select.value);
+          panel.body.append(note, preset, input, select);
+        }""")
+        window = page.get_by_role('dialog', name='Zoom')
+        expect(window).to_be_visible()
+        self.assertEqual(0, work())
+        # Its text is not a control.
+        window.get_by_text('At 100%, the image fits the cell.').click()
+        self.assertEqual(0, work())
+        window.get_by_role('button', name='200%').click()
+        self.assertEqual([[2], 1], [page.evaluate('synZoom'), work()])
+        # Typing a value is not yet; Enter applies it.
+        field = window.get_by_label('Zoom percent')
+        field.focus(); page.keyboard.type('150')
+        self.assertEqual(0, work())
+        page.keyboard.press('Enter')
+        self.assertEqual([2, 1.5], page.evaluate('synZoom'))
+        self.assertGreaterEqual(work(), 1)
+        window.get_by_label('Zoom mode').select_option('fill')
+        self.assertEqual([[2, 1.5, 'fill'], True], [page.evaluate('synZoom'), work() >= 1])
+        # Closing the window is not.
+        window.get_by_role('button', name='Close').click()
+        expect(window).to_have_count(0)
+        self.assertEqual(0, work())
+
     def test_12_a_module_failing_after_settings_opened_leaves_no_check_to_save(self):
         doomed = """() => {
           KinViewerFeatures.module('doomed', async ({ ui }) => {

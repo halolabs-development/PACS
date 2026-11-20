@@ -218,34 +218,50 @@
       const over = monitorPermissionGranted() ? KinViewerDisplayLayout.covered(rect, screensCache) : [];
       return over.length === 2 ? over : null;
     }
+    // A window that is minimized or hidden: its coordinates then say nothing about where it stands.
+    function popupHidden(popup) {
+      try { return popup.document.visibilityState === 'hidden'; } catch (_) { return false; }
+    }
+    // The one judgement of a viewer window standing over two displays, for a window the browser put there at once and for
+    // one the reader dragged there: made on where the window stands now, with the display access given, and never of a
+    // window that is closed, minimized or hidden. wanted: the two displays chosen - both must be under the window; null:
+    // only a saved place said so - then any two displays or more, and a pair only when they are exactly two. Returns
+    // { rect, pair } - the window rectangle judged and the two displays confirmed under it (null: more than two) - or
+    // null: not there, or not to be judged now.
+    function spanReached(popup, wanted) {
+      const rect = popupHidden(popup) || !monitorPermissionGranted() ? null : popupRect(popup);
+      if (!rect) return null;
+      if (wanted) return KinViewerDisplayLayout.covers(rect, wanted) ? { rect, pair: wanted } : null;
+      return KinViewerDisplayLayout.covered(rect, screensCache).length >= 2 ? { rect, pair: spanPairUnder(rect) } : null;
+    }
     // The viewer window was to stand over two displays and the browser kept it on one: this watches for the window to
-    // stand there after all, the reader having dragged it (or the window being there already, away from the exact place
-    // asked for: then at once, and true is returned - nobody is asked to drag). wanted: the two displays chosen - both
-    // must be under the window; null: only a saved place said so - then any two displays or more, and a pair only when
-    // they are exactly two. done(rect, pair) runs once, with the window rectangle the judgement was made on and the two
-    // displays confirmed under it (null: more than two). It ends without a word when still() no longer holds (the window
-    // closed or shows another document, the list's account or context changed, another move was asked), the display access
-    // was taken back, a chosen display is gone, or after two minutes; a window minimized meanwhile is not judged. A later
-    // move is still saved as any move is (watchOhifRect).
+    // stand there after all (spanReached), the reader having dragged it (or the window being there already, away from the
+    // exact place asked for: then at once, and true is returned - nobody is asked to drag). done(rect, pair) runs once.
+    // The wait is for the window itself: the same window with the next patient opened in it is still waited for. It ends
+    // without a word when the window is closed or is no longer the one this list holds for its slot (another window took
+    // the slot), still() no longer holds (the list's account or context changed, another move was asked), the display
+    // access was taken back, a chosen display is gone, or after two minutes; a window minimized meanwhile is not judged.
+    // A later move is still saved as any move is (watchOhifRect).
     function awaitSpan(popup, wanted, still, done) {
-      const until = Date.now() + 120000;
+      const until = Date.now() + 120000, slot = ohifPopupSlots.get(popup) || 0;
       const known = target => screensCache.some(s => KinViewerDisplayLayout.identity(s) === KinViewerDisplayLayout.identity(target));
+      const held = () => viewerWindows.rows().some(row => row.index === slot && row.popup === popup);
       const look = () => {
         let going = false;
-        try { going = !popup.closed && monitorPermissionGranted() && still() && (!wanted || wanted.every(known)); } catch (_) { going = false; }
+        try { going = !popup.closed && monitorPermissionGranted() && held() && still() && (!wanted || wanted.every(known)); } catch (_) { going = false; }
         if (!going || Date.now() > until) return 'ended';
-        let hidden = false;
-        try { hidden = popup.document.visibilityState === 'hidden'; } catch (_) {}
-        const rect = hidden ? null : popupRect(popup);
-        if (!rect) return 'waiting';
-        const over = wanted ? KinViewerDisplayLayout.covers(rect, wanted) : KinViewerDisplayLayout.covered(rect, screensCache).length >= 2;
-        if (!over) return 'waiting';
-        done(rect, wanted || spanPairUnder(rect));
+        const stands = spanReached(popup, wanted);
+        if (!stands) return 'waiting';
+        done(stands.rect, stands.pair);
         return 'reached';
       };
       const first = look();
       if (first === 'waiting') { const timer = setInterval(() => { if (look() !== 'waiting') clearInterval(timer); }, 500); }
       return first === 'reached';
+    }
+    // The display choice stored now (Viewer Displays), as it is written: what a placement began with (its gate's choice).
+    function storedSpanChoice() {
+      try { return localStorage.getItem(OHIF_SPAN_SCREENS_KEY); } catch (_) { return null; }
     }
     // A viewer window standing over two displays is remembered here, whichever way it got there (Span Displays, or the
     // placement of a window as it opens; moved there by the browser at once, or dragged there by the reader): the window
@@ -294,7 +310,9 @@
           // After a failed placement, an actual user move resumes position saving.
           // Restore that manual rectangle next time, including when display
           // permission was denied or a previously selected screen disappeared.
-          localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
+          // The display choice dropped is the one that placement began with (the gate's choice): displays chosen since
+          // then, for another window, are not this window's to drop.
+          if (suspended.choice === undefined || storedSpanChoice() === suspended.choice) localStorage.removeItem(OHIF_SPAN_SCREENS_KEY);
           ohifPlacementWrites.delete(popup);
         }
         const slot = ohifPopupSlots.get(popup) || 0;

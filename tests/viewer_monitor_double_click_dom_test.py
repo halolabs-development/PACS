@@ -48,7 +48,7 @@ window.nativeCommands={
 SPAN = r"""(()=>{
 window.cornerstone={metaData:{get:(type,id)=>type==='instance'&&/^wadors:/.test(id||'')?{SOPInstanceUID:'sop:'+id.split(':')[1]}:undefined}};
 for(const set of displaySets.values())set.images=[{SOPInstanceUID:'sop:'+set.displaySetInstanceUID.slice(3)}];
-const frames=v=>Object.assign(v,{getImageIds(){return [this.current]}});
+const frames=v=>Object.assign(v,{getImageIds(){return [this.current]},getCornerstoneImage(){return this.current?{imageId:this.current}:undefined}});
 nativeViewports.forEach(frames);const make=makeViewport;makeViewport=(id,seed)=>frames(make(id,seed));
 let fresh=0;
 window.layoutCommand={calls:[],runCommand(name,options){
@@ -376,6 +376,39 @@ class MonitorDoubleClickDOMTest(unittest.TestCase):
         page.wait_for_function("divisions().some(call => call[0] === 1 && call[1] === 2)", timeout=6000, polling=250)
         page.wait_for_function("geometry().length === 2")
         self.assertFalse(page.evaluate('kinViewerStockOneUp()'))
+
+    # One display above the other, touching, set apart sideways, the window laid over both: the upper one (it holds more of
+    # the window's height) ends at the grid's middle, the lower one lies under the whole width of the window. One display
+    # edge is inside the window, yet no two monitors stand side by side under the images.
+    STACKED_APART = """() => {
+      const grid = document.querySelector('[data-cy="viewport-grid"]').getBoundingClientRect();
+      const frame = (outerWidth - innerWidth) / 2, seam = screenX + frame + grid.left + grid.width / 2;
+      const top = screenY + (outerHeight - innerHeight) - frame, split = top + Math.round(innerHeight * 0.6);
+      const screens = [{ left: seam - 1600, top: split - 1500, width: 1600, height: 1500 }, { left: screenX - 200, top: split, width: 4000, height: 1500 }]
+        .map((s, i) => ({ availLeft: s.left, availTop: s.top, availWidth: s.width, availHeight: s.height, left: s.left, top: s.top, width: s.width, height: s.height,
+          isPrimary: i === 0, devicePixelRatio }));
+      const query = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = async value => value?.name === 'window-management' ? { state: 'granted', onchange: null } : query(value);
+      window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
+      Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => true });
+    }"""
+
+    def test_16_one_column_is_divided_between_two_monitors_side_by_side_only(self):
+        for displays, two in ((self.STACKED_APART, False), (TWO_DISPLAYS, True)):
+            page = self.open_with_stock_one_up(displays, span=True)
+            self.edges_known(page, [0.5])
+            # The display edge is inside the window in both: one edge, in the middle of the images.
+            page.wait_for_function("span.seams().length === 1")
+            self.assertEqual(two, page.evaluate('kinViewerTwoMonitorsNow()'))
+            # The reader picks 1 x 1 in the Layout menu.
+            page.evaluate("layoutCommand.runCommand('setViewportGridLayout', { numRows: 1, numCols: 1 })")
+            if two:
+                page.wait_for_function("divisions().some(call => call[0] === 1 && call[1] === 2)", timeout=6000, polling=250)
+            else:
+                page.wait_for_function("geometry().length === 1")
+                page.wait_for_timeout(3500)
+                self.assertEqual([[1, 1]], page.evaluate('divisions()'))
+                self.assertEqual(1, len(self.boxes(page)))
 
     def test_07_on_one_display_the_stock_one_up_still_runs(self):
         page = self.open_with_stock_one_up(ONE_DISPLAY)

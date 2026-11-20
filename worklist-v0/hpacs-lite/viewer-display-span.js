@@ -99,7 +99,9 @@ window.KinViewerDisplaySpan = (() => {
     // columns, one per monitor, by the Layout menu's own command: that command keeps every cell there is in its place (the
     // stack it shows, its frame, an empty cell empty, the active cell) and only adds the second column. A protocol that
     // gives one column again (another patient in this window) is divided again. The whole rule is here:
-    //  - the grid: a plain grid of one column, judged on every cell's place;
+    //  - the grid: a plain grid of one column, judged on every cell's whole place (plain) - a cell that a protocol or a
+    //    saved view put elsewhere (not from the top, not the full height) is theirs;
+    //  - the monitors: two side by side under the images, as far as the viewer can tell (kinViewerTwoMonitorsNow);
     //  - what it shows: at least one cell shows a display set, and every such cell shows it now as a drawn image stack
     //    (shows). Not an MPR, 3D, PDF or report cell, nor a series still loading - an empty cell asks for nothing;
     //  - never the cell the reader enlarged (the stock one-up's own cell; a maximized or merged cell), and never under an
@@ -107,19 +109,18 @@ window.KinViewerDisplaySpan = (() => {
     //    one per 2 s.
     function divide(state, cells) {
       const rows = state.layout?.numRows;
-      const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 &&
-        cells.length === rows && cells.every(cell => Math.abs(cell.x ?? -1) < 0.001 && Math.abs((cell.width ?? 0) - 1) < 0.001);
+      const single = (state.layout?.layoutType ?? 'grid') === 'grid' && state.layout?.numCols === 1 && Number.isInteger(rows) && rows >= 1 && plain(cells, rows);
       if (!single || typeof commands?.runCommand !== 'function') return;
       const showing = cells.filter(cell => (cell.displaySetInstanceUIDs || []).length);
       if (!showing.length || showing.some(cell => (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack')) return;
       let protocol = '';
       try { protocol = String(services.hangingProtocolService?.getState?.()?.protocolId || ''); } catch (_) { protocol = ''; }
       if (protocol.startsWith('kin.mammography')) return;
-      // Two monitors side by side under the images, as the monitor maximize and Monitors in Hanging Protocol count them
-      // (viewer-features-monitors.js: of two displays one above the other only one is the monitor there): one edge
-      // between their parts of the grid. Unknown there (null) leaves it to the display edge found above. Looked at again
-      // each second: that answer follows a later reading of the displays, with nothing else changing here.
-      try { const edges = window.kinViewerMonitorEdgesNow?.(); if (Array.isArray(edges) && edges.length !== 1) { owed = true; return; } } catch (_) { return; }
+      // Two monitors side by side under the images, as Monitors in Hanging Protocol counts them (viewer-features-monitors.js:
+      // of two displays one above the other only one is the monitor there, whatever side edge of the other lies inside
+      // the window). Not so: left alone, and looked at again each second - that answer follows a later reading of the
+      // displays, with nothing else changing here. Not known (no display access): the display edge found above decides.
+      try { if (window.kinViewerTwoMonitorsNow?.() === false) { owed = true; return; } } catch (_) { return; }
       // The stock one-up's one cell (a double click the monitor maximize could not take): that toggle puts its grid back.
       // Looked at again each second: another layout of the same shape can take its place with nothing else changing.
       try { if (window.kinViewerStockOneUp?.()) { owed = true; return; } } catch (_) { return; }
@@ -128,20 +129,28 @@ window.KinViewerDisplaySpan = (() => {
       Promise.resolve().then(() => commands.runCommand('setViewportGridLayout', { numRows: rows, numCols: 2 }))
         .catch(() => {}).then(() => { dividing = false; schedule(); });
     }
-    // The cell shows its display set now as a drawn image stack: its stack viewport's current image is one of that set's
-    // own images and is the image drawn. An image id left in the cell by the series shown before (a PDF or a report took
-    // its place, or the new series is still loading) is not that.
+    // The cells are those of a plain grid of one column: each fills the width, and top to bottom they are its equal rows.
+    function plain(cells, rows) {
+      const near = (value, wanted) => Number.isFinite(value) && Math.abs(value - wanted) < 0.001;
+      return cells.length === rows && [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0)).every((cell, row) =>
+        near(cell.x, 0) && near(cell.width, 1) && near(cell.y, row / rows) && near(cell.height, 1 / rows));
+    }
+    // The cell shows its display set now as a drawn image stack: its stack viewport's current image is the image it has
+    // drawn, and is one of that set's own images - for a part of one multi-frame file (a display set per time point,
+    // config series-split.js) that very frame, by the viewer's own rule. An image id left in the cell by the series
+    // shown before (a PDF or a report took its place, or the new series is still loading), an image not drawn yet and
+    // another part's frame of the same file are not that.
     function shows(cell) {
       try {
         const uids = cell.displaySetInstanceUIDs || [], view = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
         const set = uids.length === 1 ? services.displaySetService?.getDisplaySetByUID?.(uids[0]) : null;
         if (!set || !Array.isArray(set.images) || view?.type !== 'stack' || view.element?.isConnected === false) return false;
         const image = view.getCurrentImageId?.();
-        if (!image || !(view.getImageIds?.() || []).includes(image)) return false;
-        const drawn = view.getCornerstoneImage?.();
-        if (drawn && drawn.imageId !== image) return false;
+        if (!image || !(view.getImageIds?.() || []).includes(image) || view.getCornerstoneImage?.()?.imageId !== image) return false;
         const sop = window.cornerstone?.metaData?.get?.('instance', image)?.SOPInstanceUID;
-        return !!sop && set.images.some(instance => instance?.SOPInstanceUID === sop);
+        if (!sop) return false;
+        if (typeof window.kinSeriesSplitHolds !== 'function') return set.images.some(instance => instance?.SOPInstanceUID === sop);
+        return window.kinSeriesSplitHolds(set, sop, window.kinViewerImageReference?.(image)?.frame ?? 1);
       } catch (_) { return false; }
     }
     // What owns the screen now, so that its cells are not built anew under it: a cell maximized or merged, a saved Job or
@@ -409,7 +418,7 @@ window.KinViewerDisplaySpan = (() => {
     function shape() {
       try {
         const state = services.viewportGridService.getState();
-        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.width, cell.displaySetInstanceUIDs || []])]);
+        return JSON.stringify([state.layout?.numRows, state.layout?.numCols, [...state.viewports.values()].map(cell => [cell.x, cell.y, cell.width, cell.height, cell.displaySetInstanceUIDs || []])]);
       } catch (_) { return ''; }
     }
     function poll() {

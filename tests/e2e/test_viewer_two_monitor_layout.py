@@ -332,6 +332,26 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         # The image the reader went to is still the one shown in that cell.
         self.assertEqual(image, viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || null', cell[0]))
 
+    def test_two_12_an_image_enlarged_from_the_toolbar_menu_meanwhile_is_not_built_over_by_the_protocol(self):
+        p, viewer, a, _ = self.setup_viewer('TWO12')
+        left, right = self.displays
+        status = self.refused_rule(viewer)
+        viewer.evaluate("window.__reached = 0; addEventListener('kin-viewer-monitors-reached', () => __reached++)")
+        self.shows(viewer, a.uid)
+        # The reader enlarges the image from the toolbar: Display > Zoom... > 200% - no press on the image itself.
+        cell = viewer.evaluate('services.viewportGridService.getActiveViewportId()')
+        viewer.get_by_role('button', name='Display ▾').first.click()
+        viewer.get_by_role('menu', name='Display').get_by_role('menuitem', name='Zoom…', exact=True).click()
+        zoom = viewer.locator('section.kin-ux-feature-panel[role=dialog][aria-label="Zoom"]')
+        zoom.get_by_role('button', name='200%', exact=True).click()
+        viewer.wait_for_function('id => Math.abs(services.cornerstoneViewportService.getCornerstoneViewport(id).getZoom() - 2) < 0.01', arg=cell, timeout=15000)
+        viewer.wait_for_function('() => !KinViewerMonitors.reaching()')
+        # Laid over both displays afterwards: the rule is not applied again over that work.
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        viewer.wait_for_timeout(6000)
+        self.assertEqual(0, viewer.evaluate('__reached'))
+        self.assertNotIn('적용 Monitor 1·Monitor 2', status.inner_text())
+
 
 def load_tests(loader, tests, pattern):
     # Only the cases this module declares; the inherited cases run in their own profiles.

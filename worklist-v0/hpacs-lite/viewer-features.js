@@ -209,6 +209,9 @@ window.KinViewerFeatures = (() => {
         return valid;
       };
       runs.add(entry);
+      // A feature action that starts - from a feature menu, a toolbar button, a cell's own control or a shortcut key - is
+      // the reader beginning to work on the images (viewer-features-monitors.js kinViewerImageWork).
+      window.kinViewerImageWork?.();
       try {
         const result = action.run({ viewportId, current, signal: controller.signal });
         Promise.resolve(result).catch(error => { if (current()) report(error?.message || action.label + '을(를) 실행하지 못했습니다.'); })
@@ -332,6 +335,14 @@ window.KinViewerFeatures = (() => {
             },
           };
           button('Close', node, () => handle.close(), 'kin-ux-feature-panel-close');
+          // A control of a feature's window acts on the images at once (a zoom preset, a turn, a value applied): pressing
+          // one, choosing in one (a list, a check, a slider) or Enter in one of its fields is the reader beginning to work
+          // on the images, as an action started by run() is (kinViewerImageWork). A value only typed into a field is not
+          // yet: Enter or a button applies it.
+          const work = () => window.kinViewerImageWork?.();
+          body.addEventListener('click', event => { if (event.target?.closest?.('button, input, select, textarea, summary, a[href], [role="button"]')) work(); }, true);
+          body.addEventListener('change', event => { if (!event.target?.matches?.('textarea, input:not([type=checkbox]):not([type=radio]):not([type=range])')) work(); }, true);
+          body.addEventListener('keydown', event => { if (event.key === 'Enter') work(); }, true);
           node.addEventListener('keydown', event => {
             event.stopPropagation();
             if (!modal && event.key === 'Escape') { event.preventDefault(); handle.close(); }

@@ -107,10 +107,11 @@ class SpanDisplaysDOMTest(unittest.TestCase):
         return self.page.evaluate('__toasts.map(t => String(t.message))')
 
     # ── Viewer Windows > Span Displays ──
-    def span_refused(self, at=None, first=1, second=2):
-        """A viewer window on one display, the two displays chosen, Span Displays pressed; the browser moves nothing."""
+    def span_refused(self, at=None, first=1, second=2, moves="{ moveTo() {}, resizeTo() {} }"):
+        """A viewer window on one display, the two displays chosen, Span Displays pressed; the browser moves nothing
+        (moves: what the window does when it is asked to move instead)."""
         index = self.page.evaluate("""at => { const made = __makePopup();
-          Object.assign(made.popup, { screenX: at.left, screenY: at.top, outerWidth: at.width, outerHeight: at.height, moveTo() {}, resizeTo() {} });
+          Object.assign(made.popup, { screenX: at.left, screenY: at.top, outerWidth: at.width, outerHeight: at.height }, (""" + moves + """));
           return made.index; }""", at or dict(left=100, top=50, width=1600, height=900))
         self.page.locator('#viewer-windows-open').click()
         self.page.locator('#viewer-windows-displays').click()
@@ -206,6 +207,45 @@ class SpanDisplaysDOMTest(unittest.TestCase):
         expect(status).to_have_text('영상 창이 Display 1·3에 걸쳐 있습니다. 창 위치를 저장했습니다.', timeout=4000)
         self.assertEqual([box(LEFT), box(THIRD)], self.stored()['pair'])
 
+    def test_08_the_next_patient_opened_in_the_same_window_does_not_end_the_wait(self):
+        status = self.span_refused()
+        self.asked_to_drag(status)
+        # The list opens another study in that window - a patient tab in the same document, a new opening of the window.
+        before = self.page.evaluate("ohifPopupSequences.get(__popups[0])")
+        self.page.evaluate("""async () => { openingPreference = { maxWindows: 1, reuseClean: true }; ohifOpenSeq = 10;
+          __popups[0].kinViewerOpenPatient = async () => true; window.__next = await openOhifWindow('1.2.2'); }""")
+        self.assertEqual('accepted', self.page.evaluate('__next.status'))
+        self.assertNotEqual(before, self.page.evaluate("ohifPopupSequences.get(__popups[0])"))
+        self.assertEqual(dict(rect=None, pair=None), self.stored())
+        # The reader lays that same window over both displays: taken as placed.
+        self.page.evaluate("Object.assign(__popups[0], { screenX: 0, screenY: 0, outerWidth: 3840, outerHeight: 1040 })")
+        expect(status).to_have_text('영상 창이 Display 1·2에 걸쳐 있습니다. 창 위치를 저장했습니다.', timeout=4000)
+        self.assertEqual(dict(rect=SPAN, pair=[box(LEFT), box(RIGHT)]), self.stored())
+
+    def test_09_another_window_in_the_slot_ends_the_wait_of_the_window_it_replaced(self):
+        status = self.span_refused()
+        self.asked_to_drag(status)
+        # Another window is linked to that slot: the first is no longer the window this list holds there.
+        self.page.evaluate("__makePopup()")
+        self.assertTrue(self.page.evaluate("viewerWindows.rows().length === 1 && viewerWindows.rows()[0].popup === __popups[1]"))
+        self.page.evaluate("Object.assign(__popups[0], { screenX: 0, screenY: 0, outerWidth: 3840, outerHeight: 1040 })")
+        self.page.wait_for_timeout(1300)
+        self.assertEqual(dict(rect=None, pair=None), self.stored())
+        self.assertNotIn('걸쳐 있습니다', status.inner_text())
+
+    def test_16_a_window_minimized_as_the_browser_moves_it_is_taken_only_once_it_is_shown(self):
+        # The browser does put the window over both displays; the window is minimized before that is confirmed.
+        status = self.span_refused(moves="""{ moveTo(x, y) { this.screenX = x; this.screenY = y; this.document.visibilityState = 'hidden'; },
+          resizeTo(w, h) { this.outerWidth = w; this.outerHeight = h; } }""")
+        self.page.wait_for_timeout(3300)
+        self.assertEqual([SPAN['left'], SPAN['width']], self.page.evaluate("[__popups[0].screenX, __popups[0].outerWidth]"))
+        self.assertEqual(dict(rect=None, pair=None), self.stored())
+        self.assertFalse([text for text in self.page.evaluate('__said') if '저장했습니다' in text])
+        # Shown again, still over both: taken as placed.
+        self.page.evaluate("__popups[0].document.visibilityState = 'visible'")
+        expect(status).to_have_text('영상 창이 Display 1·2에 걸쳐 있습니다. 창 위치를 저장했습니다.', timeout=4000)
+        self.assertEqual(dict(rect=SPAN, pair=[box(LEFT), box(RIGHT)]), self.stored())
+
     # ── A window placed as it opens ──
     def open_window(self, at, stored=None, pair=None, refuses=True):
         """A study opened into a new viewer window that the browser first shows at `at`. stored: the place saved for that
@@ -296,6 +336,50 @@ class SpanDisplaysDOMTest(unittest.TestCase):
         self.open_window(dict(left=0, top=0, width=800, height=600), stored=single, refuses=False)
         self.page.wait_for_function("rect => JSON.stringify(__stored().rect) === JSON.stringify(rect)", arg=single, timeout=6000)
         self.assertIsNone(self.stored()['pair'])
+
+    def test_17_displays_chosen_meanwhile_for_another_window_survive_this_windows_own_drag(self):
+        self.displays([LEFT, RIGHT, THIRD])
+        self.open_window(dict(left=100, top=50, width=1600, height=900), stored=SPAN, pair=[LEFT, RIGHT])
+        self.said(REFUSED)
+        # While this window waits, the reader chooses displays 2 and 3 for another window.
+        self.page.evaluate("pair => localStorage.setItem('kin.ohif.span.screens', JSON.stringify(pair))", [RIGHT, THIRD])
+        # This window is dragged a little and left inside one display (the page's 2 s position watch, called here as it
+        # calls it): its place is saved; the displays chosen since for the other window are not this window's to drop.
+        moved = dict(left=300, top=50, width=1500, height=900)
+        self.page.evaluate("rect => { __at(rect); rememberOhifRect(__opener); }", moved)
+        self.assertEqual(dict(rect=moved, pair=[box(RIGHT), box(THIRD)]), self.stored())
+        # Laid over displays 1 and 2 at last: its place is saved, and the more recent choice stays.
+        self.page.evaluate("rect => __at(rect)", SPAN)
+        self.said(REACHED)
+        self.assertEqual(dict(rect=SPAN, pair=[box(RIGHT), box(THIRD)]), self.stored())
+
+    def test_18_an_opening_minimized_as_the_browser_places_it_is_remembered_once_it_is_shown(self):
+        # The place alone says two displays and the browser puts the window there; it is minimized before that is confirmed.
+        wide = dict(left=200, top=0, width=3000, height=1000)
+        self.page.evaluate("""() => { window.__hideOnMove = popup => { const move = popup.moveTo;
+          popup.moveTo = (x, y) => { move(x, y); popup.document.visibilityState = 'hidden'; }; }; }""")
+        self.page.evaluate("""([at, stored]) => { localStorage.setItem('kin.ohif.current.rect', JSON.stringify(stored)); __hideOnMove(__opening(at, false));
+          const b = document.createElement('button'); b.id = 'syn-open'; b.textContent = 'Open';
+          b.onclick = () => { window.__result = openOhifWindow('1.2.1'); }; document.body.append(b); }""", [dict(left=100, top=50, width=1600, height=900), wide])
+        self.page.locator('#syn-open').click()
+        self.page.wait_for_function("rect => __opener.screenX === rect.left && __opener.outerWidth === rect.width && __opener.document.visibilityState === 'hidden'", arg=wide, timeout=6000)
+        self.page.wait_for_timeout(1500)
+        self.assertIsNone(self.stored()['pair'])
+        # Shown again: judged then, and remembered as a placement that worked - nothing is said.
+        self.page.evaluate("__opener.document.visibilityState = 'visible'")
+        self.page.wait_for_function("() => __stored().pair !== null", timeout=6000)
+        self.assertEqual(dict(rect=wide, pair=[box(LEFT), box(RIGHT)]), self.stored())
+        self.assertEqual([], [text for text in self.toasts() if '걸쳐' in text])
+
+    def test_19_a_placement_made_at_once_says_so_when_only_part_of_it_could_be_saved(self):
+        # The browser puts the window over two displays at once; the display choice cannot be written (the place can).
+        wide = dict(left=200, top=0, width=3000, height=1000)
+        self.page.evaluate("""() => { const set = Storage.prototype.setItem;
+          Storage.prototype.setItem = function (key, value) { if (key === 'kin.ohif.span.screens') throw new Error('quota'); return set.call(this, key, value); }; }""")
+        self.open_window(dict(left=100, top=50, width=1600, height=900), stored=wide, refuses=False)
+        self.said('영상 창이 두 화면에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.')
+        self.assertEqual(dict(rect=wide, pair=None), self.stored())
+        self.assertNotIn(REACHED, self.toasts())
 
     def test_15_an_opening_that_stands_over_the_chosen_displays_already_is_not_asked_to_be_dragged(self):
         # The window comes up over both displays, 40 px off the place asked for, and the browser moves it no further.

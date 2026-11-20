@@ -157,3 +157,33 @@ test('edges: where the displays meet inside the viewport grid, as fractions of i
   assert.equal(plan.edges([],win,1,grid),null);
   assert.equal(plan.edges(screens,win,1,{left:0,width:0}),null);
 });
+
+test('pair: two monitors side by side under the viewport grid, and nothing else',()=>{
+  const win={screenX:-8,screenY:0,outerWidth:3856,outerHeight:1040,innerWidth:3840,innerHeight:1002};
+  const grid={left:40,width:3800};
+  assert.equal(plan.pair(screens,win,1,grid),true);
+  // One display under the grid.
+  const one={screenX:100,screenY:0,outerWidth:1216,outerHeight:900,innerWidth:1200,innerHeight:862};
+  assert.equal(plan.pair(screens,one,1,{left:0,width:1200}),false);
+  // Three displays under it: not a pair.
+  const wide={screenX:-8,screenY:0,outerWidth:4936,outerHeight:1040,innerWidth:4920,innerHeight:1002};
+  assert.equal(plan.pair(screens,wide,1,{left:0,width:4920}),false);
+  // One display above the other, touching, set apart sideways, the window laid over both: the upper one (more of the
+  // window's height) ends in the middle of the grid, the lower one lies under all of it. The upper display's side edge is
+  // inside the grid (edges counts the grid past it as another monitor), yet one monitor stands there.
+  const stacked=[{left:0,top:0,width:1000,height:700},{left:-200,top:700,width:3000,height:900}];
+  const over={screenX:92,screenY:100,outerWidth:1816,outerHeight:1038,innerWidth:1800,innerHeight:1000};
+  assert.deepEqual(plan.regions(stacked,over,1,{left:0,right:1800},16),[{monitor:0,left:0,right:900}]);
+  assert.deepEqual(plan.edges(stacked,over,1,{left:0,width:1800}),[0.5]);
+  assert.equal(plan.pair(stacked,over,1,{left:0,width:1800}),false);
+  // Two displays meeting at a corner only (one under the top of the left half, the other under the bottom of the right
+  // half): the left one holds less than half of the window's height.
+  const corner=[{left:0,top:0,width:1000,height:400},{left:1000,top:400,width:1000,height:900}];
+  assert.equal(plan.pair(corner,over,1,{left:0,width:1800}),false);
+  // Only the window's own display is known (no access): the grid past it is not a known monitor.
+  assert.equal(plan.pair([screens[0]],win,null,grid),false);
+  // Nothing readable: unknown.
+  assert.equal(plan.pair(screens,{...win,outerWidth:3956},null,grid),null);
+  assert.equal(plan.pair([],win,1,grid),null);
+  assert.equal(plan.pair(screens,win,1,{left:0,width:0}),null);
+});

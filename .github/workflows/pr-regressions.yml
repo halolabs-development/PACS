@@ -561,7 +561,7 @@ jobs:
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
       run: |
-        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/display-span-grid --cwd . --file worklist-v0/hpacs-lite/viewer-display-span.js --file worklist-v0/hpacs-lite/viewer-display-layout.js --file tests/viewer_display_span_grid_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_display_span_grid_dom_test.py
+        python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/display-span-grid --cwd . --file worklist-v0/hpacs-lite/viewer-display-span.js --file worklist-v0/hpacs-lite/viewer-display-layout.js --file config/ohif/navigation.js --file tests/viewer_display_span_grid_dom_test.py -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/viewer_display_span_grid_dom_test.py
     - name: Worklist on the monitor an applied Hanging Protocol names
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3

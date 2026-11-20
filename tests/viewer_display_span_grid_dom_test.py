@@ -14,7 +14,25 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 HPACS = Path(__file__).resolve().parents[1] / "worklist-v0" / "hpacs-lite"
+CONFIG = Path(__file__).resolve().parents[1] / "config" / "ohif"
 URL = "https://span-grid.test/ohif/viewer?StudyInstanceUIDs=1.2.1"
+# One multi-frame file shown as a display set per time point: the first cell is given the second part, which holds frame 2
+# only, while its viewport still has frame 1 - the first part's - drawn. synFrame: the frame drawn. Which frames a part
+# holds is the viewer's own rule (kinSeriesSplitHolds, checked by its own tests): here it stands as that rule's meaning
+# for a part, and records what it was asked - the cell's display set, the drawn image's SOP and its frame.
+SPLIT_PART = """() => {
+  const id = first(), view = synServices.cornerstoneViewportService.getCornerstoneViewport(id);
+  const image = frame => 'wadors:https://pacs.test/dicom-web/studies/1.2/series/1.3/instances/1.4/frames/' + frame;
+  for (const frame of [1, 2]) sets.set('part-' + frame, { displaySetInstanceUID: 'part-' + frame, images: [{ SOPInstanceUID: '1.4', kinSplitFrame: frame }] });
+  window.synAsked = [];
+  window.kinSeriesSplitHolds = (set, sop, frame) => { synAsked.push([set.displaySetInstanceUID, sop, frame].join(' '));
+    return set.images.some(entry => entry.SOPInstanceUID === sop && entry.kinSplitFrame === frame); };
+  window.synFrame = 1;
+  Object.assign(view, { getImageIds: () => [image(synFrame)], getCurrentImageId: () => image(synFrame), getCornerstoneImage: () => ({ imageId: image(synFrame) }) });
+  const get = cornerstone.metaData.get;
+  cornerstone.metaData.get = (type, imageId) => type === 'instance' && /^wadors:/.test(imageId || '') ? { SOPInstanceUID: '1.4' } : get(type, imageId);
+  putSet(id, 'part-2');
+}"""
 SEAM = 700  # client x of the display edge; the image column is 100..1100, so its middle (600) is not on the edge
 HARNESS = r"""<!doctype html><html><head><style>
 body { margin: 0 } #column { position: absolute; left: 100px; top: 0; width: 1000px; height: 600px }
@@ -31,14 +49,14 @@ sets.set('pdf-1', { displaySetInstanceUID: 'pdf-1', Modality: 'DOC' });
 // Series of the study that no cell shows yet: a new position of the Layout command takes the next one.
 window.synCandidates = [];
 // The cornerstone viewport of each viewport id lives as long as its cell: the stack it has loaded (held), its frame, and
-// whether that stack's image has arrived and is drawn.
+// whether that stack's image has arrived (synLoading: not yet) and is drawn (synUndrawn: named and described, not drawn yet).
 const viewportsById = new Map();
-window.synLoading = new Set(); window.synNoViewport = new Set();
+window.synLoading = new Set(); window.synNoViewport = new Set(); window.synUndrawn = new Set();
 function viewportFor(id, type) {
   if (!viewportsById.has(id)) viewportsById.set(id, { id, type: type === 'stack' ? 'stack' : 'orthographic', held: null, index: 0, element: document.body.appendChild(document.createElement('div')),
     getImageIds() { return this.held && !synLoading.has(id) ? [0, 1, 2].map(n => 'img:' + this.held + ':' + n) : []; },
     getCurrentImageId() { return this.held && !synLoading.has(id) ? 'img:' + this.held + ':' + this.index : undefined; },
-    getCornerstoneImage() { const imageId = this.getCurrentImageId(); return imageId ? { imageId } : undefined; } });
+    getCornerstoneImage() { const imageId = this.getCurrentImageId(); return imageId && !synUndrawn.has(id) ? { imageId } : undefined; } });
   return viewportsById.get(id);
 }
 window.cornerstone = { metaData: { get: (type, imageId) => type === 'instance' && /^img:/.test(imageId || '') ? { SOPInstanceUID: 'sop:' + imageId.slice(4) } : undefined } };
@@ -145,13 +163,16 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, displays=TWO_DISPLAYS, rows=1, cols=1, before=None, grid=None):
+    def open(self, displays=TWO_DISPLAYS, rows=1, cols=1, before=None, grid=None, config=()):
         page = self.browser.new_page(viewport={'width': 1280, 'height': 700}); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route(URL, lambda route: route.fulfill(body=HARNESS, content_type='text/html'))
         page.goto(URL)
         for name in ('viewer-display-layout.js', 'viewer-display-span.js'):
             page.add_script_tag(path=str(HPACS / name))
+        # config: the viewer's own rules a case is judged by (config/ohif), as the viewer has them.
+        for name in config:
+            page.add_script_tag(path=str(CONFIG / name))
         page.evaluate(displays, SEAM)
         page.evaluate(grid or '([rows, cols]) => setGrid(rows, cols)', [rows, cols])
         if before:
@@ -255,9 +276,10 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
 
     def test_07_an_empty_cell_does_not_keep_the_series_above_it_across_the_edge_and_stays_empty(self):
         # Two rows in one column, a series on top and nothing below; the reader is on the third image of that series.
+        # (What the cells show is read in the page before the span is mounted: a slow run could read it after the divide.)
         page = self.open(grid="() => { setGrid(2, 1, { empty: [1] }); synCandidates.push('ds-next'); }",
-                         before="synServices.cornerstoneViewportService.getCornerstoneViewport(first()).index = 2")
-        before = page.evaluate('shown()')
+                         before="() => { synServices.cornerstoneViewportService.getCornerstoneViewport(first()).index = 2; window.synBefore = shown(); }")
+        before = page.evaluate('synBefore')
         self.assertEqual([None, 0, False], before[1][1:])
         self.divided(page)
         self.assertEqual([[2, 2]], page.evaluate('layouts()'))
@@ -314,15 +336,41 @@ class DisplaySpanGridDOMTest(unittest.TestCase):
         self.left_alone(page)
 
     def test_13_only_two_monitors_side_by_side_under_the_images_divide_them(self):
-        # What the viewer counts as monitors under the grid (one above the other is one monitor there) decides with the
-        # display edge: no edge between two monitors' parts - nothing is divided; one - divided; unknown - the display edge.
-        page = self.open(rows=1, cols=1, before="window.synEdges = []; window.kinViewerMonitorEdgesNow = () => synEdges")
+        # Whether two monitors stand side by side under the grid, as the viewer tells it (one display above the other is one
+        # monitor there, whatever display edge lies inside the window), decides with the display edge: not so - nothing is
+        # divided; so, by a later reading of the displays with nothing else changing - divided; not known - the display edge.
+        page = self.open(rows=1, cols=1, before="window.synTwo = false; window.kinViewerTwoMonitorsNow = () => synTwo")
         self.left_alone(page, 'no two monitors side by side')
-        page.evaluate("synEdges = [0.3, 0.7]")
-        self.left_alone(page, 'three parts')
-        page.evaluate("synEdges = [0.6]")
+        page.evaluate("synTwo = true")
         self.divided(page)
-        page = self.open(rows=1, cols=1, before="window.kinViewerMonitorEdgesNow = () => null")
+        page = self.open(rows=1, cols=1, before="window.kinViewerTwoMonitorsNow = () => null")
+        self.divided(page)
+
+    def test_14_an_image_named_but_not_drawn_yet_is_divided_once_it_is_drawn(self):
+        # The viewport names its current image and the image's description is there; nothing is drawn yet.
+        page = self.open(rows=1, cols=1, before="synUndrawn.add(first())")
+        self.left_alone(page)
+        page.evaluate("synUndrawn.clear()")
+        self.divided(page)
+
+    def test_15_a_part_of_one_multi_frame_file_is_judged_by_its_own_frame(self):
+        # The cell was given the second time point of the file; the frame drawn is still the first time point's - the same
+        # file, another part's frame.
+        page = self.open(rows=1, cols=1, before=SPLIT_PART, config=('navigation.js',))
+        self.left_alone(page)
+        self.assertEqual(['part-2 1.4 1'], page.evaluate('[...new Set(synAsked)]'))
+        # Its own frame is drawn.
+        page.evaluate("synFrame = 2")
+        self.divided(page)
+        self.assertIn('part-2 1.4 2', page.evaluate('synAsked'))
+
+    def test_16_a_cell_put_elsewhere_than_the_plain_grid_is_left_where_it_is(self):
+        # One cell below an empty top tenth of the screen, as a protocol or a saved view leaves it: its place is theirs.
+        page = self.open(rows=1, cols=1, before="() => { const cell = state.viewports.get(first()); cell.y = 0.1; cell.height = 0.9; }")
+        self.left_alone(page)
+        self.assertEqual([0.1, 0.9], page.evaluate("(() => { const cell = state.viewports.get(first()); return [cell.y, cell.height]; })()"))
+        # The reader picks 1 x 1 in the Layout menu (announced before its state shows it): a plain grid again.
+        page.evaluate("setGrid(1, 1, { stale: true })")
         self.divided(page)
 
 
