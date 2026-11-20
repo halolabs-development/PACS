@@ -68,7 +68,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['source-regressions']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
