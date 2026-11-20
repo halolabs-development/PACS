@@ -396,6 +396,34 @@ test('TEST-D-01 clinical_vs_operational: body claims of authority are refused an
   assert.deepEqual([byMixed.entry, byMixed.version.capacity], ['clinical-entry', 'clinical-author'], 'a mixed-role person acting clinically signs as a clinician');
 });
 
+test('TEST-D-01 clinical_vs_operational: a consultation request without a reason opens Requested with nothing to sign', () => {
+  const body = { requestId: randomUUID(), expectedOwner: owner(r1), recipientSub: randomUUID(), reason: '' };
+  const blank = plan('consultation.create', r1, null, body, { recipientId: 'r2' });
+  assert.deepEqual([blank.entry, blank.signing, blank.version.text, blank.version.state.to, blank.projection.state],
+    ['state-change', null, null, 'Requested', 'Requested'], 'an empty optional reason is a request without clinical text');
+  assert.deepEqual(blank.parties, { authorId: r1.identity.id, recipientId: 'r2' });
+  assert.equal(blank.access.action, 'write', 'opening the request is recorded as its writing, not a modification');
+  assert.equal(plan('consultation.create', r1, null, body, { recipientId: 'r2' }).fingerprint, blank.fingerprint, 'the same request replays');
+  assert.notEqual(plan('consultation.create', r1, null, { ...body, reason: Q }, { recipientId: 'r2' }).fingerprint, blank.fingerprint);
+  const stated = plan('consultation.create', r1, null, { ...body, requestId: randomUUID(), reason: Q }, { recipientId: 'r2' });
+  assert.deepEqual([stated.entry, stated.version.text, stated.signing.content.body], ['clinical-entry', Q, Q], 'a typed reason is kept exactly and signed');
+  const byAdmin = plan('consultation.create', admin, null, { ...body, expectedOwner: owner(admin) }, { recipientId: 'r2' });
+  assert.deepEqual([byAdmin.entry, byAdmin.signing, byAdmin.access.action], ['state-change', null, 'write']);
+  refused(() => plan('consultation.create', r1, null, { ...body, reason: null }, { recipientId: 'r2' }), 'TextRequired', 'the reason stays a string');
+  const unit = R.applyPlan(null, blank);
+  assert.deepEqual([unit.state, unit.parties.recipientId, unit.clinicalEntry], ['Requested', 'r2', false]);
+  refused(() => plan('consultation.complete', r2, unit, changeBody(r2, unit, 'complete', '')), 'TextRequired', 'the answer stays required');
+  const cancelled = plan('consultation.cancel', r1, unit, changeBody(r1, unit, 'cancel', ''));
+  assert.deepEqual([cancelled.entry, cancelled.version.state.to], ['state-change', 'Cancelled'], 'the cancel reason stays optional');
+  // The recipient accepts and answers; the answer is signed against the unsigned opening version, which stays as it was.
+  const accepted = step(unit, 'consultation.accept', r2, changeBody(r2, unit, 'accept', ''));
+  const answer = plan('consultation.complete', r2, accepted, changeBody(r2, accepted, 'complete', ANSWER));
+  assert.deepEqual([answer.entry, answer.signing.content.body, answer.version.state.to], ['clinical-entry', ANSWER, 'Completed']);
+  assert.deepEqual(answer.signing.previousVersion, accepted.head);
+  const done = R.applyPlan(accepted, answer);
+  assert.deepEqual([done.versions[0].text, done.versions[0].entry, done.versions.length], [null, 'state-change', 3]);
+});
+
 test('TEST-D-01 clinical_vs_operational: no registered signer, a service account or a foreign path plans nothing', () => {
   refused(() => plan('question.create', actor('c3', ['clinician'], 'inst-a', null), null, qBody(actor('c3', ['clinician']))), 'SigningIdentityRequired');
   refused(() => plan('question.create', { ...c1, kind: 'service' }, null, qBody(c1)), 'ServiceActorRefused');
