@@ -801,7 +801,7 @@
     // Row C: the exam in force that cannot be read whole now is refused before any window opens, for the study and for the
     // comparison alike, whether or not the row names its exam. A stored version the server let this panel read keeps its
     // own stored scope (that read already answered for it).
-    const lost=(selectedReportTarget&&scope?null:examLost(row))||(other?examLost(other):null);
+    const lost=(selectedReportTarget&&scope?null:root.KinExamScope.unavailable(row))||(other?root.KinExamScope.unavailable(other):null);
     if(lost){note.textContent=lost.message;return;}
     if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
     const expectedSession=KinAuth.sessionId();
