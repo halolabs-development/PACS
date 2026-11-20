@@ -15,7 +15,8 @@ import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationIns
 import { applyStructureKeepList, isStructureEntry, projectStructure, structureApplyInput, structureArray,
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
-import { draftToken, refuseDestroyed, visibleDraftAuthor } from './values';
+import { cycleApprovedAt, draftToken, refuseDestroyed, visibleDraftAuthor } from './values';
+import { memberNames } from '../member-rights';
 import { draftOf, sameAccount } from '../owner-identity';
 import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
@@ -396,8 +397,20 @@ export class PacsReportEvidence {
     });
     // The state table (report-visibility.ts): a Save/Defer version outside a Preliminary, and a discarded copy of one or of a
     // private draft, keeps its text for its writer. The row (number, action, who, when) stays, marked so the screen says why it is empty.
+    // Who signed a version is shown by the member's name on its account (member-rights.ts memberNames), only on a row whose
+    // writer is shown as is; the approval that opened the current cycle is shown at the time the study keeps
+    // (values.ts cycleApprovedAt). `author`, `at` and the account id stay as stored.
+    const names = await memberNames(tx, scoped.map(row => row.authorSub));
+    const approves = scoped.filter(row => row.action === 'approve').map(row => row.version);
+    const latestApprove = approves.length ? Math.max(...approves) : null;
+    const signed = shown.map((row, i) => {
+      const raw = scoped[i];
+      const name = row.author === raw.author && raw.authorSub ? names.get(raw.authorSub) : undefined;
+      const approvedAt = cycleApprovedAt(prev, raw, latestApprove);
+      return { ...row, ...(name ? { authorName: name } : {}), ...(approvedAt ? { approvedAt } : {}) };
+    });
     const classes = versionClasses(scoped);
-    const readable = shown.map((row, i) => {
+    const readable = signed.map((row, i) => {
       const raw = scoped[i];
       if (versionBodyReadable(raw, classes.get(raw.version), c)) return row;
       const { drawings: _withheld, ...rest } = row as any;

@@ -7466,7 +7466,8 @@ function kinStackMouse(services) {
 // owns DICOM loading and display-set creation; reports are API reads only.
 function kinCreateViewerPrior() {
   let services, extensions, generation = 0, ready, dispose, frame;
-  const assets = ['viewer-prior-controller.js', 'viewer-prior-panel.js'];
+  // report-preview.js: the report screens' one rule for a version's time (KinReportPaper), which the panel shows with.
+  const assets = ['report-preview.js', 'viewer-prior-controller.js', 'viewer-prior-panel.js'];
   function load() {
     return ready ||= assets.reduce((previous, name) => previous.then(() => new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
@@ -7590,6 +7591,7 @@ function kinCreateViewerPrior() {
 function kinCreateViewerReportPanel() {
   let ready, panel = null, frame, generation = 0;
   const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
+    ['report-preview.js', () => typeof window.KinReportPaper?.approvalText === 'function'],
     ['viewer-report-panel.js', () => !!window.KinViewerReportPanel]];
   function load() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {

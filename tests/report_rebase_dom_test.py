@@ -29,6 +29,9 @@ CITATION_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-citation.js").read_
 # while loading and every case dies before its assertion (the U3 lesson). The product catalog is
 # empty, so nothing in this file's scenarios changes.
 STRUCTURE_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-structure.js").read_text(encoding="utf-8")
+# The page loads the report screens' one time rule (KinReportPaper) and names a version's signer with page-core's
+# signerName; the sliced region calls both.
+PREVIEW_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-preview.js").read_text(encoding="utf-8")
 
 UID = "1.2.3"
 OTHER = "1.2.4"
@@ -110,6 +113,7 @@ WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 # S3-U2b moved the shared "may a script write into the editor" check into one function that the
 # sliced region now calls; without it the harness defines nothing.
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
+SIGNER_FN = extract_function((ROOT / "worklist-v0" / "hpacs-lite" / "page-core.js").read_text(encoding="utf-8"), "signerName")
 
 HARNESS = """<!doctype html><html><head><style>MODALCSS</style></head><body>
 <div class="draftbar" id="draftbar" style="display:none"><span id="draftmsg"></span>
@@ -135,6 +139,9 @@ CITATIONJS
 STRUCTUREJS
 </script>
 <script>
+PREVIEWJS
+</script>
+<script>
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -152,6 +159,7 @@ const RELATED_BASE = Object.freeze({ base: true });
 const KinAuth = { has: () => true, logout: async () => {} };
 const reportPreview = { close() {} };
 const displayActor = value => String(value ?? "").split("@")[0];
+SIGNERFN
 function cur() { return studies.find(s => s.uid === selectedUid); }
 function shownStudyDesc(s) { return s?.desc ?? ""; }
 function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
@@ -240,6 +248,8 @@ def harness(state):
             .replace("STRUCTHTML", STRUCT_HTML)
             .replace("CITATIONJS", CITATION_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
+            .replace("PREVIEWJS", PREVIEW_JS)
+            .replace("SIGNERFN", SIGNER_FN)
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)
             .replace("EDITORBLOCKFN", EDITOR_BLOCK_FN)

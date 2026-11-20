@@ -14,8 +14,8 @@
     for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) node.append(c);
     return node;
   };
-  const pad = n => String(n).padStart(2, '0');
-  const when = iso => { const d = new Date(iso); return Number.isFinite(d.getTime()) ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : ''; };
+  // The approval time by the one rule of the report screens (report-preview.js paperStamp: this screen's time zone).
+  const when = iso => globalThis.KinReportPaper.paperStamp(iso);
 
   /** What the pane shows for the selected study; repainted only when this changes (a copy message stays otherwise). */
   function snapshot() {

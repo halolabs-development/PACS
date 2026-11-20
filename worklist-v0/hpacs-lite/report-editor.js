@@ -435,7 +435,7 @@
         $("#draftmsg").innerHTML = `<b>● 초안을 버렸는지 아직 확인하지 못했습니다</b> — 서버의 초안을 다시 읽으면 결과를 화면에 반영합니다`;
         return;
       }
-      const at = d?.at ? String(d.at).replace("T", " ").slice(0, 16) : "";
+      const at = draftTime(d?.at);
       // 내가 이 초안을 쓰기 시작한 뒤 남이 확정을 했다면, 그걸 지금 말해야 한다.
       // 확정 버튼을 누른 다음에야 알게 되면 이미 늦다.
       const behind = reportDraftBehind(r);
@@ -468,11 +468,9 @@
                 : `<span id="drafthint"></span>`);
       renderDraftHint();
     }
-    /** 초안이 확인된 시각(이 화면의 시계로 hh:mm). 모르면 빈 글이다. */
+    /** 초안이 확인된 시각 — 판독 화면의 시각 한 규칙(이 화면의 시간대로 YYYY-MM-DD HH:mm, report-preview.js paperStamp). 모르면 빈 글이다. */
     function draftTime(at) {
-      const date = at ? new Date(at) : null;
-      return date && !Number.isNaN(date.getTime())
-        ? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}` : "";
+      return KinReportPaper.paperStamp(typeof at === "string" ? at : at ? String(at) : "");
     }
 
     /**
@@ -1010,7 +1008,7 @@
       $("#stale-title").textContent = title;
       $("#stale-msg").textContent = message;
       $("#stale-head-title").textContent =
-        `승인본 v${head.version}` + (head.updatedBy ? ` · ${displayActor(head.updatedBy)}` : "");
+        `승인본 v${head.version}` + (head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : "");
       $("#stale-draft-title").textContent = mine;
       for (const k of RFIELDS) {
         $("#stale-head-" + k).textContent = head[k];
@@ -1048,6 +1046,7 @@
             .sort((a, b) => b.version - a.version)[0];
           if (top && Number.isSafeInteger(top.version) && ["approve", "amend", "addendum"].includes(top.action))
             head = { version: top.version, updatedBy: typeof top.author === "string" ? top.author : "",
+              updatedByName: typeof top.authorName === "string" ? top.authorName : "",
               ...Object.fromEntries(RFIELDS.map(k => [k, typeof top[k] === "string" ? top[k] : ""])) };
         } else {
           // 서버 없는 모드에는 이력이 없다 — 이 브라우저의 저장본이 곧 승인본이다.

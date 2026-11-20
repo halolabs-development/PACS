@@ -259,6 +259,7 @@ class ViewerTabLeave(h.LogoutDOMTest):
 
 PRIOR = """<!doctype html><title>SYN prior</title><div id="report"></div>
 <script>window.KinSessionTransport = { refusal: () => false, responseError: () => new Error('ended') };</script>
+<script src="/syn-viewer/report-preview.js"></script>
 <script src="/syn-viewer/viewer-prior-controller.js"></script>
 <script src="/syn-viewer/viewer-prior-panel.js"></script>
 <script>

@@ -570,7 +570,7 @@ class RelatedModePage(unittest.TestCase):
         source = self.page.locator("#related-mode-source")
         expect(source).to_have_attribute("aria-label", "Related Report (read only)")
         for value in (ALPHA, "SYN-P-001", "SYN Hospital A", "2026-09-01", "SYN CT CHEST PRIOR", "SYNACCB002", "v1 · Approved",
-                      "READ ONLY", "syn-rad2@synthetic.test", "2026-09-01 10:00"):
+                      "READ ONLY", "syn-rad2@synthetic.test", "2026-09-01 19:00"):
             self.assertIn(value, source.inner_text())
         self.assertEqual((PRIOR_B["findings"], PRIOR_B["conclusion"], PRIOR_B["recommendation"]),
                          tuple(self.source_text(f) for f in ("findings", "conclusion", "recommendation")))
@@ -600,6 +600,31 @@ class RelatedModePage(unittest.TestCase):
             self.js("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
             for field, expected in values.items():
                 self.assertEqual(expected, self.source_text(field))
+
+    def test_related_report_names_its_signer_and_this_screens_minute_in_both_views(self):
+        """The plain view's head line and, while the mode hides it, the mode's title row show the same version, signer (the
+        member name the server sends) and time (this screen's Asia/Seoul minute; the approval that opened the current cycle at
+        the time the study keeps), never the login or the server's UTC text."""
+        self.site.versions[UID_B][0].update(authorName="SYN Kim Reader", at="2026-11-17T18:05:59.990Z",
+                                            approvedAt="2026-11-17T18:06:00.000Z")
+        self.open()
+        self.open_target()
+        self.enter()
+        signed = self.page.locator("#related-mode .related-mode-signed")
+        expect(signed).to_be_visible()
+        expect(signed).to_contain_text("v1")
+        expect(signed).to_contain_text("SYN Kim Reader · 2026-11-18 03:06")
+        meta = self.js("() => document.getElementById('prior-report-meta').textContent")
+        self.assertIn("판독의 SYN Kim Reader · 2026-11-18 03:06", meta)
+        for text in (signed.text_content(), meta):
+            for leaked in ("syn-rad2@", "2026-11-17", "T18:"):
+                self.assertNotIn(leaked, text)
+        # Another study's report: the line follows the shown report (its own signer and minute).
+        self.site.versions[UID_C][0].update(authorName="SYN Lee Second", at="2026-11-18T01:30:00.000Z")
+        self.related_row(UID_C).locator("td").first.click()
+        self.wait(lambda: self.source_text("findings") == PRIOR_C["findings"], "C's text")
+        expect(signed).to_contain_text("v2")
+        expect(signed).to_contain_text("SYN Lee Second · 2026-11-18 10:30")
 
     def test_related_report_mode_hides_the_reading_target_and_source_study_cards_everywhere_it_opens(self):
         """Hide the two identity cards of the Related Report mode, in the Workspace and the reading layout, in English and
@@ -1791,9 +1816,9 @@ class RelatedModePage(unittest.TestCase):
         text=self.page.locator('#related-mode-source').inner_text()
         print('SOURCE_CARD '+json.dumps(text),flush=True)
         self.assertIn('syn-rad2@synthetic.test',text,'PAGE_03: Source signer must be visible')
-        self.assertIn('2026-09-01 10:00',text,'PAGE_03: Source signing time must be visible')
+        self.assertIn('2026-09-01 19:00',text,'PAGE_03: Source signing time must be visible (the Asia/Seoul minute)')
         confirmation = text
-        for value in ('v1', 'Approved', 'syn-rad2@synthetic.test', '2026-09-01 10:00'):
+        for value in ('v1', 'Approved', 'syn-rad2@synthetic.test', '2026-09-01 19:00'):
             self.assertIn(value, confirmation, 'PAGE_03: source provenance before one-click Insert')
 
     def prepare_refused_source_issue(self):

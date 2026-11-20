@@ -130,6 +130,18 @@ export function recordedHolder(s: any, caller: Caller): string | null {
 // Neither the study owner nor a current holder proves who wrote those drafts. Only their own account reads the name.
 export const visibleDraftAuthor = (author: string, authorSub: string | null | undefined, caller: Caller): string =>
   sameAccount(authorSub, caller) ? author : PRIVATE_WRITER;
+/**
+ * When a version was signed, as report screens show it: the version's own time (`at`), except the approval that opened the
+ * current approval cycle, which shows the approval time the study keeps (`approvedAt` - the time the worklist Confirm cell and
+ * the paper show; the two are taken by different clocks in one transaction). This returns that approval time (ISO) for that one
+ * version, null for any other version or when the study kept no approval time. `latestApprove` is the highest version number
+ * with action `approve`. Nothing stored changes.
+ */
+export function cycleApprovedAt(state: any, row: { version: number; action: string }, latestApprove: number | null): string | null {
+  if (state?.rs !== 'A' || row.action !== 'approve' || row.version !== latestApprove || !state.approvedAt) return null;
+  const t = new Date(state.approvedAt).getTime();
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
 export const visibleDraftSummary = (drafts: any[], caller: Caller) =>
   drafts.map(({ authorSub, ...draft }) => ({ ...draft, author: visibleDraftAuthor(draft.author, authorSub, caller) }));
 /** The draft list an audit record wrote: an author is named to its own account only (an older record names none). */

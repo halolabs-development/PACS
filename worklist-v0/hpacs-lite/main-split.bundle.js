@@ -24,6 +24,11 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /** Who signed a report version: the member name the server sent with it (authorName), else the login shown as before. */
+    function signerName(version) {
+      const name = version?.authorName;
+      return typeof name === "string" && name ? name : displayActor(version?.author);
+    }
     /**
      * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
      * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen
@@ -999,12 +1004,9 @@
       return Number.isFinite(until) && now >= until;
     }
     function reportStatusWord(a, now) { return reportFinalized(a, now) ? "Finalized" : RS_WORD[a?.rs] ?? a?.rs; }
-    /** 수정 창의 시각을 이 화면의 시간대로 MM-DD HH:mm. */
+    /** 수정 창의 시각 — 판독 화면의 시각 한 규칙(이 화면의 시간대로 YYYY-MM-DD HH:mm, report-preview.js paperStamp). */
     function amendTime(iso) {
-      const d = new Date(iso);
-      if (!Number.isFinite(d.getTime())) return "—";
-      const p = n => String(n).padStart(2, "0");
-      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      return KinReportPaper.paperStamp(typeof iso === "string" ? iso : "") || "—";
     }
     /**
      * 승인본(RS A)에서 Approve(= 24시간 안의 수정 뒤 다시 승인)를 열지와 그 단추의 설명. `edited`는 편집기의 글이 승인본과
@@ -1020,7 +1022,7 @@
         ? { open: true, title: `승인 후 24시간 안입니다 — 본문을 고쳐 다시 Approve할 수 있습니다 (${until}까지). 의뢰의 화면에 "수정됨(시각)"이 붙습니다` }
         : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
     }
-    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 MM-DD HH:mm까지, 수정됨 MM-DD HH:mm. */
+    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 (시각)까지, 수정됨 (시각). */
     function reportStatusParts(a, now) {
       if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];
@@ -5245,7 +5247,7 @@
         $("#prior-report-status").textContent = relatedNoReportText(s); shown({ state: "none", message: relatedNoReportText(s) }); return;
       }
       $("#prior-report-meta").textContent =
-        `${relatedReportMeta(s)} · 판독의 ${displayActor(report.author) || "-"}`;
+        `${relatedReportMeta(s)} · 판독의 ${signerName(report) || "-"} · ${KinReportPaper.versionStamp(report) || "-"}`;
       $("#prior-report-meta").title = $("#prior-report-meta").textContent;
       $("#prior-findings").textContent = report.findings ?? "";
       $("#prior-conclusion").textContent = report.conclusion ?? "";
@@ -5254,7 +5256,7 @@
       $("#prior-report-status").style.display = "none";
       $("#prior-report-content").style.display = "";
       shown({ state: "ready", version: Number.isSafeInteger(report.version) ? report.version : null, action: report.action ?? null,
-        author: displayActor(report.author) || null, at: typeof report.at === "string" ? report.at.replace("T", " ").slice(0, 16) : null,
+        author: signerName(report) || null, at: KinReportPaper.versionStamp(report) || null,
         texts: { findings: report.findings ?? "", conclusion: report.conclusion ?? "", recommendation: report.recommendation ?? "" } });
       // A5: only the version this Source shows is displayed (the read provided every version row). Its display report names
       // this read's provision; a re-read of the same Source and version (every list refresh) is the same display.
@@ -5833,7 +5835,7 @@
         $("#draftmsg").innerHTML = `<b>● 초안을 버렸는지 아직 확인하지 못했습니다</b> — 서버의 초안을 다시 읽으면 결과를 화면에 반영합니다`;
         return;
       }
-      const at = d?.at ? String(d.at).replace("T", " ").slice(0, 16) : "";
+      const at = draftTime(d?.at);
       // 내가 이 초안을 쓰기 시작한 뒤 남이 확정을 했다면, 그걸 지금 말해야 한다.
       // 확정 버튼을 누른 다음에야 알게 되면 이미 늦다.
       const behind = reportDraftBehind(r);
@@ -5866,11 +5868,9 @@
                 : `<span id="drafthint"></span>`);
       renderDraftHint();
     }
-    /** 초안이 확인된 시각(이 화면의 시계로 hh:mm). 모르면 빈 글이다. */
+    /** 초안이 확인된 시각 — 판독 화면의 시각 한 규칙(이 화면의 시간대로 YYYY-MM-DD HH:mm, report-preview.js paperStamp). 모르면 빈 글이다. */
     function draftTime(at) {
-      const date = at ? new Date(at) : null;
-      return date && !Number.isNaN(date.getTime())
-        ? `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}` : "";
+      return KinReportPaper.paperStamp(typeof at === "string" ? at : at ? String(at) : "");
     }
 
     /**
@@ -6408,7 +6408,7 @@
       $("#stale-title").textContent = title;
       $("#stale-msg").textContent = message;
       $("#stale-head-title").textContent =
-        `승인본 v${head.version}` + (head.updatedBy ? ` · ${displayActor(head.updatedBy)}` : "");
+        `승인본 v${head.version}` + (head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : "");
       $("#stale-draft-title").textContent = mine;
       for (const k of RFIELDS) {
         $("#stale-head-" + k).textContent = head[k];
@@ -6446,6 +6446,7 @@
             .sort((a, b) => b.version - a.version)[0];
           if (top && Number.isSafeInteger(top.version) && ["approve", "amend", "addendum"].includes(top.action))
             head = { version: top.version, updatedBy: typeof top.author === "string" ? top.author : "",
+              updatedByName: typeof top.authorName === "string" ? top.authorName : "",
               ...Object.fromEntries(RFIELDS.map(k => [k, typeof top[k] === "string" ? top[k] : ""])) };
         } else {
           // 서버 없는 모드에는 이력이 없다 — 이 브라우저의 저장본이 곧 승인본이다.
@@ -7515,7 +7516,7 @@
     }
     function citationEntryText(entry, scope) {
       const C = KinReportCitation;
-      const when = entry?.insertedAt ? String(entry.insertedAt).replace("T", " ").slice(0, 16) : "시각 미확인";
+      const when = KinReportPaper.paperStamp(entry?.insertedAt) || "시각 미확인";
       // 작성자는 서버가 쓰는 값이고 삽입 응답에는 실려 오지 않는다. 화면이 그 자리를
       // 추측한 문자열로 채우면 증언이 아닌 것이 증언처럼 보인다 — 방금 넣은 건은
       // 그렇게 말하고, 다음 전용 읽기가 서버의 바이트로 바꾼다.
@@ -10560,8 +10561,8 @@
             <div class="vh">
               <b>v${v.version}</b>
               <span class="tag ${esc(v.action)}" title="${esc(HINT[v.action] ?? "")}">${esc(LABEL[v.action] ?? v.action)}</span>
-              <span translate="no">${esc(displayActor(v.author))}</span>
-              <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
+              <span translate="no">${esc(signerName(v))}</span>
+              <span style="color:#b4b4b4">${esc(KinReportPaper.versionStamp(v))}</span>
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}

@@ -84,7 +84,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
                                                     "critical-result-inbox.js", "clinical-signature.js")}
 MAIN_HTML = read_page_source(HPACS / "main.html")
 AUTH_CONTROLLER = lf_text(ROOT / "api" / "src" / "auth.controller.ts")
@@ -889,6 +889,30 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                           "status": "Destroyed", "metaHidden": True, "meta": {}, "bodyHidden": True, "sections": [],
                           "keysState": KEYS_WITHHELD, "keysHidden": True, "keys": []}, seen)
         self.assertNotIn("SYN-LEAK", self.page.content())
+
+    def test_signed_by_and_on_are_the_signer_and_time_of_the_version_shown(self):
+        """Signed By is the member name the server names for the version shown and Signed On that version's time in this
+        screen's time zone (YYYY-MM-DD HH:mm; the approval that opened the cycle at the time the study keeps) - the text the
+        reader's History shows for that version. The stored UTC date and the login are not what is shown."""
+        self.open_home()
+        answer = final_report(7, 2, "approve", "SYN-S findings", "SYN-S conclusion", "", [])
+        answer["report"].update(signedBy="SYN Kim Reader", at="2026-11-17T18:05:59.990Z", approvedAt="2026-11-17T18:06:00.000Z",
+                                repDoc="syn.reader", confirm="2026-11-17")
+        self.reports[uid(7)] = answer
+        seen = self.pick(7)
+        offset = self.page.evaluate("iso => new Date(iso).getTimezoneOffset()", "2026-11-17T18:06:00.000Z")
+        local = datetime.datetime(2026, 11, 17, 18, 6) - datetime.timedelta(minutes=offset)
+        self.assertEqual({"Version": "2", "Type": "Approved", "Signed By": "SYN Kim Reader", "Signed On": f"{local:%Y-%m-%d %H:%M}"},
+                         seen["meta"])
+        # An addendum head: its own signer and its own time.
+        addendum = final_report(7, 3, "addendum", "SYN-S findings + more", "SYN-S conclusion", "", [])
+        addendum["report"].update(signedBy="SYN Lee Second", at="2026-11-18T01:30:00.000Z", repDoc="SYN Lee Second", confirm="2026-11-18")
+        self.reports[uid(7)] = addendum
+        self.pick(2)
+        seen = self.pick(7)
+        offset = self.page.evaluate("iso => new Date(iso).getTimezoneOffset()", "2026-11-18T01:30:00.000Z")
+        local = datetime.datetime(2026, 11, 18, 1, 30) - datetime.timedelta(minutes=offset)
+        self.assertEqual(("SYN Lee Second", f"{local:%Y-%m-%d %H:%M}"), (seen["meta"]["Signed By"], seen["meta"]["Signed On"]))
 
     def test_fc034_an_amended_report_says_it_was_amended_and_when(self):
         """FC-034: when the reader who approved a report corrects it within 24 hours, the clinician reads the corrected text

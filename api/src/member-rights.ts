@@ -34,6 +34,21 @@ export async function lockMemberRights(tx: any, sub: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e4d}::int4, ${key}::int4)`;
 }
 
+/**
+ * The one place a report screen's signer name comes from: the member's name on the account row (the identity provider's
+ * family and given name, or the username when it has none), by account id. It is shown only - the stored login, the account
+ * id, the audit and the signed content stay as they are. An account without a row or with a blank name is left out, and the
+ * caller keeps what it showed before.
+ */
+export async function memberNames(db: any, subs: readonly (string | null | undefined)[]): Promise<Map<string, string>> {
+  const wanted = [...new Set(subs.filter((sub): sub is string => typeof sub === 'string' && sub.length > 0))];
+  if (!wanted.length) return new Map();
+  const rows: { sub: string; name: unknown }[] = await db.memberRights.findMany({ where: { sub: { in: wanted } },
+    select: { sub: true, name: true } });
+  return new Map(rows.filter(row => typeof row.name === 'string' && row.name.trim())
+    .map(row => [row.sub, (row.name as string).trim()] as [string, string]));
+}
+
 export function rightsAllow(row: any): boolean {
   return !!row && row.approved && !row.suspended && !!row.institution
     && row.roles.length > 0 && row.roles.every((role: string) => APP_ROLES.has(role));

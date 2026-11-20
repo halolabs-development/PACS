@@ -4,7 +4,7 @@
  */
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
 import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
-import { rightsAllow, lockMemberRights } from '../member-rights';
+import { rightsAllow, lockMemberRights, memberNames } from '../member-rights';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import type { NativeReportSigning } from '../emr-report/native-signing';
@@ -21,8 +21,17 @@ import type { PacsReportEvidence } from './report-evidence';
 import type { PacsReportDraft, DraftRequestFacts, EndedWork } from './report-draft';
 import { resolveExamScope, examScopeChanged } from '../exam-merge.service';
 import { nativeReportScope } from '../emr-report/native-snapshot';
-import { sameAccount, shownActor, draftOf } from '../owner-identity';
+import { sameAccount, shownActor, draftOf, PRIVATE_WRITER } from '../owner-identity';
 
+/**
+ * The approved head a stale-draft answer shows names its writer by the member's name on the account (member-rights.ts
+ * memberNames) - only when that writer is shown as is (shownActor). Nothing else changes.
+ */
+async function signerName(tx: any, cur: { updatedBy?: string | null; updatedBySub?: string | null }, c: Caller): Promise<{ updatedByName?: string }> {
+  if (!cur.updatedBy || !cur.updatedBySub || shownActor(cur.updatedBy, cur.updatedBySub, c) === PRIVATE_WRITER) return {};
+  const name = (await memberNames(tx, [cur.updatedBySub])).get(cur.updatedBySub);
+  return name ? { updatedByName: name } : {};
+}
 export class PacsReportCommit {
   constructor(
     private readonly keycloak: KeycloakService,
@@ -252,7 +261,9 @@ export class PacsReportCommit {
       stateData.repDoc = null; stateData.confirm = null;
     }
     if (action === 'approve' || action === 'addendum') {
-      stateData.repDoc = c.actor.split('@')[0];
+      // The signer is written by the member's name on the account (member-rights.ts memberNames); an account without a name keeps
+      // the login as before. A repDoc already written is never rewritten.
+      stateData.repDoc = (await memberNames(tx, [c.sub])).get(c.sub) ?? c.actor.split('@')[0];
       stateData.confirm = new Date().toISOString().slice(0, 10);
       // 원격판독으로 받은 검사를 승인하면 의뢰 기관에 "끝났다"가 보여야 한다.
       // 상태가 상대편에 도달하지 않으면 워크플로가 아니라 파일 전송일 뿐이다 (교훈 §10).
@@ -332,6 +343,7 @@ export class PacsReportCommit {
               `v${cur.version}입니다 — 승인본을 확인한 뒤 기준을 다시 잡아 주세요.`,
             head: {
               version: cur.version, updatedBy: cur.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : null,
+              ...await signerName(tx, cur, c),
               findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             },
             draftBaseVersion: draft.baseVersion,

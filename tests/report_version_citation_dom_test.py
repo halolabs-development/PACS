@@ -109,6 +109,8 @@ def extract_function(source, name):
 HISTORY_FIXTURE = {"HISTORY_BLOCK": ("historyEpoch", "reportWriteBlock")}
 HIST_HTML = slice_between(MAIN, '<div class="modal" id="histmodal"', "\n  </div>") + "\n  </div>"
 DISPLAY_ACTOR_FN = extract_function(MAIN, "displayActor")
+# History names a version's signer with page-core's signerName (the member name the server sends, else the login).
+SIGNER_FN = extract_function(MAIN, "signerName")
 # S7-U5: the history block applies its answers through the page's work-context gate. The shipped gate is loaded as it is,
 # following a session that is at work for the whole case.
 WORK_CONTEXT = ((ROOT / "worklist-v0/hpacs-lite/work-context.js").read_text(encoding="utf-8")
@@ -196,7 +198,7 @@ def harness():
             .replace("CITATIONJS", CITATION_JS)
             .replace("PAPERJS", PAPER_JS)
             .replace("VIEWSJS", VIEWS_JS)
-            .replace("DISPLAYACTORFN", DISPLAY_ACTOR_FN)
+            .replace("DISPLAYACTORFN", DISPLAY_ACTOR_FN + "\n" + SIGNER_FN)
             .replace("HISTORYBLOCK", fixture_block(MAIN_PATH, HISTORY_FIXTURE, "HISTORY_BLOCK"))
             .replace("SESSIONACTOR", SESSION_ACTOR)
             .replace("UIDVALUE", UID))
