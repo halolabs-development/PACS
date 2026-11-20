@@ -77,6 +77,7 @@ REGRESSION_SUITES = {
         tests/unavailable_controls_dom_test.py
         tests/viewing_cell_dom_test.py
         tests/worklist_arrivals_dom_test.py
+        tests/worklist_attach_refresh_dom_test.py
         tests/worklist_body_parts_dom_test.py
         tests/worklist_header_dom_test.py
         tests/worklist_image_thumbnails_dom_test.py
