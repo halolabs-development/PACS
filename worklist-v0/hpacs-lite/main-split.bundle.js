@@ -12115,6 +12115,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!studyPanel) studyPanelField = null;
       noteStudyPanelOpener(document.activeElement);
       workspaceState = KinWorkspaceLayout.toVersion3(workspaceState);
+      // The narrow sheet's band is as tall as its open panels (main.html); the drawer borrows them, so the band keeps
+      // the height it had until the drawer closes and opening or closing the drawer moves no panel.
+      if (!document.body.classList.contains('study-panel-open') && document.body.classList.contains('workspace-narrow')) {
+        $('.right > .rw').style.setProperty('--kin-narrow-band-held', $('.right > .rw').getBoundingClientRect().height + 'px');
+      }
       if (!studyPanel) {
         // Mount on the explicit open: legacy layouts keep their first paint.
         // destroy() returns these same nodes, with their listeners, to the row.
@@ -12135,6 +12140,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
               const panel = studyPanel; studyPanel = null; panel?.destroy();
               studyPanelPreview = null;
               document.body.classList.remove('study-panel-open');
+              $('.right > .rw').style.removeProperty('--kin-narrow-band-held');
               // The borrowed sections are back on the band: draw it again (a folded panel's name returns to it).
               applyLayout();
             }

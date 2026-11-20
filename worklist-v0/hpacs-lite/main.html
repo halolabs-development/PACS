@@ -1528,10 +1528,11 @@
        its open panels show: the panel row up to the band's own floor (140 px, the least a reader can drag it to), each
        panel scrolling past that, plus the folded names and AI Report tab rows as they are. The open Clinical
        Information keeps its button row and the first lines of its text. The height follows the content, so the band's
-       handle is not offered and a stored band height is kept for a wider window. The Reading Workspace's band keeps
-       its own height (reading-workspace.css). */
+       handle is not offered and a stored band height is kept for a wider window. While the Study Panel drawer holds
+       its panels the band keeps the height it had (--kin-narrow-band-held, feature-mounts.js), so the drawer moves no
+       panel. The Reading Workspace's band keeps its own height (reading-workspace.css). */
     @media (min-width: 601px) {
-      body.workspace-narrow:not(.reading) .right > .rw { height: auto !important; }
+      body.workspace-narrow:not(.reading) .right > .rw { height: var(--kin-narrow-band-held, auto) !important; }
       body.workspace-narrow:not(.reading) .right > .rw > section { max-height: 140px; overflow: auto; }
       body.workspace-narrow:not(.reading) .right > .rw > .s-clinical > .clin-pair { min-height: 4.5em; }
       body.workspace-narrow:not(.reading) #resize-top { display: none !important; }
