@@ -885,6 +885,35 @@ test('MG-08 the auth_request admission refuses every image read and still admits
   assert.deepEqual(admitted.map(([m]) => m), ['GET', 'GET', 'POST', 'GET']);
 });
 
+// The gate's temporary refusal (an archive it could not observe) reaches the browser as 403 + its AUTH_* code from every
+// entry that reads images or their descriptions - nginx can pass on only the header. A plain refusal carries no code.
+test('the DICOM read entries carry the gate refusal code in X-KIN-Auth-Code; a plain refusal carries none', async () => {
+  const { PacsController } = require('/app/dist/pacs.controller.js');
+  const { ImageRelayController } = require('/app/dist/image-relay.controller.js');
+  const { DicomFrameController } = require('/app/dist/dicom-frame.controller.js');
+  const temporary = () => new ForbiddenException({ code: 'AUTH_SOURCE_UNAVAILABLE', message: 'synthetic' });
+  const plain = () => new ForbiddenException('synthetic');
+  for (const [refusal, expected] of [[temporary, 'AUTH_SOURCE_UNAVAILABLE'], [plain, undefined]]) {
+    const gate = { authzDicom: async () => { throw refusal(); } };
+    const response = () => { const headers = {}; return { headers, setHeader: (name, value) => { headers[name] = value; }, headersSent: false,
+      once() {}, on() {}, off() {} }; };
+    const req = url => ({ originalUrl: url, url, method: 'GET', headers: { 'x-original-uri': url.replace(/^\/api\/image-relay/, ''), 'x-original-method': 'GET' },
+      sub: 's', roles: ['radiologist'], kind: 'member', institution: 'inst-a', once() {}, off() {} });
+    const entries = [
+      ['authz/dicom', res => new PacsController(gate, {}, {}).authzDicom(req(`/dicom-web/studies/${STUDY_UID}/metadata`), res)],
+      ['relay', res => new ImageRelayController(gate, {}, {}, {}, {}, {}).read(req(`/api/image-relay/dicom-web/studies/${STUDY_UID}/metadata`), res)],
+      ['frame', res => new DicomFrameController({}, gate, {}).read(STUDY_UID, SERIES_UID, SOP_UID, '1',
+        req(`/dicom-web/studies/${STUDY_UID}/series/${SERIES_UID}/instances/${SOP_UID}/frames/1`), res)],
+      ['preview', res => new DicomFrameController({}, gate, {}).preview(INSTANCE_ID, req(`/instances/${INSTANCE_ID}/preview`), res)],
+    ];
+    for (const [name, call] of entries) {
+      const res = response();
+      await assert.rejects(async () => call(res), e => e.getStatus() === 403, name);
+      assert.equal(res.headers['X-KIN-Auth-Code'], expected, name);
+    }
+  }
+});
+
 // CD-10 STOW receipt boundary shares this relay regression suite.
 {
 'use strict';

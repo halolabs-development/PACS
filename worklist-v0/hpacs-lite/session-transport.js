@@ -350,4 +350,5 @@
   const api = Object.freeze({ create, page, DEADLINES, refusal, openFailure, responseError, accessRecordNotice, ACCESS_RECORD_EVENT });
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.KinSessionTransport = api;
-})(typeof window === 'object' ? window : null);
+  // The preload SharedWorker (no window) loads this file for refusal() alone.
+})(typeof window === 'object' ? window : typeof self === 'object' ? self : null);

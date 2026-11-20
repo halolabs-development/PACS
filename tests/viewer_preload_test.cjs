@@ -21,31 +21,41 @@ const bound = (extra = {}) => ({ method: 'GET', headers: new Headers({ 'X-KIN-Se
 
 /** A window with a scripted preload worker: `held` maps study -> { revision, session, copy }; frames answer their path
  * from the held copy only, as preload-worker.js does (another copy: `stale`). */
-function setup({ held = {}, network, shared = true, studies = null, page = false } = {}) {
-  const posted = [], sent = [];
+function setup({ held = {}, network, shared = true, studies = null, page = false, transport = false } = {}) {
+  const posted = [], sent = [], gates = { frame: null, query: null }, ends = [], through = [];
   class FakeSharedWorker {
     constructor(url, options) {
       assert.equal(url, '/worklist/hpacs-lite/preload-worker.js');
       assert.equal(options.name, 'kin-preload');
       const port = this.port = { start() {}, postMessage(message) {
         posted.push(message);
+        if (gates.silent) return;                                        // a worker that stopped: it answers nothing
         const reply = value => queueMicrotask(() => port.onmessage({ data: { type: 'reply', id: message.id, ...value } }));
         if (message.type === 'query') {
-          const entry = held[message.uid];
-          reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1 } : null });
+          const answer = () => {
+            const entry = held[message.uid];
+            // `has`: the check's frame is one of the copy's (preload-worker.js) - every frame here unless the entry says not.
+            reply({ held: entry && entry.session === message.session ? { revision: entry.revision, copy: entry.copy ?? 1, has: entry.has ?? true } : null });
+          };
+          // `gates.query`: the worker's answers to what it holds wait for it (its queue is busy).
+          if (gates.query) gates.query.then(answer); else answer();
         } else if (message.type === 'frame') {
           const uid = /studies\/([0-9.]+)\//.exec(message.path)[1], entry = held[uid];
-          if (entry && entry.session === message.session && (entry.copy ?? 1) !== message.copy) reply({ bytes: null, stale: true });
-          else reply(entry && entry.session === message.session ? { bytes: new TextEncoder().encode(`held ${entry.copy ?? 1} ${message.path}`).buffer, partType: entry.partType ?? PART } : { bytes: null });
+          const answer = () => {
+            if (entry && entry.session === message.session && (entry.copy ?? 1) !== message.copy) reply({ bytes: null, stale: true });
+            else reply(entry && entry.session === message.session ? { bytes: new TextEncoder().encode(`held ${entry.copy ?? 1} ${message.path}`).buffer, partType: entry.partType ?? PART } : { bytes: null });
+          };
+          // `gates.frame`: the worker's frame answers wait for it (a slow disk read).
+          if (gates.frame) gates.frame.then(answer); else answer();
         }
       } };
     }
   }
   // Every listener of a type runs (the module and its worker part both listen to pagehide/pageshow).
-  const handlers = {}, listeners = {};
+  const handlers = {}, listeners = {}, timers = [];
   const win = { location: { origin: ORIGIN, href: ORIGIN + '/ohif/viewer' + (studies ? '?StudyInstanceUIDs=' + studies.join(',') : '') },
     SharedWorker: shared ? FakeSharedWorker : undefined, Headers, Response, ReadableStream, crypto: globalThis.crypto,
-    document: page ? fakeDocument() : undefined,
+    document: page ? fakeDocument() : undefined, setInterval: (run, every) => { timers.push({ run, every }); return timers.length; },
     addEventListener: (type, run) => { (handlers[type] ??= []).push(run); listeners[type] = event => handlers[type].forEach(h => h(event)); } };
   const send = async (url, init) => {
     sent.push({ url, init, headers: new Headers(init.headers) });
@@ -53,11 +63,17 @@ function setup({ held = {}, network, shared = true, studies = null, page = false
   };
   const preloadFetch = attach(win, send);
   // The page's own fetch: the session transport binds the request, then this module reads it (viewer-session.js).
-  win.fetch = (url, init = {}) => {
+  // `transport`: the real one (session-transport.js) over this module, as the viewer wires it - `ends` hears what it
+  // tells the session's end (authFailure).
+  if (transport) {
+    const gate = { admits: () => true, onInvalidate() {}, capture: () => ({ session: 'sess-1' }) };
+    const bound = require('../worklist-v0/hpacs-lite/session-transport.js').create({ gate, fetch: preloadFetch, authFailure: failure => ends.push(failure) });
+    win.fetch = (url, init = {}) => { through.push(String(url)); return bound.fetch(url, init); };
+  } else win.fetch = (url, init = {}) => {
     const headers = new Headers(init.headers); headers.set('X-KIN-Session', 'sess-1');
     return preloadFetch(url, { ...init, headers });
   };
-  return { fetch: preloadFetch, posted, sent, listeners, win };
+  return { fetch: preloadFetch, posted, sent, listeners, win, timers, gates, ends, through, silence() { gates.silent = true; } };
 }
 
 /** Enough of a document for the back/forward return: the root's style, an alert with a button. */
@@ -147,10 +163,13 @@ test('a different revision at opening drops the held study and stays live', asyn
   assert.equal(sent.length, 2);
 });
 
+// A 403 with an AUTH_* code is the gate's temporary refusal (an archive it could not observe, a busy session check),
+// read by the one shared reading (session-transport.js refusal()): the held copy stays. Only a plain 403 or a 404 drops it.
 test('a refused opening drops the held study; a server failure keeps it but shows nothing from memory', async () => {
-  for (const [status, dropped] of [[403, true], [404, true], [503, false]]) {
+  for (const [status, dropped, code] of [[403, true], [404, true], [503, false], [502, false], [403, false, 'AUTH_SOURCE_UNAVAILABLE'],
+    [403, false, 'AUTH_SESSION_BUSY']]) {
     const { fetch, sent, posted } = setup({ held: { [STUDY]: { revision: 'rev-now', session: 'sess-1' } },
-      network: async () => new Response('{}', { status, headers: { 'X-KIN-Study-Revision': 'rev-now' } }) });
+      network: async () => new Response('{}', { status, headers: { 'X-KIN-Study-Revision': 'rev-now', ...(code ? { 'X-KIN-Auth-Code': code } : {}) } }) });
     assert.equal((await fetch(frameUrl(1), bound())).status, status);
     assert.equal(posted.some(m => m.type === 'evict'), dropped, String(status));
     assert.ok(!posted.some(m => m.type === 'open'), String(status));
@@ -281,7 +300,8 @@ test('a copy fetched again after Clear All or Retry is never shown under the ear
   assert.equal(await (await fetch(frameUrl(4), bound())).text(), 'live ' + frameUrl(4));
   assert.equal(checks(), 2, 'a new check read for the new copy');
   assert.equal(await (await fetch(frameUrl(5), bound())).text(), 'held 2 ' + new URL(frameUrl(5)).pathname);
-  assert.equal(posted.filter(m => m.type === 'open').length, 1, 'the study is opened once in this document');
+  // A use names the copy its check confirmed - each copy once.
+  assert.deepEqual(posted.filter(m => m.type === 'open').map(m => [m.uid, m.copy, m.session]), [[STUDY, 1, 'sess-1'], [STUDY, 2, 'sess-1']]);
   // A new copy whose revision no longer matches the archive is dropped at its check and never shown.
   held[STUDY] = { revision: 'rev-r2', session: 'sess-1', copy: 3 };
   live = 'rev-r3';
@@ -406,11 +426,12 @@ test('back/forward: the kept page is hidden on leaving and shown only after the 
   assert.equal(root.style.visibility, '', 'shown after the return\'s opening was recorded');
   assert.equal(s.win.document.body.children.length, 0, 'the notice is gone');
   const reads = s.sent.slice(1);
-  assert.deepEqual(reads.map(r => r.headers.get('X-KIN-Preload')), [null, null], 'live reads, never from memory');
+  // Live reads, never from memory - and, of a study whose copy the page used, the copy's check for the return as well.
+  assert.deepEqual(reads.map(r => [r.url, r.headers.get('X-KIN-Preload')]), [[frameUrl(1), 'check'], [frameUrl(1), 'check']]);
   const next = openingOf(reads[1]);
   assert.ok(next && next !== first && openingOf(reads[0]) !== first);
-  await s.fetch(frameUrl(2), bound());
-  assert.deepEqual([s.sent.at(-1).headers.get('X-KIN-Preload'), openingOf(s.sent.at(-1))], ['check', next], 'the held copy is checked for the return');
+  assert.equal(await (await s.fetch(frameUrl(2), bound())).text(), 'held 1 ' + new URL(frameUrl(2)).pathname, 'the copy that read confirmed');
+  assert.equal(s.sent.length, 3, 'no second check: the return\'s read was it');
 });
 
 const OBJECT_ID = '0a1b2c3d-4e5f6071-8293a4b5-c6d7e8f9-0a1b2c3d', OTHER_OBJECT = '1b2c3d4e-5f607182-93a4b5c6-d7e8f90a-1b2c3d4e';
@@ -612,6 +633,318 @@ test('review R1 of 137c2b7: memory answers of a held study in flight across its 
   assert.equal(s.sent[1].headers.get('X-KIN-Preload'), 'check');
   const next = openingOf(s.sent[1]);
   assert.ok(next && next !== first);
-  assert.deepEqual(texts.map(t => t.split(' ')[0]).sort(), ['held', 'held', 'live'], 'the new check\'s answer, then memory');
-  assert.ok(texts.includes('live ' + next), 'no answer of the earlier check is handed on');
+  // Every answer handed on is the new opening's check read or the copy's memory after it - never the earlier check's
+  // answer, never memory taken under the earlier check.
+  for (const text of texts) assert.ok(text === 'live ' + next || text.startsWith('held 1 '), text);
+  assert.deepEqual(kinds(s.posted, 'open'), [['open', STUDY, 1, 'sess-1']], 'used once, by the new opening\'s check');
+});
+
+// ── The viewer tells the worker which copy it uses, for which session, and when it leaves it ──
+const OTHER_STUDY = '1.2.840.9.2';
+const kinds = (posted, ...types) => posted.filter(m => types.includes(m.type)).map(m => [m.type, m.uid, m.copy, m.session]);
+
+test('a use names the copy and session its check confirmed: the check frame when held, else the first frame from memory; a live-only study is no use', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 4 }, [OTHER_STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 7, has: false } };
+  const { fetch, posted } = setup({ held });
+  await (await fetch(frameUrl(1), bound())).text();
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 4, 'sess-1']], 'the held check frame is a use');
+  assert.equal(posted.find(m => m.type === 'query').path, new URL(frameUrl(1)).pathname, 'the worker is told which frame the check reads');
+  // Another split part's frame checked live: no use until a frame of the copy comes from memory.
+  await (await fetch(frameUrl(1, OTHER_STUDY), bound())).text();
+  assert.equal(kinds(posted, 'open').length, 1);
+  await (await fetch(frameUrl(2, OTHER_STUDY), bound())).text();
+  await (await fetch(frameUrl(3, OTHER_STUDY), bound())).text();
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 4, 'sess-1'], ['open', OTHER_STUDY, 7, 'sess-1']], 'once, at the first frame from memory');
+  // A study the worker does not hold is no use.
+  const live = setup();
+  await (await live.fetch(frameUrl(1), bound())).text();
+  assert.equal(kinds(live.posted, 'open').length, 0);
+});
+
+test('a new opening shown leaves the earlier opening\'s copies and confirms its own again; an abandoned switch leaves nothing; the last tab closing', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 2 }, [OTHER_STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 3 } };
+  const { fetch, posted } = setup({ held, studies: [STUDY] });
+  await (await fetch(frameUrl(1), bound())).text();
+  await (await fetch(frameUrl(1, OTHER_STUDY), bound())).text();    // a comparison shown with it: each copy counts
+  assert.deepEqual(kinds(posted, 'open').map(o => o[1]), [STUDY, OTHER_STUDY]);
+  await fetch.reenter([OTHER_STUDY]);                                 // not committed: the switch did not happen
+  assert.deepEqual(kinds(posted, 'close'), []);
+  (await fetch.reenter([OTHER_STUDY])).commit();                      // another scope shown (another patient, or another
+  // exam of the same original): every copy of the earlier opening is left - one the new scope shows is used again only
+  // when its own check confirms it.
+  assert.deepEqual(kinds(posted, 'close'), [['close', STUDY, 2, 'sess-1'], ['close', OTHER_STUDY, 3, 'sess-1']]);
+  await (await fetch(frameUrl(2, OTHER_STUDY), bound())).text();
+  assert.deepEqual(kinds(posted, 'open').map(o => o[1]), [STUDY, OTHER_STUDY, OTHER_STUDY]);
+  fetch.leave();                                                      // the last patient tab closed
+  assert.deepEqual(kinds(posted, 'close').slice(2), [['close', OTHER_STUDY, 3, 'sess-1']]);
+  fetch.leave();
+  assert.equal(kinds(posted, 'close').length, 3, 'left once');
+});
+
+test('a check left behind by a new opening or by leaving the page opens and drops nothing; the return checks again', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let revision = 'rev-now';
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+  const s = setup({ held, studies: [STUDY], network: async url => { await gate; return new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': revision } }); } });
+  const pending = s.fetch(frameUrl(1), bound());
+  await tick();
+  s.listeners.pagehide({ persisted: true });
+  release();
+  await (await pending).text();
+  assert.deepEqual(kinds(s.posted, 'open', 'evict'), [], 'the check finished after the page was left');
+  assert.equal(s.posted.filter(m => m.type === 'bye').length, 1);
+  s.listeners.pageshow({ persisted: false });
+  assert.deepEqual(kinds(s.posted, 'open'), [], 'a return re-sends no use before its own check');
+  // A changed copy found by a check whose opening was replaced is not dropped by it.
+  revision = 'rev-other';
+  const t = setup({ held, studies: [STUDY], network: async url => { await tick(); return new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': revision } }); } });
+  const late = t.fetch(frameUrl(1), bound());
+  await new Promise(resolve => setTimeout(resolve, 0));
+  (await t.fetch.reenter([STUDY])).commit();
+  await (await late).text();
+  // The read asked under the earlier opening is read again under the new one (its own check): that check, not the
+  // earlier one, drops the copy it checked - one drop, naming it.
+  const checksSent = t.sent.filter(r => r.headers.get('X-KIN-Preload') === 'check');
+  assert.equal(checksSent.length, 2);
+  assert.notEqual(openingOf(checksSent[0]), openingOf(checksSent[1]));
+  assert.deepEqual(kinds(t.posted, 'evict'), [['evict', STUDY, 1, 'sess-1']], 'one drop: the earlier opening\'s check drops nothing');
+});
+
+test('while shown, the document says every ten minutes which copies it still uses; after leaving, nothing', async () => {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 5 } };
+  const s = setup({ held, studies: [STUDY] });
+  await (await s.fetch(frameUrl(1), bound())).text();
+  await (await s.fetch(frameUrl(2), bound())).text();                // the worker is started by the first read
+  const beat = s.timers.find(timer => timer.every === 10 * 60 * 1000);
+  assert.ok(beat, 'one ten-minute timer');
+  beat.run();
+  assert.deepEqual(kinds(s.posted, 'using'), [['using', STUDY, 5, 'sess-1']]);
+  s.fetch.leave();
+  beat.run();
+  assert.equal(kinds(s.posted, 'using').length, 1);
+});
+
+test('a check still under way when another scope is shown or the last tab closes opens and drops nothing', async () => {
+  for (const [end, status] of [['switch', 200], ['switch', 403], ['leave', 200], ['leave', 403]]) {
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+    const s = setup({ held, studies: [STUDY], network: async url => { await gate;
+      return new Response('live ' + url, { status, headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }); } });
+    const pending = s.fetch(frameUrl(1), bound());
+    await tick();
+    if (end === 'switch') (await s.fetch.reenter([OTHER_STUDY])).commit(); else s.fetch.leave();
+    release();
+    await (await pending).text();
+    await tick();
+    assert.deepEqual(kinds(s.posted, 'open', 'evict'), [], end + ' ' + status);
+  }
+});
+
+/** A page that used copy `copy` of STUDY (frames 1 and 2 read) and was then left for the back/forward cache. */
+async function leftPage({ copy = 6, network, transport = false } = {}) {
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy } };
+  const s = setup({ held, studies: [STUDY], page: true, network, transport });
+  await (await s.win.fetch(frameUrl(1), bound())).text();
+  await (await s.win.fetch(frameUrl(2), bound())).text();
+  assert.deepEqual(kinds(s.posted, 'open'), [['open', STUDY, copy, 'sess-1']]);
+  s.listeners.pagehide({ persisted: true });
+  assert.equal(s.posted.at(-1).type, 'bye');
+  return { s, held, root: s.win.document.documentElement, before: s.sent.length };
+}
+/** A network that answers as the server does, each read waiting for `release()` once `hold()` was called. */
+function gated(answer = url => new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } })) {
+  let gate = null, open = null;
+  return { network: async (url, init) => { if (gate) await gate; return answer(url, init); },
+    hold() { gate = new Promise(resolve => { open = resolve; }); }, release() { gate = null; open?.(); } };
+}
+
+test('a back/forward return uses the copy again by one read: the page\'s own fetch records the return\'s opening and checks the copy the page left, without a frame read', async () => {
+  const { s, root, before } = await leftPage();
+  s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 20 && kinds(s.posted, 'open').length < 2; i++) await tick();
+  assert.deepEqual(kinds(s.posted, 'open'), [['open', STUDY, 6, 'sess-1'], ['open', STUDY, 6, 'sess-1']], 'used again, the same copy');
+  const after = s.sent.slice(before);
+  assert.deepEqual(after.map(r => [r.url, r.headers.get('X-KIN-Preload'), r.headers.get('X-KIN-Session')]), [[frameUrl(2), 'check', 'sess-1']],
+    'one read: the frame it last showed, live, bound to the session, marked as the check');
+  assert.ok(openingOf(after[0]) && openingOf(after[0]) !== openingOf(s.sent[0]), 'under the return\'s opening');
+  assert.equal(root.style.visibility, '', 'shown');
+  assert.equal(await (await s.win.fetch(frameUrl(1), bound())).text(), 'held 6 ' + new URL(frameUrl(1)).pathname, 'no further check');
+  assert.equal(s.sent.length, before + 1);
+});
+
+test('a return left behind - the last tab closed, another opening shown, the page left again - shows, uses and drops nothing when its reads come back', async () => {
+  for (const [how, status] of [['leave', 200], ['leave', 403], ['switch', 200], ['switch', 403], ['left again', 200], ['left again', 404]]) {
+    let away = false;                                                    // the page reads its frames while all is well
+    const net = gated(url => new Response('live ' + url, { status: away ? status : 200, headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }));
+    const { s, root } = await leftPage({ network: net.network });
+    away = true; net.hold();
+    s.listeners.pageshow({ persisted: true });
+    await tick();
+    const posted = s.posted.length;
+    if (how === 'leave') s.fetch.leave();                              // the last patient tab closed while the return's read was out
+    else if (how === 'left again') s.listeners.pagehide({ persisted: true });
+    else (await s.fetch.reenter([OTHER_STUDY])).commit();               // another patient shown meanwhile (nothing of it to read again)
+    const visible = root.style.visibility, notices = s.win.document.body.children.length;
+    net.release();
+    for (let i = 0; i < 10; i++) await tick();
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open', 'evict'), [], `${how} ${status}: no use, no drop`);
+    assert.deepEqual([root.style.visibility, s.win.document.body.children.length], [visible, notices], `${how} ${status}: the late answer changes no screen, also when it failed`);
+    // What ended the return owns the screen: an empty viewer or another patient shows; a page left again stays hidden.
+    assert.equal(visible, how === 'left again' ? 'hidden' : '', how);
+    if (how === 'left again') {
+      // Its next return starts over, with what the page used before it was first left.
+      s.listeners.pageshow({ persisted: true });
+      for (let i = 0; i < 10; i++) await tick();
+      if (status === 200) assert.deepEqual(kinds(s.posted.slice(posted), 'open'), [['open', STUDY, 6, 'sess-1']], 'the second return uses the copy');
+      else assert.equal(root.style.visibility, 'hidden', 'a return that could not be recorded stays hidden');
+    }
+  }
+});
+
+test('a return uses again only the very copy the page left: a later copy of the study is neither used nor dropped by it, and is checked by the next frame read', async () => {
+  for (const [changed, revision] of [['another copy', 'rev-now'], ['another copy', 'rev-other'], ['another session', 'rev-now'], ['gone', 'rev-now']]) {
+    let away = false;
+    const net = gated(url => new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': away ? revision : 'rev-now' } }));
+    const { s, held, root, before } = await leftPage({ network: net.network });
+    away = true;
+    if (changed === 'another copy') held[STUDY] = { revision: 'rev-now', session: 'sess-1', copy: 7 };      // fetched again meanwhile
+    if (changed === 'another session') held[STUDY] = { revision: 'rev-now', session: 'sess-2', copy: 6 };
+    if (changed === 'gone') delete held[STUDY];
+    const posted = s.posted.length;
+    s.listeners.pageshow({ persisted: true });
+    for (let i = 0; i < 10; i++) await tick();
+    assert.equal(root.style.visibility, '', changed + ': the return is recorded and shown');
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open', 'evict', 'close'), [], changed + ' ' + revision + ': the return opens and drops nothing');
+    assert.equal(s.sent.length, before + 1, changed + ': one live read');
+  }
+  // The return does not wait for the worker: one that never answers leaves the page shown and the copy simply not used.
+  const silent = await leftPage();
+  const posted = silent.s.posted.length;
+  silent.s.silence();
+  silent.s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(silent.root.style.visibility, '', 'shown although the worker said nothing');
+  assert.deepEqual(kinds(silent.s.posted.slice(posted), 'open', 'evict'), []);
+  // The next frame read checks the copy held now, for itself.
+  const { s, held } = await leftPage();
+  held[STUDY] = { revision: 'rev-now', session: 'sess-1', copy: 7 };
+  s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 10; i++) await tick();
+  const opens = kinds(s.posted, 'open').length;
+  await (await s.win.fetch(frameUrl(1), bound())).text();
+  assert.equal(s.sent.at(-1).headers.get('X-KIN-Preload'), 'check');
+  assert.deepEqual(kinds(s.posted, 'open').slice(opens), [['open', STUDY, 7, 'sess-1']]);
+});
+
+test('a return whose worker answers only after the read has come in still uses the copy again - while the return\'s opening is the view shown, never under another', async () => {
+  for (const moved of [false, true]) {
+    const { s, root } = await leftPage();
+    let answer;
+    s.gates.query = new Promise(resolve => { answer = resolve; });      // the worker is slow to say what it holds
+    const posted = s.posted.length;
+    s.listeners.pageshow({ persisted: true });
+    for (let i = 0; i < 10; i++) await tick();
+    assert.equal(root.style.visibility, '', 'shown without waiting for the worker');
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open'), [], 'not used yet: the worker has not named the copy');
+    if (moved) s.fetch.leave();                                         // the last patient tab closed before it answered
+    s.gates.query = null; answer();
+    for (let i = 0; i < 10; i++) await tick();
+    // Shown and still the view: the copy on screen is in use again (it cannot be removed for space under the reader).
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open'), moved ? [] : [['open', STUDY, 6, 'sess-1']], 'moved=' + moved);
+    if (!moved) {
+      assert.equal(await (await s.win.fetch(frameUrl(1), bound())).text(), 'held 6 ' + new URL(frameUrl(1)).pathname, 'no further check');
+      assert.equal(kinds(s.posted.slice(posted), 'open').length, 1, 'used once');
+    }
+  }
+});
+test('a return\'s check whose body is cut, or whose revision is not the copy\'s, is no use of the copy', async () => {
+  let cut = false;
+  const { s, root } = await leftPage({ network: async url => new Response(cut
+    ? new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('par')); c.error(new TypeError('cut')); } }) : 'live ' + url,
+    { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }) });
+  const posted = s.posted.length;
+  cut = true;
+  s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(kinds(s.posted.slice(posted), 'open'), [], 'a cut body confirms nothing');
+  assert.equal(root.style.visibility, 'hidden', 'and records no return: the page stays hidden with its Retry');
+  cut = false;
+  s.win.document.body.children[0].children[1].onclick();
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(kinds(s.posted.slice(posted), 'open'), [['open', STUDY, 6, 'sess-1']]);
+  assert.equal(root.style.visibility, '');
+});
+
+test('a return\'s read is the page\'s own fetch: an ended session answered to it reaches that session\'s end, also when the view has moved on meanwhile', async () => {
+  // Every read a return sends passes the session transport (none goes under it, where an ended session is not heard).
+  const well = await leftPage({ transport: true });
+  const passed = well.s.through.length;
+  well.s.listeners.pageshow({ persisted: true });
+  for (let i = 0; i < 20 && kinds(well.s.posted, 'open').length < 2; i++) await tick();
+  await tick();
+  assert.deepEqual(well.s.sent.slice(well.before).map(r => r.url), well.s.through.slice(passed), 'what reached the network is what the transport sent');
+  assert.equal(well.s.sent.length, well.before + 1);
+  for (const moved of [false, true]) for (const [status, code] of [[401, 'AUTH_SESSION_ENDED'], [403, 'AUTH_SESSION_MISMATCH']]) {
+    let ended = false;
+    const net = gated(url => ended ? new Response('{}', { status, headers: { 'X-KIN-Auth-Code': code } })
+      : new Response('live ' + url, { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }));
+    const { s, root } = await leftPage({ network: net.network, transport: true });
+    ended = true; net.hold();
+    const posted = s.posted.length;
+    s.listeners.pageshow({ persisted: true });
+    await tick();
+    if (moved) s.fetch.leave();
+    net.release();
+    for (let i = 0; i < 10; i++) await tick();
+    assert.deepEqual(s.ends, [{ session: 'sess-1', status, code }], `${status} ${code} moved=${moved}: told to the session's end once`);
+    assert.deepEqual(kinds(s.posted.slice(posted), 'open', 'evict'), [], 'no use, no drop');
+    if (!moved) assert.equal(root.style.visibility, 'hidden', 'an unrecorded return shows nothing');
+  }
+});
+
+test('a frame the worker answers after its view ended is not handed on from memory: it is read live, or checked again for the opening shown now', async () => {
+  for (const how of ['leave', 'left', 'switch']) {
+    const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 3 } };
+    const s = setup({ held, studies: [STUDY], page: true });
+    await (await s.fetch(frameUrl(1), bound())).text();
+    let answer;
+    s.gates.frame = new Promise(resolve => { answer = resolve; });      // the worker is slow to read frame 2 from its disk
+    const pending = s.fetch(frameUrl(2), bound());
+    await tick();
+    if (how === 'leave') s.fetch.leave();
+    else if (how === 'left') s.listeners.pagehide({ persisted: true });
+    else (await s.fetch.reenter([STUDY])).commit();
+    const opens = kinds(s.posted, 'open').length;
+    s.gates.frame = null; answer();
+    const text = await (await pending).text();
+    if (how === 'switch') {
+      // The new opening's own check came first; the frame is the copy's only after it.
+      assert.equal(s.sent.filter(r => r.headers.get('X-KIN-Preload') === 'check').length, 2, how);
+      assert.ok(text === 'live ' + frameUrl(2) || text.startsWith('held 3 '), how + ': ' + text);
+    } else {
+      assert.equal(text, 'live ' + frameUrl(2), how + ': read live, never the held bytes');
+      assert.equal(s.sent.at(-1).headers.get('X-KIN-Preload'), null, how + ': no check of a view that shows nothing');
+      assert.equal(kinds(s.posted, 'open').length, opens, how + ': no use');
+      // A straggler read started after the view ended is the same: live, no check, no use.
+      assert.equal(await (await s.fetch(frameUrl(3), bound())).text(), 'live ' + frameUrl(3), how);
+      assert.equal(s.sent.at(-1).headers.get('X-KIN-Preload'), null, how);
+      assert.equal(kinds(s.posted, 'open').length, opens, how);
+    }
+  }
+});
+
+test('a check read whose body is cut after its headers confirms nothing: no use, the next frame is checked live again', async () => {
+  let cut = true;
+  const held = { [STUDY]: { revision: 'rev-now', session: 'sess-1', copy: 1 } };
+  const { fetch, posted, sent } = setup({ held, network: async url => new Response(cut
+    ? new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('par')); c.error(new TypeError('cut')); } }) : 'live ' + url,
+    { headers: { 'Content-Type': PART, 'X-KIN-Study-Revision': 'rev-now' } }) });
+  await assert.rejects(async () => (await fetch(frameUrl(1), bound())).text());
+  assert.deepEqual(kinds(posted, 'open'), []);
+  cut = false;
+  assert.equal(await (await fetch(frameUrl(2), bound())).text(), 'live ' + frameUrl(2), 'checked live again, not from memory');
+  assert.equal(sent.filter(r => r.headers.get('X-KIN-Preload') === 'check').length, 2);
+  assert.deepEqual(kinds(posted, 'open'), [['open', STUDY, 1, 'sess-1']]);
 });
