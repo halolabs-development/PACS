@@ -52,6 +52,9 @@ export class PacsInstitutions {
         });
         // A seed order made before the RIS Status column existed gets the seed's status once (never over a value).
         await this.prisma.order.updateMany({ where: { oid: o.oid, risStatus: null }, data: { risStatus: o.risStatus } });
+        // A seed order made before the scheduled-device column existed gets the seed's device once (never over a value).
+        await this.prisma.order.updateMany({ where: { oid: o.oid, scheduledStationAet: null },
+          data: { scheduledStationAet: o.scheduledStationAet } });
       }
     }
     console.log(`[KIN API] 기관 ${this.institutions.length}개: ${this.institutions.map(i => `${i.id}(${i.name})`).join(', ')}`);
@@ -176,6 +179,6 @@ export class PacsInstitutions {
     need(c.roles, 'radiologist', '판독의 목록 조회');   // Preliminary 지정 화면 전용
     const me = inst(c);
     const users = await this.keycloak.usersInGroupWithRole(me, 'radiologist');
-    return users.filter(u => u.id !== c.actor);   // 자기 자신은 지정 대상이 아니다
+    return users.filter(u => u.sub !== c.sub);   // 자기 자신은 지정 대상이 아니다 (계정으로 판정: owner-identity.ts)
   }
 }

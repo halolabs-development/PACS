@@ -150,7 +150,10 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261118120000_gateway_settings/migration.sql',
               'api/prisma/migrations/20261118120000_institution_critical_result_inbox/migration.sql',
               'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
-              'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql']
+              'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
+              'api/prisma/migrations/20261120120000_study_referred_at/migration.sql',
+              'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
+              'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -297,7 +300,10 @@ def expected_rows(uid):
         reqHosp='SYNTHETIC', repDoc='SYNTHETIC-reader', confirm=None,
         # FC-034: the approval round's lookup values travel as they are (two set, two NULL).
         approvedAt=STAMP, approvedBySub='SYNTHETIC-reader-sub', amendedAt=STAMP, addendumAt=None, preDoc=None, preReviewer=None, preDocSub="SYNTHETIC-author-sub", preReviewerSub="SYNTHETIC-reviewer-sub",
-        ov=None, orig=None, orderOid=None, holder=None, holderInstitutionId=None, heldAt=None,
+        ov=None, orig=None, orderOid=None, holder=None, holderSub=None, holderInstitutionId=None, heldAt=None,
+        # Worklist Referred: a study registered directly and then announced. The first Gateway announce time and the closed
+        # mark are values of the row (written once, together), kept as they are: a restore never re-opens the row.
+        referredAt=STAMP, referredOpen=False,
         # S7-U5: the draft epoch is a value of the row (rotated by a forced release), not something a restore may re-draw.
         draftEpoch='00000000-0000-4000-8000-0000000000d1', reportUnit='disposal:00000000-0000-4000-8000-0000000000d2',
         updatedAt=STAMP, createdAt=STAMP)]
@@ -318,7 +324,7 @@ def expected_rows(uid):
         dict(groupId=EXAM_GROUP, logicalUid=uid + '.9', studyUid=uid + '.9', part=1, seriesUids=[uid + '.9.1', uid + '.9.2'],
         sourcePatientId='SYNTHETIC-patient', sourceInstitution='SYNTHETIC-hospital')]
     rows['Report'] = [dict(uid=uid, findings='SYNTHETIC findings\n합성', conclusion='SYNTHETIC conclusion',
-        recommendation='', version=2, updatedBy='SYNTHETIC-reader', updatedAt=STAMP,
+        recommendation='', version=2, updatedBy='SYNTHETIC-reader', updatedBySub='SYNTHETIC-reader-sub', updatedAt=STAMP,
         # Merge Exam: the report's current version was written on the merged exam below.
         groupId=EXAM_GROUP)]
     # 한 행은 인용을 들고, 한 행은 NULL이다. 둘 다 실제로 왕복해야 "추가 전용"이 말이 된다 —
@@ -338,11 +344,14 @@ def expected_rows(uid):
     # pin real final rows through their composite foreign key and their action copies equal the pinned rows.
     rows['ReportVersion'] = [dict(id=number, uid=uid, version=number, action='approve' if number == 1 else 'addendum',
         findings='SYNTHETIC history '+str(number), conclusion='', recommendation='', reason=None,
-        author='SYNTHETIC-reader', citations=citation if number == 2 else None,
+        author='SYNTHETIC-reader', authorSub='SYNTHETIC-reader-sub', citations=citation if number == 2 else None,
         structured=structured if number == 2 else None,
         drawings=[dict(id=DRAWING_ID, background='breast', source=None, sha256='d' * 64)] if number == 2 else None, at=STAMP,
         groupId=EXAM_GROUP if number == 2 else None, snapshotFormat=number) for number in (1, 2)]
-    rows['ReportDraft'] = [dict(uid=uid, author='SYNTHETIC-reader'+str(number),
+    # The account each draft belongs to travels with it; the emptied row is an older one no member was found for (NULL).
+    # Legacy rows keep their display login in author.
+    rows['ReportDraft'] = [dict(uid=uid, author='SYNTHETIC-reader'+str(number), authorSub='SYNTHETIC-reader'+str(number)+'-sub',
+        authorLogin=None,
         findings='SYNTHETIC private '+str(number), conclusion='', recommendation='', baseVersion=2,
         citations=citation if number == 1 else None,
         structured=structured if number == 1 else None,
@@ -354,7 +363,8 @@ def expected_rows(uid):
         # CD-09-P: each present row holds its own work (an opaque unit, its server start and intent); the emptied row none.
         workUnit='disposal:00000000-0000-4000-8000-0000000000e'+str(number), workSince=STAMP,
         workIntent='addendum' if number == 1 else 'approve', groupId=EXAM_GROUP if number == 1 else None) for number in (1, 2)]
-    rows['ReportDraft'].append(dict(uid=uid, author='SYNTHETIC-reader3', findings='', conclusion='', recommendation='',
+    rows['ReportDraft'].append(dict(uid=uid, author='SYNTHETIC-reader3', authorSub=None, authorLogin=None,
+        findings='', conclusion='', recommendation='',
         baseVersion=0, citations=None, structured=None, drawings=None, revision=5, present=False, updatedAt=STAMP,
         workUnit=None, workSince=None, workIntent=None, groupId=None))
     rows['ReportDraftInsertReceipt'] = insert_receipt_rows(uid)
@@ -386,7 +396,12 @@ def expected_rows(uid):
         # Delete Order: the order is taken off the list with who and why (a mark, never a row delete).
         removedAt=STAMP, removedBySub='SYNTHETIC-sub', removedBy='SYNTHETIC-actor', removeReason='SYNTHETIC reason',
         # Order List RIS Status: a real value of the CHECK set, so a dump that lost the column or its CHECK would differ.
-        risStatus='acquired', orderingPhysicianSub=None)]
+        risStatus='acquired', orderingPhysicianSub=None,
+        # Modality Worklist: the database gives each order its procedure ID and worklist Study Instance UID by default
+        # (new values each time), so the synthetic order names fixed ones - a restore that drew them again would differ -
+        # and carries a scheduled device.
+        mwlProcedureId='SYNMWLPROC000001', mwlStudyUid='2.25.329800735698586629295641978511506172918',
+        scheduledStationAet='SYNTHETIC_CT1')]
     # S4-U3: one synthetic receipt in a retry state, so BIGINT counts, the UUID epoch and a non-null
     # errorCode all carry real values through the dump (an empty table would pass on nothing).
     rows['GatewayReceipt'] = [dict(studyUid=uid, institutionId='SYNTHETIC-hospital',
@@ -396,10 +411,10 @@ def expected_rows(uid):
     # composite key, the UUID epoch, the BIGINT seq and the timestamp carry real values through the dump.
     rows['GatewayRetryRequest'] = [dict(studyUid=uid, epoch='00000000-0000-4000-8000-000000000c01', seq=7,
         requestedAt=STAMP)]
-    rows['UserFilter'] = [dict(id=1, owner='SYNTHETIC-reader', name='SYNTHETIC saved search',
+    rows['UserFilter'] = [dict(id=1, owner='SYNTHETIC-reader', ownerSub='SYNTHETIC-reader-sub', name='SYNTHETIC saved search',
         mode='Radiology', isDefault=True, quick='SYNTHETIC', days=-1, cols='{}', sortKey='date',
         sortDir=-1, folder='SYNTHETIC/CT', description='SYNTHETIC follow-up', ordinal=7, createdAt=STAMP)]
-    rows['UserFilterCollection'] = [dict(owner='SYNTHETIC-reader', revision=3, folders=[
+    rows['UserFilterCollection'] = [dict(owner='SYNTHETIC-reader', ownerSub='SYNTHETIC-reader-sub', revision=3, folders=[
         dict(path='SYNTHETIC/Empty', description='SYNTHETIC empty folder', ordinal=2)],
         shortcuts=[dict(id='first', name='SYNTHETIC shortcut', searchId='own:1'),
                    dict(id='missing', name='SYNTHETIC unavailable', searchId='shared:999')])]

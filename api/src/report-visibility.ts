@@ -15,14 +15,16 @@
  * included other readers' saved text). That one exception is the open question between that decision and the request
  * that a save is seen only by the physician writing it; it never covers another user's private draft.
  *
- * The writer of the unsigned head is `Report.updatedBy` (= its version's `author`), the account's login identity
- * (actor): a display name change does not change it. Images are not governed here (canReadPreliminary still gates them).
+ * The writer of the unsigned head is the account that made it: `Report.updatedBySub` (= its version's `authorSub`), judged by
+ * owner-identity.ts. `updatedBy` keeps the login email of the time, shown as the writer; an email or display name change
+ * does not change whose text it is. Images are not governed here (canReadPreliminary still gates them).
  */
 import { ForbiddenException } from '@nestjs/common';
 import { canReadPreliminary } from './preliminary-reader';
 import { clinicianOnly } from './clinician-policy';
 import { structureArray } from './report-structure';
 import { versionDrawings } from './image-report';
+import { sameAccount, shownActor } from './account-identity';
 
 export type ReportBodyLock = 'preliminary' | 'in-progress' | 'destroyed' | null;
 
@@ -31,9 +33,11 @@ type Reader = { actor: string; sub?: string; roles?: readonly string[] };
  * The head as stored: its writer and text, and - where the caller read its version - storedExtras, whether that version
  * stored a structured item or a drawing (a head without text is judged by them).
  */
-type Head = { updatedBy?: string | null; findings?: string | null; conclusion?: string | null; recommendation?: string | null;
+type Head = { updatedBy?: string | null; updatedBySub?: string | null; findings?: string | null; conclusion?: string | null; recommendation?: string | null;
   storedExtras?: boolean } | null | undefined;
-type VersionRow = { version: number; action: string; author?: string | null; reason?: string | null };
+type VersionRow = { version: number; action: string; author?: string | null; authorSub?: string | null; reason?: string | null };
+/** The account whose unsigned work the head holds and its login email as written. */
+export type UnsignedWriter = { actor: string; sub: string | null };
 
 /** States whose head text is a reading physician's own unsigned work. */
 export const UNSIGNED_STATES: readonly string[] = Object.freeze(['W', 'T', 'H']);
@@ -61,9 +65,9 @@ export function versionExtras(version: { structured?: unknown; drawings?: unknow
  * must be of one moment (headVersionsUnchanged after a list read, or one transaction that locked the study row). A head with no recorded writer
  * is not locked (every Save records its writer; an older row without one is a known limit).
  */
-export function unsignedAuthor(state: any, head: Head): string | null {
+export function unsignedAuthor(state: any, head: Head): UnsignedWriter | null {
   if (!UNSIGNED_STATES.includes(state?.rs) || !storedContent(head)) return null;
-  return typeof head!.updatedBy === 'string' && head!.updatedBy ? head!.updatedBy : null;
+  return typeof head!.updatedBy === 'string' && head!.updatedBy ? { actor: head!.updatedBy, sub: head!.updatedBySub ?? null } : null;
 }
 
 /** Why this reader gets no report text for this study now, or null when the text is theirs to read. */
@@ -74,7 +78,7 @@ export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBo
   // radiologist who also holds the clinician role reads as a radiologist).
   if (clinicianOnly(reader.roles)) return null;
   const author = unsignedAuthor(state, head);
-  return author !== null && author !== reader.actor ? 'in-progress' : null;
+  return author !== null && !sameAccount(author.sub, reader) ? 'in-progress' : null;
 }
 
 export const IN_PROGRESS_MESSAGE = '다른 판독의가 Save해 둔 진행 중 판독입니다. 그 판독의만 보고 이어 쓸 수 있습니다 — 이어 쓰려면 Reset으로 Unread로 되돌리세요';
@@ -86,14 +90,17 @@ export function inProgressRefusal(author: string | null): ForbiddenException {
 
 /** Reads of the head's text (citations, structure, drawings, preview): refused while it is another physician's. */
 export function assertHeadReadable(state: any, head: Head, reader: Reader): void {
-  if (reportBodyLock(state, head, reader) === 'in-progress') throw inProgressRefusal(unsignedAuthor(state, head) || null);
+  if (reportBodyLock(state, head, reader) === 'in-progress') {
+    const writer = unsignedAuthor(state, head);
+    throw inProgressRefusal(writer ? shownActor(writer.actor, writer.sub, reader) : null);
+  }
 }
 
 /** Writes over the head (draft writes, hold, commits other than Reset): refused while it is another physician's. */
 export const assertHeadWritable = assertHeadReadable;
 
 /** The head columns this module reads, for callers that read the head only to ask. */
-export const HEAD_AUTHOR_SELECT = { uid: true, version: true, updatedBy: true, findings: true, conclusion: true, recommendation: true } as const;
+export const HEAD_AUTHOR_SELECT = { uid: true, version: true, updatedBy: true, updatedBySub: true, findings: true, conclusion: true, recommendation: true } as const;
 
 /**
  * Report heads with storedExtras: a head without text is asked whether its version stored a structured item or a drawing
@@ -167,19 +174,19 @@ export function versionClasses(rows: readonly VersionRow[]): Map<number, 'shared
 }
 
 /** Whether this reader gets the text of a version of the given class. */
-export function versionBodyReadable(row: { action: string; author?: string | null },
+export function versionBodyReadable(row: { action: string; authorSub?: string | null },
   kind: 'shared' | 'unsigned' | 'private' | undefined, reader: Reader): boolean {
   if (!kind || kind === 'shared') return true;
-  if (!!row.author && row.author === reader.actor) return true;
+  if (sameAccount(row.authorSub, reader)) return true;
   return kind === 'unsigned' && clinicianOnly(reader.roles);
 }
 
 /** `versionBodyReadable` for one stored row read alone (a version's citations, a preview, a drawing, a clinician read). */
 export async function storedVersionReadable(db: any, uid: string, row: VersionRow, reader: Reader): Promise<boolean> {
   if (SIGNED_ACTIONS.includes(row.action) || row.action === 'reset' || row.action === 'preliminary') return true;
-  if (!!row.author && row.author === reader.actor) return true;
+  if (sameAccount(row.authorSub, reader)) return true;
   const rows = await db.reportVersion.findMany({ where: { uid, version: { lte: row.version + 1 } },
-    select: { version: true, action: true, reason: true, author: true } });
+    select: { version: true, action: true, reason: true, author: true, authorSub: true } });
   return versionBodyReadable(row, versionClasses(rows).get(row.version), reader);
 }
 

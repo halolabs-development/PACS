@@ -20,6 +20,7 @@ import { need, inst } from './pacs/access';
 import type { Caller } from './pacs/access';
 import { dump, holdAlive, draftConflict } from './pacs/values';
 import { canReadPreliminary } from './preliminary-reader';
+import { sameAccount } from './account-identity';
 
 export const STUDY_MERGED = 'STUDY_MERGED';
 export const EXAM_GROUP_REFUSED = 'EXAM_GROUP_REFUSED';
@@ -654,8 +655,11 @@ export class ExamMergeService {
       const refusals = await this.mergeRefusals(tx, c, inst(c), [uid], [scope.state]);
       if (refusals.length) throw this.refused('나눌 수 없습니다', refusals);
       const id = randomUUID(), second = '2.25.' + BigInt('0x' + randomUUID().replace(/-/g, '')).toString();
+      // The second row is a report target, not a study a hospital sends: its own Referred stays blank and closed, so an
+      // announce naming this generated UID records nothing. The list shows the original study's Referred on both rows.
       await tx.studyState.create({ data: { uid: second, institutionId: scope.state.institutionId,
-        teleInstitutionId: scope.state.teleInstitutionId, origin: 'logical', ss: scope.state.ss, em: scope.state.em } });
+        teleInstitutionId: scope.state.teleInstitutionId, origin: 'logical', ss: scope.state.ss, em: scope.state.em,
+        referredAt: null, referredOpen: false } });
       await tx.studyGroup.create({ data: { id, institutionId: inst(c), kind: 'split', baseUid: uid, createdBy: c.actor, createdBySub: c.sub } });
       const members = [{ groupId: id, logicalUid: uid, studyUid: uid, part: 0, seriesUids: [] },
         { groupId: id, logicalUid: second, studyUid: uid, part: 1, seriesUids: [...selected].sort() }];
@@ -778,7 +782,7 @@ export class ExamMergeService {
       if (row.rs === 'D') out.push({ uid: row.uid, rule: 'destroyed', message: '보존 기간이 끝나 판독문을 파기한 검사입니다.' });
       else if (row.rs === 'A') out.push({ uid: row.uid, rule: 'approved', message: '승인된 판독문이 있습니다. 먼저 판독 취소(Reset)를 하세요.' });
       else if (!dissolving && row.rs !== 'W') out.push({ uid: row.uid, rule: 'reported', message: `판독문이 있습니다(RS ${row.rs}). 먼저 판독 취소(Reset)를 하세요.` });
-      if (holdAlive(row) && row.holder !== c.actor) out.push({ uid: row.uid, rule: 'held', message: '판독의가 지금 이 검사의 판독문을 쓰고 있습니다.' });
+      if (holdAlive(row) && !sameAccount(row.holderSub, c)) out.push({ uid: row.uid, rule: 'held', message: '판독의가 지금 이 검사의 판독문을 쓰고 있습니다.' });
     }
     const uids = states.map(row => row.uid);
     const drafts = await tx.reportDraft.findMany({ where: { uid: { in: uids }, present: true }, select: { uid: true } });

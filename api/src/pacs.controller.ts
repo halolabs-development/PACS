@@ -270,7 +270,7 @@ export class PacsController {
   @Get('bootstrap')
   @Header('Cache-Control', 'no-store')
   async bootstrap(@Req() req: any, @Query() query: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);
+    draftDeliveries.track(caller(req).sub, req, req.res);
     return bootstrapRead(await this.svc.bootstrap(caller(req), query), req.actor, req.institution);
   }
 
@@ -281,8 +281,8 @@ export class PacsController {
   @Get('studies')
   @Header('Cache-Control', 'no-store')
   async studies(@Req() req: any, @Query() query: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);
-    return this.svc.readStudies(caller(req), query);
+    draftDeliveries.track(caller(req).sub, req, req.res);
+    return this.svc.readStudies(caller(req), query, req.headers?.['x-kin-viewer-display'] === '1');
   }
 
   /** S4-U4 Now Retry 요청. 본문은 비어 있어야 하고 묶을 영수증은 서버가 정한다. 200은 "저장됨"이지 "재시도됨"이 아니다. */
@@ -294,7 +294,7 @@ export class PacsController {
 
   @Patch('studies/:uid')
   patch(@Param('uid') uid: string, @Body() body: any, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // the answer's state carries my draft
+    draftDeliveries.track(caller(req).sub, req, req.res);   // the answer's state carries my draft
     return this.svc.patchState(uid, body, caller(req), req);
   }
 
@@ -327,7 +327,7 @@ export class PacsController {
    */
   @Put('studies/:uid/report')
   report(@Param('uid') uid: string, @Body() body: any, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);
+    draftDeliveries.track(caller(req).sub, req, req.res);
     return this.withDraftFacts(req, facts => this.svc.putReport(uid, body, caller(req), draftSession(req), facts));
   }
 
@@ -338,7 +338,7 @@ export class PacsController {
   @Get('studies/:uid/draft')
   @Header('Cache-Control', 'no-store')
   draft(@Param('uid') uid: string, @Req() req: any, @Query('insertRequestId') insertRequestId?: string) {
-    draftDeliveries.track(caller(req).actor, req, req.res);
+    draftDeliveries.track(caller(req).sub, req, req.res);
     return this.withDraftFacts(req, facts => this.svc.readDraft(uid, caller(req), facts, insertRequestId));
   }
 
@@ -369,7 +369,7 @@ export class PacsController {
   /** 인용 — 머리 판과 내 초안의 증언. 소견 가독을 여기서 다시 건다 */
   @Get('studies/:uid/report/citations')
   citations(@Param('uid') uid: string, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // my draft's citations
+    draftDeliveries.track(caller(req).sub, req, req.res);   // my draft's citations
     return this.svc.reportCitations(uid, caller(req));
   }
 
@@ -382,7 +382,7 @@ export class PacsController {
   /** 구조화 항목 — 머리 판과 내 초안의 타입 있는 값. 관문은 `versions()`와 같다 */
   @Get('studies/:uid/report/structure')
   structure(@Param('uid') uid: string, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // my draft's structured entries and text
+    draftDeliveries.track(caller(req).sub, req, req.res);   // my draft's structured entries and text
     return this.svc.reportStructure(uid, caller(req));
   }
 
@@ -412,13 +412,13 @@ export class PacsController {
 
   @Post('match')
   match(@Body() body: any, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // the answer's state carries my draft
+    draftDeliveries.track(caller(req).sub, req, req.res);   // the answer's state carries my draft
     return this.svc.match(body.uid, body.oid, body.patient, caller(req), req);
   }
 
   @Post('unmatch')
   unmatch(@Body() body: any, @Req() req: any) {
-    draftDeliveries.track(caller(req).actor, req, req.res);   // the answer's state carries my draft
+    draftDeliveries.track(caller(req).sub, req, req.res);   // the answer's state carries my draft
     // The Unmatch… window sends a reason (kept in the unmatch audit row); the right-click Unmatch sends none.
     return this.svc.unmatch(body.uid, caller(req), req, body?.reason);
   }

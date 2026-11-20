@@ -247,10 +247,14 @@ const UNNAMED = Prisma.sql`NOT EXISTS (SELECT 1 FROM "ReportVersion" v WHERE v.u
 
 /**
  * A report version row as signed and as hashed for the next version: a row without drawings serializes exactly as it did
- * before the column existed, so a stored signature and a stored previous-version hash stay the hashes of that row.
+ * before the column existed, so a stored signature and a stored previous-version hash stay the hashes of that row. The
+ * account the version belongs to (`authorSub`, owner-identity.ts) is never part of it: it came after the signed format, and
+ * it is a lookup key, not testimony (`author` keeps the email as written).
  */
 export function signedReportRow<T>(row: T): T {
-  if (!row || (row as any).drawings !== null) return row;
-  const { drawings: _none, ...rest } = row as any;
+  if (!row) return row;
+  const { authorSub: _account, ...kept } = row as any;
+  if (kept.drawings !== null) return ('authorSub' in (row as any) ? kept : row) as T;
+  const { drawings: _none, ...rest } = kept;
   return rest as T;
 }

@@ -44,6 +44,8 @@ REQ-WS7 → RISK-WS7 (단축키 초기화·잘못된 명령·계정 설정 하�
 
 ## 실행 입구와 중단 조건 (2026-09-11)
 
+화면 문구나 서버 오류 문구를 바꿀 때는 로컬에서 `python -B tests/worklist_language_source_test.py`를 실행한다.
+
 REQ-DEV-EXECUTION-GATE → RISK-DEV-ACCIDENTAL-LIVE/CONCURRENT-FIXTURES/UNBOUNDED-RETRY → TEST-DEV-EXECUTION-GATE (`execution_guard_test.py`). `LiveStack`을 쓰는 아래 과거 직접 실행 예시는 이제 공용 실행기로 감싼다. 순수 모델 시험에서 실환경 TestCase가 import로 따라온 사고를 막기 위해 일반 `unittest`에서는 LiveStack 생성 자체가 거부된다.
 
 ```sh

@@ -50,6 +50,7 @@
       savedFilterManager.reset();
       worklistFolders?.destroy(); worklistFolders = null;
       folderLoadState = 'unknown'; folderAppliedSearch = null; filterCollection = null;
+      if (collectionSelect) { collectionSelect.hidden = true; collectionSelect.replaceChildren(); }
       sharedSearches = []; storedShortcuts = []; shortcutDraft = null; shortcutBusy = false; ++filterReadSequence; ++sharedFilterReadSequence;
       userFilters = []; activeFilterName = null;
       autoPreload?.end(); autoPreload = null;   // FC-073: the More menu keeps no saved search of the ended session

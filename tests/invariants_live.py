@@ -555,6 +555,7 @@ class LiveStack:
         self.usernames: dict[str, str] = {}
         self.user_ids: dict[str, str] = {}
         self.template_owners: set[str] = set()
+        self.settings_accounts: set[str] = set()
         self.test_client_id = "kin-invariants-" + uuid.uuid4().hex[:12]
         self.test_client_uuid: str | None = None
         self.service_clients: dict[str, dict[str, str]] = {}
@@ -806,6 +807,7 @@ class LiveStack:
         user_id = str(created.body)
         self.user_ids[logical] = user_id
         self.template_owners.add(template_owner)
+        self.register_settings_account(user_id)
         self.usernames[logical] = username
         self.passwords[logical] = password
 
@@ -1057,6 +1059,15 @@ class LiveStack:
     def username(self, logical: str) -> str:
         return self.usernames.get(logical, logical)
 
+    def register_settings_account(self, sub: str) -> None:
+        # Register the newly issued account before its first bootstrap can seed templates.
+        if not re.fullmatch(UUID_RE, sub):
+            raise RuntimeError("Invalid temporary account id")
+        for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
+            if psql(f'''SELECT count(*) FROM "{table}" t WHERE owner='{sub}' OR to_jsonb(t)->>'ownerSub'='{sub}' ''') != ["0"]:
+                raise RuntimeError("Temporary settings account already has data; refusing reuse")
+        self.settings_accounts.add(sub)
+
     def cleanup_test_identities(self) -> None:
         # Only owners created by this instance, proven empty before provisioning.
         # Bootstrap seeds templates even when a test never opens the editor.
@@ -1073,20 +1084,19 @@ class LiveStack:
                 psql(past_audit_guard(f'DELETE FROM "AuditLog" t WHERE actor=\'{owner}\' AND to_jsonb(t)={saved}'))
             if psql(f'SELECT count(*) FROM "AuditLog" WHERE actor=\'{owner}\'') != ["0"]:
                 raise RuntimeError("Temporary audits changed during cleanup")
-            rows = psql(f'SELECT to_jsonb(t)::text FROM "ReadingTemplate" t WHERE owner=\'{owner}\'')
-            for raw in rows:
-                saved = "'" + raw.replace("'", "''") + "'::jsonb"
-                psql(f'DELETE FROM "ReadingTemplate" t WHERE owner=\'{owner}\' AND to_jsonb(t)={saved}')
-            if psql(f'SELECT count(*) FROM "ReadingTemplate" WHERE owner=\'{owner}\'') != ["0"]:
-                raise RuntimeError("Temporary templates changed during cleanup")
-            for table in ('UserFilter', 'UserFilterCollection'):
-                rows = psql(f'SELECT to_jsonb(t)::text FROM "{table}" t WHERE owner=\'{owner}\'')
+        # Both the historical and current API images run against synthetic fixtures.
+        for owner in sorted(self.template_owners | self.settings_accounts):
+            for table in ('ReadingTemplate', 'UserFilter', 'UserFilterCollection'):
+                criterion = (f"to_jsonb(t)->>'ownerSub'='{owner}'" if owner in self.settings_accounts
+                             else f"owner='{owner}' AND to_jsonb(t)->>'ownerSub' IS NULL")
+                rows = psql(f'SELECT to_jsonb(t)::text FROM "{table}" t WHERE {criterion}')
                 for raw in rows:
                     saved = "'" + raw.replace("'", "''") + "'::jsonb"
-                    psql(f'DELETE FROM "{table}" t WHERE owner=\'{owner}\' AND to_jsonb(t)={saved}')
-                if psql(f'SELECT count(*) FROM "{table}" WHERE owner=\'{owner}\'') != ["0"]:
+                    psql(f'DELETE FROM "{table}" t WHERE {criterion} AND to_jsonb(t)={saved}')
+                if psql(f'SELECT count(*) FROM "{table}" t WHERE {criterion}') != ["0"]:
                     raise RuntimeError("Temporary saved searches changed during cleanup")
         self.template_owners.clear()
+        self.settings_accounts.clear()
         if self.user_ids or self.test_client_uuid or self.service_clients or self.created_gateway_role:
             self._admin_login()
         failures = []
@@ -4019,7 +4029,29 @@ class LiveInvariantTests(unittest.TestCase):
         self.assertEqual(other.status, 200, other.text)
         self.assertNotIn(uid, [row["uid"] for row in other.body["notObserved"]])
 
+        # Worklist Referred, as the study row stores it ("<time or blank> <open or closed>") and as the list shows it.
+        def referred_stored(study_uid: str) -> list[str]:
+            self.assertRegex(study_uid, r"^[0-9.]+$")
+            return psql("SELECT COALESCE(to_char(\"referredAt\", 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'), 'blank') || ' ' || "
+                        "CASE WHEN \"referredOpen\" THEN 'open' ELSE 'closed' END FROM \"StudyState\" WHERE uid='" + study_uid + "'")
+
+        def referred_listed(study_uid: str) -> Any:
+            listed = self.stack.request("GET", "/studies", "kdoctor")
+            self.assertEqual(listed.status, 200, listed.text[:500])
+            return next(row for row in listed.body["studies"] if row["uid"] == study_uid).get("referredAt")
+
+        def announce_audits(study_uid: str) -> list[str]:
+            self.assertRegex(study_uid, r"^[0-9.]+$")
+            return psql("SELECT count(*) FROM \"AuditLog\" WHERE action='study.announce' AND target='" + study_uid + "'")
+
+        # The study the announce created above: its creation moment is its Referred time, recorded and closed.
+        self.assertEqual(psql("SELECT (\"referredAt\" = \"createdAt\")::text || ' ' || \"referredOpen\"::text FROM \"StudyState\" "
+                              "WHERE uid='" + uid + "'"), ["true false"])
+
         with self.stack.fixture("KIN 판독센터") as existing:
+            # A study a device sent directly, registered by the list: blank, and waiting for its first announce.
+            self.assertEqual(referred_stored(existing.uid), ["blank open"])
+            self.assertIsNone(referred_listed(existing.uid))
             preserved = self.stack.bearer_request(
                 "POST", "/gateway/announce", token, {"studyUid": existing.uid},
             )
@@ -4029,6 +4061,57 @@ class LiveInvariantTests(unittest.TestCase):
             listed = self.stack.request("GET", "/studies", "kdoctor")
             self.assertIn(existing.uid, [row["uid"] for row in listed.body["studies"]])
             self.assertNotIn(existing.uid, [row["uid"] for row in listed.body["notObserved"]])
+            # Worklist Referred: this first announce of a study registered another way recorded when the Gateway sent
+            # it and closed the row; a second announce keeps that first time. The study gets no announce audit.
+            referred = next(row for row in listed.body["studies"] if row["uid"] == existing.uid).get("referredAt")
+            self.assertIsInstance(referred, str, listed.text[:500])
+            self.assertEqual(referred_stored(existing.uid), [referred + " closed"])
+            again = self.stack.bearer_request("POST", "/gateway/announce", token, {"studyUid": existing.uid})
+            self.assertEqual(again.status, 200, again.text)
+            listed = self.stack.request("GET", "/studies", "kdoctor")
+            self.assertEqual(referred, next(row for row in listed.body["studies"] if row["uid"] == existing.uid).get("referredAt"))
+            self.assertEqual(referred_stored(existing.uid), [referred + " closed"])
+            self.assertEqual(announce_audits(existing.uid), ["0"])
+
+        with self.stack.fixture("KIN 판독센터") as earlier:
+            # A study registered directly before the Referred time was kept, as the upgrade leaves it: blank and closed.
+            # It may already have been announced then, so no later announce of its Gateway is recorded as the first.
+            psql("UPDATE \"StudyState\" SET \"referredOpen\"=false WHERE \"referredAt\" IS NULL AND uid='" + earlier.uid + "'")
+            for _ in range(3):
+                retried = self.stack.bearer_request("POST", "/gateway/announce", token, {"studyUid": earlier.uid})
+                self.assertEqual((retried.status, retried.body.get("origin")), (200, "dicom"), retried.text)
+            self.assertEqual(referred_stored(earlier.uid), ["blank closed"])
+            self.assertIsNone(referred_listed(earlier.uid))
+
+        with self.stack.fixture("KIN 판독센터") as contended:
+            # Announces of one institution arriving together for a study that waits: every one is accepted, one time is
+            # recorded, and it does not move afterwards.
+            self.assertEqual(referred_stored(contended.uid), ["blank open"])
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                together = list(pool.map(lambda _: self.stack.bearer_request(
+                    "POST", "/gateway/announce", token, {"studyUid": contended.uid}), range(6)))
+            self.assertEqual([(answer.status, answer.body.get("origin")) for answer in together], [(200, "dicom")] * 6,
+                             [answer.text for answer in together])
+            first_time = referred_listed(contended.uid)
+            self.assertIsInstance(first_time, str)
+            self.assertEqual(referred_stored(contended.uid), [first_time + " closed"])
+            self.assert_status(self.stack.bearer_request("POST", "/gateway/announce", token, {"studyUid": contended.uid}), 200)
+            self.assertEqual(referred_stored(contended.uid), [first_time + " closed"])
+            self.assertEqual(announce_audits(contended.uid), ["0"])
+
+        # Announces arriving together for a study nobody has registered: one of them creates the row (one audit, its
+        # creation moment as the Referred time) and the others, whether they find it or lose the insert, are accepted too.
+        raced = "2.25." + str(uuid.uuid4().int)
+        self.stack.active[raced] = Fixture(raced, "", "KIN 판독센터", "kdoctor", "")
+        self.addCleanup(self.stack.cleanup_fixture, raced)
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            together = list(pool.map(lambda _: self.stack.bearer_request(
+                "POST", "/gateway/announce", token, {"studyUid": raced}), range(6)))
+        self.assertEqual([(answer.status, answer.body.get("origin")) for answer in together], [(200, "gateway")] * 6,
+                         [answer.text for answer in together])
+        self.assertEqual(announce_audits(raced), ["1"])
+        self.assertEqual(psql("SELECT (\"referredAt\" = \"createdAt\")::text || ' ' || \"referredOpen\"::text FROM \"StudyState\" "
+                              "WHERE uid='" + raced + "'"), ["true false"])
 
         with self.stack.fixture() as foreign:
             conflict = self.stack.bearer_request(
@@ -4036,6 +4119,9 @@ class LiveInvariantTests(unittest.TestCase):
             )
             self.assertEqual(conflict.status, 409, conflict.text)
             self.assertEqual(conflict.body.get("code"), "STUDY_OWNERSHIP_CONFLICT", conflict.text)
+            # The refused announce recorded nothing on the other institution's study: it still waits for its own Gateway.
+            self.assertEqual(referred_stored(foreign.uid), ["blank open"])
+            self.assertEqual(announce_audits(foreign.uid), ["0"])
 
         # S4-F01V: the announce-only study above now gets Gateway receipts with zero instances delivered; the 3-key
         # assertion above stays the no-receipt control. Only the owner's absent item carries the U3 projection, and
@@ -5874,6 +5960,10 @@ class LiveInvariantTests(unittest.TestCase):
             scope["operations"].append(op)
             self.assertEqual((first.status, first.body["outcome"]), (200, "stored"), first.text)
             self.assertEqual(self.s9u4_state(study), ["hallym|Unverified|local-import"])
+            # Worklist Referred: a study a local import registered is blank and waits for its first Gateway announce.
+            self.assertRegex(study, r"^[0-9.]+$")
+            self.assertEqual(psql("SELECT (\"referredAt\" IS NULL)::text || ' ' || \"referredOpen\"::text FROM \"StudyState\" "
+                                  "WHERE uid='" + study + "'"), ["true true"])
             objects = lambda: len(self.stack._orthanc_request("GET", f"/studies/{self.s9u4_study_id(study)}/instances").body)
             before = objects()
             refusals = [

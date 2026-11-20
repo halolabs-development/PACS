@@ -34,6 +34,9 @@
         { k: "modality", t: "Modality", f: ["CT", "MR", "CR", "US", "SC"] },
         { k: "desc", t: "StudyDesc", f: "text" },
         { k: "date", t: "StudyDate", f: "text" },
+        // Referred: when the referring hospital's Gateway sent the study (server row referredAt, this screen's local time).
+        // Blank for a study that did not come through a Gateway. Filters like ReqDate: "2026-11", "2026-11-20", "2026-11-20 09".
+        { k: "referredAt", t: "Referred", f: "text" },
         // 예비 판독을 쓴 사람과, 최종 판독을 맡은 상급 판독의.
         // HPACS도 2025.07에 이 둘을 컬럼으로 붙였다 (교훈 §13 — 컬럼은 끝없이 늘어난다)
         { k: "preDoc", t: "PreDoc", f: "text" },
@@ -81,6 +84,11 @@
       if (!d || !Number.isFinite(d.getTime())) return "";
       const p = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    /** The same server time as a sort key (UTC ISO, seconds kept; the local stamp drops them); anything unreadable is "". */
+    function serverInstant(iso) {
+      const d = typeof iso === "string" && iso ? new Date(iso) : null;
+      return d && Number.isFinite(d.getTime()) ? d.toISOString() : "";
     }
     /**
      * Confirm cell: the approval time of an Approved report. An approval stored before its time was kept shows the stored
@@ -157,9 +165,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -177,7 +185,7 @@
           : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
           : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
-        const by = on.by && on.by !== user ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
+        const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
@@ -193,7 +201,7 @@
       preReviewer: s => esc(displayActor(s.preReviewer)),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
-        const hold = !s.holder ? '' : s.holder === user
+        const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
           : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
@@ -284,8 +292,10 @@
     });
 
     // Hover help for one- and two-letter headers. Only codes the screen already uses are explained (RS letters match the count bar).
+    // Referred says where its time comes from and what a blank cell means.
     const HEAD_HELP = {
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
+      referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
       pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",

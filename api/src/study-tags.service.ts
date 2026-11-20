@@ -28,7 +28,7 @@ export class StudyTagsService {
     // A study without an owning institution is nobody's, even with this institution in its tele column.
     const rows=await tx.$queryRaw(Prisma.sql`SELECT uid,"institutionId","teleInstitutionId" FROM "StudyState" WHERE uid IN (${Prisma.join([...new Set(uids)].sort())})
       AND "institutionId" IS NOT NULL AND ("institutionId"=${c.institution} OR "teleInstitutionId"=${c.institution})
-      AND (rs<>'P' OR (CASE WHEN "preDocSub" IS NOT NULL THEN "preDocSub"=${c.sub} ELSE "preDoc"=${c.actor} END) OR (CASE WHEN "preReviewerSub" IS NOT NULL THEN "preReviewerSub"=${c.sub} ELSE "preReviewer"=${c.actor} END)) ORDER BY uid ${lock?Prisma.sql`FOR SHARE`:Prisma.empty}`);
+      AND (rs<>'P' OR COALESCE("preDocSub" = ${c.sub}, false) OR COALESCE("preReviewerSub" = ${c.sub}, false)) ORDER BY uid ${lock?Prisma.sql`FOR SHARE`:Prisma.empty}`);
     // One gate decides every study of the catalog as a single study is decided.
     return examParentsAdmitted(tx,this.studyAccess,c,rows);
   }

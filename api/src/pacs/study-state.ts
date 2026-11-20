@@ -352,7 +352,7 @@ export class PacsStudyState {
   }
 
   private async response(tx:any,state:any,c:Caller) {
-    const uid=state.uid, stored=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c.actor,tx);
+    const uid=state.uid, stored=await tx.report.findUnique({where:{uid}}), draft=await this.access.myDraft(uid,c,tx);
     // Read in the transaction that wrote (and locked) the study row: the state and the head are of the same moment.
     const report=stored?(await withStoredExtras(tx,[stored]))[0]:stored;
     const readable=!report||await readableExamRecord(tx,this.studyAccess,c,uid,report);
@@ -434,9 +434,9 @@ export class PacsStudyState {
     // row lock taken above, so a study that arrives again under this UID never brings it back open.
     if (prev.teleInstitutionId)
       await closeReaderAssignments(tx, uid, { institutionId: prev.institutionId, teleInstitutionId: null }, c, 'study-deleted', workflow);
-    // 남은 초안 행은 비운 자리뿐이다(위에서 present 행이 있으면 거절했다). 검사 행과 함께 치운다: 같은 UID로 다시 생긴
-    // 검사는 새 세대(draftEpoch)를 받으므로, 치운 자리의 revision이 없어도 옛 경계의 쓰기는 모두 거절된다.
-    await tx.reportDraft.deleteMany({ where: { uid, present: false } });
+    // 남은 초안 행은 비운 자리뿐이다(위에서 present 행이 있으면 거절했다). 지우지 않고 둔다: 그 행의 (uid, author)는
+    // 보존·열람 기록이 가리키는 초안 기록 ID다. 같은 UID가 다시 들어와도 기존 행의 ID와 revision을 유지하고
+    // 새 검사의 세대(draftEpoch)로 삭제 전 화면에서 보낸 쓰기를 거절한다.
     await tx.studyState.delete({ where: { uid } });
     const row = await tx.auditLog.create({ data: { actor: c.actor, action: 'state.delete', target: uid, detail: JSON.stringify({ by: me }) } });
     await workflow?.record(studyChange('DELETE studies/:uid', prev, 'study-metadata', row));

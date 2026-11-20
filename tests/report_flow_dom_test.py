@@ -47,6 +47,7 @@ class FlowSite(h.Site):
 
     def __init__(self, count=3):
         super().__init__()
+        self.version_author = None
         self.flow = STUDIES[:count]
         self.store = {uid: {"revs": 0, "row": None, "report": {"version": 0, "rs": "W"}} for uid, _, _ in self.flow}
         self.flow_puts = []             # (uid, body) of every draft write that reached the server
@@ -121,7 +122,8 @@ class FlowSite(h.Site):
         st["report"] = {"version": st["report"]["version"] + 1, "rs": RS_OF.get(action, "T"), **texts}
         # The version this commit made, as GET report/versions lists it: a lost answer is proved against it.
         st.setdefault("versions", []).append({"version": st["report"]["version"], "action": action,
-                                              "author": h.owner_of(account)["author"], "reason": body.get("reason"), **texts})
+                                              "mine": True, "author": self.version_author or h.owner_of(account)["author"],
+                                              "reason": body.get("reason"), **texts})
         return 200, {**self.envelope_of(uid, account), "state": self.state_of(uid, account)}
 
     def stored_of(self, uid):
@@ -162,7 +164,7 @@ class FlowSite(h.Site):
         uid, what = found.groups()
         if method == "POST" and what == "hold":
             self.holds.append(path)
-            return route.fulfill(json={"holder": account["user"], "conflict": False})
+            return route.fulfill(json={"holder": account["user"], "mine": True, "conflict": False})
         if method == "POST" and what == "release":
             self.releases.append((path, request.headers.get("x-kin-session")))
             return route.fulfill(json={"ok": True})
@@ -1218,6 +1220,46 @@ class ReportFlowPage(unittest.TestCase):
         self.wait(lambda: viewer_loads, "the viewer document request")
         self.wait(lambda: self.page.evaluate("() => { const f = document.querySelector('#reading-frame'); "
                                              "return !!f && !f.hidden && !f.inert; }"), "the usable viewer frame")
+
+    def test_return_to_kept_viewer_refreshes_current_and_added_prior(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.enter_reading_with_a_bound_viewer()
+        frame = self.page.locator("#reading-frame").element_handle().content_frame()
+        order = ["ORDER"]
+        reads = []
+
+        def display_response(route):
+            uids = route.request.url.split("uids=")[1].replace("%2C", ",").split(",")
+            reads.append(uids)
+            rows = []
+            for uid in uids:
+                values = {"id": order[0], "name": order[0], "over": ["id", "name"], "age": ""}
+                rows.append({"uid": uid, "sourcePatientKey": "institution|SOURCE", "state": {"ov": {"id": order[0]}},
+                             "displaySources": [{"sourcePatientKey": "institution|SOURCE", "studyUid": uid,
+                                                 "series": {"mode": "all", "uids": []}, "values": values}]})
+            route.fulfill(json={"studies": rows})
+
+        frame.page.route("**/api/studies?uids=*", display_response)
+        frame.add_script_tag(path=str(ROOT / "config/ohif/study-display.js"))
+        frame.evaluate("""([current, prior]) => {
+          window.kinViewerJobWorkspaceState = () => ({busy:false, dirty:true});
+          const show = () => { document.querySelector('.cornerstone-canvas').textContent = [current, prior].map(
+            uid => kinViewerStudyDisplay.of(uid, uid + '.1', 'SOURCE')?.id || 'SOURCE').join(' / '); };
+          kinViewerStudyDisplay.subscribe(show); show();
+        }""", [h.UID, UID_C])
+        canvas = frame.locator(".cornerstone-canvas")
+        expect(canvas).to_have_text("ORDER / ORDER")
+        before = len(reads)
+        order[0] = "CORRECTED"
+        if not self.row(h.PATIENT_B).is_visible():
+            self.page.get_by_role("button", name="Worklist", exact=True).click()
+        self.pick(h.PATIENT_B)
+        expect(self.page.locator("#reading-frame")).to_be_hidden()
+        self.page.get_by_role("button", name="Return to Previous Viewer", exact=True).click()
+        expect(self.page.locator("#reading-frame")).to_be_visible()
+        expect(canvas).to_have_text("CORRECTED / CORRECTED")
+        self.assertEqual([{h.UID, UID_C}], [set(uids) for uids in reads[before:]])
 
     def test_ctrl_s_in_the_bound_viewer_frame_runs_the_real_finalize_once(self):
         """D1371 end to end on the merged tree: Ctrl+S pressed in the viewer frame of the Reading Workspace approves the

@@ -4,23 +4,23 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 업무 화면은 `worklist-v0/hpacs-lite/main.html`의 바닐라 JS, 영상 뷰어는 고정 OHIF를 사용한다.
 기존 구조를 유지하고 요청 없는 프레임워크 전환·의존성 추가·일괄 리팩터링은 하지 않는다.
 
-현재 진행·실행 순서·완료 SHA는 이 파일에 쌓지 않는다. 새 세션·인계 때 단위 지시서가 주어졌으면
-현재 단위 지시서와 그 지시서가 고정한 AGENTS 원문, 승인된 단계 패킷·결정·요구/위험/시험 계약을 읽는다. docs-repo README는 현행 진입점으로 검수된 버전일 때 위치 안내로 사용하며, 과거 인계·작업지시의 다음 단계로 범위를 추정하지 않는다. 그런 README가 준비되기 전에는 지시서가 읽을 패킷의 정확한 경로와 SHA를 직접 지정한다.
+현재 진행·실행 순서·완료 SHA는 이 파일에 쌓지 않는다. 새 세션·인계 때 작업지시가 주어졌으면
+그 작업지시를 읽고, 작업지시는 읽을 자료의 정확한 경로를 직접 지정한다.
 없으면 대화에서 주어진 범위를 따르며 오래된 단계 번호로 다음 작업을 추정하지 않는다.
 기존 승인 범위는 이어받되 최신 사용자 중지/우선순위와 현재 업무 묶음을 먼저 적용한다.
 과거 작업지시의 다음 단계나 비차단 개선을 근거로 보류된 운영 강화·기관 확장을 자동 시작하지 않는다.
 진행 보고는 사용 가능한 업무·사용자 확인 상태·남은 조건·다음 한 묶음을 중심으로 쓰고, 내부 작업 번호는 근거 추적에 쓴다.
 
-지휘자는 범위와 작업 배정을 맡고, 구현자는 단위 지시서의 owned_paths 안에서 진단·구현하며 재위임하지 않는다. 구현과 검수는 서로 다른 모델 계열이 맡는다: Claude가 실질적으로 쓴 코드는 GPT가, GPT(Codex)가 쓴 코드는 Claude가 한 번 독립 검수한다. 어느 모델이 구현·검수하는지는 현행 사용자 모드를 따르며 이 파일에 고정하지 않는다. 제출 후보는 같은 최종 change_sha의 required CI와 그 교차 검수 판정을 거친다. 중간 보존 커밋 자체가 새 후보 라운드는 아니다. G3는 최종 후보 SHA에서 workflow_dispatch로 `.github/workflows/candidate.yml`을 실행하는 후보 관문이다(§2). 상세 실행·병합 명령은 비공개 docs-repo의 cmdtools README에 둔다.
+지휘자는 범위와 작업 배정을 맡고, 구현자는 작업지시가 정한 경로(owned_paths) 안에서 진단·구현하며 재위임하지 않는다. 구현과 검수는 서로 다른 모델 계열이 맡는다: Claude가 실질적으로 쓴 코드는 GPT가, GPT(Codex)가 쓴 코드는 Claude가 한 번 독립 검수한다. 어느 모델이 구현·검수하는지는 현행 사용자 모드를 따르며 이 파일에 고정하지 않는다. 제출 후보는 같은 최종 SHA의 required CI와 그 교차 검수 판정을 거친다. 중간 보존 커밋 자체가 새 후보 라운드는 아니다. G3는 배포·평가 후보 SHA에서 workflow_dispatch로 `.github/workflows/candidate.yml`을 실행하는 후보 관문이다(§2).
 
 ## 개발 집중 방식
 
-- 단위 지시서는 목적, owned_paths, 관련 인터페이스, 변경 금지 범위, 완료 조건과 필요한 시험을 전달하고 전체 대화/문서 묶음을 복제하지 않는다. 작업자는 범위 확장·모델 변경·태그 발행을 하지 않고 변경·검증·미완료를 결과 계약(§5)으로 짧게 반환한다.
+- 작업지시는 목적, owned_paths, 관련 인터페이스, 변경 금지 범위, 완료 조건과 필요한 시험을 전달하고 전체 대화/문서 묶음을 복제하지 않는다. 작업자는 범위 확장·모델 변경·태그 발행을 하지 않고 변경·검증·미완료를 결과 계약(§5)으로 짧게 반환한다.
 - 구현자는 실제 변경 경계와 그 소비자·시험을 짧게 확인한 뒤 바로 구현한다. 별도 설계 상담은 계약이 바뀌거나 해결 방향이 불명확할 때만 한다. 매 작업 전 별도 영향조사·진단·사전검수 단계를 두지 않는다.
 - 작업은 실제 모듈 경계로 나누고, 같은 영역의 작은 수정은 PR 하나·CI 한 번·검수 한 번으로 묶는다. 파일 수·줄 수·시간으로 나누는 상한은 두지 않는다.
 - 동시에 진행하는 작업은 서로 독립된 단위로 한정하고 같은 파일·실환경 fixture를 함께 수정/실행하지 않는다. 살아 있는 작업을 중복 발주하지 않는다.
 - 화면·브라우저 확인이 필요한 작업은 담당 작업자가 사용할 수 있는 브라우저 도구로 실제 화면과 경계를 직접 확인한다.
-- 다음 업무는 지휘자가 기존 승인 요구사항과 단계 계약에서 선택한다. 사용자에게 다음 할 일을 만들게 하지 않는다. Ultra 또는 별도 고비용 실행은 사용자 명시 지시 없이 시작하지 않는다. 토큰 차단·계측·절감 효과를 확인하는 별도 검사 프로젝트는 만들지 않는다(2026-09-11 사용자 철회). 모델 분업만으로 품질 동일성이나 토큰 절감률을 보장했다고 보고하지 않는다.
+- 다음 업무는 지휘자가 기존 승인 요구사항에서 현재 승인된 작업 순서에 따라 선택한다. 사용자에게 다음 할 일을 만들게 하지 않는다. Ultra 또는 별도 고비용 실행은 사용자 명시 지시 없이 시작하지 않는다. 토큰 차단·계측·절감 효과를 확인하는 별도 검사 프로젝트는 만들지 않는다(2026-09-11 사용자 철회). 모델 분업만으로 품질 동일성이나 토큰 절감률을 보장했다고 보고하지 않는다.
 - 원본 환경 격리는 아직 미완료다. 원본 DB·DICOM·계정·볼륨에 연결된 fixture는 실행하지 않는다. 해당 검증은 자격증명·저장소·접속 대상이 원본과 분리된 합성 환경에서 수행하며, 분리 확인 전에는 제품 구현과 순수 시험을 진행하고 실환경 검증을 미완료로 표시한다. Compose 이름만 다른 것을 권한 격리 완료로 세지 않는다.
 
 - 외부 게시·예약은 최신 명시 요청의 대상과 범위 안에서만 수행하며, 과거 승인을 자동 갱신 지시로 해석하지 않는다. 주간 자료가 쌓여도 자동 게시·주간 예약을 만들지 않는다.
@@ -29,11 +29,10 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 - 검토 중에는 충돌 없는 구현을 이어가며, 대기를 완료/통과로 처리하지 않는다. 자원·환경 대기는 같은 작업의 대기이며 내용 변경 없는 새 구현 라운드를 만들지 않는다. 지휘자 자체 확인은 교차 검수를 대체하지 않는다.
 - 검수는 발견한 결함을 한 번에 모두 보고한다(D1080). 시험 실행은 실제 변경·실패·공통 입력의 영향에 맞추고, 같은 SHA·입력의 유효한 결과는 재사용한다. 반례·mutant 개수 할당은 두지 않는다.
 - 기록은 `scripts/record-run.py` 같은 공용 도구로 실행 시점에 남긴다. 실제 입력/버전·command·exit·원문 로그를 보존하고 실패·skip·timeout을 성공으로 세지 않는다. 단위별 기록/검토/발행 도구를 반복해서 새로 만들지 않는다. 실행 기록은 로컬 `tmp/<단위>/`에 남기고 원시 증거는 비공개 저장소에 보존한다. 별도 증거 계약·서식 관문·서술형 마감 작업으로 확대하지 않는다.
-- 진행 상태·작업 순서·결정·finding 원장은 비공개 docs-repo의 해당 기록에 두고 이 파일에 복제하지 않는다. 과거 인계·완료 이력을 매 실행마다 다시 읽거나 동기화하지 않는다. 시험 소요 시간 같은 수치는 manifest에만 둔다.
+- 진행 상태·작업 순서·결정·finding 원장은 비공개 docs-repo(`halolabs-development/PACS-docs`)의 해당 기록에 두고 이 파일에 복제하지 않는다. 과거 인계·완료 이력을 매 실행마다 다시 읽거나 동기화하지 않는다. 시험 소요 시간 같은 수치는 manifest에만 둔다.
 
 **승인 재요청 금지:** 사용자는 기존 PACS 작업 범위의 개발·검토·문서 정리·커밋/push와 필요한 연결 설정을 명시적으로 승인했으며, 이 승인은 이후 턴과 인계에서도 유지한다. 기존 승인 범위의 허락을 반복 요청하지 않되, 이 문서는 작업지시의 write/network/server 권한이나 실행 환경의 제한을 확장하지 않는다. 실행 불가와 미검증은 사실대로 기록한다. 실제 실행 실패를 승인 부족으로 오인하거나 미완료를 완료로 보고하지 않는다. 최신 중지·우선순위·외부 백업 OFF 등 사용자가 정한 별도 조건과 자료 보존 규칙은 함께 적용한다.
 
-작업 순서와 단계 범위는 최신 승인된 단계 계약과 결정이 정하며 이 파일에 복제하지 않는다.
 화면만 완성된 것으로 세지 않으며 검사 조회·영상 조작/비교·판독·저장·재열람의 연결과 실패 복구를 함께 완성한다.
 의사 평가가 시작되면 평가 버전과 데이터를 안정적으로 유지하고, 백엔드 작업은 별도 브랜치·환경에서 진행한다.
 
@@ -43,23 +42,23 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 
 | 영역 | 파일 | 시험 |
 |---|---|---|
-| 업무 화면(목록·판독) | `worklist-v0/hpacs-lite/main.html` + 기능별 `*.js`(compound-filter·saved-filter-manager·worklist-columns·favorites·favorite-list·study-tags·reader-assignment·tech-note·reading-workspace·study-pages·workspace-layout/roaming·viewer-jobs·critical-result-send) | `tests/e2e/test_*.py`(컨테이너 스택 필요), 격리 DOM `tests/*_dom_test.py`, 순수 모델 `tests/*_test.cjs`(`node --test`) |
-| 임상의·관리 화면 | `worklist-v0/hpacs-lite/clinician.html`·`clinician.js`, 관리 `admin.html`·`study-access-admin.js` | `tests/clinician_*_dom_test.py`, `tests/admin_member_roles_dom_test.py` |
-| 뷰어(고정 OHIF) 확장 | `config/ohif.js`의 `kinCreate*` 확장, 별도 창 스크립트 `worklist-v0/hpacs-lite/viewer-tech-note.js`·`viewer-workspace-dock.js` | `tests/viewer_*_test.cjs`·`tests/ct_*_test.cjs`·`tests/cine_budget_test.cjs`(`/app/dist` require 시험은 컨테이너 전용) |
+| 업무 화면(목록·판독) | `worklist-v0/hpacs-lite/main.html` + 기능별 `*.js`(compound-filter·saved-filter-manager·worklist-columns·favorites·favorite-list·study-tags·reader-assignment·tech-note·reading-workspace·study-pages·workspace-layout/roaming·viewer-jobs·critical-result-send). `main.html`의 페이지 스크립트는 `scripts/main-split-order.json`의 원본들을 순서대로 묶은 `main-split.bundle.js`다 — 원본을 고치고 `scripts/build-main-split-bundle.py`로 다시 만든다(`--check`는 파일을 쓰지 않고 대조만 한다) | `tests/e2e/test_*.py`(컨테이너 스택 필요), 격리 DOM `tests/*_dom_test.py`, 순수 모델 `tests/*_test.cjs`(`node --test`) |
+| 로그인·임상의·관리·감사 화면 | 로그인 `worklist-v0/hpacs-lite/index.html`, 임상의 `clinician.html`·`clinician.js`, 관리 `admin.html`·`study-access-admin.js`, 감사 `audit.html`·`audit.js` | `tests/clinician_*_dom_test.py`, `tests/admin_member_roles_dom_test.py` |
+| 뷰어(고정 OHIF) 확장 | `config/ohif/*.js`의 `kinCreate*` 확장 — `config/ohif.js`는 `config/ohif/source-order.json` 순서로 이어 붙인 결과물이다(`scripts/build-ohif-config.py`, `--check`는 다시 만들기를 잊은 것을 알림). 뷰어 쪽 화면 스크립트 `worklist-v0/hpacs-lite/viewer-*.js`(별도 창 스크립트 `viewer-tech-note.js`·`viewer-workspace-dock.js` 포함) | `tests/viewer_*_test.cjs`·`tests/ct_*_test.cjs`·`tests/cine_budget_test.cjs`(`/app/dist` require 시험은 컨테이너 전용) |
 | API 목록·판독·hold·권한 | `api/src/pacs.controller.ts`·`pacs.service.ts`(공개 facade)·`pacs/`(concern 지도 `pacs/README.md`: `access.ts`의 `visible()`·`need()`, `report-commit.ts`의 `commitReport`, `hold.ts`의 `hold`), `auth.guard.ts` | `tests/invariants_live.py`(라우트 선언표 `ROUTES`는 컨트롤러 데코레이터와 정확 일치해야 함), `tests/e2e/test_worklist.py`. 후보 선택 건수는 `tests/candidate_ci.py`의 선언에만 두고 실제 수집 목록과 정확히 일치해야 한다 |
 | API 기능별 | `favorite.*`·`study-tags.*`·`reader-assignment.*`·`viewer-job.*`·`manual-sr.*`·`connect.*`·`admin.*`·`report-preview.controller.ts`, `clinician-policy.ts`·`clinician-question.*`·`clinical-context*`·`critical-result*`·`image-request.*`·`consultation.*`·`study-access*`, 원본 조회 `orthanc.service.ts`·`study-page.ts`, 뷰어 프레임 range 읽기 `dicom-frame.*`·`dicom-frame-layout.ts`, 계정 `keycloak.service.ts` | 해당 `tests/e2e/test_<기능>.py`, `tests/*_live.py`, 역할·경로 행렬 `tests/clinician_policy_test.py`·`tests/clinician_policy_fixtures.json`, 프레임 읽기 `tests/dicom_frame_test.cjs` |
+| EMR 단위·병원 설치물·법적 고지 | `api/src/emr-*/`(계약 `api/src/emr-contract/README.md`)·`emr/units/*.json`, 병원 안 Gateway `gateway/`(`gateway/README.md`), `worklist-v0/legal/` | `tests/emr/`, `gateway/agent/test_agent.py` |
 | DB | `api/prisma/schema.prisma`, `api/prisma/migrations/<시각>_<이름>/migration.sql` (`StudyState.preDocSub`·`preReviewerSub`: 판독 지정 주체) | migration을 추가하면 같은 커밋에서 `tests/production_image_test.py`의 기대 목록과 복원 fixture(`tests/ops_product_transfer_*.py`)를 갱신한다(2026-09-09 누락으로 CI `runtime` 12커밋 실패) |
-| 운영·CI | `.github/workflows/validate.yml`(build/runtime/measurements)·`candidate.yml`(G3, `tests/candidate_ci.py`), `scripts/ops_*.py`, `docker-compose*.yml`, `proxy/` | `tests/ops_*_test.py`, `tests/production_image_test.py`, `tests/candidate_ci_test.py` |
+| 운영·CI | `.github/workflows/`: `pr-regressions.yml`(PR·`v*` 태그·수동)·`validate.yml`(PR·main push·`v*` 태그·매일 예약·수동), `output-integration.yml`(Focused integration)·`candidate.yml`(G3, `tests/candidate_ci.py`)·`gateway-e2e.yml`(수동), `dependency-audit.yml`(주간); 경로별 선택 `scripts/ci-paths.json`. `scripts/ops_*.py`, `docker-compose*.yml`, `proxy/`, `docs/ops/` | `tests/ops_*_test.py`, `tests/production_image_test.py`, `tests/candidate_ci_test.py` |
 | 시험 실행 통제 | `scripts/run-tests.py`·`tests/live_test_gate.py` | `tests/execution_guard_test.py`·`tests/execution_selection_test.py` |
 | 실행 기록 | `scripts/record-run.py` → 로컬 `tmp/<단위>/` → 비공개 `docs-repo/evidence/<단위>/` | `tests/record_run_test.py` |
 
 위 시험 열의 시험을 고치거나 새로 쓸 때는 §1-B(시험과 구현의 분리)를 따른다.
-지휘 도구 cmdtools(결과 계약 검증·후보 라운드·병합·감시·finding 원장)는 제품 저장소가 아니라 비공개 docs-repo의 도구이며, 명령과 계약은 그 README가 정한다.
 
 ## 1. 판독·권한 불변조건
 
-1. `ReportVersion`은 추가만 하는 이력이다. 판독 취소에는 사유를 남긴다. 승인 A에서 나가는 길은 이전 판을 남기는 Addendum과 사유가 있는 Reset뿐이며, A에서 `save`·`approve`를 거절한다.
-2. 개인 `ReportDraft`의 키는 `(uid, author)`이며 확정 `Report`를 바꾸지 않는다. 충돌은 확정(`commitReport`) 때 처리하고 남의 초안은 응답에 포함하지 않는다.
+1. `ReportVersion`은 추가만 하는 이력이다. 판독 취소에는 사유를 남긴다. 승인본(A)에는 기록된 첫 승인 시각부터 24시간이 지나기 전이고 Addendum이 없을 때 승인한 판독의의 본문 수정(amend), 이전 판을 남기는 Addendum, 사유가 있는 Reset만 허용한다. Reset만 W로 되돌리며, A에서 `save`·`approve`를 거절한다.
+2. 개인 `ReportDraft`의 행 키는 `(uid, author)`이고, 누구의 초안인지는 로그인 이메일이 아니라 계정 ID(`authorSub`, uid마다 하나)로 판정한다(`api/src/owner-identity.ts` — 점유·저장 글·검색·템플릿의 주인도 같다). 초안은 확정 `Report`를 바꾸지 않는다. 충돌은 확정(`commitReport`) 때 처리하고 남의 초안은 응답에 포함하지 않는다.
 3. RS=P에서는 지정된 상급 판독의의 승인 또는 사유가 있는 취소만 상태를 바꾼다. 임시저장은 P를 유지하며 작성자 자신의 승인은 금지한다.
 4. 타 기관 열람은 `StudyState.teleInstitutionId` 경계를 지킨다. `admin`도 예외가 아니며 기관 범위와 역할 권한을 따로 검사한다.
 5. 역할 검사는 서버의 `need()`, 기관 검사는 `visible()`에서 강제한다(`api/src/pacs/access.ts`). 화면 잠금으로 서버 검사를 대신하지 않는다.
@@ -83,7 +82,7 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 
 2026-09-27 사용자 결정 D73으로 모든 작업 단위에 즉시 적용한다. 시험은 제품 요구를 확인하는 수단이며, 시험의 편의가 제품 구조를 정하지 않는다.
 
-13. 제품 코드는 시험 선택자·시험 문자열·시험 하니스를 통과시키기 위해 구조·문구·접근 방식을 바꾸지 않는다. 시험이 요구하는 형태가 제품 요구와 다르면 시험을 고친다. 현재 알려진 위반은 없다(마지막 항목이던 `api/src/pacs/metrics.ts:206`의 대괄호 접근은 9단계 S9-U0f-ORTHANC에서 공개 `statistics()` 계약으로 정리했다). 이 목록을 새 위반의 선례로 쓰지 않는다.
+13. 제품 코드는 시험 선택자·시험 문자열·시험 하니스를 통과시키기 위해 구조·문구·접근 방식을 바꾸지 않는다. 시험이 요구하는 형태가 제품 요구와 다르면 시험을 고친다. 현재 알려진 위반은 없다(마지막 항목이던 `api/src/pacs/metrics.ts`의 대괄호 접근은 9단계 S9-U0f-ORTHANC에서 공개 `statistics()` 계약으로 정리했다). 이 목록을 새 위반의 선례로 쓰지 않는다.
 14. 시험은 동작·권한 계약(역할·상태, §1·§1-A 불변조건, §4 문구 규칙, API 계약)에 단언을 붙인다. 구현 문자열·DOM 형태·내부 함수명에 붙이지 않는다. 바이트 핀은 바이트 동일성 자체가 요구인 경우(동작 보존 리팩터링의 전후 동등성, 브랜딩 영역 제외)에만 허용하고 그 사유를 시험 파일 머리에 적는다.
 15. 구문 검사·정적 대조가 필요하면 자체 파서를 만들지 않고 이미 설치된 도구(TypeScript AST, Nest 메타데이터, 실제 라우트 표)를 쓴다. `tests/clinician_policy_test.py`의 자체 TS 구문 검사기와 구현 문자열 고정 시험도 S9-U0f 정리 대상이다.
 16. 검수는 "시험을 위해 비튼 제품 코드"와 "구현 문자열에 고정된 시험"을 finding으로 보고한다. 변경 경계의 실제 소비자·행동 시험만 보며, 전수 pin 표·자가점검 증빙은 만들지 않는다.
@@ -92,7 +91,7 @@ Orthanc·NestJS/Prisma·PostgreSQL·Keycloak·nginx로 구성된 의료영상 �
 
 ### 시험 실행 통제 (2026-09-11)
 
-사용자가 현재 실행의 모델/추론 수준을 선택한다. 이 선택을 별도 고비용 실행·보조 실행이나 모델 설정 변경의 승인으로 해석하지 않는다. 다음 개발 업무는 지휘자가 기존 요구사항·승인된 단계 계약에서 선택하며 사용자에게 시험 계획 작성을 떠넘기지 않는다.
+사용자가 현재 실행의 모델/추론 수준을 선택한다. 이 선택을 별도 고비용 실행·보조 실행이나 모델 설정 변경의 승인으로 해석하지 않는다.
 
 `LiveStack`을 쓰는 시험은 `scripts/run-tests.py`가 만든 실행 범위 안에서만 허용한다. 일반 `unittest` 실행이나 환경 변수로 이 허가를 얻지 못한다. 실행기는 정확한 파일/클래스/메서드를 고정하고 순수 모드의 LiveStack 접근과 실환경 동시 실행을 거부한다. 시도 횟수 상한은 없다(D1804). 모든 시도는 단위 원장에 남고 최초 실패도 덮어쓰지 않으며, 다시 돌릴 때는 바뀐 코드·환경과 이유를 같은 작업 기록에 남긴다. `timeout_seconds`는 멈춘 실행을 끊는 hang timeout으로 필수이며 그 suite의 실측 소요에 맞춘다.
 
@@ -108,7 +107,7 @@ LiveStack이 생성·정리하는 임시 클라이언트에만 사용하며 기�
 제품 동작은 컨테이너 스택에서 재현한다. 검증 단위는 사용자 업무와 전달 후보이며, 턴 종료나 중간 커밋 자체는 전체 검증의 사유가 아니다.
 
 - 전달 전 개발 중에는 변경 기능, 직접 영향을 받는 회귀, 필요한 빌드·구문 검사를 수행한다. 중간 보존 커밋마다 후보 시험 전량·독립 검수·제품 태그를 반복하지 않는다.
-- 제출 후보는 변경 종류와 관계없이 같은 최종 change_sha의 required CI와 교차 검수 판정을 거친다. G3(`.github/workflows/candidate.yml`)는 최종 후보 SHA에서 workflow_dispatch로 `tests/candidate_ci.py`가 선언한 선택(아래 두 모듈과 누적 업무 흐름)을 실행하며, 선언과 실제 수집 목록이 정확히 일치해야 한다.
+- 제출 후보는 변경 종류와 관계없이 같은 최종 SHA의 required CI와 교차 검수 판정을 거친다. G3(`.github/workflows/candidate.yml`)는 아래 배포·평가 후보의 최종 SHA에서 workflow_dispatch로 `tests/candidate_ci.py`가 선언한 선택(아래 두 모듈과 누적 업무 흐름)을 실행하며, 선언과 실제 수집 목록이 정확히 일치해야 한다.
 - 인증·권한·판독 상태 전이·원본/저장 보존·DB/migration을 바꾸면 해당 실패와 보존 경계를 즉시 검사한다. 공유 경로 변경, 영향 범위 불명확 또는 교차 기능 실패가 있으면 아래 두 후보 시험을 포함해 검증 범위를 넓힌다.
 - 의사에게 처음 전달할 때, 평가 후보를 교체할 때, 실제 배포 후보를 확정할 때는 **같은 최종 SHA**에서 아래 두 시험을 순차 실행한다. 누적 변경의 기능 통합·필요한 정확도 시험, 교차 검수의 미해결 차단 결함 0, 실제 CI도 필수다.
 - 완료한 시험은 근거 없이 반복하지 않는다. 시험 삭제·단언 약화·실패 생략으로 실행 비용을 줄이지 않는다. 현재 CI 구조와 실행 트리거는 유지하며, 이 실행 정책 변경을 CI 축소로 기록하지 않는다.
@@ -147,7 +146,7 @@ curl -sk https://localhost:9443/api/health
 
 ## 4. 코드 규칙
 
-- 화면의 메뉴·버튼·상태명·패널 제목은 영어로 통일하고 설명·툴팁·확인·오류 안내는 한국어로 유지한다(2026-09-10 사용자 선택). 환자/검사/판독 데이터와 사용자가 입력한 이름·사유는 번역하지 않는다. 기관 미연결은 `Unmatched Studies`, 판독자 미배정은 `Unassigned`, 검증 전 상태는 `Unverified`, 보류 동작은 `Defer`·상태는 `On Hold`로 구분한다.
+- 화면의 메뉴·버튼·상태명·패널 제목은 영어로 통일하고 설명·툴팁·확인·오류 안내는 한국어로 유지한다(2026-09-10 사용자 선택). 환자/검사/판독 데이터와 사용자가 입력한 이름·사유는 번역하지 않는다. 기관 미연결은 `Institution Unmatched`, 판독자 미배정은 `Unassigned`, 검증 전 상태는 `Unverified`, 보류 동작은 `Defer`·상태는 `On Hold`로 구분한다. 워크리스트·판독 화면의 언어 전환은 선택형이다(`worklist-v0/hpacs-lite/worklist-language.js`); 그 화면에 새 낱말을 쓰면 낱말표 `worklist-language-terms.js`에 더하며, 빠진 낱말은 `tests/worklist_language_source_test.py`가 알린다.
 
 - 주석은 선택의 이유·피하는 실패를 적고 코드의 동작을 그대로 반복하지 않는다.
 - 제품 코드의 구조·문구·접근 방식은 시험에 맞춰 정하지 않는다(§1-B).
@@ -158,8 +157,8 @@ curl -sk https://localhost:9443/api/health
 ## 5. 커밋·검토·발행
 
 - 한 변경 목적씩 커밋하고 증상·원인·수정·실제 검증 결과를 적는다. 커밋 메시지에는 실제로 코드를 쓴 모델만 적는다. **커밋 직후 push**한다(전원 차단·계정 전환 때 작업 보존). 원격 SHA·태그 확인은 실제 제출·릴리스 때 한다. 중간 커밋마다 별도 게시·검수·제품 태그를 만들지 않는다.
-- 제출 후보는 문서·UI·시험 변경을 포함해 같은 최종 change_sha의 required CI와 교차 검수 판정을 거친 뒤에만 병합한다. `--admin` 병합과 force-push는 쓰지 않는다. 중간 보존 커밋은 후보 라운드가 아니며 최종 검증 완료나 검수 통과로 표시하지 않는다. 병합 명령은 비공개 docs-repo의 cmdtools README를 따른다.
-- 제출 후보의 최종 change_sha에서 검증하고 명령·실제 exit·선택된 시험·원문 로그를 보존한다. 실패·skip·미실행과 다른 SHA의 결과는 통과 증거로 대체하지 않는다. 작업 결과는 주문이 지정한 한 곳에 대상 SHA·실제 결과·남은 결함·원문 로그 경로로 남긴다. 긴 작업은 의미 있는 중간 산출물을 자기 경로만 커밋·push하여 보존하고, WIP·미검증 상태를 명시한다.
+- 제출 후보는 문서·UI·시험 변경을 포함해 같은 최종 SHA의 required CI와 교차 검수 판정을 거친 뒤에만 병합한다. `--admin` 병합과 force-push는 쓰지 않는다. 중간 보존 커밋은 후보 라운드가 아니며 최종 검증 완료나 검수 통과로 표시하지 않는다.
+- 제출 후보의 최종 SHA에서 검증하고 명령·실제 exit·선택된 시험·원문 로그를 보존한다. 실패·skip·미실행과 다른 SHA의 결과는 통과 증거로 대체하지 않는다. 작업 결과는 주문이 지정한 한 곳에 대상 SHA·실제 결과·남은 결함·원문 로그 경로로 남긴다. 긴 작업은 의미 있는 중간 산출물을 자기 경로만 커밋·push하여 보존하고, WIP·미검증 상태를 명시한다.
 - 의사 전달·평가 후보 교체·실제 배포 후보의 제품 릴리스는 선행 REQ/RISK/TEST 스펙과 같은 최종 SHA의 누적 검증·실제 CI·교차 검수 미해결 차단 결함 0, 실제 배포·backup/restore·rollback 확인을 연결한다. 통과 후 주석 태그를 즉시 push하고 원격 object/peeled와 태그 CI를 확인한다. 공유 태그는 재지정하지 않는다.
 - 비공개 스펙 SHA·검토/시험·발행 기록은 비공개 저장소에서 연결한다. 유효한 검토 진행 중 같은 범위의 중복 검토를 시작하지 않는다.
 - 시험 약화·불변조건 삭제·실패 생략으로 통과시키지 않는다. 코드·태그 발행과 운영 반영은 구분하고, 운영 변경에는 해당 변경을 포괄하는 기존 승인을 확인한다.
@@ -169,6 +168,6 @@ curl -sk https://localhost:9443/api/health
 ## 6. 자료·작업 보존
 
 - 기존 dirty/untracked와 공유 Git index를 확인하고 **내 경로만 stage**한다. `add .`·reset·clean·자동 stash로 다른 작업을 덮거나 함께 커밋하지 않는다.
-- `docs-repo`는 별도 비공개 저장소다. 그 문서·원문 매뉴얼·환자 자료·키를 공개 코드 저장소에 넣지 않는다. 승인된 문서 작업도 해당 저장소에서 별도로 커밋·push한다.
+- `docs-repo`(`halolabs-development/PACS-docs`)는 별도 비공개 저장소다. 그 문서·원문 매뉴얼·환자 자료·키를 공개 코드 저장소에 넣지 않는다. 승인된 문서 작업도 해당 저장소에서 별도로 커밋·push한다.
 - 기존 DB 행·DICOM 원본을 보존한다. 시험 정리는 소유한 합성 자료만 정확한 식별·대조 후 수행한다. 권한·감사·연쇄 해제 계약 없이 Orthanc 영상 삭제 기능을 추가하지 않는다.
 - 자격증명을 새로 커밋하지 않는다. 운영 활성화·외부 전송·과금·예약 변경은 문서 정리나 코드 발행으로 승인된 것으로 간주하지 않는다.

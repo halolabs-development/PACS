@@ -286,7 +286,7 @@ export type DestructionOutcome =
  */
 export type CommitTarget =
   // An ending transaction (Discard, Clear, the author's Reset, a signed result) on (uid, author) from `revision`.
-  | { kind: 'ended'; uid: string; author: string; unit: string; revision: number }
+  | { kind: 'ended'; uid: string; author: string; unit: string; revision: number; account?: string }
   // A destruction attempt: the anchor before it, and the started record's position.
   | { kind: 'destroyed'; unit: string; startedSeq: number; before: { seq: number; lastCompletedUnit: string | null } }
   // A re-application of completed units to a restored copy (sweep or gate).
@@ -412,9 +412,10 @@ export class DraftPurposeDisposal {
 
   /** After the ending transaction committed (API process): settle this author's deliveries, then destroy. A database
    * failure is retried here with a growing wait; a refusal stays pending for the sweep. Nothing undoes the end. */
-  scheduleDestruction(unit: string, author: string, attempt = 0): void {
+  scheduleDestruction(unit: string, account: string, attempt = 0): void {
     const job = (async () => {
-      if (this.deliveries) await this.deliveries.settled(author);
+      // Deliveries are registered by account (owner-identity.ts): the work's account, whatever its email is now.
+      if (this.deliveries) await this.deliveries.settled(account);
       await this.db.$executeRaw`UPDATE "ReportDraftPurposeEnd" SET "deliverySettled" = true WHERE "disposalUnitId" = ${unit}`;
       const result = await this.destroy(unit);
       if (result.outcome === 'refused') console.error(`[CD-09-P] Destruction of ${unit} refused: ${result.code}`);
@@ -425,7 +426,7 @@ export class DraftPurposeDisposal {
         attempt < RETRY_MS.length;
       console.error(`[CD-09-P] Destruction attempt failed${retry ? `; retry ${attempt + 1} in ${RETRY_MS[attempt]} ms` : ''}:`,
         error?.code ?? error?.name ?? 'error');
-      if (retry) setTimeout(() => this.scheduleDestruction(unit, author, attempt + 1), RETRY_MS[attempt]).unref();
+      if (retry) setTimeout(() => this.scheduleDestruction(unit, account, attempt + 1), RETRY_MS[attempt]).unref();
     });
     this.inflight.add(job);
     void job.finally(() => this.inflight.delete(job));
@@ -443,7 +444,7 @@ export class DraftPurposeDisposal {
     }
     setTimeout(() => {
       void judgeCommit(this.db, target, this.ledger).then(outcome => {
-        if (outcome === 'committed') this.scheduleDestruction(target.unit, target.author);
+        if (outcome === 'committed') this.scheduleDestruction(target.unit, target.account ?? '');
         else if (outcome === 'unknown') this.recheckEnd(target, attempt + 1);
       });
     }, RETRY_MS[attempt]).unref();
@@ -556,21 +557,23 @@ export class DraftPurposeDisposal {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LEDGER_LOCK}::bigint)`;
       return (await this.matchedLedger(tx, 'sweep')).view;
     }));
-    const rows: { disposalUnitId: string; author: string; deliverySettled: boolean }[] = await this.db.$queryRaw`
-      SELECT "disposalUnitId", author, "deliverySettled" FROM "ReportDraftPurposeEnd" ORDER BY "endedAt", "disposalUnitId"`;
+    // Deliveries are registered by account: the ended work's account is its draft row's (the row stays, emptied).
+    const rows: { disposalUnitId: string; account: string; deliverySettled: boolean }[] = await this.db.$queryRaw`
+      SELECT p."disposalUnitId", COALESCE(d."authorSub", '') AS account, p."deliverySettled" FROM "ReportDraftPurposeEnd" p
+      LEFT JOIN "ReportDraft" d ON d.uid = p.uid AND d.author = p.author ORDER BY p."endedAt", p."disposalUnitId"`;
     // A copy taken while a work the ledger completed was still live holds it in the author's row, with no ended row.
     const done = [...unitPhases(view)].filter(([, phases]) => completed(phases)).map(([unit]) => unit);
     const liveUnits: { workUnit: string }[] = done.length ? await this.db.$queryRaw`
       SELECT DISTINCT "workUnit" FROM "ReportDraft" WHERE "workUnit" = ANY(${done}::text[])` : [];
     const ended = new Set(rows.map(r => r.disposalUnitId));
     const targets = [...rows, ...liveUnits.filter(r => !ended.has(r.workUnit))
-      .map(r => ({ disposalUnitId: r.workUnit, author: '', deliverySettled: true }))];
+      .map(r => ({ disposalUnitId: r.workUnit, account: '', deliverySettled: true }))];
     const results: DestructionOutcome[] = [];
-    for (const { disposalUnitId, author, deliverySettled } of targets) {
+    for (const { disposalUnitId, account, deliverySettled } of targets) {
       try {
         if (!deliverySettled) {
           if (!this.deliveries) { results.push({ unit: disposalUnitId, outcome: 'delivery-pending' }); continue; }
-          await this.deliveries.settled(author);
+          await this.deliveries.settled(account);
           await this.db.$executeRaw`UPDATE "ReportDraftPurposeEnd" SET "deliverySettled" = true WHERE "disposalUnitId" = ${disposalUnitId}`;
         }
         results.push(await this.destroy(disposalUnitId));
