@@ -647,7 +647,9 @@ export class AdminService {
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
   }
 
-  async resetPassword(id: string, body: any, c: Caller) {
+  /** `facts`: the request's (AdminController, through its member-change gate). Under the member lock the caller's own
+   * authorization is checked again, so a provider write never starts for an administrator replaced meanwhile. */
+  async resetPassword(id: string, body: any, c: Caller, facts?: AdminRequestFacts) {
     const admin = this.admin(c);
     if (!['temp', 'email'].includes(body?.mode))
       throw new BadRequestException('mode는 temp 또는 email이어야 합니다');
@@ -668,6 +670,7 @@ export class AdminService {
         const row = await tx.memberRights.findUnique({ where: { sub: id } });
         // Decided again on the locked row: a concurrent change may have moved the member.
         requireInScope(admin, memberInstitution(row, user.groups));
+        await facts?.request.requireCurrent(tx);
         return row ?? await this.register(tx, user);
       }, { maxWait: 4000, timeout: 8000 }));
     } catch (error) {

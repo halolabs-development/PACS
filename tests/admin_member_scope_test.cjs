@@ -115,11 +115,12 @@ function world() {
   const controller = new AdminController(service, null, requests.source);
   const keys = new SigningKeyAdminController(db, requests.source, { manage: async () => { kcCalls.push(['key']); } });
   const adminA = { sub: 'admin-a', actor: 'admin-a@example.test', roles: ['admin'], institution: A, kind: 'member' };
-  const call = async (route, method, run, who = adminA) => {
+  // `current`: the admitted request's recheck of its caller's authorization (AuthService.bindCurrentAuthorization).
+  const call = async (route, method, run, who = adminA, current = async () => {}) => {
     const req = Object.assign(new IncomingMessage(new Socket()), who), res = new ServerResponse(req);
     await requests.capture.capture(req, res, { issuer: process.env.KC_ISSUER, subject: who.sub, roles: who.roles,
       rightsVersion: 1, institution: who.institution, binding: { method: 'bearer', sessionRef: null } },
-      { method, route, purpose: 'clinical' }, async () => {});
+      { method, route, purpose: 'clinical' }, current);
     try { return await run(req); } finally { res.emit('finish'); }
   };
   let factsMade = 0;
@@ -133,7 +134,9 @@ function world() {
   const replace = (from, to, institution, operator = { name: 'ops', reason: 'synthetic hospital request confirmed by phone' }) =>
     service.replaceSoleAdmin(from, to, institution, operator, ledger.begin());
   return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; },
-    replace, raws, identities: () => identities, put, standingOverride: f => { standingHook = f; } };
+    replace, raws, identities: () => identities, put, standingOverride: f => { standingHook = f; },
+    // The reset route through the request context, as AuthGuard admits it.
+    reset: (id, body, who = adminA, current) => call('admin/users/:id/reset-password', 'POST', req => controller.resetPassword(id, body, req), who, current) };
 }
 
 const status = code => error => { assert.equal(error?.getStatus?.(), code, String(error?.message)); return true; };
@@ -162,8 +165,8 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       ['suspend', id => w.call('admin/users/:id', 'PATCH', req => w.controller.patch(id, { enabled: false, version: 1 }, req))],
       ['revoke', id => w.call('admin/users/:id', 'PATCH', req => w.controller.patch(id, { approvalState: 'PENDING', version: 1 }, req))],
       ['roles', id => w.call('admin/users/:id', 'PATCH', req => w.controller.patch(id, { roles: ['clinician'], version: 1 }, req))],
-      ['temp', id => w.controller.resetPassword(id, { mode: 'temp' }, w.adminA)],
-      ['email', id => w.controller.resetPassword(id, { mode: 'email' }, w.adminA)],
+      ['temp', id => w.reset(id, { mode: 'temp' }, w.adminA)],
+      ['email', id => w.reset(id, { mode: 'email' }, w.adminA)],
     ];
     for (const [name, run] of attempts) {
       for (const id of ['reader-b', 'kc-b', 'kc-two', 'no-such-member']) {
@@ -224,14 +227,14 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     w.db.memberRights.findUnique = realFind;
     Object.assign(w.rows.get('waiting'), { institution: null, approved: false, roles: [], version: 1 });
     w.kc.resetPassword = async (id, mode) => { if (mode === 'temp') claim(); };
-    await assert.rejects(w.controller.resetPassword('waiting', { mode: 'temp' }, w.adminA), sameAsUnknown,
+    await assert.rejects(w.reset('waiting', { mode: 'temp' }, w.adminA), sameAsUnknown,
       'the temporary password of a member B took during the provider write is not shown to A');
     Object.assign(w.rows.get('waiting'), { institution: null, approved: false, roles: [], version: 1 });
     w.kc.resetPassword = async (id, mode) => { if (mode === 'email') claim(); };
-    await assert.rejects(w.controller.resetPassword('waiting', { mode: 'email' }, w.adminA), sameAsUnknown,
+    await assert.rejects(w.reset('waiting', { mode: 'email' }, w.adminA), sameAsUnknown,
       'a member B took during the send is not shown to A');
     w.kc.getUser = async () => { throw new RosterWriteFailure({ state: 'unknown', outcome: 'http_500' }); };
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getResponse().code, 'MEMBER_DIRECTORY_UNAVAILABLE');
       assert.doesNotMatch(error.getResponse().message, /Keycloak|roster|http_/i);
       return true;
@@ -244,9 +247,9 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     const w = world();
     const suspended = await w.call('admin/users/:id', 'PATCH', req => w.controller.patch('reader-a', { enabled: false, version: 1 }, req));
     assert.equal(suspended.enabled, false);
-    const temp = await w.controller.resetPassword('reader-a', { mode: 'temp' }, w.adminA);
+    const temp = await w.reset('reader-a', { mode: 'temp' }, w.adminA);
     assert.ok(temp.temporaryPassword);
-    const mail = await w.controller.resetPassword('waiting', { mode: 'email' }, w.adminA);
+    const mail = await w.reset('waiting', { mode: 'email' }, w.adminA);
     assert.equal(mail.id, 'waiting', 'the waiting room can receive a reset mail');
   }
 
@@ -270,7 +273,7 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     const w = world();
     w.kc.resetPassword = async (id, mode) => { if (mode === 'email') throw new RosterWriteFailure({ state: 'unknown', outcome: 'http_500' }); };
     w.kc.mailSettings = async () => ({ configured: false });
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getStatus(), 503);
       const body = error.getResponse();
       assert.equal(body.code, 'RESET_MAIL_NOT_CONFIGURED');
@@ -279,24 +282,24 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       return true;
     });
     w.kc.mailSettings = async () => ({ configured: true });
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getResponse().code, 'RESET_MAIL_FAILED');
       assert.doesNotMatch(error.getResponse().message, /Keycloak|roster|http_/i);
       return true;
     });
     w.kc.mailSettings = async () => { throw new Error('synthetic read failure'); };
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getResponse().code, 'RESET_MAIL_FAILED', 'an unknown cause is never reported as missing settings');
       return true;
     });
     w.kc.resetPassword = async () => { throw new TypeError('fetch failed'); };
     w.kc.mailSettings = async () => ({ configured: true });
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getResponse().code, 'RESET_MAIL_FAILED', 'a transport failure also gets the page message');
       return true;
     });
     w.rows.get('reader-a').email = '';
-    await assert.rejects(w.controller.resetPassword('reader-a', { mode: 'email' }, w.adminA), error => {
+    await assert.rejects(w.reset('reader-a', { mode: 'email' }, w.adminA), error => {
       assert.equal(error.getStatus(), 400);
       assert.equal(error.getResponse().code, 'RESET_MAIL_NO_ADDRESS');
       return true;
@@ -687,6 +690,26 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
         'a row registered meanwhile for a successor observed without one');
       assert.equal(w2.changes.length, 0);
       assert.equal(w2.rows.get('admin-d').suspended, false);
+    }
+    // The predecessor, admitted before, resets a colleague's temporary password; while the server reads the provider for
+    // it, the operator replaces them: the caller's recheck under the member lock refuses — no provider write, no password.
+    {
+      const w = setup();
+      const adminD = { sub: 'admin-d', actor: 'admin-d@example.test', roles: ['admin'], institution: D, kind: 'member' };
+      const current = async () => { if (w.rows.get('admin-d').suspended) throw Object.assign(new Error('session ended'), { getStatus: () => 401 }); };
+      const realGet = w.kc.getUser;
+      let pending = true;
+      w.kc.getUser = async id => {
+        if (id === 'colleague-d' && pending) { pending = false; await w.replace('admin-d', 'reader-d', D); }
+        return realGet(id);
+      };
+      await assert.rejects(w.reset('colleague-d', { mode: 'temp' }, adminD, current), e => e.getStatus?.() === 401);
+      assert.ok(!pending && !w.kcCalls.some(c => c[0] === 'reset'), 'replaced meanwhile: no provider write, no password');
+      assert.ok(!w.audits.some(a => a.action.startsWith('admin.user.reset-password')));
+      // Not replaced: the same reset returns the temporary password.
+      const w2 = setup();
+      const current2 = async () => { if (w2.rows.get('admin-d').suspended) throw new Error('unexpected'); };
+      assert.ok((await w2.reset('colleague-d', { mode: 'temp' }, adminD, current2)).temporaryPassword);
     }
     // The screen's member changes take the same institution lock before the member lock.
     {

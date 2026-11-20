@@ -994,9 +994,11 @@ async function rightsReplace() {
   const runtime=new OperatorRuntime(process.env.DATABASE_URL,process.env.KIN_B2R_SPOOL);
   const groups={departed:[X],'first-successor':[X],'second-successor':[X],colleague:[X],'other-admin':[Y],
     'waiting-1':[],'waiting-2':[],'y-first':[Y],'y-second':[Y]};
-  let gate=null;
-  const provider={institutions:async()=>[X,Y],getUser:async id=>{
+  let gate=null,pause=null,providerResets=0;
+  const provider={institutions:async()=>[X,Y],resetPassword:async()=>{providerResets++;},mailSettings:async()=>({configured:true}),
+    getUser:async id=>{
     if(gate) await gate();
+    if(pause) await pause(id);
     return groups[id]&&{id,username:id,email:id+'@synthetic.invalid',emailVerified:true,firstName:'Synthetic',lastName:id,
       enabled:true,serviceAccountClientId:null,groups:groups[id],roles:[]};
   },memberStanding:async id=>({groups:groups[id]??[],effectiveRoles:[]})};
@@ -1011,21 +1013,23 @@ async function rightsReplace() {
   const admit=async adminSub=>{const row=await witness.memberRights.findUnique({where:{sub:adminSub}});
     return {payload:{iss:process.env.KC_ISSUER,sub:adminSub,auth_time:Math.floor(Date.now()/1000)+1,
       realm_access:{roles:['admin']},amr:['otp']},rights:{version:row.version,institution:row.institution,roles:row.roles}};};
-  const screen=async(adminSub,institution,sub,body,admitted)=>{
+  // The screen's member routes: the real AdminController (its member-change gate) over the same record port.
+  const { AdminController } = require(path.join(build, 'admin.controller.js'));
+  const asAdmin=async(adminSub,institution,admitted,method,route,run)=>{
     admitted??=await admit(adminSub);
     const requests=createRequestContext(createRequestIngress({proxyPeers:[]}),runtime.port);
-    const caller={sub:adminSub,actor:adminSub+'@synthetic.invalid',roles:admitted.rights.roles,institution,kind:'member'};
-    const req=new IncomingMessage(new Socket()),res=new ServerResponse(req);
-    requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:admitted.rights.roles,
+    const controller=new AdminController(service,null,requests.source,null);
+    const req=Object.assign(new IncomingMessage(new Socket()),{sub:adminSub,actor:adminSub+'@synthetic.invalid',
+      roles:admitted.rights.roles,institution,kind:'member'}),res=new ServerResponse(req);
+    await requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:admitted.rights.roles,
       rightsVersion:admitted.rights.version,institution,binding:{method:'bearer',sessionRef:null}},
-      {method:'PATCH',route:'admin/users/:id',purpose:'clinical'},
-      auth.bindCurrentAuthorization(admitted.payload,'synthetic-bearer',null,admitted.rights));
-    try{
-      return await requests.source.withWork(req,request=>service.patchUser(sub,body,caller,{surface:request.facts.surface,
-        actor:request.facts.actor,roles:request.facts.roles,rightsVersion:request.facts.rightsVersion,institution:request.facts.institution,
-        ip:null,ipSource:'trusted-proxy',sessionRef:null,requestId:request.facts.requestId,request}));
-    }finally{res.emit('finish');}
+      {method,route,purpose:'clinical'},auth.bindCurrentAuthorization(admitted.payload,'synthetic-bearer',null,admitted.rights));
+    try{return await run(controller,req);}finally{res.emit('finish');}
   };
+  const screen=(adminSub,institution,sub,body,admitted)=>asAdmin(adminSub,institution,admitted,'PATCH','admin/users/:id',
+    (controller,req)=>controller.patch(sub,body,req));
+  const resetAs=(adminSub,institution,sub,body,admitted)=>asAdmin(adminSub,institution,admitted,'POST','admin/users/:id/reset-password',
+    (controller,req)=>controller.resetPassword(sub,body,req));
   const refusedWith=(...codes)=>e=>{assert.ok(codes.includes(e?.getResponse?.().code),String(e?.message));return true;};
   const service=new AdminService(db,provider,null,{publishCredentials(){}});
   const replace=async(from,to)=>{
@@ -1139,14 +1143,21 @@ async function rightsReplace() {
     assert.equal(await snapshot(),settled,'the same replacement again writes nothing');
     await assert.rejects(replace('departed',loser),refusedWith('REPLACE_ADMIN_FROM_NOT_ADMIN'));
     assert.equal(await snapshot(),settled);
-    // 4b. The winner, admitted as X's sole administrator before its own replacement, then promotes a third person: the
-    // replacement committed first, so the product's recheck refuses the request — no third administrator.
+    // 4b. The winner, admitted as X's sole administrator before its own replacement (5b), then promotes a third person:
+    // the replacement committed first, so the product's recheck refuses the request — no third administrator.
     const admittedWinner=await admit(winner);
     // 5. Two institutions, one waiting member. Y's administrator approves it first: X's replacement refuses it.
     await screen('other-admin',Y,'waiting-1',{approvalState:'APPROVED',institution:Y,roles:['radiologist']});
     await assert.rejects(replace(winner,'waiting-1'),refusedWith('REPLACE_ADMIN_TO_CONFLICT'));
-    // X's replacement takes the other waiting member first: to Y's administrator it is now an unknown member.
-    await replace(winner,'waiting-2');
+    // 5b. The winner, admitted as X's administrator, resets a colleague's temporary password; while the server reads the
+    // provider for it, X's replacement takes the other waiting member: no provider write, and no password is returned.
+    const auditsBefore=await witness.auditLog.count({where:{action:{startsWith:'admin.user.reset-password'}}});
+    pause=async id=>{if(id==='colleague'){pause=null;await replace(winner,'waiting-2');}};
+    await assert.rejects(resetAs(winner,X,'colleague',{mode:'temp'},admittedWinner),e=>e.getStatus?.()===401);
+    assert.equal(pause,null,'the replacement ran during the reset');
+    assert.equal(providerResets,0,'no provider write for a replaced administrator');
+    assert.equal(await witness.auditLog.count({where:{action:{startsWith:'admin.user.reset-password'}}}),auditsBefore);
+    // 4b, after the replacement: the winner's admitted PATCH is refused by the recheck.
     const colleagueBefore=await witness.memberRights.findUnique({where:{sub:'colleague'}});
     await assert.rejects(screen(winner,X,'colleague',{roles:['radiologist','admin'],version:colleagueBefore.version},admittedWinner),
       e=>e.getStatus?.()===401);
@@ -1154,6 +1165,7 @@ async function rightsReplace() {
     assert.deepEqual([colleagueAfter.version,colleagueAfter.roles],[colleagueBefore.version,colleagueBefore.roles],'no third administrator');
     assert.deepEqual((await witness.memberRights.findMany({where:{institution:X,approved:true,suspended:false,roles:{has:'admin'}}}))
       .map(a=>a.sub),['waiting-2'],'X\'s one administrator is the new successor');
+    // X's replacement took the other waiting member first: to Y's administrator it is now an unknown member.
     await assert.rejects(screen('other-admin',Y,'waiting-2',{approvalState:'APPROVED',institution:Y,roles:['radiologist']}),
       e=>e.getStatus()===404);
     assert.equal((await witness.memberRights.findUnique({where:{sub:'waiting-2'}})).institution,X);
@@ -1218,7 +1230,7 @@ Module._resolveFilename=function(request,parent,...rest){
     console.log(JSON.stringify({status:'PASS',boundary:'actual replacement service and CLI + operator runtime + independent PG',
       green:['operator start leaves pending work','failed second change rolls back both','concurrent replacements: one winner',
         'both members\' sessions end, colleague\'s live','predecessor leaves the viewing display','predecessor history unchanged','same replacement again stands without writes',
-        'admitted predecessor\'s promotion refused after the replacement','rerun of the winning CLI: exit 0 standing',
+        'admitted predecessor\'s promotion refused after the replacement','admitted predecessor\'s reset gets no password','rerun of the winning CLI: exit 0 standing',
         'waiting successor taken by one institution only','screen promotion first refuses the replacement','two CLI processes: exit 0 and 1']}));
   }finally{
     await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_replace ON public."AuditLog"');
