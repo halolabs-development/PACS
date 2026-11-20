@@ -152,12 +152,19 @@
       menu.hidePopover();
       choose(mode);
     }
+    function expanded() {
+      const shown = menu.matches(':popover-open');
+      for (const control of [open, ...openers]) if (control) control.setAttribute('aria-expanded', String(shown && control === anchor));
+      return shown;
+    }
     function toggleFrom(from) {
       anchor = from;
       refresh();
       hideAsk();
       place();
       menu.togglePopover();
+      // Said at once (the toggle event comes a task later and also follows an outside click or Escape).
+      expanded();
     }
     open.addEventListener('click', () => toggleFrom(open));
     for (const other of openers) {
@@ -168,7 +175,7 @@
     }
     menu.addEventListener('toggle', event => {
       const shown = event.newState === 'open';
-      for (const control of [open, ...openers]) if (control) control.setAttribute('aria-expanded', String(shown && control === anchor));
+      expanded();
       if (shown) (items.get(current()) || items.get('physician')).item.focus();
       else hideAsk();
     });

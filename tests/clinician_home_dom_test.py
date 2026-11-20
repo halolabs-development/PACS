@@ -1168,10 +1168,10 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual(("Physician ▾", "menu", "false"), (button.text_content(), button.get_attribute("aria-haspopup"), button.get_attribute("aria-expanded")))
         button.click()
         expect(self.page.locator("#work-mode-menu")).to_be_visible()
-        self.assertEqual("true", button.get_attribute("aria-expanded"))
+        expect(button).to_have_attribute("aria-expanded", "true")
         reason = "이 계정은 진료과 의사 화면만 엽니다 — 판독·기사 화면은 radiologist·technician 역할이 있는 계정이 씁니다"
         self.assertEqual([["Physician", "true", None, ""], ["Radiologist", "false", "true", reason], ["Technician", "false", "true", reason]], self.menu())
-        self.assertEqual("Physician", self.active()["text"], "the open menu focuses the current mode")
+        self.page.wait_for_function("() => document.activeElement.textContent === 'Physician'")  # the open menu focuses the current mode
         self.page.keyboard.press("ArrowDown")
         self.assertEqual("Radiologist", self.active()["text"], "a mode with a reason is still reached from the keyboard")
         self.page.keyboard.press("Enter")
