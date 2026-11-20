@@ -23,7 +23,7 @@ body { margin: 0; background: #111; font-family: sans-serif; }
 .viewport-element canvas, .viewport-element svg { position: absolute; left: 0; top: 0; width: 200px; height: 150px; }
 .overlay { position: absolute; left: 4px; top: 4px; color: rgb(255, 255, 0); font: bold 28px sans-serif; }
 .action { position: absolute; right: 2px; bottom: 2px; color: rgb(255, 0, 255); font: bold 28px sans-serif; }
-.slice { position: absolute; top: 68px; color: rgb(255, 105, 180); font: bold 14px sans-serif; line-height: 14px; }
+.slice { position: absolute; top: 68px; width: 12px; height: 14px; overflow: hidden; background: rgb(255, 105, 180); color: rgb(255, 105, 180); font: bold 10px sans-serif; }
 .cover { position: absolute; left: 90px; top: 122px; color: rgb(255, 255, 255); font: bold 16px sans-serif; }
 </style></head><body><div id="root"><div class="kin-ux-toolbar-slot"></div><div id="grid"></div></div></body></html>"""
 
@@ -44,8 +44,8 @@ body { margin: 0; background: #111; font-family: sans-serif; }
 #   (IMAGE_RENDERED). setStack() announces its first request at once and the new stack (VIEWPORT_NEW_IMAGE_SET) only
 #   after that load. scroll() moves the scroll target and announces it (STACK_VIEWPORT_SCROLL) at once, but asks for an
 #   image not loaded yet 40 ms later.
-# The viewer's slice number and scroll bar follow STACK_VIEWPORT_SCROLL only, a frame later (a pink mark at
-# x = 10 + 15 * number, y = 68; synScrollbar), and its "Loading" cover rises 50 ms after a scroll unless the image came.
+# The viewer's slice number and scroll bar follow STACK_VIEWPORT_SCROLL only, a frame later (a pink box of image text
+# at x = 10 + 15 * number, y = 68; synScrollbar), and its "Loading" cover rises 50 ms after a scroll unless the image came.
 # The grid sends its notices a moment after a change, as the viewer's grid service does (setActive places the selection
 # without a notice). The Cine service keeps each cell's state and tells of a play and a stop as they are made.
 SETUP = """() => {
@@ -115,7 +115,7 @@ SETUP = """() => {
     for (const [k, v] of Object.entries({ x1: 0, y1: 100, x2: 200, y2: 100, stroke: 'rgb(0, 255, 0)', 'stroke-width': 6 })) line.setAttribute(k, v);
     svg.append(line); element.append(canvas, svg);
     const text = document.createElement('div'); text.className = 'overlay'; text.textContent = 'SYN ' + id.toUpperCase();
-    const slice = document.createElement('div'); slice.className = 'slice'; slice.textContent = '\\u25A0'; slice.style.left = (10 + 15 * 1) + 'px';
+    const slice = document.createElement('div'); slice.className = 'slice'; slice.textContent = 'I'; slice.style.left = (10 + 15 * 1) + 'px';
     const cover = document.createElement('div'); cover.className = 'cover'; cover.textContent = 'Loading'; cover.hidden = true;
     const action = document.createElement('button'); action.className = 'action'; action.textContent = 'XX';
     pane.append(element, text, slice, cover, action); document.getElementById('grid').append(pane);
