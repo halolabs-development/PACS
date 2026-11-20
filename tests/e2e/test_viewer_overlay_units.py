@@ -151,8 +151,12 @@ class ViewerOverlayUnitsE2E(ViewerToolsE2E):
     def length_on(self, page):
         # Between two points of the image itself (below the overlay's bars), wherever the cell puts the image on the screen: a
         # place on the cell's canvas may lie outside the image, which the viewer refuses to measure.
+        # The cell's own image grid (indexToWorld) places them as drawn, square pixels or not.
         select_image_tool(page, 'Length')
-        start, end = page.evaluate(ON_PAGE, [[80, 215], [176, 215]])
+        start, end = page.evaluate('''points => { const v = (%s)(), grid = v.getImageData().imageData;
+            const box = v.element.querySelector('canvas').getBoundingClientRect();
+            return points.map(p => { const c = v.worldToCanvas(Array.from(grid.indexToWorld([p[0], p[1], 0]))); return [c[0] + box.x, c[1] + box.y]; }); }''' % CELL,
+            [[80, 215], [176, 215]])
         self.drag_path(page, [tuple(start), tuple(end)])
         page.wait_for_function('() => / mm/.test((%s)())' % SVG_TEXT)
 
