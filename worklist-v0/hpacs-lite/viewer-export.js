@@ -267,6 +267,9 @@ window.KinViewerExport = (() => {
   // The image the viewport holds for its canvas. The image number moves before its image arrives, and a failed load can
   // leave the previous image on the canvas at the new number, so the number alone never says what a cell shows.
   const heldImage = viewport => typeof viewport.getCornerstoneImage === 'function' ? viewport.getCornerstoneImage()?.imageId : undefined;
+  // Whether an image has arrived in full. A loader that shows an image in steps hands the cell a coarser version of it
+  // first, under the same image id; an image that states no quality is whole (the viewer's cache reads it so).
+  const whole = image => !!image && (!image.imageQualityStatus || image.imageQualityStatus >= (window.cornerstone?.Enums?.ImageQualityStatus?.FULL_RESOLUTION ?? 8));
   // The DICOM frame an image id names (WADO-RS `/frames/N`, WADO-URI `frame=N`); a single-frame image is frame 1.
   const frameOf = imageId => { const match = /\/frames\/(\d+)(?:[/?#]|$)/.exec(imageId) || /[?&]frame=(\d+)(?:&|#|$)/.exec(imageId); return match ? Number(match[1]) : 1; };
   // Whether the cell's list is a series (display set) the grid names for the cell, whole and once: every image of the
@@ -317,8 +320,8 @@ window.KinViewerExport = (() => {
   //             in the cell (however briefly): even when everything looks the same again later. 'ended' for good when
   //             the viewer ends, switches patient or the window goes away.
   //   shows(k)  whether the reader sees image k of the list copied at the start in the cell: the viewport finished a draw
-  //             of that image after the last request for an image and still holds it, its own canvas is in the cell,
-  //             shown and sized, and the cell shows its stack one image at a time.
+  //             of that image, arrived in full, after the last request for an image and still holds the very image it
+  //             drew, its own canvas is in the cell, shown and sized, and the cell shows its stack one image at a time.
   // The image the export starts on, every image as its pixels are copied and the reader's image when the export goes
   // back to it all pass shows().
   // The cell is asked for an image only once that image's load has ended (the loader alone loads it; the cell is asked
@@ -352,7 +355,7 @@ window.KinViewerExport = (() => {
       }
       return lost || 'own';
     };
-    const drawn = k => typeof ids[k] === 'string' && !!ids[k] && viewport.getCurrentImageIdIndex() === k && painted === ids[k] && heldImage(viewport) === ids[k];
+    const drawn = k => typeof ids[k] === 'string' && !!ids[k] && viewport.getCurrentImageIdIndex() === k && !!painted && painted.imageId === ids[k] && viewport.getCornerstoneImage() === painted;
     // Why the reader does not see the cell's image, if so.
     const hidden = () => otherView(cell.id) || (visible(cell.pane) && imageCanvas(cell, cell.pane.getBoundingClientRect()) ? '' : HIDDEN);
     const shows = k => drawn(k) && !hidden();
@@ -368,10 +371,10 @@ window.KinViewerExport = (() => {
     // not the reader's); a new stack is announced once it loaded.
     on(SCROLL, () => { if (telling) { noticed = true; return; } if (settled) lose('taken'); else unsettled?.(); });
     for (const name of new Set([names.STACK_NEW_STACK || 'CORNERSTONE_STACK_NEW_STACK', names.VIEWPORT_NEW_IMAGE_SET || 'CORNERSTONE_VIEWPORT_NEW_IMAGE_SET'])) on(name, () => lose('taken'));
-    // A finished draw: the image the viewport held as it drew.
+    // A finished draw: the image the viewport held as it drew, if that image had arrived in full.
     on(names.IMAGE_RENDERED || 'CORNERSTONE_IMAGE_RENDERED', () => {
-      const status = viewport.viewportStatus, done = core?.Enums?.ViewportStatus?.RENDERED || 'rendered';
-      painted = (status === undefined || status === done) && !viewport.stackInvalidated ? heldImage(viewport) ?? null : null;
+      const status = viewport.viewportStatus, done = core?.Enums?.ViewportStatus?.RENDERED || 'rendered', image = viewport.getCornerstoneImage?.();
+      painted = (status === undefined || status === done) && !viewport.stackInvalidated && whole(image) ? image : null;
       wake?.();
     });
     // The grid tells of a change after it happened, when its state may already be back: another cell selected (the
@@ -421,14 +424,15 @@ window.KinViewerExport = (() => {
     // Before anything is asked of the cell, the reader's last move ends, and the image it ends on is the reader's image,
     // the one to go back to. A wheel step names its image at once but may ask for it up to 40 ms later, so a scroll
     // target that is not the image number may be a step still to come (or be left from a move made without scrolling):
-    // then a timer longer than that delay must pass with no move announced. The image asked for last may still load.
+    // then a timer longer than that delay must pass with no move announced. The image asked for last may still load,
+    // or be on the cell in a coarser version only: the move has ended when the cell holds that image in full.
     function settle(stopped) {
       let moves = 0, calm = aim() === undefined || aim() === viewport.getCurrentImageIdIndex(), timing = false;
       unsettled = () => { moves++; calm = false; };
       return wait(stopped, it => {
-        const at = viewport.getCurrentImageIdIndex();
-        if (calm && heldImage(viewport) === ids[at]) {
-          start = at; aimed = aim(); kept = viewport.getCornerstoneImage?.() || null; settled = true; unsettled = null; it.finish();
+        const at = viewport.getCurrentImageIdIndex(), image = viewport.getCornerstoneImage?.();
+        if (calm && image?.imageId === ids[at] && whole(image)) {
+          start = at; aimed = aim(); kept = image; settled = true; unsettled = null; it.finish();
         } else if (!calm && !timing) {
           timing = true; const seen = moves;
           it.later(() => { timing = false; if (moves === seen) calm = true; it.again(); }, 100);
@@ -479,8 +483,8 @@ window.KinViewerExport = (() => {
         if (typeof add === 'function') { if (had) queue.addRequest = add; else delete queue.addRequest; }
       }
     }
-    // The reader's image is never loaded again: the image the cell held at the start is handed back to the cell, as the
-    // loader hands it one. So the way back to it (and its own turn in the file) depends on no load and on no room in the
+    // The reader's image is never loaded again: the image the cell held in full at the start is handed back to the cell,
+    // as the loader hands it one. So the way back to it (and its own turn in the file) depends on no load and on no room in the
     // cache. False when the cell did not take it.
     function home() {
       const imageId = ids[start];
@@ -493,7 +497,7 @@ window.KinViewerExport = (() => {
           detail: { image: kept, imageId, imageIdIndex: start, viewportId: viewport.id, renderingEngineId: viewport.renderingEngineId } }));
         viewport.render?.();
       } else viewport.successCallback(imageId, kept);
-      return heldImage(viewport) === imageId;
+      return viewport.getCornerstoneImage() === kept;
     }
     // Waits until the cell shows image k. An image the cell already holds is drawn again and judged like any other; the
     // reader's image is handed back; any other image is loaded first and then asked for (the export's own request).
@@ -505,7 +509,7 @@ window.KinViewerExport = (() => {
         begun = true;
         const failed = error => it.finish(error?.constructor === Error && /[가-힣]/.test(error.message) ? error : new Error(NOT_LOADED));
         try {
-          if (viewport.getCurrentImageIdIndex() === k && heldImage(viewport) === ids[k]) { viewport.render?.(); return; }
+          if (viewport.getCurrentImageIdIndex() === k && heldImage(viewport) === ids[k] && whole(viewport.getCornerstoneImage())) { viewport.render?.(); return; }
           if (k === start) { if (!home()) failed(); return; }
           const step = () => {
             if (!it.going()) return;

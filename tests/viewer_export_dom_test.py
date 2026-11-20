@@ -45,6 +45,8 @@ body { margin: 0; background: #111; font-family: sans-serif; }
 #   after that load. scroll() moves the scroll target by its step (from the target, not from the image shown) and
 #   announces it (STACK_VIEWPORT_SCROLL) once the request is made, but asks for an image not loaded yet 40 ms later.
 #   successCallback() is how a loader hands the viewport an image; renderImageObject() puts one on it as it is.
+#   A loader that shows an image in steps hands the viewport a coarser version of it first, under the same image id
+#   (imageQualityStatus below 8; synPreview), and the image in full when it has arrived.
 # The viewer's slice number and scroll bar follow STACK_VIEWPORT_SCROLL only, a frame later (a pink box of image text
 # at x = 10 + 15 * number, y = 68; synScrollbar), and its "Loading" cover rises 50 ms after a scroll unless the image came.
 # The grid sends its notices a moment after a change, as the viewer's grid service does (setActive places the selection
@@ -138,8 +140,8 @@ SETUP = """() => {
       getLoaderImageOptions(imageId) { return { useRGBA: false, priority: 5, requestType: 'interaction', additionalDetails: { imageId, imageIdIndex: this.imageIds.indexOf(imageId) } }; },
       // The image the viewport holds is drawn at the next frame, and the draw is announced.
       paint() {
-        const [of, drawn] = where(this.csImage.imageId);
-        const c = canvas.getContext('2d'); c.fillStyle = 'rgb(' + (colours[of] || colours.other).join(',') + ')'; c.fillRect(0, 0, 400, 300);
+        const [of, drawn] = where(this.csImage.imageId), coarse = this.csImage.imageQualityStatus < 8;
+        const c = canvas.getContext('2d'); c.fillStyle = 'rgb(' + (colours[of] || colours.other).map(n => coarse ? n >> 1 : n).join(',') + ')'; c.fillRect(0, 0, 400, 300);
         c.fillStyle = 'rgb(255, 255, 255)';
         if (window.synBits) { for (let bit = 0; bit < 6; bit++) if (drawn >> bit & 1) c.fillRect((10 + 22 * bit) * 2, 115 * 2, 14 * 2, 14 * 2); }
         else c.fillRect((10 + 15 * drawn) * 2, 50 * 2, 10 * 2, 10 * 2);
@@ -205,6 +207,16 @@ SETUP = """() => {
     element.addEventListener('CORNERSTONE_STACK_NEW_IMAGE', () => { clearTimeout(covering); cover.hidden = true; synCover.up = false; });
     view.paint(); viewports.set(id, view);
   }
+  // The reader is on image `index` of a cell whose loader shows an image in steps: a coarser version of it is on the
+  // cell now (the same image id; drawn at half the series' colour), and the image in full arrives `ms` later (never,
+  // without `ms`) and is handed to the viewport then.
+  window.synPreview = (id, index, ms) => { const v = viewports.get(id), imageId = v.imageIds[index];
+    const full = { imageId, imageQualityStatus: 8 }, coarse = { imageId, imageQualityStatus: 6 };
+    const promise = new Promise(resolve => { if (ms !== undefined) setTimeout(() => resolve(full), ms); });
+    const entry = { imageLoadObject: { promise }, loaded: false, image: coarse };
+    entries.set(imageId, entry);
+    promise.then(image => { seen.add(imageId); if (entries.get(imageId) === entry) { entry.loaded = true; entry.image = image; } v.successCallback(imageId, image); });
+    v.currentImageIdIndex = v.targetImageIdIndex = index; v.successCallback(imageId, coarse); };
   window.synViewports = viewports; window.synSets = sets; window.synInstances = instances;
   window.cornerstone = { eventTarget: loader, cache, imageLoader, imageLoadPoolManager: pool,
     Enums: { ViewportStatus: { RENDERED: 'rendered', PRE_RENDER: 'preRender', LOADING: 'loading' }, RequestType: { Interaction: 'interaction' },
@@ -1522,6 +1534,48 @@ class ViewerExportDOMTest(unittest.TestCase):
             self.assertEqual([[], []], [seen, page.evaluate("() => synNotes.filter(n => n.type === 'success')")], act)
             self.assertEqual([to, 'syn:left:%d' % to, to], page.evaluate(self.SHOWN), act)
             self.assertEqual([to, to, False], page.evaluate("() => [synViewports.get('left').getTargetImageIdIndex(), synScrollbar.left, synCover.up]"), act)
+
+    def test_70_an_image_on_the_cell_in_a_coarser_version_is_exported_and_left_in_full(self):
+        # The viewer's loader may show an image in steps: a coarser version first, under the same image id, the image in
+        # full later. The reader's image is on the cell in its coarser version when the export is started: the export
+        # waits for it in full, so the file holds it in full and so does the cell at the end.
+        held = "() => { const v = synViewports.get('left'); return [v.getCornerstoneImage().imageQualityStatus ?? 8, (%s)()]; }" % self.COLOUR
+        for tool in ['SaveSeriesJPEG', 'SaveVideo']:
+            page = self.open()
+            page.evaluate("() => synPreview('left', 1, 600)")
+            page.wait_for_function("() => synViewports.get('left').getCornerstoneImage().imageQualityStatus === 6")
+            with page.expect_download(timeout=30000) as saved:
+                self.click(page, tool)
+            if tool == 'SaveSeriesJPEG':
+                archive = self.archive(saved.value)
+                self.assertEqual(4, len(archive.namelist()))
+                for index, name in enumerate(archive.namelist()): self.assert_frame(self.image(archive.read(name)), index)
+            else:
+                import base64
+                played = page.evaluate(self.PLAYED, base64.b64encode(Path(saved.value.path()).read_bytes()).decode())
+                self.assertEqual([0, 1, 2, 3], sorted({image for _, image in played['seen'] if image >= 0}), played['seen'])
+                colours = page.evaluate("""async b64 => { const video = document.createElement('video'); video.muted = true;
+                  video.src = URL.createObjectURL(new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))])); document.body.append(video);
+                  await new Promise(resolve => { video.onloadeddata = resolve; });
+                  const c = document.createElement('canvas'); c.width = video.videoWidth; c.height = video.videoHeight; const x = c.getContext('2d');
+                  const seen = [];
+                  for (let k = 0; k < 4; k++) { await new Promise(resolve => { video.onseeked = () => { video.requestVideoFrameCallback(() => resolve()); setTimeout(resolve, 250); }; video.currentTime = (k + 0.5) / 10; });
+                    x.drawImage(video, 0, 0); seen.push([...x.getImageData(300, 260, 1, 1).data].slice(0, 3)); }
+                  return seen; }""", base64.b64encode(Path(saved.value.path()).read_bytes()).decode())
+                for index, rgb in enumerate(colours): self.assertTrue(near(rgb, (200, 0, 0)), 'image %d of the video in full: %s' % (index, rgb))
+            page.wait_for_function("() => synNotes.some(n => n.type === 'success')")
+            self.assertEqual([1, 'syn:left:1', 1], page.evaluate(self.SHOWN), tool)
+            quality, colour = page.evaluate(held)
+            self.assertEqual(8, quality, tool); self.assertTrue(near(colour, (200, 0, 0)), 'the cell shows the image in full: %s' % (colour,))
+        # The image in full never comes: nothing is moved and nothing is written.
+        page = self.open(); seen = self.downloads(page)
+        page.evaluate("() => { synPreview('left', 1); KinViewerExport.options.loadTimeout = 600; }")
+        self.click(page, 'SaveSeriesJPEG')
+        page.wait_for_function("() => synNotes.length", timeout=60000)
+        page.wait_for_timeout(300)
+        self.assertEqual(['error'], page.evaluate("() => synNotes.map(n => n.type)"))
+        self.assertIn('불러오지 못해', page.evaluate("() => synNotes[0].message"))
+        self.assertEqual([[], []], [seen, page.evaluate("() => synRequests")])
 
     # ── Captures: captures collect in this window's Captures panel ──
     def panel(self, page):
