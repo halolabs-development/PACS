@@ -242,7 +242,25 @@ ACCESS_RECORD = {
 # The landing's notices, as the shipped index.html words them (compared, never parsed).
 CONFIRMED = "이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요."
 UNKNOWN = "로그아웃 상태를 확인할 수 없어 자동으로 로그인하지 않습니다. 로그인 버튼을 눌러 주세요."
+NETWORK = "서버에 연결하지 못해 로그인 세션 종료를 확인하지 못했습니다. 업무 화면은 닫혔습니다. Retry Log Out을 눌러 다시 시도해 주세요."
+AUTO_ENTRY = "확인되면 자동으로 들어갑니다"
+# The work page's line while it moves to the landing: true before the server has confirmed anything.
+WORK_CLOSED = "업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
 SIGN_IN = "HALO PACS 계정으로 로그인"
+# What a reverse proxy answers while the API behind it is down (its own page, not the API's JSON).
+GATEWAY_PAGE = "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>"
+# Every text the landing's notice line shows, recorded from the first paint (the harness's, not the page's).
+MSG_RECORDER = """(() => {
+  if (!/\\/index\\.html$/.test(location.pathname)) return;
+  window.__synMsgs = [];
+  document.addEventListener('DOMContentLoaded', () => {
+    const line = document.querySelector('#msg');
+    if (!line) return;
+    const note = () => { const text = line.textContent; if (text && window.__synMsgs.at(-1) !== text) window.__synMsgs.push(text); };
+    note();
+    new MutationObserver(note).observe(line, { childList: true, characterData: true, subtree: true });
+  });
+})();"""
 
 # Writes to either storage, recorded before any page script runs (the recorder is this harness's).
 STORAGE_RECORDER = """(() => {
@@ -429,6 +447,8 @@ class Site:
         try:
             if body is None:
                 route.fulfill(status=status, body="", headers=headers or {})
+            elif isinstance(body, str):      # a proxy's own page
+                route.fulfill(status=status, body=body, headers={"Content-Type": "text/html", **(headers or {})})
             else:
                 route.fulfill(status=status, json=body, headers=headers or {})
         except PlaywrightError:
@@ -603,7 +623,10 @@ class Site:
         if method == "GET" and path == "/api/me" and self.held_me is not None:
             return self.held_me.append(route)
         if method == "GET" and path == "/api/me" and self.me_answers:
-            return self.answer(route, *self.me_answers.pop(0))
+            reply = self.me_answers.pop(0)
+            if reply == "abort":
+                return route.abort("connectionreset")
+            return self.answer(route, *reply)
         if method == "POST" and path == "/api/auth/logout":
             self.logouts.append((request.frame.page.url, request.headers.get("x-kin-session")))
             reply = self.logout_answers.pop(0) if self.logout_answers else "end"
@@ -613,7 +636,7 @@ class Site:
                 return route.abort("connectionreset")
             if reply != "end":
                 return self.answer(route, reply[0], reply[1], {"X-KIN-Auth-Code": reply[1]["code"]}
-                                   if reply[1] and str(reply[1].get("code", "")).startswith("AUTH_") else None)
+                                   if isinstance(reply[1], dict) and str(reply[1].get("code", "")).startswith("AUTH_") else None)
             if refused and refused[1] != "AUTH_SESSION_ENDED":
                 return self.refuse(route, *refused)
             self.ended.add(self.cookie)
@@ -1109,7 +1132,7 @@ class LogoutDOMTest(unittest.TestCase):
         if status == 204:
             self.site.ended.add(self.site.logouts[-1][1])
         self.site.answer(route, status, body, {"X-KIN-Auth-Code": body["code"]}
-                         if body and str(body.get("code", "")).startswith("AUTH_") else None)
+                         if isinstance(body, dict) and str(body.get("code", "")).startswith("AUTH_") else None)
 
     def sign_in_from_landing(self, page=None):
         """The explicit login: the control, the IdP stand-in, the marker, the work page."""
@@ -1490,6 +1513,12 @@ class LogoutDOMTest(unittest.TestCase):
                  ("500 storage", code(500, "AUTH_STORAGE_FAILURE"), None, 0, ("unconfirmed", "storage")),
                  ("500 other", (500, {"statusCode": 500, "message": "SYN-SERVER-WORDING"}), None, 0, ("unconfirmed", "refused")),
                  ("connection dropped", "abort", None, 0, ("unconfirmed", "network")),
+                 # The API never answers its logout with these: a proxy in front of an API that is down or restarting
+                 # does. The logout did not reach the server - not a refusal.
+                 ("502 from the proxy", (502, GATEWAY_PAGE), None, 0, ("unconfirmed", "network")),
+                 ("503 empty", (503, None), None, 0, ("unconfirmed", "network")),
+                 ("504 from the proxy", (504, GATEWAY_PAGE.replace("502 Bad Gateway", "504 Gateway Time-out")), None, 0,
+                  ("unconfirmed", "network")),
                  ("no headers in 10 s", "hold", None, 10500, ("unconfirmed", "timeout")),
                  ("no body in 10 s", code(409, "AUTH_SESSION_BUSY"), HOLD_LOGOUT_BODY, 10500, ("unconfirmed", "timeout"))]
         messages = {}
@@ -1506,6 +1535,52 @@ class LogoutDOMTest(unittest.TestCase):
                 messages.setdefault(expected[1], set()).add(message)
         self.assertEqual(6, len({next(iter(m)) for reason, m in messages.items() if reason}),
                          "each failure kind has its own notice")
+        self.assertEqual({NETWORK}, messages["network"], "a proxy's 5xx reads as the dropped connection does")
+
+    def test_br05_with_the_api_down_the_landing_shows_the_unconfirmed_logout_and_waits_for_retry(self):
+        # The API is down behind its proxy: the logout and every session read answer 502 (or the connection drops).
+        # Nothing may call the logout done or promise an entry; the landing shows why and offers Retry Log Out.
+        for label, me in (("the session read answers 502", (502, GATEWAY_PAGE)), ("the session read drops", "abort")):
+            with self.subTest(read=label):
+                self.fresh_context()
+                self.context.add_init_script(MSG_RECORDER)
+                self.open_main()
+                # The work page's two closing lines have their English in the glossary.
+                self.assertEqual(["Work screens closed. Going to the login screen…",
+                                  "The work screens closed, so the report draft could not be saved."],
+                                 self.page.evaluate("""t => [KinLanguage.tr(KinLanguage.say(t[0]), 'en'), KinLanguage.tr(KinLanguage.say(t[1]), 'en').split(' What')[0]]""",
+                                                    [WORK_CLOSED, "업무 화면이 닫혀 판독문 초안을 저장하지 못했습니다. 입력한 내용은 이 창의 메모리에만 "
+                                                     "있고 새로고침하거나 창을 닫으면 사라집니다. 다른 창에서 같은 계정으로 다시 로그인한 뒤 "
+                                                     "Recover Draft를 누르면 저장을 다시 시도합니다."]))
+                self.site.logout_answers = ["hold"]
+                self.log_out_main()
+                self.wait_until(lambda: self.site.held_logouts, "POST /api/auth/logout")
+                expect(self.page.locator(".kin-closed-note")).to_have_text(WORK_CLOSED)
+                self.site.me_answers = [me] * 20
+                self.release_logout(502, GATEWAY_PAGE)
+                self.assertEqual((NETWORK, True), self.landing())
+                self.assertEqual(("unconfirmed", "network"), (self.end_state()["status"], self.end_state()["reason"]))
+                self.page.wait_for_timeout(1500)
+                self.assertEqual([], [m for m in self.page.evaluate("() => window.__synMsgs") if AUTO_ENTRY in m],
+                                 "no entry is promised for a logout the server did not take")
+                self.assertEqual((NETWORK, True), self.landing(), "the notice stays; no retry loop replaces it")
+                self.assertEqual(([], 0, 1), (self.docs(name="main.html")[1:], self.site.logins, len(self.site.logouts)))
+                # Reload and a work page opened directly show the same notice while the API is still down.
+                for step in ("reload", "main.html"):
+                    if step == "reload":
+                        self.page.reload()
+                    else:
+                        self.page.goto(MAIN_URL)
+                    self.assertEqual((NETWORK, True), self.landing(), step)
+                # Retry Log Out while the API is still down says the same; once the API is back it confirms the end.
+                self.site.logout_answers = [(503, None)]
+                self.page.locator("#retry-logout").click()
+                self.wait_until(lambda: len(self.site.logouts) == 2, "the retry POST")
+                expect(self.page.locator("#msg")).to_have_text(NETWORK)
+                self.site.me_answers = []
+                self.page.locator("#retry-logout").click()
+                expect(self.page.locator("#msg")).to_have_text(CONFIRMED)
+                self.assertEqual(("confirmed", 3, 0), (self.end_state()["status"], len(self.site.logouts), self.site.logins))
 
     def test_br05_a_logout_refused_for_another_login_ends_nothing_and_keeps_that_login(self):
         # The cookie is another login's by the time this document's logout arrives: the server refuses it by code, the
@@ -1996,14 +2071,16 @@ class LogoutDOMTest(unittest.TestCase):
     def test_s03_a_session_that_ends_outside_a_preparation_keeps_unsaved_text_in_this_window(self):
         # No Log out was pressed: the server ends this session (idle, another device) or another document of the session
         # logs out while this one holds text the server does not have. Closing must not lose it.
-        for cause in ("the server says the session ended", "another tab's end"):
+        for cause in ("the server says the session ended", "another tab's end", "another tab's logout the server never got"):
             with self.subTest(cause=cause):
                 self.fresh_context()
                 self.open_main()
                 session = self.site.cookie
-                other = self.open_main(self.watch(self.context.new_page())) if cause == "another tab's end" else None
+                other = self.open_main(self.watch(self.context.new_page())) if cause.startswith("another tab") else None
                 self.select_and_type()
-                if cause == "another tab's end":
+                if other:
+                    if cause.endswith("never got"):
+                        self.site.logout_answers = [(502, GATEWAY_PAGE)]
                     self.log_out_main(other)
                     other.wait_for_url(INDEX_URL)
                 else:
@@ -2011,6 +2088,9 @@ class LogoutDOMTest(unittest.TestCase):
                     # A request still queued from the typing can get the 401 first and hide the toolbar; click like a script.
                     self.page.evaluate("() => document.querySelector('#m-refresh').click()")
                 expect(self.panel_title()).to_have_text("Session Ended")
+                # The window says what it knows - this screen closed and the draft is not saved - not that the server
+                # ended the login session (the other tab's logout may not have reached it).
+                expect(self.page.locator("dialog.kin-logout")).to_contain_text("업무 화면이 닫혀 판독문 초안을 저장하지 못했습니다.")
                 self.assert_closed(cause)
                 self.page.wait_for_timeout(300)
                 self.assertEqual([], self.docs(name="index.html"), "no move: the text would be lost")
