@@ -1968,7 +1968,7 @@ window.KinLanguageTerms = {
     ["{0} — {n1}. {2} — 그 검사를 열면 초안으로 남아 있습니다.", "{0} — {n1}. {2} — it remains as a draft when you open that study.", "m"],
     ["{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", "Could not check the {0} results. Please try again shortly.", "m"],
     ["{0} 계정이 바뀌었습니다", "{0}: the account has changed", "m"],
-    ["{0} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?", "Force release {0}'s lock. Their screen will be rejected on its next save. Continue?", "m"],
+    ["{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", "Force release {0}'s lock? Their saved draft will be kept, and the release will be recorded in the audit log. They can continue saving unless someone else takes the lock first.", "m"],
     ["{0} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.", "Released {0}'s reading hold and reset to Unread.", "mc", "{0} 님의 판독 점유를 풀고 미판독으로 되돌렸습니다."],
     ["{0} 님이", "{0}", "m"],
     ["{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", "{0} is doing the final reading (RS: P) — only the designated reader can see the content", "m"],
