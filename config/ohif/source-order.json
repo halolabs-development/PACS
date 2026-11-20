@@ -16,6 +16,7 @@
     "marker-style.js",
     "layout-model.js",
     "clinician-context.js",
+    "study-display.js",
     "layout.js",
     "ct-sync.js",
     "cine.js",

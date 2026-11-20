@@ -202,7 +202,7 @@ test('a series that is one display set still restores as before', async () => {
 
 // ---------------------------------------------------------------------------------------------------------------
 // Prior images: the shipped viewer-prior extension over the shipped shell seam and prior controller.
-async function priorWorld(currentSets) {
+async function priorWorld(currentSets, imagePatient = 'P') {
   const priors = priorSeries(), sets = [...currentSets, ...priors], subscribers = new Set();
   const byId = id => sets.find(set => set.displaySetInstanceUID === id);
   const state = { activeViewportId: 'v1', layout: { layoutType: 'grid', numRows: 1, numCols: 2 }, viewports: new Map([
@@ -231,8 +231,8 @@ async function priorWorld(currentSets) {
     fetch: async path => {
       assert.equal(path, '/api/studies');
       return { ok: true, status: 200, json: async () => ({ studies: [
-        { uid: '2.25.7000', sourcePatientKey: 'P', date: '20261110', modality: 'MR' },
-        { uid: '2.25.8000', sourcePatientKey: 'P', date: '20250110', modality: 'MR' }] }) };
+        { uid: '2.25.7000', sourcePatientKey: 'site|P', date: '20261110', modality: 'MR' },
+        { uid: '2.25.8000', sourcePatientKey: 'site|P', date: '20250110', modality: 'MR' }] }) };
     } };
   sandbox.window = sandbox; sandbox.top = sandbox;
   Object.assign(document, { body: new Element('body'), head, createElement: tag => new Element(tag),
@@ -249,7 +249,7 @@ async function priorWorld(currentSets) {
   };
   Object.assign(sandbox, {
     KinSessionTransport: { refusal: () => false, responseError: () => new Error('ended') },
-    KinViewerPatientTabs: { snapshot: () => ({ key: 'P', sequence: 1, studyUIDs: ['2.25.7000'], patient: {} }),
+    KinViewerPatientTabs: { snapshot: () => ({ key: 'site|P', sequence: 1, studyUIDs: ['2.25.7000'], patient: {} }),
       subscribe: () => () => {}, mount() {}, refresh() {}, dispose() {}, guard: () => true },
     // The info bar's identity: a cell names a clinical image only when it holds exactly one display set.
     KinViewerInfoBar: { mount(value) { studyActions = value.studyActions; return chrome(); },
@@ -257,7 +257,7 @@ async function priorWorld(currentSets) {
         const cell = state.viewports.get(viewportId), ids = cell?.displaySetInstanceUIDs || [];
         const set = ids.length === 1 && byId(ids[0]);
         return { viewportId, cell, set, viewport: { type: 'stack' },
-          instance: set ? { StudyInstanceUID: set.StudyInstanceUID, SeriesInstanceUID: set.SeriesInstanceUID } : null };
+          instance: set ? { PatientID: imagePatient, StudyInstanceUID: set.StudyInstanceUID, SeriesInstanceUID: set.SeriesInstanceUID } : null };
       } },
     KinViewerSeriesStrip: { mount: chrome }, cornerstone: { Enums: { Events: {} } },
   });
@@ -369,4 +369,11 @@ test('prior by series number: a series without a number matches no prior number,
   assert.equal(rank([zero, same], origin, 'number')[0].SeriesInstanceUID, '2.25.8102');
   const numbered = singleSeries('Scout', '2.25.7403', 0);
   assert.equal(rank([same, zero], numbered, 'number')[0].SeriesInstanceUID, '2.25.8101', 'a real 0 matches a real 0');
+});
+
+test('a prior menu cannot show the tab patient on pixels belonging to a different original patient', async () => {
+  const world = await priorWorld(splitSeries(), 'OTHER');
+  try {
+    assert.equal(await world.listPriors(), undefined);
+  } finally { world.end(); }
 });

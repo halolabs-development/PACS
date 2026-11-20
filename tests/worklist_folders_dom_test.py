@@ -1581,10 +1581,10 @@ class StudioWorklistDOM(unittest.TestCase):
     def test_default_columns_and_compact_rows(self):
         self.open()
         names = self.page.locator("#heads th").evaluate_all("els => els.map(e => e.dataset.key)")
-        self.assertEqual(["no", "assignedReader", "rs", "confirm", "date", "id", "name", "reqDate", "reqDept", "reqDoc", "ptClass",
-                          "age", "desc", "modality", "institutionName"], names)
+        # Referred (when the referring hospital's Gateway sent the study) follows StudyDate now that the list rows carry it.
+        self.assertEqual(["no", "assignedReader", "rs", "confirm", "date", "referredAt", "id", "name", "reqDate", "reqDept", "reqDoc",
+                          "ptClass", "age", "desc", "modality", "institutionName"], names)
         self.assertEqual("11px", self.page.locator("#rows td").first.evaluate("e => getComputedStyle(e).fontSize"))
-        self.assertNotIn("Referred", self.page.locator("#heads").inner_text())
         if os.environ.get("KIN_EVIDENCE_DIR"):
             target = Path(os.environ["KIN_EVIDENCE_DIR"]); target.mkdir(parents=True, exist_ok=True)
             self.page.screenshot(path=str(target / "studio-worklist.png"), full_page=True)
