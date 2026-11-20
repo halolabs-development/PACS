@@ -305,6 +305,64 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launcher.state["last"]["code"], "not_ready")
         self.assertEqual(launcher.running_version, BUILTIN)
 
+    def test_rolled_back_is_written_only_after_the_trial_stopped_and_the_one_before_started(self):
+        launcher = self.launcher(probation=1.0)
+        self.start(launcher)
+        self.install(launcher, make_bundle(SEED, "2026.12.1", {"agent.py": stand_in("never_ready")}),
+                     {"requestId": "55555555-5555-4555-8555-555555555555", "version": "2026.12.1"})
+        seen = []
+        real_stop = launcher.stop_child
+
+        def stop_child():
+            on_disk = json.loads(launcher.paths.state.read_text())
+            seen.append((on_disk["pending"] is not None, (on_disk["last"] or {}).get("result")))
+            return real_stop()
+
+        launcher.stop_child = stop_child
+        self.drive(launcher, lambda: last_result(launcher) == "rolled_back")
+        # At the stop of the trial (the install's own stop of the first child came before it): still pending, not told.
+        self.assertEqual(seen[-1], (True, None))
+        on_disk = json.loads(launcher.paths.state.read_text())
+        self.assertEqual((on_disk["pending"], on_disk["running"], on_disk["last"]["result"]), (None, BUILTIN, "rolled_back"))
+        self.assertIsNone(launcher.child.poll(), "the release before runs when the outcome is written")
+
+    def test_after_a_key_change_a_failed_trial_goes_back_to_what_actually_ran(self):
+        launcher = self.launcher()
+        self.start(launcher)
+        self.install(launcher, make_bundle(SEED, "2026.12.1", {"agent.py": stand_in("good")}))
+        self.drive(launcher, lambda: launcher.state["current"] == "2026.12.1")
+        launcher.stop_child()
+        # The host now trusts another key only: the kept 2026.12.1 does not verify, the built-in agent runs.
+        rotated = self.launcher()
+        rotated.keys_value = base64.b64encode(ed25519.public_key(OTHER_SEED)).decode()
+        self.start(rotated)
+        self.assertEqual((rotated.running_version, rotated.state["current"]), (BUILTIN, "2026.12.1"))
+        # 2026.12.1 again, signed with the new key, fails its trial: back to the built-in agent, not to the failed one.
+        self.install(rotated, make_bundle(OTHER_SEED, "2026.12.1", {"agent.py": stand_in("crash")}))
+        self.drive(rotated, lambda: last_result(rotated) == "rolled_back" and rotated.ready())
+        self.assertEqual((rotated.running_version, rotated.state["current"]), (BUILTIN, BUILTIN))
+        before = len(self.children())
+        for _ in range(30):
+            rotated.step()
+            time.sleep(0.02)
+        self.assertEqual(len(self.children()), before, "the failed release is not started again")
+
+    def test_a_remote_bundle_waiting_on_a_host_that_switched_support_off_is_refused(self):
+        launcher = self.launcher()
+        launcher.env["GW_REMOTE_SUPPORT"] = "off"
+        self.start(launcher)
+        pid = launcher.child.pid
+        self.install(launcher, make_bundle(SEED, "2026.12.1", {"agent.py": stand_in("good")}),
+                     {"requestId": "66666666-6666-4666-8666-666666666666", "version": "2026.12.1"})
+        self.drive(launcher, lambda: not any(launcher.paths.incoming.iterdir()))
+        self.assertEqual(launcher.state["results"][-1], {"version": "2026.12.1", "result": "refused",
+                                                         "code": "remote_support_off",
+                                                         "requestId": "66666666-6666-4666-8666-666666666666"})
+        self.assertEqual(launcher.child.pid, pid)
+        # The host's own manual install still works with remote support off.
+        self.install(launcher, make_bundle(SEED, "2026.12.1", {"agent.py": stand_in("good")}))
+        self.drive(launcher, lambda: launcher.state["current"] == "2026.12.1")
+
     def test_a_second_update_rolls_back_to_the_first_not_to_the_floor(self):
         launcher = self.launcher()
         self.start(launcher)

@@ -201,6 +201,10 @@ class AdminGatewaySupportDOMTest(unittest.TestCase):
         self.assertIn("gw-syn-ward", lines[0]["untranslated"])
         self.assertIn("2026.11.2", lines[0]["untranslated"])
         self.assertIn("SYN-admin", lines[0]["untranslated"])
+        # Two lines of one name are told apart by the queue instance, shown as on Gateway Status, the full value as its title.
+        expect(self.line(Q1).locator('.gw-host-fact').first).to_have_text('Queue Instance 0f4b2c1a')
+        self.assertIn(Q1, self.line(Q1).locator('.gw-host-fact').first.get_attribute('title'))
+        self.assertIn('1f4b2c1a', self.lines()[1]['untranslated'])
         expect(self.line(Q3)).to_contain_text("No Contact since 2026-11-20 03:00:00")
         expect(self.page.locator("#gateway-support-state")).to_have_text("Observed 2026-11-20 03:00:00")
         # No update held: no update control to press.

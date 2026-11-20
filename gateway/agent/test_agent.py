@@ -2000,16 +2000,17 @@ class SupportTests(unittest.TestCase):
             agent.loop()
         self.assertEqual(seen, [False, True], "not after the failed pass; after the next clean one")
 
-    def test_the_log_ring_keeps_no_uid_destination_or_free_text(self):
+    def test_the_log_ring_keeps_no_study_line_destination_or_free_text(self):
         with patch.object(agent_module.sys, "stdout", io.StringIO()):
-            agent_module.log("study.retry", uid="1.2.840.99", attempt=2, afterSeconds=1.5, error="announce HTTP 500",
-                             dest=PEER, note="PATIENT^NAME")
-            agent_module.log("forward.retry", uid="1.2.840.99", error="Patient Name Something")
+            agent_module.log("forward.complete", uid="1.2.840.99", sops=2)   # one study's history: not kept at all
+            agent_module.log("agent.retry", attempt=2, afterSeconds=1.5, error="announce HTTP 500", dest=PEER,
+                             note="PATIENT^NAME")
+            agent_module.log("heartbeat.deferred", error="Patient Name Something")
         first, second = list(agent_module.LOG_RING)[-2:]
-        self.assertEqual(first, {"at": first["at"], "event": "study.retry", "attempt": 2, "afterSeconds": 1.5,
+        self.assertEqual(first, {"at": first["at"], "event": "agent.retry", "attempt": 2, "afterSeconds": 1.5,
                                  "error": "announce_http"})
-        self.assertEqual(second, {"at": second["at"], "event": "forward.retry", "error": "other"})
-
+        self.assertEqual(second, {"at": second["at"], "event": "heartbeat.deferred", "error": "other"})
+        self.assertNotIn("forward.complete", [line["event"] for line in agent_module.LOG_RING])
     def test_diagnostics_are_a_closed_report_without_secrets_names_or_unrouted_studies(self):
         agent = self.agent(client_secret="SECRET-VALUE-1", orthanc_pass="ORTHANC-PASS-1")
         self.row(agent, "1.2.3.1", "retry", ("kin", PEER), "announce HTTP 503")

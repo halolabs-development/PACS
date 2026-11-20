@@ -304,7 +304,8 @@ class SettingsStore:
 
 _LOG_LOCK = threading.Lock()
 # The last LOG_RING_MAX log lines of this run, as the remote-support diagnostics carry them: the time, the event and
-# only numbers, true/false and error codes — never a UID, a destination or free text.
+# only numbers, true/false and error codes — never a UID, a destination or free text. A line about one study (it has a
+# uid) is not kept at all: a study's own history stays out of the report (the KIN-bound ones are its queue rows).
 LOG_RING_MAX = 200
 LOG_RING: deque[dict[str, Any]] = deque(maxlen=LOG_RING_MAX)
 _SAFE_EVENT = re.compile(r"[a-z_.]{1,64}")
@@ -333,7 +334,8 @@ def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
     # the text and the newline separately, so two lines written at once could interleave into one unreadable line.
     line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
     with _LOG_LOCK:
-        LOG_RING.append(_ring_line(safe))
+        if not uid:
+            LOG_RING.append(_ring_line(safe))
         sys.stdout.write(line)
         sys.stdout.flush()
 

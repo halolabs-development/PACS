@@ -404,6 +404,9 @@ class Launcher:
         expected = request.get("version") if valid_version(request.get("version")) else None
         running = self.version_of(self.running_version or self.state["current"])
         try:
+            # A remote request is the host's to allow at the moment it would run, not only when the agent took it in.
+            if request_id and str(self.env.get("GW_REMOTE_SUPPORT", "on")).strip().lower() in ("0", "false", "no", "off"):
+                raise UpdateRefused("remote_support_off")
             try:
                 raw = (entry / "bundle.json").read_bytes()
             except OSError:
@@ -441,12 +444,20 @@ class Launcher:
             self.save()
             self.prune()
             return
-        self.record(pending["to"], "rolled_back", code, pending.get("requestId"))
-        self.state["failed"] = pending["to"]
-        self.save()
+        # The trial child is stopped and reaped first, and the release that ran before is started, before the outcome is
+        # written: until then a restart still finds `pending` (interrupted) and the console cannot read "rolled back"
+        # while nothing older runs yet. The release to go back to is the one that actually ran (`from`), even when
+        # `current` names a release that no longer verifies.
         self.stop_child()
-        if not self.stopping:
-            self.start_chain()
+        self.state["pending"] = pending
+        if self.stopping:
+            return
+        self.state["current"] = pending["from"]
+        self.state["failed"] = pending["to"]
+        self.start_chain()
+        self.state["pending"] = None
+        self.record(pending["to"], "rolled_back", code, pending.get("requestId"))
+        self.save()
 
     def manual_rollback(self) -> None:
         marker = self.paths.control / "rollback"

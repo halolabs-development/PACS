@@ -4613,7 +4613,7 @@ class LiveInvariantTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertIn("Ran 22 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 25 tests", completed.stderr + completed.stdout)
 
     def test_gateway_agent_queue_and_batch_contract(self) -> None:
         completed = subprocess.run(

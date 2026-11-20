@@ -136,10 +136,13 @@
     const items = (read ? read.gateways : []).map(row => {
       const li = document.createElement('li');
       li.dataset.queueInstance = row.queueInstance;
+      // The queue instance tells two lines of one Gateway name apart (as on Gateway Status); its full value is the title.
       li.append(span('gw-host-name', row.gateway, '', true),
+        span('gw-host-fact', 'Queue Instance ', `이 줄의 Gateway 큐(${row.queueInstance})입니다. 요청은 이 큐에만 갑니다.`),
         span('gw-host-fact', 'Version ', 'Gateway가 마지막으로 알린 프로그램 버전입니다.'),
         requestLine(row.request));
-      li.children[1].append(span('', row.version, '', true));
+      li.children[1].append(span('', row.queueInstance.slice(0, 8), '', true));
+      li.children[2].append(span('', row.version, '', true));
       if (row.contact === 'no_contact') li.append(span('gw-host-contact', `No Contact since ${local(row.lastContactAt)}`,
         '이 Gateway의 연락이 끊겨 요청을 가져가지 못할 수 있습니다.'));
       const open = row.request && ['requested', 'delivered', 'accepted'].includes(row.request.state);
