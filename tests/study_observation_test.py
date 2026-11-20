@@ -208,21 +208,28 @@ def receipt_gap(b, receipt):
     last = b.get("last") if stale else b
     if not isinstance(last, dict):
         return None
-    if state == "observed":
-        held = b.get("count")
-    elif state == "not_observed":
-        held = 0
-    elif stale:
-        held = 0 if last.get("notObserved") is True else last.get("count")
+    if state == "not_observed" or stale and last.get("notObserved") is True:
+        held, held_series = 0, 0
+    elif state == "observed" or stale:
+        held, held_series = last.get("count"), last.get("series")
     else:
-        held = None
+        held, held_series = None, None
+    # The series the sent images belong to, as the Gateway counted them; absent or inconsistent is unknown, never 0.
+    expected = receipt.get("successSeries")
+    if not (ok_count(expected) and expected <= m and (expected == 0) == (m == 0)):
+        expected = None
+    images, series = ok_count(held), expected is not None and ok_count(held_series)
     # A paged list's first page bounds the comparison; without it the observation's own time does.
     seen = parse_time(b["readSince"] if b.get("readSince") is not None else last.get("observedAt"))
-    if not ok_count(held) or seen is None:
+    if not images and not series or seen is None:
         return None
+    base = {"held": held if images else None, "sent": m, "stale": stale}
     if at > seen:   # a known count read before the report: not compared yet
-        return {"missing": None, "pending": True, "held": held, "sent": m, "stale": stale}
-    return {"missing": held < m, "held": held, "sent": m, "stale": stale}
+        return {"missing": None, "pending": True, **base,
+                "series": {"held": held_series, "sent": expected, "missing": None} if series else None}
+    images_short, series_short = images and held < m, series and held_series < expected
+    return {"missing": images_short or series_short, **base,
+            "series": {"held": held_series, "sent": expected, "missing": series_short} if series else None}
 
 
 def gateway(receipt, b):
@@ -362,10 +369,10 @@ class SourcePins(unittest.TestCase):
             "const prior=base.owner===owner&&(base.observedAt===null||Date.parse(at)>=Date.parse(base.observedAt))?base.rows:new Map();",
             "if(value===null||value===undefined)return {rows:null};",
             "return {...base,available:false};",
-            "const held=b.state==='observed'?b.count:b.state==='not_observed'?0:stale?(seen.notObserved===true?0:seen.count):null;",
-            "if(!count(held)||!validTime(since))return null;",
-            "if(Date.parse(receipt.serverReceivedAt)>Date.parse(since))return {missing:null,pending:true,held,sent,stale};",
-            "if(held>=sent)return {missing:false,held,sent,stale};",
+            "const held=absent?0:kept?seen.count:null,heldSeries=absent?0:kept?seen.series:null;",
+            "if(!images&&!series||!validTime(since))return null;",
+            "return {missing:null,pending:true,...base,series:series?{held:heldSeries,sent:expected,missing:null}:null};",
+            "const imagesShort=images&&held<sent,seriesShort=series&&heldSeries<expected;",
             "if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');",
             "if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');",
             "const BANNED=/완료|수신 완료|안정|다 옴|received|complete|stable/i;",
