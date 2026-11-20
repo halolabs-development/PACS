@@ -254,7 +254,7 @@ export class PacsDicomGateway {
         : decideGatewayReceipt(row ? storedGatewayReceipt(row) : null, receipt);
       const fields = { epoch: receipt.epoch, seq: receipt.seq, phase: receipt.phase, attempt: receipt.attempt,
         successCount: receipt.successCount, localCount: receipt.localCount, errorCode: receipt.errorCode,
-        receivedAt: new Date() };
+        successSeries: receipt.successSeries, receivedAt: new Date() };
       const audit = (action: string, detail: any) =>
         tx.auditLog.create({ data: { actor: c.actor || 'unknown', action, target: uid, detail: dump(detail) } });
       if (decision.kind === 'first') {

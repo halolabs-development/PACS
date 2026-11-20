@@ -55,15 +55,19 @@ CATALOG = WorkflowCatalog(ROOT)
 WORKFLOW = CATALOG.text()
 EPOCH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F-01)"
-# U3 surfaces this unit must not touch, as they are at 9152f43 (LF-normalised sha256).
-U3_RULE_SHA256 = "bff24d487a066df554c2dbe70a9ca1dbc28cf52062eebac87f9a537344d27510"
+# U3 surfaces this unit must not touch, as they are at 9152f43 (LF-normalised sha256). The rule moved once since, for the
+# receipt's optional series count (successSeries, bff24d48…27510 before); its behaviour is gateway_receipt_server_test.cjs
+# over tests/gateway_receipt_vectors.json, which this pin runs.
+U3_RULE_SHA256 = "faff60a79ee9745b02d15407e0bd777ac2ad32caf4122feabd9c4249e3af708b"
 # The Gateway label pin moved once for the product rename: its one visible "KIN 보유" now reads "HALO PACS 보유"
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
 # Technician list and Info draw), which compares only a report the observation is not older than (7ce3a2e6…3e0e4 before).
 # Its label text and keys are unchanged; the reason rules are pinned by tests/study_observation_vectors.json. Its title
 # says why it did not compare exactly when that answer did not (count unknown, or the report arrived after the list read began).
-U1B_GATEWAY_LABEL_SHA256 = "a10685cc99c21ca24a0181dee4b34aa287f38e3039a3a0c12c1bfdd68bbfd06f"
+# It moved once more for the series count (a10685cc…bfd06f before): "compared" is the images' answer, so a series answer
+# alone never drops the "count unknown" title; the label text and keys are unchanged (study_observation_vectors.json).
+U1B_GATEWAY_LABEL_SHA256 = "4504020d7d3fee787a4a4f20bbe54d33cfd2142c05afde921278dc05041a328f"
 
 
 def sha(value):

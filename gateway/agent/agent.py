@@ -102,6 +102,9 @@ RECEIPT_COLUMNS = (
     ("seq", "seq INTEGER NOT NULL DEFAULT 0"),
     ("local_count", "local_count INTEGER"),
     ("success_count", "success_count INTEGER NOT NULL DEFAULT 0"),
+    # Distinct series of the sent SOPs (successCount's set). NULL = unknown: a row counted before this column, or a sent SOP
+    # whose series this Gateway could not read. Unknown goes to KIN as null and is never 0.
+    ("success_series", "success_series INTEGER"),
     ("error_code", "error_code TEXT"),
     ("announced", "announced INTEGER NOT NULL DEFAULT 0"),
     ("reported_seq", "reported_seq INTEGER NOT NULL DEFAULT 0"),
@@ -546,19 +549,19 @@ class Queue:
         with self.db:
             self.db.execute(sql, values)
 
-    def announced(self, uid: str, local_count: int, success_count: int) -> None:
+    def announced(self, uid: str, local_count: int, success_count: int, success_series: int | None = None) -> None:
         """KIN accepted the announce, so this study's state may now be reported."""
         with self.db:
             self.db.execute("""
-              UPDATE studies SET announced=1, local_count=?, success_count=?, seq=seq+1, updated_at=?
+              UPDATE studies SET announced=1, local_count=?, success_count=?, success_series=?, seq=seq+1, updated_at=?
               WHERE uid=?
-            """, (local_count, success_count, time.time(), uid))
+            """, (local_count, success_count, success_series, time.time(), uid))
 
-    def counts(self, uid: str, local_count: int, success_count: int) -> None:
+    def counts(self, uid: str, local_count: int, success_count: int, success_series: int | None = None) -> None:
         with self.db:
             self.db.execute("""
-              UPDATE studies SET local_count=?, success_count=?, seq=seq+1, updated_at=? WHERE uid=?
-            """, (local_count, success_count, time.time(), uid))
+              UPDATE studies SET local_count=?, success_count=?, success_series=?, seq=seq+1, updated_at=? WHERE uid=?
+            """, (local_count, success_count, success_series, time.time(), uid))
 
     def add_successes(self, uid: str, sops: set[str], batch_index: int) -> None:
         merged = self.successes(uid) | sops
@@ -567,22 +570,22 @@ class Queue:
               UPDATE studies SET successful_sops=?, batch_index=?, updated_at=? WHERE uid=?
             """, (json.dumps(sorted(merged)), batch_index, time.time(), uid))
 
-    def complete(self, uid: str, sops: int) -> None:
+    def complete(self, uid: str, sops: int, success_series: int | None = None) -> None:
         # complete is exactly "the local SOP set equals the sent set at this check", so M == N here.
         with self.db:
             self.db.execute("""
               UPDATE studies SET phase='complete', attempt=0, next_at=0,
-                last_error=NULL, error_code=NULL, local_count=?, success_count=?, seq=seq+1, updated_at=?
+                last_error=NULL, error_code=NULL, local_count=?, success_count=?, success_series=?, seq=seq+1, updated_at=?
               WHERE uid=?
-            """, (sops, sops, time.time(), uid))
+            """, (sops, sops, success_series, time.time(), uid))
 
-    def pending_now(self, uid: str, local_count: int, success_count: int) -> None:
+    def pending_now(self, uid: str, local_count: int, success_count: int, success_series: int | None = None) -> None:
         with self.db:
             self.db.execute("""
               UPDATE studies SET phase='pending', attempt=0, next_at=0,
-                last_error=NULL, error_code=NULL, local_count=?, success_count=?, seq=seq+1, updated_at=?
+                last_error=NULL, error_code=NULL, local_count=?, success_count=?, success_series=?, seq=seq+1, updated_at=?
               WHERE uid=?
-            """, (local_count, success_count, time.time(), uid))
+            """, (local_count, success_count, success_series, time.time(), uid))
 
     def fail(self, uid: str, reason: str, code: str = GATEWAY_ERROR_FALLBACK) -> None:
         with self.db:
@@ -613,7 +616,7 @@ class Queue:
         and the institution comes only from the client credentials.
         """
         row = self.db.execute("""
-          SELECT phase, attempt, seq, local_count, success_count, error_code, announced FROM studies WHERE uid=?
+          SELECT phase, attempt, seq, local_count, success_count, success_series, error_code, announced FROM studies WHERE uid=?
         """, (uid,)).fetchone()
         if not row or not row["announced"] or row["local_count"] is None:
             return None
@@ -627,6 +630,7 @@ class Queue:
             "errorCode": (row["error_code"] or GATEWAY_ERROR_FALLBACK) if phase in ERROR_PHASES else None,
             "epoch": self.epoch,
             "seq": int(row["seq"]),
+            "successSeries": None if row["success_series"] is None else int(row["success_series"]),
         }
 
     def unreported(self, limit: int = 16) -> list[str]:
@@ -765,7 +769,8 @@ class Orthanc:
                 raise GatewayError("local instance metadata incomplete")
             # RemoteAET is Orthanc's C-STORE association fact, not a DICOM patient-supplied tag.
             metadata = self.request("GET", f"/instances/{instance_id}/metadata?expand").json()
-            normalized.append({"sop": sop, "id": instance_id, "size": size,
+            # ParentSeries is Orthanc's id of the instance's series: only counted (sent_series), never sent anywhere.
+            normalized.append({"sop": sop, "id": instance_id, "size": size, "series": str(item.get("ParentSeries") or ""),
                                "source_ae": str(metadata.get("RemoteAET", "")),
                                "syntax": str(metadata.get("TransferSyntax", ""))})
         if len({item["sop"] for item in normalized}) != len(normalized):
@@ -974,6 +979,18 @@ def stored_sops(payload: Any) -> set[str]:
         if isinstance(values, list) and values and isinstance(values[0], str):
             stored.add(values[0])
     return stored
+
+
+def sent_series(instances: list[dict[str, Any]], sent: set[str]) -> int | None:
+    """Distinct series of the SOPs KIN accepted that this Gateway holds now (successCount's set, so never more than it).
+
+    A set: a SOP sent again, or a series spread over several batches, is counted once. Only KIN's own success set is
+    given here, never a forward destination's. None when a counted SOP has no series id: unknown is never a count.
+    """
+    held = [item for item in instances if item["sop"] in sent]
+    if any(not item.get("series") for item in held):
+        return None
+    return len({item["series"] for item in held})
 
 
 def plan_batches(instances: list[dict[str, Any]], budget: int) -> list[list[dict[str, Any]]]:
@@ -1334,7 +1351,7 @@ class Agent:
         local_sops = {item["sop"] for item in instances}
         successful = self.queue.successes(uid)
         # M counts only SOPs this Gateway still holds, so 0 <= M <= N holds in every receipt.
-        self.queue.announced(uid, len(local_sops), len(successful & local_sops))
+        self.queue.announced(uid, len(local_sops), len(successful & local_sops), sent_series(instances, successful))
         self.report(uid)
         pending = [item for item in instances if item["sop"] not in successful]
         batches = plan_batches(pending, self.config.byte_budget)
@@ -1354,7 +1371,8 @@ class Agent:
             if unknown:
                 raise GatewayError("STOW response named an unknown failed SOP")
             self.queue.add_successes(uid, batch_sops - failures, batch_index)
-            self.queue.counts(uid, len(local_sops), len(self.queue.successes(uid) & local_sops))
+            sent = self.queue.successes(uid)
+            self.queue.counts(uid, len(local_sops), len(sent & local_sops), sent_series(instances, sent))
             if lossless is None:
                 log(
                     "batch.stored", uid=uid, batch=batch_index, sops=len(batch),
@@ -1378,10 +1396,10 @@ class Agent:
         if extra:
             raise GatewayError(f"successful SOP absent locally count={len(extra)}")
         if missing:
-            self.queue.pending_now(uid, len(latest_sops), len(successful & latest_sops))
+            self.queue.pending_now(uid, len(latest_sops), len(successful & latest_sops), sent_series(latest, successful))
             log("study.delta", uid=uid, pending=len(missing))
             return
-        self.queue.complete(uid, len(successful))
+        self.queue.complete(uid, len(successful), sent_series(latest, successful))
         log("study.complete", uid=uid, sops=len(successful))
 
     def process_forward(self, row: sqlite3.Row) -> None:
