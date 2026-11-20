@@ -1095,7 +1095,8 @@
             // A superseded or changed-list answer is not a failed observation; the last one still stands.
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') markObservationUnavailable();
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
-            $("#err").textContent = "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message;
+            // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
+            listRefreshWarning(true, "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message);
             toast("검사 목록 실패: " + e.message, "err");
             render();
           });

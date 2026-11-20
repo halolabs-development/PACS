@@ -300,13 +300,17 @@
       }, seconds * 1000);
     }
     let pollFails = 0;
-    // The notice two failed polls leave on the banner; a list read that succeeds takes it away again. Only the text this
-    // wrote is removed — another notice written on the banner since stays.
+    // The notice a failed list read leaves on the banner (two failed polls, or a failed Refresh with its own `text`); a list
+    // read that succeeds takes it away again. Only the text written here is removed — another notice written since stays.
     let listWarningText = null;
-    function listRefreshWarning(on) {
+    function listRefreshWarning(on, text) {
       const banner = $("#err");
       if (!banner) return;
-      if (on) { kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다")); listWarningText = banner.textContent; return; }
+      if (on) {
+        if (text === undefined) kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다"));
+        else banner.textContent = text;
+        listWarningText = banner.textContent; return;
+      }
       if (listWarningText !== null && banner.textContent === listWarningText) banner.textContent = "";
       listWarningText = null;
     }

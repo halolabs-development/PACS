@@ -140,15 +140,43 @@ class ImageStoreDown(h.LogoutDOMTest):
         self.site.gets["/api/study-access"] = (502, {"message": "SYN bad gateway"})
         self.page.clock.run_for(61000)
         expect(self.status()).to_contain_text("서버 연결 끊김")
-        # The API is back, the store not: the full bootstrap and the list fail, the database answers.
+        # The API is back, the store not: every bootstrap and the list fail (a restricted account's order check reads
+        # the store even without states), the database answers the connection check.
         del self.site.gets["/api/study-access"]
-        self.site.bootstrap_answers = [STORE_DOWN]
+        original_api = self.site.api
+
+        def api(route, request, method, path, query):
+            if method == "GET" and path == "/api/bootstrap":
+                return self.site.answer(route, *STORE_DOWN)
+            return original_api(route, request, method, path, query)
+
+        self.site.api = api
         self.site.list_answers = [STORE_DOWN] * 4
-        omitted = sum(1 for call in self.site.calls if call == ("GET", "/api/bootstrap"))
+        self.site.gets["/api/study-access"] = (200, {"restricted": True, "revision": 1})
+        checks = self.site.count("GET", "/api/study-access")
         self.status().click()
         expect(self.status()).to_contain_text("DB Connected")
-        self.assertGreater(sum(1 for call in self.site.calls if call == ("GET", "/api/bootstrap")), omitted + 1,
-                           "the full bootstrap, then the one without states")
+        self.assertGreater(self.site.count("GET", "/api/study-access"), checks, "the connection check decided")
+        expect(self.page.locator("#rows")).to_contain_text(h.PATIENT)
+        # The automatic reconnect decides the same way.
+        self.site.gets["/api/study-access"] = (502, {"message": "SYN bad gateway"})
+        self.site.list_answers = [(500, {"code": "SYN_OUTAGE"})] * 2
+        self.page.clock.run_for(61000)
+        expect(self.status()).to_contain_text("서버 연결 끊김")
+        self.site.gets["/api/study-access"] = (200, {"restricted": True, "revision": 1})
+        self.site.list_answers = [STORE_DOWN] * 4
+        self.page.clock.run_for(16000)
+        expect(self.status()).to_contain_text("DB Connected")
+
+    def test_a_failed_refresh_notice_goes_with_the_next_list_a_poll_reads(self):
+        self.page.clock.install()
+        self.open_main()
+        self.site.list_answers = [STORE_DOWN]
+        self.refresh()
+        expect(self.page.locator("#err")).to_contain_text("검사 목록을 불러오지 못했습니다")
+        expect(self.status()).to_contain_text("DB Connected")
+        self.page.clock.run_for(31000)
+        expect(self.page.locator("#err")).to_have_text("")
 
     def test_the_error_page_window_is_read_again_from_the_list(self):
         self.open_main()

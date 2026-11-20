@@ -2567,7 +2567,8 @@
             // A superseded or changed-list answer is not a failed observation; the last one still stands.
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') markObservationUnavailable();
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
-            $("#err").textContent = "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message;
+            // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
+            listRefreshWarning(true, "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message);
             toast("검사 목록 실패: " + e.message, "err");
             render();
           });
@@ -10426,13 +10427,17 @@
       }, seconds * 1000);
     }
     let pollFails = 0;
-    // The notice two failed polls leave on the banner; a list read that succeeds takes it away again. Only the text this
-    // wrote is removed — another notice written on the banner since stays.
+    // The notice a failed list read leaves on the banner (two failed polls, or a failed Refresh with its own `text`); a list
+    // read that succeeds takes it away again. Only the text written here is removed — another notice written since stays.
     let listWarningText = null;
-    function listRefreshWarning(on) {
+    function listRefreshWarning(on, text) {
       const banner = $("#err");
       if (!banner) return;
-      if (on) { kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다")); listWarningText = banner.textContent; return; }
+      if (on) {
+        if (text === undefined) kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다"));
+        else banner.textContent = text;
+        listWarningText = banner.textContent; return;
+      }
       if (listWarningText !== null && banner.textContent === listWarningText) banner.textContent = "";
       listWarningText = null;
     }
@@ -15946,12 +15951,36 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       } catch (e) { /* 이름 조회가 실패해도 이메일 표시는 유지한다. */ }
     }
 
-    /** 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다. */
+    /**
+     * 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다.
+     * `b`가 null이면 서버는 답했지만 초기 목록(bootstrap)은 읽지 못한 재연결이다(영상 저장소만 멈춤 — reconnectAnswer):
+     * 연결·쓰기는 되살리고, 이 화면이 가진 오더·필터·상용구·기관 값은 그대로 둔다.
+     */
     function goOnline(b) {
       serverMode = true; offline = false;
       $('#consultations-open').disabled=!!demoMode;consultations.refresh();
       queryRetrieve?.sync();
       stopReconnect();
+      if (b) applyBootstrap(b);
+      mountWorklistFolders();
+      void reloadFolderSearches();
+      renderChips(); renderTemplates();
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
+      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
+      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
+      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
+      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
+      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
+      void showHeldSources();
+      startPolling();
+      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
+      reportSaveFailures.clear();
+      reconcileReportDrafts();
+      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
+    }
+    function applyBootstrap(b) {
       for (const [uid, state] of Object.entries(b.states ?? {})) appState[uid] = mergeObservedReportState(uid, state);
       orders = b.orders;
       myInstitution = b.me?.institution ?? null;
@@ -15968,25 +15997,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
       userFilters = personalSearches(b.filters);
-      mountWorklistFolders();
-      void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];
       try { localStorage.removeItem("kin-filters"); localStorage.removeItem("kin-templates"); } catch (e) {}
-      renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
-      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
-      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
-      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
-      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
-      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
-      void showHeldSources();
-      startPolling();
-      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
-      reportSaveFailures.clear();
-      reconcileReportDrafts();
-      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
-      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -16046,14 +16058,17 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
      */
     let reconnectTimer = null;
     function stopReconnect() { clearInterval(reconnectTimer); reconnectTimer = null; $("#dbstat").style.cursor = ""; }
-    // Whether the server is back does not wait on the study list: the full answer reads the image store's identities, so
-    // when it ends without the server's answer the answer without the states (database only) reconnects; the list read after
-    // it says on its own whether the list could be refreshed.
+    // Whether the server is back is the same check as going offline (confirmConnection: the member's access policy, database
+    // only), not the initial list: that reads the image store too. When the list is not answered but the check is, the page
+    // reconnects with what it holds (null); the list read after it says on its own whether the list could be refreshed.
     async function reconnectAnswer(at) {
       try { return await api("GET", "/bootstrap", undefined, undefined, at); }
       catch (e) {
         if (!serverUnanswered(e) || !work.admits(at)) throw e;
-        return api("GET", "/bootstrap?states=omit", undefined, undefined, at);
+        // Answered is answered, as in confirmConnection: a refusal (4xx) is the server's own answer too.
+        try { await api("GET", "/study-access", undefined, undefined, at); }
+        catch (check) { if (serverUnanswered(check) || check?.auth || check?.stale || check?.ownerChanged) throw check; }
+        return null;
       }
     }
     function startReconnect() {
