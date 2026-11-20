@@ -469,7 +469,7 @@ class StorageEncryptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             config, root = folder / "keys" / "backup-encryption.json", folder / "backups"
-            root.mkdir()
+            root.mkdir(mode=0o700)   # a backup root is its account's private directory; the admission refuses any other
             config.parent.mkdir()
             with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
                 self.assertEqual((deploy.backup_key_state(root), deploy.backup_key_state()), ("absent", "absent"))
@@ -520,7 +520,7 @@ class StorageEncryptionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             folder = Path(folder)
             root = folder / "backups"
-            root.mkdir()
+            root.mkdir(mode=0o700)
             (folder / "keys").mkdir()
             program = folder / "keys" / "age-copy"
             shutil.copyfile(age_program(), program)
