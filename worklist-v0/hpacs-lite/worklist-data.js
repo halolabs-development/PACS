@@ -187,6 +187,23 @@
       cancelThumbs();
       window.dispatchEvent(new CustomEvent("kin-exam-scope-changed", { detail: { uid: s.uid, previous, next } }));
     }
+    /**
+     * The original studies of a merged or split exam row (server `sourceMetadata`) as the screen keeps them. The one place
+     * both the whole-list rebuild (fromApi) and the poll that refreshes rows in place (worklist-polling.js) read them, so a
+     * column a filter compares per original (exam-scope.js projections) has the same form after either.
+     */
+    function sourceMetadataView(list) {
+      return (list || []).map(m => ({ ...m, sourceAcc: m.acc, acc: m.orderAccession || m.acc, date: fmtD(m.date),
+        reqDate: localStamp(m.reqDate), ...referredFields(m) }));
+    }
+    /**
+     * Referred (server `referredAt`): when the referring hospital's Gateway sent the study. The cell and its filter read the
+     * local "YYYY-MM-DD HH:mm"; the sort reads referredAtIso, the same time with its seconds (orderedStudies). Blank both
+     * when the server sent none. A row and each original of a merged or split exam, on a rebuild and on a poll, all pass here.
+     */
+    function referredFields(s) {
+      return { referredAt: localStamp(s?.referredAt), referredAtIso: serverInstant(s?.referredAt) };
+    }
     function fromApi(s) {
       observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
@@ -221,14 +238,14 @@
         gatewayReceipt: s.gatewayReceipt ?? null,
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
+        ...referredFields(s),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
         // The kind of exam in force (merge / split) this row belongs to when its originals cannot all be read now.
         examUnavailableKind: s.examUnavailable === true && ['merge', 'split'].includes(s.examUnavailableKind) ? s.examUnavailableKind : null,
         draftEpoch: s.state?.draftEpoch ?? null,
-        sourceMetadata: (s.sourceMetadata || []).map(m => ({ ...m, sourceAcc: m.acc,
-          acc: m.orderAccession || m.acc, date: fmtD(m.date), reqDate: localStamp(m.reqDate) })),
+        sourceMetadata: sourceMetadataView(s.sourceMetadata),
         ...(s.group ? { group: s.group } : {}),
         // A report written on a merged exam (now or before Unmerge): which studies, and whether this account may read them all.
         ...(s.reportGroup && typeof s.reportGroup === 'object' ? { reportGroup: s.reportGroup } : {}),
@@ -583,8 +600,9 @@
     let queueSeen = null;
     function orderedStudies() {
       const list = filtered();
-      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·".
-      const sortValue = s => sortKey === "pf" ? preloadWord(s) : s[sortKey];
+      // PF sorts by the queue word the cell and the filter read now (preloadWord), not the row's stored "·"; Referred by the
+      // server time itself (its cell drops the seconds).
+      const sortValue = s => sortKey === "pf" ? preloadWord(s) : sortKey === "referredAt" ? s.referredAtIso : s[sortKey];
       if (sortDir !== 0 && sortKey)
         list.sort((a, b) => { const x = sortValue(a), y = sortValue(b); return (x > y ? 1 : x < y ? -1 : 0) * sortDir; });
       if (selectedUid && list.some(s => s.uid === selectedUid)) queueSeen = { uid: selectedUid, order: list.map(s => s.uid) };

@@ -34,6 +34,9 @@
         { k: "modality", t: "Modality", f: ["CT", "MR", "CR", "US", "SC"] },
         { k: "desc", t: "StudyDesc", f: "text" },
         { k: "date", t: "StudyDate", f: "text" },
+        // Referred: when the referring hospital's Gateway sent the study (server row referredAt, this screen's local time).
+        // Blank for a study that did not come through a Gateway. Filters like ReqDate: "2026-11", "2026-11-20", "2026-11-20 09".
+        { k: "referredAt", t: "Referred", f: "text" },
         // 예비 판독을 쓴 사람과, 최종 판독을 맡은 상급 판독의.
         // HPACS도 2025.07에 이 둘을 컬럼으로 붙였다 (교훈 §13 — 컬럼은 끝없이 늘어난다)
         { k: "preDoc", t: "PreDoc", f: "text" },
@@ -84,6 +87,11 @@
       if (!d || !Number.isFinite(d.getTime())) return "";
       const p = n => String(n).padStart(2, "0");
       return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+    /** The same server time as a sort key (UTC ISO, seconds kept; the local stamp drops them); anything unreadable is "". */
+    function serverInstant(iso) {
+      const d = typeof iso === "string" && iso ? new Date(iso) : null;
+      return d && Number.isFinite(d.getTime()) ? d.toISOString() : "";
     }
     /**
      * Confirm cell: the approval time of an Approved report. An approval stored before its time was kept shows the stored
@@ -294,8 +302,10 @@
     });
 
     // Hover help for one- and two-letter headers. Only codes the screen already uses are explained (RS letters match the count bar).
+    // Referred says where its time comes from and what a blank cell means.
     const HEAD_HELP = {
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
+      referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
       pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",

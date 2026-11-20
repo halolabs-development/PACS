@@ -97,7 +97,9 @@ const DEFAULTS = {
   studyState: () => ({ teleInstitutionId: null, rs: 'W', ss: 'Unverified', em: 'N', ts: 'none', matched: 'U', ward: null,
     reqHosp: null, holder: null, heldAt: null, holdReason: null, preDoc: null, preReviewer: null, preDocSub: null,
     preReviewerSub: null, repDoc: null, confirm: null, ov: null, orig: null, orderOid: null, origin: 'device',
-    qcReason: null, qcBy: null, qcAt: null, qcRevision: 0, draftEpoch: randomUUID(), createdAt: new Date() }),
+    qcReason: null, qcBy: null, qcAt: null, qcRevision: 0,
+    // Referred: a row created without the two fields waits for its first Gateway announce (the database default).
+    draftEpoch: randomUUID(), createdAt: new Date(), referredAt: null, referredOpen: true }),
   auditLog: () => ({ detail: null, at: new Date() }),
   reportVersion: () => ({ citations: null, structured: null, reason: null, at: new Date() }),
   reportDraft: () => ({ citations: null, structured: null, updatedAt: new Date() }),
@@ -1505,6 +1507,165 @@ test('SPLIT-18 Gateway surfaces admit only the gateway identity; a repeated anno
   assert.deepEqual([asked.result, repeated.result, repeated.requestedAt], ['requested', 'already_requested', asked.requestedAt]);
   assert.equal(w.db.rows('gatewayRetryRequest').length, 1);
   assert.equal(w.audits('gateway.retry.request').length, 1);
+});
+
+// Referred, as a study row stores it: [time or null, still waiting for its first announce].
+const referredOf = (w, uid) => { const s = w.db.rows('studyState').find(r => r.uid === uid); return s ? [s.referredAt === null ? null : +s.referredAt, s.referredOpen] : 'no row'; };
+const STUDY_LOCK = /^SELECT \* FROM "StudyState" WHERE uid = \? FOR UPDATE$/;
+/** What another session commits between this announce's first look and the moment it holds the study row's lock: applied
+ *  once, to the committed store and to what the locking statement then reads. */
+function beforeLockIsHeld(w, change) {
+  const entry = [STUDY_LOCK, ([uid], tables, label, store) => {
+    store.handlers.splice(store.handlers.indexOf(entry), 1);
+    assert.equal(label, 'tx', 'the row is locked inside a transaction');
+    for (const view of [store.tables, tables]) view.studyState = change(view.studyState ?? [], uid);
+    return (tables.studyState ?? []).filter(r => r.uid === uid).map(copy);
+  }];
+  w.db.handlers.push(entry);
+}
+/** A registration that commits between this announce's first look and its own create: the create loses the unique race. */
+function losesCreateRace(w, uid, winner) {
+  w.db.faults.push({ model: 'studyState', op: 'create', client: 'tx', get error() {
+    if (winner) w.db.seed('studyState', { uid, ss: 'Unverified', ...winner });
+    return Object.assign(new Error('Unique constraint failed on uid'), { code: 'P2002', meta: { modelName: 'StudyState', target: ['uid'] } });
+  } });
+}
+
+test('SPLIT-18b Referred is the first announce time: a new study gets its creation moment, a study registered another way gets it once', async () => {
+  const w = world();
+  await w.boot();
+  const row = uid => w.db.rows('studyState').find(s => s.uid === uid);
+  // A study the announce creates: one moment for its creation and its Referred time, recorded and closed from the start.
+  const fresh = uidOf();
+  await w.gateway.announceStudy(fresh, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.ok(row(fresh).referredAt instanceof Date);
+  assert.deepEqual(referredOf(w, fresh), [+row(fresh).createdAt, false]);
+  const first = referredOf(w, fresh);
+  await w.gateway.announceStudy(fresh, 'SYN A HOSPITAL', GATEWAY_A);
+  assert.deepEqual(referredOf(w, fresh), first, 'a retry keeps the first time');
+  // A study registered first another way (a device sent it and a list registered it; a local import claimed it) is blank
+  // and waits; the hospital Gateway's first announce records the time once and closes the row in the same write.
+  for (const origin of ['dicom', 'local-import']) {
+    const direct = w.study({ origin, createdAt: new Date('2026-11-01T00:00:00.000Z') }).uid;
+    assert.deepEqual(referredOf(w, direct), [null, true], origin);
+    const before = Date.now(), audits = w.audits().length;
+    const answer = await w.gateway.announceStudy(direct, 'SYN A HOSPITAL', GATEWAY_A);
+    assert.deepEqual(answer, { studyUid: direct, institutionId: INST_A, origin }, 'the origin stays as registered');
+    assert.ok(row(direct).referredAt instanceof Date && +row(direct).referredAt >= before, 'the first announce writes the time');
+    assert.equal(row(direct).referredOpen, false, 'and closes the row');
+    assert.equal(+row(direct).createdAt, +new Date('2026-11-01T00:00:00.000Z'), 'the registration time is not the Referred time');
+    const once = referredOf(w, direct), writes = w.db.writes.length;
+    for (let i = 0; i < 2; i++) await w.gateway.announceStudy(direct, 'SYN A HOSPITAL', GATEWAY_A);
+    assert.deepEqual(referredOf(w, direct), once, 'later announces keep it');
+    assert.equal(w.db.writes.length, writes, 'and write nothing');
+    assert.equal(w.audits().length, audits, 'a study that was already registered gets no announce audit');
+  }
+  assert.equal(w.audits('study.announce').length, 1, 'only the created study is an announce audit');
+});
+
+test('SPLIT-18c Referred stays blank where a later announce cannot be known to be the first: rows closed without a time', async () => {
+  const w = world();
+  await w.boot();
+  // As the upgrade leaves them: a directly registered study that may already have been announced before the time was kept,
+  // and a Gateway study with the time copied from its creation. And a split exam's second (logical) row, created closed.
+  const kept = new Date('2026-10-01T03:04:05.678Z');
+  const cases = [
+    [w.study({ origin: 'dicom', referredAt: null, referredOpen: false }).uid, 'dicom', [null, false]],
+    [w.study({ origin: 'local-import', referredAt: null, referredOpen: false }).uid, 'local-import', [null, false]],
+    [w.study({ origin: 'gateway', createdAt: kept, referredAt: kept, referredOpen: false }).uid, 'gateway', [+kept, false]],
+    [w.study({ uid: '2.25.' + (10n ** 30n + BigInt(process.pid)), origin: 'logical', referredAt: null, referredOpen: false }).uid, 'logical', [null, false]],
+  ];
+  const writes = w.db.writes.length, audits = w.audits().length;
+  for (const [uid, origin, stored] of cases) {
+    // The Gateway retries: every announce of its own institution's study is accepted, and none becomes "the first".
+    for (let i = 0; i < 3; i++)
+      assert.deepEqual(await w.gateway.announceStudy(uid, 'SYN A HOSPITAL', GATEWAY_A), { studyUid: uid, institutionId: INST_A, origin });
+    assert.deepEqual(referredOf(w, uid), stored, origin);
+  }
+  assert.equal(w.db.writes.length, writes, 'nothing is written');
+  assert.equal(w.audits().length, audits, 'and nothing audited');
+});
+
+test('SPLIT-18d announce judges the row under its lock: one first time; a study gone, another institution\'s or unassigned is the ownership conflict with nothing written', async () => {
+  const w = world();
+  await w.boot();
+  const conflict = async (uid, caller = GATEWAY_A) => {
+    const writes = w.db.writes.length, audits = w.audits().length;
+    await refused(() => w.gateway.announceStudy(uid, 'SYN A HOSPITAL', caller), 409, 'STUDY_OWNERSHIP_CONFLICT');
+    assert.equal(w.db.writes.length, writes, 'a refused announce writes nothing');
+    assert.equal(w.audits().length, audits, 'and audits nothing');
+  };
+
+  // ── a study that already has a row when the announce first looks ──
+  // Deleted between that look and the lock: there is no row to record on, so not a success (and no time written anywhere).
+  for (const fields of [{ origin: 'dicom' }, { origin: 'gateway', referredAt: new Date('2026-11-02T00:00:00.000Z'), referredOpen: false }]) {
+    const gone = w.study(fields).uid;
+    beforeLockIsHeld(w, (rows, uid) => rows.filter(r => r.uid !== uid));
+    await conflict(gone);
+    assert.equal(referredOf(w, gone), 'no row');
+  }
+  // Deleted and registered again by a list between the look and the lock: the row found under the lock is a new, open one
+  // of this institution, and this announce is its first.
+  const again = w.study({ origin: 'gateway', referredAt: new Date('2026-11-02T00:00:00.000Z'), referredOpen: false }).uid;
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, origin: 'dicom', referredAt: null, referredOpen: true } : r));
+  const before = Date.now();
+  assert.equal((await w.gateway.announceStudy(again, '', GATEWAY_A)).origin, 'dicom', 'the answer is read from the locked row');
+  assert.ok(referredOf(w, again)[0] >= before && referredOf(w, again)[1] === false);
+  // Two announces of one institution that both looked before either wrote: the one that gets the lock second finds the
+  // row recorded and keeps that first time.
+  const twice = w.study({ origin: 'dicom' }).uid, firstTime = new Date('2026-11-03T05:06:07.008Z');
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, referredAt: firstTime, referredOpen: false } : r));
+  const writes = w.db.writes.length;
+  assert.equal((await w.gateway.announceStudy(twice, '', GATEWAY_A)).origin, 'dicom');
+  assert.deepEqual(referredOf(w, twice), [+firstTime, false], 'one first time');
+  assert.equal(w.db.writes.length, writes);
+  // No longer this institution's when the lock is held, or never this institution's: another institution's and an
+  // unassigned study.
+  const moved = w.study({ origin: 'dicom' }).uid;
+  beforeLockIsHeld(w, (rows, uid) => rows.map(r => r.uid === uid ? { ...r, institutionId: INST_B } : r));
+  await conflict(moved);
+  assert.deepEqual(referredOf(w, moved), [null, true]);
+  const foreign = w.study({ origin: 'dicom', institutionId: INST_B }).uid, held = w.study({ origin: 'dicom', institutionId: null }).uid;
+  // A study this institution only receives for tele-reading is its owner's: the receiver's Gateway cannot announce it.
+  const tele = w.study({ origin: 'gateway', teleInstitutionId: INST_B, referredAt: firstTime, referredOpen: false }).uid;
+  await conflict(foreign); await conflict(held); await conflict(tele, { ...GATEWAY_A, institution: INST_B });
+  assert.deepEqual([foreign, held, tele].map(uid => referredOf(w, uid)), [[null, true], [null, true], [+firstTime, false]]);
+
+  // ── a study with no row at the first look, registered by someone else before this announce's own create commits ──
+  const raced = async (winner) => { const uid = uidOf(); losesCreateRace(w, uid, winner); return uid; };
+  // A list registered the device's study first: this announce is its first, on the winner's row and with its origin.
+  const listed = await raced({ institutionId: INST_A, origin: 'dicom' });
+  assert.deepEqual(await w.gateway.announceStudy(listed, 'SYN A HOSPITAL', GATEWAY_A), { studyUid: listed, institutionId: INST_A, origin: 'dicom' });
+  assert.ok(referredOf(w, listed)[0] >= before && referredOf(w, listed)[1] === false);
+  // Another announce of the same institution won: its time is the first, and the loser writes nothing.
+  const announced = await raced({ institutionId: INST_A, origin: 'gateway', referredAt: firstTime, referredOpen: false });
+  const settled = w.db.writes.length;
+  assert.equal((await w.gateway.announceStudy(announced, 'SYN A HOSPITAL', GATEWAY_A)).origin, 'gateway');
+  assert.deepEqual(referredOf(w, announced), [+firstTime, false]);
+  assert.equal(w.db.writes.length, settled);
+  // The winner is another institution's, unassigned, or already gone again: the ownership conflict, the winner untouched.
+  const theirs = await raced({ institutionId: INST_B, origin: 'dicom' }); await conflict(theirs);
+  const unassigned = await raced({ institutionId: null, origin: 'dicom' }); await conflict(unassigned);
+  const vanished = await raced(null); await conflict(vanished);
+  assert.deepEqual([theirs, unassigned, vanished].map(uid => referredOf(w, uid)), [[null, true], [null, true], 'no row']);
+  assert.equal(w.audits('study.announce').length, 0, 'no announce created a study here, so none is audited');
+  assert.equal(w.db.faults.length, 0, 'every staged race was met');
+  assert.equal(w.db.handlers.length, 0, 'every staged wait was met');
+
+  // ── refusals that never reach the store, and a row lock that is not free in time ──
+  const open = w.study({ origin: 'dicom' }).uid, raw = w.db.raw.length, transactions = w.db.transactions;
+  await refused(() => w.gateway.announceStudy(open, '', ADMIN_A), 403);
+  await refused(() => w.gateway.announceStudy(open, '', { ...GATEWAY_A, kind: 'member' }), 403);
+  await refused(() => w.gateway.announceStudy(open, '', { ...GATEWAY_A, roles: ['radiologist'] }), 403);
+  await refused(() => w.gateway.announceStudy('1.2.x', '', GATEWAY_A), 400);
+  await refused(() => w.gateway.announceStudy(open, 7, GATEWAY_A), 400);
+  assert.deepEqual([w.db.raw.length, w.db.transactions], [raw, transactions]);
+  w.db.faults.push({ model: '$raw', op: 'SELECT * FROM "StudyState" WHERE uid = ? FOR UPDATE',
+    error: Object.assign(new Error('synthetic lock timeout'), { code: 'P2010', meta: { code: '55P03' } }) });
+  await refused(() => w.gateway.announceStudy(open, '', GATEWAY_A), 503, 'GATEWAY_ANNOUNCE_BUSY');
+  assert.deepEqual(referredOf(w, open), [null, true], 'still waiting: the Gateway announces again');
+  await w.gateway.announceStudy(open, '', GATEWAY_A);
+  assert.equal(referredOf(w, open)[1], false);
 });
 
 // ── SPLIT-19 preferences and searches: the CAS writes ──

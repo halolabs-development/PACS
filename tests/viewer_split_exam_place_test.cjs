@@ -40,6 +40,7 @@ class Element extends EventTarget {
 // One MR original X split into part A (series s1, s4) and part B (s2, s3, its report UID L); a merged exam of the
 // originals M1 (base) and M2.
 const X = '2.25.9100', L = '2.25.9199', M1 = '2.25.9201', M2 = '2.25.9202';
+const PATIENT_ID = 'SYN-P', PATIENT_KEY = 'inst|' + PATIENT_ID;
 const scope = (reportUid, sources, extra) => ({ reportUid, groupId: 'g-' + reportUid, active: true, generation: 'gen-' + reportUid, ...extra, sources });
 const PART_A = scope(X, [{ studyUid: X, series: { mode: 'exclude', uids: ['s2', 's3'] } }], { kind: 'split', part: 0 });
 const PART_B = scope(L, [{ studyUid: X, series: { mode: 'include', uids: ['s2', 's3'] } }], { kind: 'split', part: 1 });
@@ -47,9 +48,9 @@ const MERGED = scope(M1, [{ studyUid: M1, series: { mode: 'all', uids: [] } }, {
 const set = (study, series, number) => ({ displaySetInstanceUID: study + ':' + series, StudyInstanceUID: study, SeriesInstanceUID: series,
   Modality: 'MR', SeriesNumber: number, SeriesDescription: 'MR ' + series, images: [{}] });
 const SETS = [set(X, 's1', 1), set(X, 's2', 2), set(X, 's3', 3), set(X, 's4', 4), set(M1, 'm1', 1), set(M2, 'm2', 1)];
-const SPLIT_ROWS = [{ uid: X, sourcePatientKey: 'P', date: '20261110', modality: 'MR', examScope: PART_A },
-  { uid: L, sourcePatientKey: 'P', date: '20261110', modality: 'MR', examScope: PART_B }];
-const MERGED_ROWS = [{ uid: M1, sourcePatientKey: 'P', date: '20261110', modality: 'MR', examScope: MERGED }];
+const SPLIT_ROWS = [{ uid: X, sourcePatientKey: PATIENT_KEY, date: '20261110', modality: 'MR', examScope: PART_A },
+  { uid: L, sourcePatientKey: PATIENT_KEY, date: '20261110', modality: 'MR', examScope: PART_B }];
+const MERGED_ROWS = [{ uid: M1, sourcePatientKey: PATIENT_KEY, date: '20261110', modality: 'MR', examScope: MERGED }];
 
 async function world({ current, prior = null, rows, cells }) {
   const byId = id => SETS.find(item => item.displaySetInstanceUID === id), subscribers = new Set();
@@ -95,10 +96,10 @@ async function world({ current, prior = null, rows, cells }) {
       node.onload();
     });
   };
-  const patient = { key: 'P', sequence: 1, studyUIDs: current.sources.map(s => s.studyUid), examScope: current, patient: {} };
+  const patient = { key: PATIENT_KEY, sequence: 1, studyUIDs: current.sources.map(s => s.studyUid), examScope: current, patient: {} };
   Object.assign(sandbox, {
     KinSessionTransport: { refusal: () => false, responseError: () => new Error('ended') },
-    KinViewerPatientTabs: { snapshot: () => ({ ...patient }), resolve: async () => ({ key: 'P' }),
+    KinViewerPatientTabs: { snapshot: () => ({ ...patient }), resolve: async () => ({ key: PATIENT_KEY }),
       subscribe: () => () => {}, mount() {}, refresh() {}, dispose() {}, guard: () => true },
     // The window's admitted exam scopes, read through the shipped model's one role rule.
     KinViewerExamScope: { snapshot: () => input, ensure: async () => {}, role: (study, series) => sandbox.KinExamScope.examRole(input, study, series) },
@@ -107,7 +108,7 @@ async function world({ current, prior = null, rows, cells }) {
         const cell = state.viewports.get(viewportId), ids = cell?.displaySetInstanceUIDs || [];
         const shown = ids.length === 1 && byId(ids[0]);
         return { viewportId, cell, set: shown, viewport: { type: 'stack' },
-          instance: shown ? { StudyInstanceUID: shown.StudyInstanceUID, SeriesInstanceUID: shown.SeriesInstanceUID } : null };
+          instance: shown ? { PatientID: PATIENT_ID, StudyInstanceUID: shown.StudyInstanceUID, SeriesInstanceUID: shown.SeriesInstanceUID } : null };
       } },
     KinViewerSeriesStrip: { mount: chrome }, cornerstone: { Enums: { Events: {} } },
   });
@@ -176,7 +177,7 @@ test('the cell\'s own part: an answer that comes after the request was dropped c
     const related = w.sandbox.KinViewerUX.related(), value = w.sandbox.KinViewerUX.viewport('v1');
     const studies = await related.studies(value), request = new AbortController();
     let release;
-    w.sandbox.KinViewerPatientTabs.resolve = () => new Promise(resolve => { release = () => resolve({ key: 'P' }); });
+    w.sandbox.KinViewerPatientTabs.resolve = () => new Promise(resolve => { release = () => resolve({ key: PATIENT_KEY }); });
     const opening = related.open(value, L, { seriesUid: 's3', studies, signal: request.signal });
     for (let i = 0; i < 5 && !release; i++) await settle();
     request.abort(); release();

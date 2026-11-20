@@ -657,8 +657,11 @@ export class ExamMergeService {
       const refusals = await this.mergeRefusals(tx, c, inst(c), [uid], [scope.state]);
       if (refusals.length) throw this.refused('나눌 수 없습니다', refusals);
       const id = randomUUID(), second = '2.25.' + BigInt('0x' + randomUUID().replace(/-/g, '')).toString();
+      // The second row is a report target, not a study a hospital sends: its own Referred stays blank and closed, so an
+      // announce naming this generated UID records nothing. The list shows the original study's Referred on both rows.
       await tx.studyState.create({ data: { uid: second, institutionId: scope.state.institutionId,
-        teleInstitutionId: scope.state.teleInstitutionId, origin: 'logical', ss: scope.state.ss, em: scope.state.em } });
+        teleInstitutionId: scope.state.teleInstitutionId, origin: 'logical', ss: scope.state.ss, em: scope.state.em,
+        referredAt: null, referredOpen: false } });
       await tx.studyGroup.create({ data: { id, institutionId: inst(c), kind: 'split', baseUid: uid, createdBy: c.actor, createdBySub: c.sub } });
       const members = [{ groupId: id, logicalUid: uid, studyUid: uid, part: 0, seriesUids: [] },
         { groupId: id, logicalUid: second, studyUid: uid, part: 1, seriesUids: [...selected].sort() }];

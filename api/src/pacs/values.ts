@@ -91,6 +91,18 @@ export function requestColumns(order: { reqAt?: unknown; reqDept?: unknown; reqD
 }
 
 /**
+ * The worklist's Referred column: when the referring hospital sent the study - our server's time of the hospital
+ * Gateway's first successful announce of it (StudyState.referredAt, written once by dicom-gateway.ts announceStudy and
+ * never changed; announce comes before any image may be stored). A study with no announce recorded (a device sending
+ * directly, a local import, a logical exam row, or one announced before the time was kept) has none: null, never the
+ * time someone first listed it. The latest Gateway receipt is not used: it is replaced on every report.
+ */
+export function referredAt(state: { referredAt?: unknown } | null | undefined): string | null {
+  const at = state?.referredAt;
+  return at instanceof Date && Number.isFinite(at.getTime()) ? at.toISOString() : null;
+}
+
+/**
  * A shared study grants access to the report, not the other institution's writer identity.
  * Keep the existing nonempty holder contract so clients still block conflicting writes.
  * Unknown legacy affiliations fail closed; only an authenticated hold heartbeat can fill them.
