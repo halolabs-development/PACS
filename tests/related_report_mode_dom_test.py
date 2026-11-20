@@ -606,7 +606,7 @@ class RelatedModePage(unittest.TestCase):
         member name the server sends) and time (this screen's Asia/Seoul minute; the approval that opened the current cycle at
         the time the study keeps), never the login or the server's UTC text."""
         self.site.versions[UID_B][0].update(authorName="SYN Kim Reader", at="2026-11-17T18:05:59.990Z",
-                                            approvedAt="2026-11-17T18:06:00.000Z")
+                                            keptAt="2026-11-17T18:06:00.000Z")
         self.open()
         self.open_target()
         self.enter()

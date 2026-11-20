@@ -70,7 +70,7 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
             # The signer as the server names it (the member name beside the stored login) and the approval that opened the
             # current cycle at the time the study keeps (2026-11-18 03:06 in Asia/Seoul).
             route.fulfill(json=[{"version": 1, "action": "approve", "findings": "Approved text", "author": "syn.reader@example.test",
-                                 "authorName": "SYN Kim Reader", "at": "2026-11-17T18:05:59.990Z", "approvedAt": "2026-11-17T18:06:00.000Z"}])
+                                 "authorName": "SYN Kim Reader", "at": "2026-11-17T18:05:59.990Z", "keptAt": "2026-11-17T18:06:00.000Z"}])
             return
         uids = (route.request.url.split("uids=")[1].split("&")[0].replace("%2C", ",").split(",")
                 if "uids=" in route.request.url else self.answer)

@@ -21,7 +21,7 @@ import { activeGroups, resolveExamScope, prepareExamRead, relatedExamRecord, rel
   groupedExamUids, ordinaryExamRecord } from '../exam-merge.service';
 import { versionDrawings, drawingEntries } from '../image-report';
 import { memberNames } from '../member-rights';
-import { cycleApprovedAt } from './values';
+import { keptVersionTime } from './values';
 import { reportBodyLock, storedVersionReadable } from '../report-visibility';
 
 /**
@@ -137,16 +137,15 @@ export class PacsClinician {
   /**
    * The version this read shows says who signed it and when, as the History of that same version does - the member's
    * name on its account (member-rights.ts memberNames; an account without a name: the login before the @, as the study's signer
-   * was written before) and its time (`at`), with the current cycle's approval at the time the study keeps (values.ts
-   * cycleApprovedAt). A version opened by number names its own signer, never the current head's.
+   * was written before) and its time (`at`), or the time the study keeps for it when it is a kept event of the current cycle
+   * (values.ts keptVersionTime). A version opened by number names its own signer and time, never the current head's.
    */
   private async signedFacts(tx: any, uid: string, state: any, head: any) {
     const names = await memberNames(tx, [head?.authorSub]);
-    const latest = await tx.reportVersion.findFirst({ where: { uid, action: 'approve' }, orderBy: { version: 'desc' }, select: { version: true } });
-    const approvedAt = cycleApprovedAt(state, head, latest?.version ?? null);
+    const rows = await tx.reportVersion.findMany({ where: { uid }, select: { version: true, action: true } });
     const t = head?.at ? new Date(head.at).getTime() : NaN;
     return { signedBy: (head?.authorSub && names.get(head.authorSub)) || String(head?.author ?? '').split('@')[0] || null,
-      at: Number.isFinite(t) ? new Date(t).toISOString() : null, ...(approvedAt ? { approvedAt } : {}) };
+      at: Number.isFinite(t) ? new Date(t).toISOString() : null, ...keptVersionTime(state, head, rows) };
   }
 
   /**

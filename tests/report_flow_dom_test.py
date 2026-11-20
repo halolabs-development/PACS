@@ -978,7 +978,7 @@ class ReportFlowPage(unittest.TestCase):
         versions = [dict(version=3, action='addendum', author='syn.second@example.test', authorName='SYN Lee Second',
                          at='2026-11-18T01:30:00.000Z'),
                     dict(version=2, action='approve', author='syn.reader@example.test', authorName='SYN Kim Reader',
-                         at='2026-11-17T18:05:59.990Z', approvedAt='2026-11-17T18:06:00.000Z'),
+                         at='2026-11-17T18:05:59.990Z', keptAt='2026-11-17T18:06:00.000Z'),
                     dict(version=1, action='save', author='SYN Doctor', at='2026-11-17T17:00:00.000Z')]
         self.page.route('**/api/studies/*/report/versions', lambda route: route.fulfill(json=versions))
         self.page.locator('#report-more > summary').click()

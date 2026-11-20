@@ -55,12 +55,14 @@
   }
   /**
    * The time a report version shows on every report screen (History, Related Report, the viewer's Previous Report, the
-   * clinician read): the version's own time, or - for the approval that opened the current approval cycle - the approval
-   * time the study keeps, which the server sends as `approvedAt` on that one version (the worklist Confirm cell's time).
-   * Both by paperStamp; '' when neither is readable.
+   * clinician read): the time the study keeps for it when the server names one (`keptAt` - the current cycle's approval,
+   * last amendment or last addendum, the times the worklist Confirm cell and the editor show), else the stored approval date
+   * of an approval older than the kept times (`keptOn`, no time added), else the version's own time. By paperStamp; '' when
+   * none is readable.
    */
   function versionStamp(version) {
-    return paperStamp(version?.approvedAt) || paperStamp(version?.at);
+    const keptOn = typeof version?.keptOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(version.keptOn) ? version.keptOn : '';
+    return paperStamp(version?.keptAt) || keptOn || paperStamp(version?.at);
   }
   /** A DICOM date (YYYYMMDD) as YYYY-MM-DD; any other text as it came; nothing as ''. */
   function paperDate(value) {

@@ -121,10 +121,10 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         # Who signed it: the member name the server sends beside the stored login. When: this browser's minute of the
         # version's time (the current cycle's approval at the time the study keeps), never the server's UTC text.
         expect(report).to_contain_text(head.get('authorName') or head['author'])
-        shown_at = head.get('approvedAt') or head['at']
+        shown_at = head.get('keptAt') or head['at']
         offset = page.evaluate("iso => new Date(iso).getTimezoneOffset()", shown_at)
         local = datetime.datetime.fromisoformat(shown_at.replace('Z', '+00:00')).replace(tzinfo=None) - datetime.timedelta(minutes=offset)
-        expect(report).to_contain_text(f"{local:%Y-%m-%d %H:%M}")
+        expect(report).to_contain_text(head['keptOn'] if head.get('keptOn') else f"{local:%Y-%m-%d %H:%M}")
         expect(report).not_to_contain_text(head['at'])
         expect(report).to_contain_text(y.uid)
         self.assertEqual(report.locator('input,textarea,[contenteditable=true]').count(), 0)

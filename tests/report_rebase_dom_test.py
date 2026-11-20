@@ -357,6 +357,7 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertIn("v4", value["pane"]["action"])
         # Nothing was rewritten, reloaded or discarded.
         self.assertEqual(["MY ADDENDUM+", "", ""], value["text"])
+
         # The page keeps the typed text as this study's own copy (it is what the next save carries); the refusal moved
         # neither that text nor the version it stands on.
         self.assertEqual(2, value["state"]["draft"]["baseVersion"])
@@ -366,6 +367,16 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertEqual([], value["clipboard"])
         for entry in value["toasts"]:
             self.assertNotIn("저장했습니다", entry["message"])
+
+    def test_a_stale_addendum_names_the_approved_heads_signer_by_the_member_name(self):
+        """The refused head's writer is the member name the server sends beside the login (the name History shows for that
+        version), not the login."""
+        self.open(draft={"findings": "MY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2, "at": "2026-09-20T01:00"})
+        self.page.evaluate("type(['MY ADDENDUM+', '', ''])")
+        self.page.evaluate("reply(%s)" % json.dumps(stale_body(head={"updatedByName": "SYN Lee Second"}), ensure_ascii=False))
+        self.page.evaluate("commit('addendum')")
+        self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
+        self.assertEqual("승인본 v4 · SYN Lee Second", self.page.evaluate("snapshot()")["pane"]["title"])
 
     def test_the_rebase_writes_the_typed_text_onto_exactly_the_version_it_showed(self):
         self.open(draft={"findings": "MY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2, "at": "2026-09-20T01:00"})

@@ -172,6 +172,7 @@
       if (!Number.isSafeInteger(h.version) || h.version <= 0) return null;
       const text = v => (typeof v === "string" ? v : "");
       return { version: h.version, updatedBy: typeof h.updatedBy === "string" ? h.updatedBy : "",
+        updatedByName: typeof h.updatedByName === "string" ? h.updatedByName : "",
         findings: text(h.findings), conclusion: text(h.conclusion), recommendation: text(h.recommendation),
         draftBaseVersion: Number.isSafeInteger(e?.body?.draftBaseVersion) ? e.body.draftBaseVersion : null };
     }

@@ -131,16 +131,31 @@ export function recordedHolder(s: any, caller: Caller): string | null {
 export const visibleDraftAuthor = (author: string, authorSub: string | null | undefined, caller: Caller): string =>
   sameAccount(authorSub, caller) ? author : PRIVATE_WRITER;
 /**
- * When a version was signed, as report screens show it: the version's own time (`at`), except the approval that opened the
- * current approval cycle, which shows the approval time the study keeps (`approvedAt` - the time the worklist Confirm cell and
- * the paper show; the two are taken by different clocks in one transaction). This returns that approval time (ISO) for that one
- * version, null for any other version or when the study kept no approval time. `latestApprove` is the highest version number
- * with action `approve`. Nothing stored changes.
+ * The one rule for when a report screen says a version was signed. A version shows its own time (`at`), except an event of the
+ * current approval cycle whose time the study keeps - the approval that opened the cycle (`approvedAt`, the worklist Confirm
+ * cell's and the paper's time), its last amendment (`amendedAt`, the editor's "수정됨") and its last addendum (`addendumAt`):
+ * those versions show the kept time (`keptAt`, ISO), since the version row is stamped by another clock in the same
+ * transaction. An approval stored before its time was kept, with no amendment or addendum after it, shows the stored approval
+ * date (`keptOn`, YYYY-MM-DD) as the worklist does, no time added. `rows` are the study's versions (number and action).
+ * Nothing stored changes; {} means "its own time".
  */
-export function cycleApprovedAt(state: any, row: { version: number; action: string }, latestApprove: number | null): string | null {
-  if (state?.rs !== 'A' || row.action !== 'approve' || row.version !== latestApprove || !state.approvedAt) return null;
-  const t = new Date(state.approvedAt).getTime();
-  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+export function keptVersionTime(state: any, row: { version: number; action: string },
+  rows: readonly { version: number; action: string }[]): { keptAt?: string; keptOn?: string } {
+  if (state?.rs !== 'A') return {};
+  const latest = (action: string) =>
+    rows.reduce<number | null>((n, r) => r.action === action && (n === null || r.version > n) ? r.version : n, null);
+  const approve = latest('approve');
+  if (approve === null || row.version < approve) return {};
+  const iso = (value: any) => { const t = value ? new Date(value).getTime() : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null; };
+  const kept = (value: any) => { const at = iso(value); return at ? { keptAt: at } : {}; };
+  if (row.action === 'approve' && row.version === approve) {
+    if (iso(state.approvedAt)) return kept(state.approvedAt);
+    const later = rows.some(r => r.version > approve && (r.action === 'amend' || r.action === 'addendum'));
+    return !later && typeof state.confirm === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(state.confirm) ? { keptOn: state.confirm } : {};
+  }
+  if (row.action === 'amend' && row.version === latest('amend')) return kept(state.amendedAt);
+  if (row.action === 'addendum' && row.version === latest('addendum')) return kept(state.addendumAt);
+  return {};
 }
 export const visibleDraftSummary = (drafts: any[], caller: Caller) =>
   drafts.map(({ authorSub, ...draft }) => ({ ...draft, author: visibleDraftAuthor(draft.author, authorSub, caller) }));

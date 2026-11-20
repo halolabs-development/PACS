@@ -896,7 +896,7 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         reader's History shows for that version. The stored UTC date and the login are not what is shown."""
         self.open_home()
         answer = final_report(7, 2, "approve", "SYN-S findings", "SYN-S conclusion", "", [])
-        answer["report"].update(signedBy="SYN Kim Reader", at="2026-11-17T18:05:59.990Z", approvedAt="2026-11-17T18:06:00.000Z",
+        answer["report"].update(signedBy="SYN Kim Reader", at="2026-11-17T18:05:59.990Z", keptAt="2026-11-17T18:06:00.000Z",
                                 repDoc="syn.reader", confirm="2026-11-17")
         self.reports[uid(7)] = answer
         seen = self.pick(7)
@@ -921,7 +921,8 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.open_home()
         amended_at = "2026-09-21T05:07:00.000Z"
         answer = final_report(7, 4, "amend", "SYN-T corrected findings", "SYN-T conclusion", "", [])
-        answer["report"]["amendedAt"] = amended_at
+        # The server names this version's time (the last amendment's kept time) beside the study's amendedAt.
+        answer["report"].update(amendedAt=amended_at, at="2026-09-21T05:06:59.990Z", keptAt=amended_at)
         self.reports[uid(7)] = answer
         seen = self.pick(7)
         offset = self.page.evaluate("iso => new Date(iso).getTimezoneOffset()", amended_at)
@@ -929,6 +930,16 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual(("Final", "Amended", "4", ["Findings", "SYN-T corrected findings"]),
                          (seen["status"], seen["meta"]["Type"], seen["meta"]["Version"], seen["sections"][0]))
         self.assertEqual(f"수정됨 ({local:%Y-%m-%d %H:%M})", self.page.locator("#report-amended").text_content())
+        self.assertEqual(f"{local:%Y-%m-%d %H:%M}", seen["meta"]["Signed On"], "the line and Signed On name the same minute")
+        # An earlier amendment opened by number: its own time, never the study's last amendment.
+        earlier = final_report(7, 3, "amend", "SYN-T first correction", "SYN-T conclusion", "", [])
+        earlier["report"].update(amendedAt=amended_at, at="2026-09-21T03:00:00.000Z")
+        self.reports[uid(7)] = earlier
+        self.pick(1)
+        self.pick(7)
+        offset = self.page.evaluate("iso => new Date(iso).getTimezoneOffset()", "2026-09-21T03:00:00.000Z")
+        first = datetime.datetime(2026, 9, 21, 3, 0) - datetime.timedelta(minutes=offset)
+        self.assertEqual(f"수정됨 ({first:%Y-%m-%d %H:%M})", self.page.locator("#report-amended").text_content())
         self.assertEqual("report-amended", self.page.evaluate("() => document.querySelector('#report-body').firstElementChild.id"),
                          "the line is at the head of the report, before Findings")
         # An approval head carries no amended line, even if a stray time rides along.
