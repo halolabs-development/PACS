@@ -200,17 +200,22 @@ async function touch(uid, copy, at) {
   await locked(async () => {
     const study = store.get(uid), usedAt = Math.min(at, issued);
     const same = () => mine === epoch && bound === session && !!key && keyId === held && store.get(uid) === study;
-    const approved = () => same() && store.usable(uid, copy, usedAt);
-    if (!study || !approved()) return;
+    if (!study || !same() || !store.usable(uid, copy, usedAt)) return;
     try {
       const claim = await envelope(uid, { claimedUse: usedAt });
       if (!same()) return;
       await disk.write({ studies: [claim] }); await inventory();
-      if (!approved()) return;
-      const record = await envelope(uid, { usedAt });
-      if (!same()) return;
-      await disk.write({ studies: [record] });
     } catch (_) { return; }
+    // The judgement, here and nowhere else.
+    if (!same() || !store.approve(uid, copy, usedAt)) return;
+    try {
+      const record = await envelope(uid, { usedAt });
+      if (!same()) throw new Stop(null);
+      await disk.write({ studies: [record] });
+    } catch (_) {
+      if (mine === epoch && store.get(uid) === study) { store.refuse(uid); broadcast(); }
+      return;
+    }
     // Approved and stored. Only a session that changed meanwhile has another model: its own restore reads the record.
     if (mine !== epoch || store.get(uid) !== study || !store.use(uid, copy, usedAt)) return;
     await inventory(); broadcast();
@@ -450,6 +455,8 @@ async function handle(port, message, mine) {
     const reason = await prerequisites(); if (mine !== epoch) return;
     await locked(async () => {
       if (mine !== epoch) return;
+      // The model first catches up with the clock: a row the panel shows gone (past its date) is gone for this add too.
+      await sweep(); if (mine !== epoch) return;
       // FC-073: an Auto Preload add while preload cannot run queues nothing (no Failed rows each refresh); its next
       // list read asks again, which retries the setup above. It runs after the restore, so its dedup sees the stored queue.
       const auto = message.auto === true;
@@ -493,6 +500,9 @@ async function handle(port, message, mine) {
   const used = [];
   await locked(async () => {
     if (mine !== epoch) return;
+    // The model first catches up with the clock, so no message acts on a copy past its date as if it were held: Retry
+    // of a row the panel shows gone queues it again, an open or a using of it counts nothing.
+    await sweep(); if (mine !== epoch) return;
     switch (message.type) {
       case 'retry':
         if (!key || unavailable) { store.fail(message.uid, unavailable || MESSAGES.key); break; }

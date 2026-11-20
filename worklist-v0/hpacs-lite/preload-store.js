@@ -40,8 +40,10 @@
     const released = [];
 
     // An entry past its date is shown as the next sweep leaves it: no row says Ready, or waits, past the date it showed.
+    // Not while a use the worker approved before that date is being stored (`approve`): that row is not gone, and a row
+    // once said gone never comes back.
     const view = study => {
-      const gone = LIVE.includes(study.status) && study.expiresAt <= now();
+      const gone = LIVE.includes(study.status) && study.expiresAt <= now() && study.approved == null;
       return Object.freeze({ uid: study.uid, label: study.label, status: gone ? STATUS.evicted : study.status,
         reason: gone ? lapsed(study) : study.reason, waiting: !gone && study.waiting, done: gone ? 0 : study.frames.size,
         total: gone ? 0 : study.total, bytes: gone ? 0 : study.bytes, open: !gone && study.opens > 0, expiresAt: study.expiresAt,
@@ -55,7 +57,7 @@
       study.frames.clear(); study.bytes = 0; study.revision = null; study.total = 0; study.estimate = null; study.copy = null;
       // A copy's uses go with it: a later copy counts its own (an old viewer's close or check cannot reach it - open/close
       // name the copy).
-      study.usedAt = null; study.opens = 0; study.closedAt = null;
+      study.usedAt = null; study.approved = null; study.opens = 0; study.closedAt = null;
       return ids;
     }
     function end(study, status, reason) {
@@ -68,6 +70,12 @@
     function evictable(except) {
       return [...studies.values()].filter(s => s.uid !== except && s.bytes > 0 && s.opens === 0 && s.closedAt !== null)
         .sort((a, b) => a.closedAt - b.closedAt);
+    }
+
+    function usable(uid, copy, at) {
+      const s = studies.get(uid);
+      return !!s && s.copy !== null && s.copy === copy && s.frames.size > 0 && Number.isFinite(at) && at < s.expiresAt && s.expiresAt > now()
+        && LIVE.includes(s.status) && at > (s.usedAt ?? -Infinity);
     }
 
     return {
@@ -105,22 +113,26 @@
        * holds frames, was not past its date at `at` and is not past it now, and the use is later than the last one counted.
        * An expired copy is never brought back by a late open, close, key answer or slow disk.
        */
-      usable(uid, copy, at) {
-        const s = studies.get(uid);
-        return !!s && s.copy !== null && s.copy === copy && s.frames.size > 0 && Number.isFinite(at) && at < s.expiresAt && s.expiresAt > now()
-          && LIVE.includes(s.status) && at > (s.usedAt ?? -Infinity);
-      },
+      usable,
       /**
-       * A use the worker approved is counted: the copy's date moves to 72 hours after it. The worker asks `usable` when its
-       * write of the claim has ended and stores the approval before it calls this (preload-worker.js touch) - the clock is
-       * not read again here.
+       * The worker's one judgement of a use, made when the write of its claim has ended (preload-worker.js touch): approved
+       * when it is `usable` at this moment. An approved use awaits only its record: `use` once that is stored, `refuse` when
+       * it could not be.
        */
-      use(uid, copy, at) {
-        const s = studies.get(uid);
-        if (!s || s.copy === null || s.copy !== copy || !Number.isFinite(at) || at <= (s.usedAt ?? -Infinity)) return false;
-        s.usedAt = at; s.expiresAt = expiryOf(s);
+      approve(uid, copy, at) {
+        if (!usable(uid, copy, at)) return false;
+        studies.get(uid).approved = at;
         return true;
       },
+      /** The approved use, its record stored, is counted: the copy's date moves to 72 hours after it. The clock is not read again. */
+      use(uid, copy, at) {
+        const s = studies.get(uid);
+        if (!s || s.copy === null || s.copy !== copy || s.approved == null || s.approved !== at) return false;
+        s.approved = null; s.usedAt = at; s.expiresAt = expiryOf(s);
+        return true;
+      },
+      /** The approval could not be stored: the copy keeps the date it had. */
+      refuse(uid) { const s = studies.get(uid); if (s) s.approved = null; },
       expire(at = now()) {
         const ids = [];
         for (const s of studies.values()) if (s.expiresAt <= at && LIVE.includes(s.status)) ids.push(...end(s, STATUS.evicted, lapsed(s)));

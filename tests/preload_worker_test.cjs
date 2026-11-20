@@ -1122,9 +1122,23 @@ test('a use whose approval is not stored - the write fails, or the worker stops 
   }
   // Approved at hour 71.9 (the claim's write ended before the date); the approval's own write ends at hour 72.1.
   const t = await usedNearItsDate();
-  t.using(async n => { if (n === 2) t.h.advance(0.2 * HOUR); });
+  let during = null;
+  t.using(async n => {
+    if (n !== 2) return;
+    t.h.advance(0.2 * HOUR);
+    // A panel opened while the approval is being stored, the earlier date already past: the row is not said gone.
+    const panel = t.h.connect(); panel.send({ type: 'hello', role: 'list' });
+    during = statusOf(panel, STUDY);
+  });
   await until(() => statusOf(t.list, STUDY).expiresAt === SERVER_START + 143.9 * HOUR, 'the model moves once the approval is stored');
   assert.equal(statusOf(t.list, STUDY).status, 'Ready', 'panel, model and disk say the same date');
+  assert.deepEqual([during.status, during.reason], ['Ready', null], 'never shown gone and then Ready again');
+  // An approval that fails after the earlier date has passed: the row is gone from then on, as the disk says.
+  const late = await usedNearItsDate();
+  late.using(n => { if (n === 2) { late.h.advance(0.2 * HOUR); return Promise.reject(new Error('disk')); } });
+  await until(() => statusOf(late.list, STUDY).status === 'Evicted', 'refused: gone at the date it had');
+  assert.match(statusOf(late.list, STUDY).reason, /표시된 보관 기한이 지나/);
+  assert.equal((await studyRecord(late.h, STUDY)).record.expiresAt, SERVER_START + 72 * HOUR);
   const { record, manifest } = await studyRecord(t.h, STUDY);
   assert.deepEqual([record.expiresAt, manifest.usedAt, manifest.claimedUse], [SERVER_START + 143.9 * HOUR, SERVER_START + 71.9 * HOUR, undefined]);
   assert.ok((await t.viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: t.copy })).bytes);
@@ -1154,6 +1168,23 @@ test('server time is not the PC clock: set back, or forward and back again, whil
     assert.equal((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy })).bytes, null, 'no frame at its date');
     assert.equal((await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null, 'not held at its date');
     assert.deepEqual([h.disk.frames.size, h.disk.studies.size], [0, 0]);
+  }
+});
+
+test('a row shown gone at its date can be fetched again at once: Retry, or Preload again, before any sweep has run', async () => {
+  for (const how of ['retry', 'add']) {
+    const h = boot(), list = await ready(h), first = (await viewerOf(h)).copy;
+    h.advance(72 * HOUR);
+    const panel = h.connect(); panel.send({ type: 'hello', role: 'list' });
+    assert.equal(statusOf(panel, STUDY).status, 'Evicted', 'the panel offers Retry');
+    assert.ok(h.disk.frames.size > 0, 'no sweep has run');
+    if (how === 'retry') panel.send({ type: 'retry', uid: STUDY });
+    else panel.send({ type: 'add', session: 'sess-A', studies: [{ uid: STUDY }] });
+    await until(() => statusOf(list, STUDY)?.status === 'Ready', how + ': fetched again');
+    const viewer = h.connect(); viewer.send({ type: 'hello', role: 'viewer' });
+    const held = (await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held;
+    assert.ok(held && held.copy !== first, how + ': a new copy');
+    assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 144 * HOUR, how + ': counted from its own receipt');
   }
 });
 

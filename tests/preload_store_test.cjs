@@ -206,6 +206,38 @@ test('R5 fixed 72-hour window blocks held/frame before sweep and releases every 
   assert.equal(status(store, '1.1').expiresAt, now + 72*3600000);
 });
 
+test('a use moves the date only as approved and then stored: approved while the copy is within its date, refused once past it, and a row past its date is shown gone before any sweep', () => {
+  const HOUR = 3600000;
+  let now = 1000;
+  const store = create(100, () => now);
+  store.add([{ uid: '1.1' }]);
+  store.fetched('1.1', now);
+  fill(store, '1.1', 1, 10);
+  const c = copy(store, '1.1'), received = now;
+  now += 10 * HOUR;
+  assert.equal(store.use('1.1', c, now), false, 'nothing is counted that was not approved');
+  assert.equal(store.approve('1.1', 'another-copy', now), false);
+  assert.equal(store.approve('1.1', c, now), true);
+  assert.equal(status(store, '1.1').expiresAt, received + 72 * HOUR, 'approved, not yet stored: the date it had');
+  assert.equal(store.use('1.1', c, now), true);
+  assert.equal(status(store, '1.1').expiresAt, received + 82 * HOUR, 'stored: 72 hours from the use');
+  // An approval that could not be stored leaves the date.
+  now += HOUR;
+  assert.equal(store.approve('1.1', c, now), true);
+  store.refuse('1.1');
+  assert.equal(store.use('1.1', c, now), false);
+  assert.equal(status(store, '1.1').expiresAt, received + 82 * HOUR);
+  // While an approved use is being stored the row is not said gone, even past the date it had; refused, it is.
+  assert.equal(store.approve('1.1', c, now), true);
+  now = received + 82 * HOUR;
+  assert.equal(status(store, '1.1').status, STATUS.ready);
+  store.refuse('1.1');
+  assert.deepEqual([status(store, '1.1').status, status(store, '1.1').done, status(store, '1.1').bytes], [STATUS.evicted, 0, 0], 'shown gone before any sweep');
+  assert.match(status(store, '1.1').reason, /표시된 보관 기한이 지나/);
+  assert.equal(store.approve('1.1', c, now), false, 'no use is approved at or past the date');
+  assert.equal(store.usable('1.1', c, now - 1), false, 'nor one made before it, asked after it');
+});
+
 test('R5 a still-queued study expires at its original deadline after restart', () => {
   const queuedAt = 1000, deadline = queuedAt + 72 * 3600000;
   const store = create(100, () => queuedAt);
