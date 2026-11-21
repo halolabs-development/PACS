@@ -1027,6 +1027,84 @@ class ReportEditorFrameDOM(unittest.TestCase):
         self.assertFalse(current())
         self.assertFalse(self.page.evaluate("editor.isCurrent(null)"))
 
+    # ── keeps: text an edit must leave in place (an approved report that takes only an Addendum) ──
+
+    HELD = "APPROVED."
+
+    def boot_held(self):
+        """The frame with the host rule: while `held` is set, a field that starts with it must keep starting with it."""
+        self.page.evaluate("""() => {
+          window.held = 'APPROVED.'; window.keptFields = []; window.heard = 0;
+          document.addEventListener('input', () => { heard += 1; });
+          window.editor = KinReportEditorFrame.create({
+            fields: Object.fromEntries(['findings','conclusion','recommendation'].map(k => [k, document.getElementById(k)])),
+            canEdit: () => allowed,
+            keeps: (field, text, prior) => !held || !prior.startsWith(held) || text.startsWith(held),
+            kept: field => keptFields.push(field),
+          });
+        }""")
+        self.open("A", findings=self.HELD)
+
+    def caret_at(self, at, field="findings"):
+        self.focus(field)
+        self.page.evaluate("x => editor.element(x.f).setSelectionRange(x.at, x.at)", {"f": field, "at": at})
+
+    def test_keeps_a_typed_edit_inside_the_held_text_is_put_back_and_no_one_hears_of_it(self):
+        self.boot_held()
+        heard = self.page.evaluate("heard")
+        for at, key in ((3, "x"), (len(self.HELD), "Backspace"), (0, "Delete")):
+            with self.subTest(at=at, key=key):
+                self.caret_at(at)
+                self.key(key)
+                self.assert_text(self.HELD)
+        self.page.evaluate("() => editor.element('findings').select()")
+        self.key("Backspace")
+        self.assert_text(self.HELD)
+        self.assertEqual(4, len(self.page.evaluate("keptFields")))
+        self.assertEqual(heard, self.page.evaluate("heard"), "a put-back edit reaches no other listener")
+        self.caret_at(len(self.HELD))
+        self.type(" More")
+        self.assert_text(self.HELD + " More")
+        self.key("Backspace")
+        self.assert_text(self.HELD + " Mor")
+        self.key("Control+z")
+        self.assertTrue(self.read()["findings"].startswith(self.HELD))
+
+    def test_keeps_a_composition_inside_the_held_text_is_put_back_and_one_at_the_end_stays(self):
+        self.boot_held()
+        self.caret_at(3)
+        cdp = self.compose()
+        cdp.send("Input.insertText", {"text": "한"})
+        self.assertFalse(self.page.evaluate("editor.isComposing()"))
+        self.assert_text(self.HELD)
+        self.assertEqual(["findings"], self.page.evaluate("keptFields"))
+        self.caret_at(len(self.HELD))
+        cdp.send("Input.imeSetComposition", {"text": "한", "selectionStart": 1, "selectionEnd": 1})
+        cdp.send("Input.insertText", {"text": "한"})
+        self.assert_text(self.HELD + "한")
+        self.assertEqual(["findings"], self.page.evaluate("keptFields"))
+        cdp.detach()
+
+    def test_keeps_a_write_inside_the_held_text_is_refused_and_one_after_it_is_applied(self):
+        self.boot_held()
+        self.capture("findings", 0, 0)
+        self.assertEqual({"status": "refused", "reason": "kept"}, self.insert("Z "))
+        self.assert_text(self.HELD)
+        self.capture("findings", len(self.HELD), len(self.HELD))
+        self.assertEqual("applied", self.insert(" Z")["status"])
+        self.assert_text(self.HELD + " Z")
+        many = self.page.evaluate("""() => editor.insertMany([
+          { at: editor.capture('findings', { start: 0, end: 0 }), text: 'Y' },
+          { at: editor.capture('conclusion', { start: 0, end: 0 }), text: 'C' }])""")
+        self.assertEqual({"status": "refused", "reason": "kept"}, many)
+        self.assert_text(self.HELD + " Z")
+        self.assert_text("", "conclusion")
+        # Nothing held: every edit goes through as before.
+        self.page.evaluate("() => { held = ''; }")
+        self.caret_at(0)
+        self.key("x")
+        self.assert_text("x" + self.HELD + " Z")
+
 
 # Each mutation changes one product line; unchanged context can disambiguate an anchor.
 # Assertions never require these source spellings.

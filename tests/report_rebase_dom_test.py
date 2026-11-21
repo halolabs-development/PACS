@@ -335,6 +335,8 @@ class ReportRebaseDOMTest(unittest.TestCase):
         settle(self.page, "load({force: true})")
         self.assertEqual(5, self.page.evaluate("snapshot().base"))
         self.assertEqual(["NEW HEAD", "", ""], self.page.evaluate("snapshot().text"))
+        # An Addendum adds something (one with nothing added is not sent): a line written after the approved text.
+        self.page.evaluate("type(['NEW HEAD\\nADDED', '', ''])")
         self.page.evaluate("reply({status: 200, body: {rs: 'A', version: 6}})")
         self.page.evaluate("commit('addendum')")
         self.page.wait_for_function("()=>calls.length===1")
@@ -379,10 +381,12 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertEqual("승인본 v4 · SYN Lee Second", self.page.evaluate("snapshot()")["pane"]["title"])
 
     def test_the_rebase_writes_the_typed_text_onto_exactly_the_version_it_showed(self):
+        """An amendment (the approver's Approve within 24 hours) is re-based with its typed text as it is: its approver may
+        change the middle. (An Addendum's re-base is the next case.)"""
         self.open(draft={"findings": "MY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2, "at": "2026-09-20T01:00"})
         self.page.evaluate("type(['MY ADDENDUM+', 'C', ''])")
         self.page.evaluate("reply(%s)" % json.dumps(stale_body()))
-        self.page.evaluate("commit('addendum')")
+        self.page.evaluate("commit('approve')")
         self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
         self.page.evaluate("reply({status: 200, body: {uid: '%s', baseVersion: 4}})" % UID)
         self.page.click("#stale-rebase")
@@ -416,7 +420,8 @@ class ReportRebaseDOMTest(unittest.TestCase):
         # The head moved again while the pane was open: the newer refusal wins and
         # the older version number must not be the one that gets written.
         self.page.evaluate("reply(%s)" % json.dumps(stale_body(version=6, base=2, findings="EVEN NEWER")))
-        self.page.evaluate("commit('addendum')")
+        # (An amendment this time: its re-base writes the typed text as it is - the version number is what this case is about.)
+        self.page.evaluate("commit('approve')")
         self.page.wait_for_function("()=>$('#stale-head-title').textContent.includes('v6')")
         self.page.evaluate("reply({status: 200, body: {}})")
         self.page.click("#stale-rebase")
@@ -556,6 +561,62 @@ class ReportRebaseDOMTest(unittest.TestCase):
                 self.assertEqual(["MY ADDENDUM", "", ""], value["text"])
                 self.assertEqual(2, value["state"]["draft"]["baseVersion"])
                 self.page.close()
+
+    def test_an_addendum_is_rebased_as_its_addition_after_the_new_approved_text(self):
+        """An Addendum written on v2 and refused because v4 is approved now is re-based as the new approved text with what it
+        added to v2 (v2's text read from the history): the lines v3 and v4 added stay, and the editor and the draft hold
+        exactly that. Nothing is signed until Addendum is pressed again."""
+        self.open(draft={"findings": "V2 BODY\nMY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2,
+                         "at": "2026-09-20T01:00"})
+        self.page.evaluate("type(['V2 BODY\\nMY ADDENDUM+', 'C', ''])")
+        self.page.evaluate("reply(%s)" % json.dumps(stale_body()))
+        self.page.evaluate("commit('addendum')")
+        self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
+        self.page.evaluate("reply(%s)" % json.dumps({"status": 200, "body": [
+            {"version": 4, "action": "addendum", "findings": HEAD_FINDINGS, "conclusion": "", "recommendation": "HEAD R"},
+            {"version": 2, "action": "approve", "findings": "V2 BODY", "conclusion": "", "recommendation": ""}]}))
+        self.page.evaluate("reply({status: 200, body: {uid: '%s', baseVersion: 4}})" % UID)
+        self.page.click("#stale-rebase")
+        self.page.wait_for_function("()=>calls.length===3")
+        calls = self.page.evaluate("snapshot().calls")
+        self.assertEqual(("GET", "/studies/%s/report/versions" % UID), (calls[1]["method"], calls[1]["path"]))
+        rebased = ["SERVER HEAD\n  approved line  \nSECOND\n\nMY ADDENDUM+", "C", "HEAD R"]
+        self.assertEqual(("PUT", 4, rebased), (calls[2]["method"], calls[2]["body"]["baseVersion"],
+                                               [calls[2]["body"][k] for k in ("findings", "conclusion", "recommendation")]))
+        self.page.wait_for_function("()=>!$('#stalemodal').classList.contains('show')")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual(rebased, value["text"], "the editor holds the re-based text")
+        self.assertEqual((4, rebased[0]), (value["state"]["draft"]["baseVersion"], value["state"]["draft"]["findings"]))
+        self.assertEqual(4, value["base"])
+        self.assertFalse(any(c["path"].endswith("/report/commit") for c in calls[1:]), "a re-base signs nothing")
+
+    def test_an_addendum_that_does_not_start_with_its_version_or_cannot_read_it_is_not_rebased(self):
+        """The re-base needs the exact text of the version the draft was written on. When the typed text does not start with
+        it (an approved line was changed) or it cannot be read, nothing is written: the text, the draft and its base stay,
+        and the pane says why."""
+        for label, versions in (("changed", {"status": 200, "body": [
+                                    {"version": 2, "action": "approve", "findings": "V2 BODY", "conclusion": "", "recommendation": ""}]}),
+                                ("unread", {"status": 503, "body": {"message": "SYN unavailable"}}),
+                                ("hidden", {"status": 200, "body": [{"version": 2, "action": "approve", "findings": "",
+                                    "conclusion": "", "recommendation": "", "bodyHidden": "in-progress"}]})):
+            with self.subTest(label):
+                typed = "V2 CHANGED\nMY ADDENDUM" if label == "changed" else "V2 BODY\nMY ADDENDUM"
+                self.open(draft={"findings": typed, "conclusion": "", "recommendation": "", "baseVersion": 2,
+                                 "at": "2026-09-20T01:00"})
+                self.page.evaluate("type([%s, '', ''])" % json.dumps(typed + "+"))
+                self.page.evaluate("reply(%s)" % json.dumps(stale_body()))
+                self.page.evaluate("commit('addendum')")
+                self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
+                self.page.evaluate("reply(%s)" % json.dumps(versions))
+                self.page.click("#stale-rebase")
+                self.page.wait_for_function("()=>calls.length===2 && $('#stale-status').textContent.includes('기준을 다시 잡지 않았습니다')")
+                value = self.page.evaluate("snapshot()")
+                self.assertTrue(value["shown"])
+                self.assertIn("추가기재는 승인본에 덧붙이기만" if label == "changed" else "v2의 글을 읽지 못해", value["pane"]["status"])
+                self.assertEqual([typed + "+", "", ""], value["text"])
+                self.assertEqual((2, typed + "+"), (value["state"]["draft"]["baseVersion"], value["state"]["draft"]["findings"]))
+                self.page.close()
+        self.page = self.browser.new_page()
 
 
 if __name__ == "__main__":
