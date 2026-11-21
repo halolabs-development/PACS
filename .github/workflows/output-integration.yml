@@ -52,6 +52,7 @@ on:
           - viewer-overlay-units
           - suspended-reader-pickers
           - in-app-unread
+          - clinician-reading-request
 
 permissions:
   contents: read
@@ -145,6 +146,7 @@ jobs:
             tests/e2e/artifacts/image-report-ci/
             tests/e2e/artifacts/auto-save-view-ci/
             tests/e2e/artifacts/in-app-unread-ci/
+            tests/e2e/artifacts/clinician-reading-request-ci/
             tests/e2e/artifacts/mark-autosave-ci/
             tests/e2e/artifacts/screen-language-ci/
             tests/e2e/artifacts/login-error-page-ci/

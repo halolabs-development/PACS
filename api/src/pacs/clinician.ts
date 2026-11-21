@@ -23,6 +23,7 @@ import { versionDrawings, drawingEntries } from '../image-report';
 import { versionWriterName } from '../member-rights';
 import { keptVersionTime } from './values';
 import { reportBodyLock, storedVersionReadable } from '../report-visibility';
+import { clinicianReadingRequests } from './reading-request';
 
 /**
  * The state table (report-visibility.ts) on the clinician list and timeline rows: a clinician, like any reader
@@ -72,6 +73,10 @@ export class PacsClinician {
     const body = clinicianList(list, current);
     // Merge Exam: a study reported as one exam with others says so (the exam's studies and whether it is merged now).
     for (const row of body.studies as any[]) { const exam = exams.get(row.uid); if (exam) row.exam = exam; }
+    // Reading request (pacs/reading-request.ts): the study's latest request and whether this caller may ask now, judged on the
+    // row the study opens on (the openUid rule). Its own read: the request is not part of the report state the list pins.
+    const requests = await clinicianReadingRequests(this.prisma, this.studyAccess, c, uids);
+    for (const row of body.studies as any[]) Object.assign(row, requests.get(row.uid) ?? { readingRequest: null, readingRequestable: false });
     await this.markUnavailable(c, body.studies as any[]);
     return new LocalReadResponse(body, [
       ...body.studies.flatMap((row, index) => {

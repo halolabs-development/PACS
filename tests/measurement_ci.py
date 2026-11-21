@@ -699,6 +699,15 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_in_app_unread.py', 'InAppUnreadE2E', 'ci-in-app-unread'),),
     },
+    'clinician-reading-request': {
+        'out': ROOT / 'tests/e2e/artifacts/clinician-reading-request-ci',
+        'project_prefix': 'kin-clinician-reading-request-ci-',
+        # Dispatch only (Focused integration): a clinician's reading request on PostgreSQL through the real guard and services -
+        # one per study (two presses on two connections), the refusals, the approval that closes it (and a Reset that keeps it
+        # closed), a merged exam's base row and an approval racing a press. API level, one class.
+        'suite_timeout': 900,
+        'suites': (('e2e/test_reading_request.py', 'ReadingRequestE2E', 'ci-clinician-reading-request'),),
+    },
     'mark-autosave': {
         'out': ROOT / 'tests/e2e/artifacts/mark-autosave-ci',
         'project_prefix': 'kin-mark-autosave-ci-',

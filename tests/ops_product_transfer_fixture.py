@@ -159,7 +159,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261121120000_unread_seen/migration.sql',
               'api/prisma/migrations/20261121130000_access_alerts/migration.sql',
               'api/prisma/migrations/20261121160000_report_version_signer_name/migration.sql',
-              'api/prisma/migrations/20261121220000_patient_consent_record/migration.sql']
+              'api/prisma/migrations/20261121220000_patient_consent_record/migration.sql',
+              'api/prisma/migrations/20261122120000_reading_request/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -313,6 +314,9 @@ def expected_rows(uid):
         # Worklist Referred: a study registered directly and then announced. The first Gateway announce time and the closed
         # mark are values of the row (written once, together), kept as they are: a restore never re-opens the row.
         referredAt=STAMP, referredOpen=False,
+        # Reading request: a clinician's request closed by the approval, kept as it is (a restore never re-opens it).
+        readingRequestAt=STAMP, readingRequestBySub='SYNTHETIC-clinician-sub', readingRequestBy='SYNTHETIC-clinician',
+        readingRequestByName='SYNTHETIC Clinician', readingRequestClosedAt=STAMP,
         # S7-U5: the draft epoch is a value of the row (rotated by a forced release), not something a restore may re-draw.
         draftEpoch='00000000-0000-4000-8000-0000000000d1', reportUnit='disposal:00000000-0000-4000-8000-0000000000d2',
         updatedAt=STAMP, createdAt=STAMP)]

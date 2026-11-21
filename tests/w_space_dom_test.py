@@ -918,14 +918,14 @@ class WSpaceDOM(unittest.TestCase):
                 expect(editor).to_be_hidden()
                 expect(page.locator('#toolbar-view')).to_have_js_property('open', False)
                 after = [t.split('\n')[0].strip() for t in self.column_order(page)]
-                self.assertEqual(['RS', 'No', 'Confirm', 'StudyDate', 'Referred', 'ID', 'StudyDesc', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
+                self.assertEqual(['RS', 'No', 'Confirm', 'Read Req', 'StudyDate', 'Referred', 'ID', 'StudyDesc', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
                                   'Modality', 'PF'], after)
                 for name in hide:
                     self.assertNotIn(name, after)
                 stored = page.evaluate('(key) => JSON.parse(localStorage.getItem(key))', COLUMNS_KEY)
                 part = stored['modes']['Radiology']
                 self.assertEqual(['rs', 'no'], part['order'][:2])
-                shown_keys = {'rs', 'no', 'confirm', 'date', 'referredAt', 'id', 'modality', 'name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass', 'desc', 'pf'}
+                shown_keys = {'rs', 'no', 'confirm', 'readReq', 'date', 'referredAt', 'id', 'modality', 'name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass', 'desc', 'pf'}
                 self.assertEqual(set(part['order']) - shown_keys, set(part['hidden']))
                 self.assertTrue({'assignedReader', 'age', 'institutionName'} <= set(part['hidden']))
                 # Reload: order and hidden columns kept; sorting and the Name filter behave as before.
