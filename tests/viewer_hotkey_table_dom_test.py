@@ -43,14 +43,19 @@ class ViewerHotkeyTableDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, leader=True):
+    def open(self, leader=True, viewer_window=False):
         context = self.browser.new_context()
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.route(ORIGIN + "/", lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
         page.goto(ORIGIN + "/")
         page.add_script_tag(path=str(HPACS / "viewer-ux-shortcuts.js"))
-        page.evaluate("""leader => {
+        if viewer_window:
+            # The work page's chords as a Viewer window judges them (config/ohif/viewer-ux.js), with the window's patient ID
+            # copy (viewer-tech-note.js) installed or not.
+            page.add_script_tag(path=str(ROOT / "config" / "ohif" / "viewer-ux.js"))
+            page.add_script_tag(path=str(HPACS / "viewer-tech-note.js"))
+        page.evaluate("""([leader, viewerWindow]) => {
           window.kinCTPresets = { names: ['Soft tissue', 'Lung', 'Liver', 'Bone', 'Brain'] };
           window.synRecorded = []; window.synInvoked = [];
           // The viewer's recorder and hotkeys listen on the document (Mousetrap).
@@ -60,8 +65,9 @@ class ViewerHotkeyTableDOMTest(unittest.TestCase):
           window.synKeys = KinViewerUXShortcuts.mount({
             getBindings: () => ({ Length: 'l', RectangleROI: 'r', Zoom: 'z', flipHorizontal: 'shift+h', Probe: '3' }),
             invoke: id => { synInvoked.push(id); return true; }, allowed: () => true,
-            workspace: ({ ctrlKey, altKey, code }) => ctrlKey && altKey && ['Digit2', 'KeyC'].includes(code) });
-        }""", leader)
+            workspace: viewerWindow ? kinViewerWorkspaceClaims
+              : ({ ctrlKey, altKey, code }) => ctrlKey && altKey && ['Digit2', 'KeyC'].includes(code) });
+        }""", [leader, viewer_window])
         self.addCleanup(context.close)
         self.addCleanup(lambda: self.assertEqual([], errors))
         return page
@@ -119,6 +125,31 @@ class ViewerHotkeyTableDOMTest(unittest.TestCase):
         page.evaluate(MODAL, [['Rotate Right', 'r']])
         self.assertIsNone(dict(self.notes(page))['Rotate Right'])
         self.assertIsNone(page.evaluate("KinViewerUXShortcuts.claims('r')"))
+
+    def test_04_patient_id_copy_is_reserved_only_while_the_window_has_it(self):
+        """Control+Alt+C is the Viewer window's patient ID copy only while that copy is installed (a radiologist's or a
+        technician's window). A clinician's read-only window has none: there the table neither marks nor refuses it, and
+        it can be put on another row."""
+        page = self.open(viewer_window=True)
+        rows = [['Copy', 'ctrl+alt+c'], ['Next Series', 'pagedown']]
+        page.evaluate(MODAL, rows)
+        self.assertIsNone(dict(self.notes(page))['Copy'])
+        page.focus('[aria-label="Next Series"]')
+        page.keyboard.press('Control+Alt+c')
+        self.assertEqual(['c'], page.evaluate("synRecorded"))
+        # The same table in a window that has the copy (it is installed when the window's writer is confirmed).
+        page.evaluate("""() => { document.querySelectorAll('.ReactModal__Portal').forEach(p => p.remove());
+          window.synCopy = kinCreateViewerPatientCopy({ services: {}, host: document.body, selected: () => null,
+            owner: () => ['syn-sub', 'SYN-INST'], live: () => true, studies: [] }); }""")
+        page.evaluate(MODAL, rows)
+        self.assertIn('작업 화면 단축키', dict(self.notes(page))['Copy'])
+        page.focus('[aria-label="Next Series"]')
+        page.keyboard.press('Control+Alt+c')
+        self.assertEqual(['c'], page.evaluate("synRecorded"))
+        # Its window ends the copy: the key is the viewer's again.
+        page.evaluate("""() => { synCopy.dispose(); document.querySelectorAll('.ReactModal__Portal').forEach(p => p.remove()); }""")
+        page.evaluate(MODAL, rows)
+        self.assertIsNone(dict(self.notes(page))['Copy'])
 
 
 if __name__ == "__main__":

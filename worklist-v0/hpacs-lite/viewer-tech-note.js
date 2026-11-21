@@ -99,12 +99,17 @@ window.kinCreateViewerPatientCopy=function(options){
     document.addEventListener('contextmenu',openCopyMenu);
     restoreCopyMenu=()=>{copyGesture=null;document.removeEventListener('mousedown',copyMouseDown,true);document.removeEventListener('mousemove',copyMouseMove,true);document.removeEventListener('mouseup',copyMouseUp,true);window.removeEventListener('blur',clearCopyGesture);document.removeEventListener('contextmenu',openCopyMenu);if(copyMenuOpen)services.uiDialogService?.dismiss({id:'context-menu'});copyMenuOpen=false;};
 
-  const key=e=>{if(e.defaultPrevented||e.repeat||e.isComposing||e.getModifierState('AltGraph')||!e.ctrlKey||!e.altKey||e.shiftKey||e.metaKey||e.code!=='KeyC'||blocked()||e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'))return;e.preventDefault();e.stopImmediatePropagation();copyPatientId();};
-  window.addEventListener('keydown',key,true);
+  // Ctrl+Alt+C while this copy is installed; the viewer's hotkey table asks the same (config/ohif/viewer-ux.js).
+  const chord=e=>!!e&&e.ctrlKey&&e.altKey&&!e.shiftKey&&!e.metaKey&&e.code==='KeyC';
+  // A key the copy used stays its own until it is let go: its repeats run nothing (as viewer-ux-shortcuts.js holds keys).
+  const held=new Set();
+  const key=e=>{if(e.repeat&&held.has(e.code)){e.preventDefault();e.stopImmediatePropagation();return;}held.delete(e.code);if(e.defaultPrevented||e.repeat||e.isComposing||e.getModifierState('AltGraph')||!chord(e)||blocked()||e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'))return;e.preventDefault();e.stopImmediatePropagation();held.add(e.code);copyPatientId();};
+  const release=e=>{held.delete(e.code);};
+  window.addEventListener('keydown',key,true);window.addEventListener('keyup',release,true);window.kinViewerPatientCopyChord=chord;
   const timer=setInterval(refreshCopy,500);
   window.addEventListener('pagehide',end);
   try{channel = window.kinViewerOnEnd(() => end());}catch(_){}
-  function end(){if(ended)return;ended=true;identity?.dispose();copyTracked=false;clearInterval(timer);restoreCopyMenu();window.removeEventListener('keydown',key,true);window.removeEventListener('pagehide',end);if(copyStackEvent)document.removeEventListener(copyStackEvent,copyChanged,true);for(const event of volumeEvents)document.removeEventListener(event,volumeChanged,true);copySubscriptions.forEach(s=>s.unsubscribe());channel?.close();refreshCopy();}
+  function end(){if(ended)return;ended=true;identity?.dispose();copyTracked=false;clearInterval(timer);restoreCopyMenu();window.removeEventListener('keydown',key,true);window.removeEventListener('keyup',release,true);if(window.kinViewerPatientCopyChord===chord)delete window.kinViewerPatientCopyChord;window.removeEventListener('pagehide',end);if(copyStackEvent)document.removeEventListener(copyStackEvent,copyChanged,true);for(const event of volumeEvents)document.removeEventListener(event,volumeChanged,true);copySubscriptions.forEach(s=>s.unsubscribe());channel?.close();refreshCopy();}
   refreshCopy();return {refresh:refreshCopy,tracked:()=>copyTracked,end,dispose(){end();toolBar.remove();}};
 };
 
@@ -567,19 +572,24 @@ window.kinViewerTechNote=function(services,session=null){
       return e.altKey&&e.code==='Digit8'?'Digit8':shortcutActions[window.KinWorkspaceShortcuts.action(shortcutMap,e)]||null;
     };
     window.kinViewerWorkspaceChord=chordOf;
+    // A chord this window ran stays its own until its key is let go: its repeats run nothing, here or in the viewer.
+    const held=new Set();
     const key=e=>{
+      if(e.repeat&&held.has(e.code)){e.preventDefault();e.stopImmediatePropagation();return;}
+      held.delete(e.code);
       if(e.defaultPrevented||e.repeat||e.isComposing||e.getModifierState('AltGraph')||document.querySelector('dialog[open],[role="dialog"][aria-modal="true"],.modal.show'))return;
       const code=chordOf(e);
       if(!code)return;
       // Once, before the viewer's own hotkeys (they listen on the document): this window's chord runs nothing else.
-      e.preventDefault();e.stopImmediatePropagation();if(code==='Digit6')open();else focusTool(code);
+      e.preventDefault();e.stopImmediatePropagation();held.add(e.code);if(code==='Digit6')open();else focusTool(code);
     };
-    button.onclick=open;window.addEventListener('keydown',key,true);
+    const release=e=>{held.delete(e.code);};
+    button.onclick=open;window.addEventListener('keydown',key,true);window.addEventListener('keyup',release,true);
     window.addEventListener('pagehide',end);
     try{channel = window.kinViewerOnEnd(() => end());}catch(_){}
     const offEnd=session?.onEnd(end)||(()=>{});
     const timer=setInterval(()=>{if(!live())end();else refreshReturnSelection();},500);
-    stop=()=>{if(window.kinViewerTechNoteWorkspaceState===recoveryState)delete window.kinViewerTechNoteWorkspaceState;offEnd();end();dock?.dispose();dock=null;clearInterval(timer);window.removeEventListener('keydown',key,true);if(window.kinViewerWorkspaceChord===chordOf)delete window.kinViewerWorkspaceChord;window.removeEventListener('pagehide',end);patientCopy.dispose();channel?.close();returnStatus.remove();panel.remove();};
+    stop=()=>{if(window.kinViewerTechNoteWorkspaceState===recoveryState)delete window.kinViewerTechNoteWorkspaceState;offEnd();end();dock?.dispose();dock=null;clearInterval(timer);window.removeEventListener('keydown',key,true);window.removeEventListener('keyup',release,true);if(window.kinViewerWorkspaceChord===chordOf)delete window.kinViewerWorkspaceChord;window.removeEventListener('pagehide',end);patientCopy.dispose();channel?.close();returnStatus.remove();panel.remove();};
     async function connect(){
       if(!live()||busy)return;
       const restore=document.activeElement===retry;busy=true;refresh();status.textContent='메모 연결 확인 중…';
