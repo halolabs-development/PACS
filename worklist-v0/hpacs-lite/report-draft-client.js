@@ -335,9 +335,18 @@
       const envelope = answer.incomplete ? null : envelopeOf(answer.body);
       if (!envelope || envelope.uid !== uid || !sameOwner(envelope.owner, owner)) return { outcome: 'unknown', answer, expected };
       // 서버가 기록했다고 답한 원문이 보낸 것과 전부 같아야 한다. 삽입·구조화는 서버가 지은 새 id가 목록에 더해진다.
-      const inserted = operation && operation.insert ? answer.body.inserted : null;
+      // Insert Selected into Report sends `insert` as an array: the answer must name one receipt per element, in order, each a new
+      // id for the field it was sent for. A partial or reordered answer is not taken as saved.
+      const many = !!operation && Array.isArray(operation.insert);
+      const insertedAll = many ? answer.body.insertedAll : null;
+      if (many && !(Array.isArray(insertedAll) && insertedAll.length === operation.insert.length &&
+          insertedAll.every((r, i) => r && typeof r.cid === 'string' && r.cid && r.field === operation.insert[i].field &&
+            (r.measurementRecorded === true) === (typeof operation.insert[i].measurementLine === 'string')) &&
+          new Set(insertedAll.map(r => r.cid)).size === insertedAll.length && !snapshot.citations.some(cid => insertedAll.some(r => r.cid === cid))))
+        return { outcome: 'unknown', answer, expected };
+      const inserted = operation && operation.insert && !many ? answer.body.inserted : null;
       const applied = operation && operation.structure ? answer.body.applied : null;
-      if (operation && operation.insert && !(inserted && typeof inserted.cid === 'string')) return { outcome: 'unknown', answer, expected };
+      if (operation && operation.insert && !many && !(inserted && typeof inserted.cid === 'string')) return { outcome: 'unknown', answer, expected };
       if (operation && operation.structure && !(applied && typeof applied.sid === 'string')) return { outcome: 'unknown', answer, expected };
       // Image Report: attach / remove answer the draft's drawing ids after the operation; a drawing alone keeps the draft.
       const drawing = !!operation && (operation.drawing !== undefined || operation.removeDrawing !== undefined);
@@ -350,7 +359,7 @@
       const replaced = operation && operation.structure ? operation.structure.replacesSid : undefined;
       const stored = (drawing ? !envelope.present : emptyDraft(snapshot)) ? null : {
         ...snapshot,
-        citations: inserted ? [...snapshot.citations, inserted.cid] : snapshot.citations,
+        citations: inserted ? [...snapshot.citations, inserted.cid] : many ? [...snapshot.citations, ...insertedAll.map(r => r.cid)] : snapshot.citations,
         structured: applied ? [...snapshot.structured.filter(sid => sid !== replaced), applied.sid] : snapshot.structured,
         ...(drawing && drawn.ids !== null ? { drawings: drawn.ids } : {}),
       };

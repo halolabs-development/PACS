@@ -48,7 +48,7 @@ window.kinViewerFindings = function (services, model) {
     const host = document.querySelector('#kin-viewer-history');
     if (!host) return false;
     // A section of another record-format version than its model is never mounted beside it.
-    if (model.SCHEMA !== 3) {
+    if (model.SCHEMA !== 4) {
       const refused = document.createElement('p'); refused.id = 'kin-viewer-findings'; refused.textContent = model.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.';
       host.append(refused); stop = () => { refused.remove(); stop = () => {}; }; return false;
     }
@@ -77,7 +77,8 @@ window.kinViewerFindings = function (services, model) {
       '비교 검사를 볼 수 없게 되면 그 검사를 연결한 소견은 목록에서 빠집니다. 소견 저장 한도에는 이 화면에 표시되지 않는 소견도 포함됩니다.');
     pairNote.id = 'kin-viewer-findings-pair-note'; pairNote.hidden = !store.pairOf();
     const pairStatus = text(panel, 'p', ''); pairStatus.id = 'kin-viewer-findings-comparison'; pairStatus.hidden = true;
-    const actions = document.createElement('div'), list = document.createElement('div'); panel.append(actions, list);
+    // markRow holds New Finding from Mark on its own line (never rebuilt by a render, so an open choice list stays open).
+    const actions = document.createElement('div'), markRow = document.createElement('div'), list = document.createElement('div'); panel.append(actions, markRow, list);
     host.append(panel);
     const button = (parent, label, run, disabled = false) => {
       const b = text(parent, 'button', label); b.type = 'button'; b.disabled = disabled;
@@ -105,8 +106,16 @@ window.kinViewerFindings = function (services, model) {
       const shown = describe(head) + values(head, own ? 'live-head' : 'server-copy'); pairCopies.set(key, shown); return shown;
     };
     const rows = new Map();
-    const CHARACTERISTICS_HELP = '사용자가 직접 입력하는 병변 특성입니다. 정해진 용어나 항목은 없으며 판독문에 자동 반영하지 않습니다.';
-    const LESION_LOCATION_HELP = '사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). 영상의 Series/Image 번호는 연결한 표식이 가집니다.';
+    const CHARACTERISTICS_HELP = '사용자가 직접 입력하는 병변 특성입니다. Pick Characteristics의 항목을 누르면 칸 끝에 이어 붙고, 붙인 글도 고칠 수 있습니다. 판독문에는 Insert into Report로 넣을 때만 들어갑니다.';
+    const LESION_LOCATION_HELP = '사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). Pick Location의 항목을 누르면 칸 끝에 이어 붙습니다. 영상의 Series/Image 번호는 연결한 표식이 가집니다.';
+    const SIZE_HELP = '사용자가 직접 입력하는 병변 크기입니다(예: 8mm, 12 x 8 mm). 쓴 그대로 저장하며 환산하지 않습니다. 연결한 표식의 측정값은 판독문에 넣을 때 Include Measurements 줄이 따로 가져갑니다.';
+    const QUICK_HELP = '한 줄로 쓰고 Fill Fields를 누르면 크기(숫자+mm/cm 하나)와 Pick 목록의 위치·특성 용어를 칸으로 나누고 나머지를 제목으로 둡니다. 비어 있는 칸만 채우며 서버에는 Save를 눌러야 저장됩니다.';
+    const QUICK_REFUSED = {
+      empty: '나눌 글이 없습니다.',
+      shape: '한 줄, 200자 이하의 글만 나눕니다. 칸에 직접 입력하세요.',
+      ambiguous: '부정·범위·비교·대략 같은 표현이 있어 칸을 나누지 않았습니다. 뜻이 바뀌지 않도록 칸에 직접 입력하세요.',
+      sizes: '크기 표기가 둘 이상이라 칸을 나누지 않았습니다. 칸에 직접 입력하세요.',
+    };
     const LOCATION_HELP = '저장 화면(Saved View)은 저장 작업의 영상 상태 전체를, 3D 표식(3D Point)은 MPR 3D Annotations 작업에 저장한 점 하나를 연결합니다. ' +
       '3D 표식은 그 작업을 복원하거나 저장해 지금 화면에 표시한 뒤 고르세요. 표식을 바꾸면 Save New Job으로 새 작업을 저장해야 하며, 검사별 저장 작업은 200개까지입니다. ' +
       '비교 검사를 판독 대상으로 연 화면에서 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요.';
@@ -238,7 +247,43 @@ window.kinViewerFindings = function (services, model) {
     function editor(e) {
       let box = editors.get(e);
       if (!box) {
-        const host = document.createElement('div');
+        const host = document.createElement('div'), picks = [];
+        // Quick Entry (version 4): one line split into the fields below by the model's single rule; only empty fields are filled.
+        const quick = field(host, 'Quick Entry', 'input', '', model.LIMITS.title, () => {}, false);
+        quick.setAttribute('aria-label', 'Finding Quick Entry'); quick.translate = false;
+        const quickHelp = text(host, 'p', QUICK_HELP); quickHelp.id = 'kin-finding-quick-help-' + crypto.randomUUID();
+        quick.setAttribute('aria-describedby', quickHelp.id);
+        const quickNote = text(host, 'p', ''); quickNote.dataset.kinQuickEntry = ''; quickNote.setAttribute('aria-live', 'polite');
+        const fill = button(host, 'Fill Fields', () => {
+          const parsed = model.quickEntry(quick.value);
+          if (!parsed.split) { quickNote.textContent = QUICK_REFUSED[parsed.reason] || QUICK_REFUSED.shape; return; }
+          const filled = [], kept = [];
+          for (const [key, node, name, limit] of [['title', title, 'Title', model.LIMITS.title], ['lesionLocation', where, 'Location', model.LESION_LOCATION],
+            ['size', size, 'Size', model.SIZE], ['characteristics', traits, 'Characteristics', model.CHARACTERISTICS]]) {
+            const value = parsed[key];
+            if (!value) continue;
+            const current = typeof e.draft[key] === 'string' ? e.draft[key] : '';
+            if (current.trim() || [...value].length > limit) { kept.push(name); continue; }
+            store.updateDraft(e, { [key]: value });
+            if (e.draft[key] === value) { node.value = value; filled.push(name); } else kept.push(name);
+          }
+          quickNote.textContent = (filled.length ? '채운 칸: ' + filled.join(', ') : '채운 칸이 없습니다') +
+            (kept.length ? ' · 이미 쓴 칸이나 길이 한도로 그대로 둔 칸: ' + kept.join(', ') : '') + ' · 저장하려면 Save를 누르세요.';
+        });
+        picks.push(fill);
+        // A fixed pick list under a field: a press appends the term to that field's own text (the reader may change it after).
+        const pickList = (summary, terms, node, key, limit, name) => {
+          const list = text(host, 'details', ''); text(list, 'summary', summary);
+          for (const term of terms) {
+            const pick = button(list, term, () => {
+              const next = model.appendTerm(e.draft[key], term);
+              if ([...next].length > limit) return;
+              store.updateDraft(e, { [key]: next });
+              if (e.draft[key] === next) node.value = next;
+            });
+            pick.setAttribute('aria-label', name + ' ' + term); pick.translate = false; picks.push(pick);
+          }
+        };
         const title = field(host, 'Finding Title', 'input', e.draft.title, model.LIMITS.title, v => store.updateDraft(e, { title: v }), false);
         // Location (version 3): the reader's own words for where the lesion is, the same code-point limit rule as Characteristics.
         const where = field(host, 'Location (병변 위치)', 'input', typeof e.draft.lesionLocation === 'string' ? e.draft.lesionLocation : '',
@@ -246,23 +291,32 @@ window.kinViewerFindings = function (services, model) {
         where.setAttribute('aria-label', 'Finding Location'); where.translate = false;
         const whereHelp = text(host, 'p', LESION_LOCATION_HELP); whereHelp.id = 'kin-finding-location-help-' + crypto.randomUUID();
         where.setAttribute('aria-describedby', whereHelp.id);
+        pickList('Pick Location', model.LOCATION_TERMS, where, 'lesionLocation', model.LESION_LOCATION, 'Add Location');
+        // Size (version 4): the reader's own words for the lesion size, kept as typed.
+        const size = field(host, 'Size (크기)', 'input', typeof e.draft.size === 'string' ? e.draft.size : '', model.SIZE, v => store.updateDraft(e, { size: v }), false);
+        size.setAttribute('aria-label', 'Finding Size'); size.translate = false;
+        const sizeHelp = text(host, 'p', SIZE_HELP); sizeHelp.id = 'kin-finding-size-help-' + crypto.randomUUID();
+        size.setAttribute('aria-describedby', sizeHelp.id);
         // Characteristics: native maxLength counts UTF-16 units (astral characters stop earlier); the saved limit is code points.
         const traits = field(host, 'Characteristics (병변 특성)', 'textarea', typeof e.draft.characteristics === 'string' ? e.draft.characteristics : '',
           model.CHARACTERISTICS, v => store.updateDraft(e, { characteristics: v }), false);
         traits.setAttribute('aria-label', 'Finding Characteristics');
         const help = text(host, 'p', CHARACTERISTICS_HELP); help.id = 'kin-finding-characteristics-help-' + crypto.randomUUID();
         traits.setAttribute('aria-describedby', help.id);
+        pickList('Pick Characteristics', model.CHARACTERISTIC_TERMS, traits, 'characteristics', model.CHARACTERISTICS, 'Add Characteristic');
         const body = field(host, 'Finding Text', 'textarea', e.draft.text, model.LIMITS.text, v => store.updateDraft(e, { text: v }), false);
-        box = { host, fields: [[title, 'title'], [where, 'lesionLocation'], [traits, 'characteristics'], [body, 'text']] };
+        box = { host, picks, fields: [[quick, null], [title, 'title'], [where, 'lesionLocation'], [size, 'size'], [traits, 'characteristics'], [body, 'text']] };
         editors.set(e, box);
       }
       let active = null; try { active = document.activeElement; } catch (_) { active = null; }
       for (const [node, key] of box.fields) {
         const value = typeof e.draft[key] === 'string' ? e.draft[key] : '';
         // A draft changed elsewhere (a restored copy, Use Latest) is shown; the field being typed into is never overwritten.
-        if (node !== active && node.value !== value) node.value = value;
+        // Quick Entry (no key) is this editor's own line and never part of the draft.
+        if (key && node !== active && node.value !== value) node.value = value;
         node.disabled = !!(e.busy || e.pending);
       }
+      for (const pick of box.picks) pick.disabled = !!(e.busy || e.pending);
       return box.host;
     }
     function row(e) {
@@ -289,8 +343,10 @@ window.kinViewerFindings = function (services, model) {
         text(el, 'p', e.head ? e.head.item.title : e.draft.title).style.fontWeight = '600';
         const body = text(el, 'p', e.head ? e.head.item.text : e.draft.text); body.style.whiteSpace = 'pre-wrap';
         // Version 1 records show no characteristics line (nor version 1-2 a location line); old prose is never relabelled.
-        const where = e.head && e.head.item.schemaVersion === 3 ? e.head.item.lesionLocation : '';
+        const where = e.head && e.head.item.schemaVersion >= 3 ? e.head.item.lesionLocation : '';
         if (where) { const line = text(el, 'p', 'Location (병변 위치): ' + where); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionLocation = ''; }
+        const size = e.head && e.head.item.schemaVersion >= 4 ? e.head.item.size : '';
+        if (size) { const line = text(el, 'p', 'Size (크기): ' + size); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionSize = ''; }
         const traits = e.head && e.head.item.schemaVersion >= 2 ? e.head.item.characteristics : '';
         if (traits) { const line = text(el, 'p', 'Characteristics (병변 특성): ' + traits); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinCharacteristics = ''; }
       }
@@ -342,7 +398,8 @@ window.kinViewerFindings = function (services, model) {
             // Each revision's own text, characteristics (version 2) and the kinds it linked, counted only.
             const detail = text(history, 'div', ''); detail.dataset.kinRevision = String(r.revision); detail.style.marginLeft = '8px';
             if (r.item.text) text(detail, 'p', '본문: ' + r.item.text).style.whiteSpace = 'pre-wrap';
-            if (r.item.schemaVersion === 3) text(detail, 'p', r.item.lesionLocation ? 'Location (병변 위치): ' + r.item.lesionLocation : 'Location (병변 위치): 없음').style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 3) text(detail, 'p', r.item.lesionLocation ? 'Location (병변 위치): ' + r.item.lesionLocation : 'Location (병변 위치): 없음').style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 4) text(detail, 'p', r.item.size ? 'Size (크기): ' + r.item.size : 'Size (크기): 없음').style.whiteSpace = 'pre-wrap';
             if (r.item.schemaVersion >= 2) text(detail, 'p', r.item.characteristics ? 'Characteristics (병변 특성): ' + r.item.characteristics : 'Characteristics (병변 특성): 없음').style.whiteSpace = 'pre-wrap';
             const count = kind => r.item.sources.filter(kind).length;
             text(detail, 'p', '연결: 2D 표식 ' + count(x => !model.isJob(x)) + '개 · Saved View ' + count(x => model.isJob(x) && !x.mark) + '개 · 3D Point ' + count(x => model.isJob(x) && !!x.mark) + '개 · v' + (r.item.schemaVersion || 1));
@@ -353,6 +410,43 @@ window.kinViewerFindings = function (services, model) {
         await more();
       }, blocked); if (kept) el.append(kept.node); toggle.setAttribute('aria-expanded', String(!!kept)); }
     }
+    /* New Finding from Mark: the reader picks one saved mark of this study and starts a finding linked to it. The choice is kept
+     * across renders by mark and revision; a mark that changed revision, was hidden or is being edited drops out of the choice, and
+     * the press checks the same again (newDraftFrom), so no draft is made with another mark or revision than the one picked. */
+    const fromMark = document.createElement('span'); fromMark.dataset.kinFromMark = '';
+    const markChoice = document.createElement('select'); markChoice.setAttribute('aria-label', 'From Saved Mark');
+    markChoice.style.cssText = 'margin:3px;max-width:100%;background:#0c1423;color:#fff;border:1px solid #657c9f';
+    const markNote = document.createElement('span'); markNote.setAttribute('aria-live', 'polite');
+    fromMark.append(markChoice);
+    // The mark and the revision the reader picked, as shown when they picked it.
+    let picked = null, offered = new Map();
+    markChoice.addEventListener('change', () => {
+      picked = markChoice.value && offered.has(markChoice.value) ? { id: markChoice.value, revision: offered.get(markChoice.value) } : null;
+      markNote.textContent = '';
+    });
+    const fromMarkButton = button(fromMark, 'New Finding from Mark', () => {
+      if (!picked) { markNote.textContent = ' 먼저 표식을 고르세요.'; return; }
+      const made = store.newDraftFrom(picked.id, picked.revision);
+      markNote.textContent = made ? '' : ' 고른 표식이 그 사이 바뀌었거나 숨겨졌거나 수정 중이라 소견을 만들지 않았습니다. 다시 고르세요.';
+    });
+    fromMark.append(markNote);
+    markRow.append(fromMark);
+    function renderFromMark(s) {
+      const heads = store.anchorLive() ? [...s.heads.values()].filter(h => !h.hidden && !h.working) : [];
+      const wanted = [''].concat(heads.map(h => h.id + ':' + h.revision)).join('|');
+      if (markChoice.dataset.options !== wanted) {
+        markChoice.dataset.options = wanted;
+        offered = new Map(heads.map(h => [h.id, h.revision]));
+        const none = document.createElement('option'); none.value = ''; none.textContent = '— 저장 표식 선택 —';
+        const options = heads.map(h => { const o = document.createElement('option'); o.value = h.id; o.textContent = describe(h) + values(h, 'live-head'); return o; });
+        markChoice.replaceChildren(none, ...options);
+        // A picked mark stays picked only while it is offered at the same revision; otherwise the reader picks again.
+        if (picked && offered.get(picked.id) !== picked.revision) picked = null;
+        markChoice.value = picked ? picked.id : '';
+      }
+      const off = s.ended || s.suspended || !store.writable();
+      markChoice.disabled = off || !heads.length; fromMarkButton.disabled = off || !heads.length;
+    }
     function render() {
       const s = store.state();
       status.textContent = s.status;
@@ -361,6 +455,7 @@ window.kinViewerFindings = function (services, model) {
       // A distinct accessible name: the Measurements panel already owns the exact name 'Refresh'.
       button(actions, 'Reload Findings', () => store.load(), s.ended || !s.scope);
       button(actions, 'New Finding', () => store.newDraft(), s.ended || s.suspended || !store.writable());
+      renderFromMark(s);
       if (!s.ended && !s.suspended && !store.writable()) text(actions, 'span', ' Read-only');
       // Held drafts are named by count and study only, so the unsaved-work guards never fire with nothing to resolve.
       const kept = store.held();

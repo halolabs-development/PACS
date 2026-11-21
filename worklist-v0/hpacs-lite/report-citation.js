@@ -142,14 +142,35 @@ window.KinReportCitation = (function () {
    */
   function assembleBlock(source) {
     const blocks = [];
+    // 판 4의 크기는 위치 다음·특성 앞에 정확히 `크기: `로. 빈 크기는 판 3과 같은 바이트다.
     for (const [value, prefix] of [[source && source.title, ''], [source && source.text, ''],
-                                   [source && source.lesionLocation, '위치: '], [source && source.characteristics, '특성: ']]) {
+                                   [source && source.lesionLocation, '위치: '], [source && source.size, '크기: '],
+                                   [source && source.characteristics, '특성: ']]) {
       if (value === null || value === undefined) continue;
       const normalized = toLf(value);
       if (!normalized.length) continue;
       blocks.push(prefix + normalized);
     }
     const joined = blocks.join('\n');
+    return blockIsBlank(joined) ? null : joined;
+  }
+
+  /**
+   * Write as Sentence — 사람이 켰을 때만 쓰는 두 번째 서식. 저장된 위치·제목·크기·특성을 그 순서로 한 문장
+   * `[위치] [제목], [크기], [특성].`에 잇고(빈 칸은 빠짐) 그 아래 줄에 본문을 그대로 둔다. 더하는 글자는 칸 사이의
+   * 공백·`, `와 끝의 `.` 하나뿐이고 낱말을 보태거나 고치지 않는다(각 칸 앞뒤 공백만 걷는다). 네 칸 중 하나라도 여러 줄이거나
+   * 이미 문장 끝맺음(`.`·`!`·`?`)으로 끝나면 이어 붙여 뜻이 바뀔 수 있으므로 그 소견은 `assembleBlock`의 라벨 블록 그대로다.
+   * 네 칸이 모두 비면 본문만이다(빈 첫 줄이나 `.` 한 글자를 만들지 않는다).
+   */
+  function sentenceBlock(source) {
+    const field = value => (value === null || value === undefined ? '' : toLf(value));
+    const parts = [source && source.lesionLocation, source && source.title, source && source.size, source && source.characteristics].map(field);
+    if (parts.some(value => value.includes('\n') || /[.!?。]\s*$/u.test(value))) return assembleBlock(source);
+    const [where, title, size, traits] = parts.map(value => value.trim());
+    const head = [where, title].filter(Boolean).join(' ');
+    const sentence = [head, size, traits].filter(Boolean).join(', ');
+    const text = field(source && source.text);
+    const joined = [sentence ? sentence + '.' : '', text].filter(value => value.length).join('\n');
     return blockIsBlank(joined) ? null : joined;
   }
 
@@ -482,7 +503,7 @@ window.KinReportCitation = (function () {
     SCHEMA, FIELDS, FIELD_LABEL, INSERTED_TEXT_BYTES, SOURCE_UNAVAILABLE,
     STATE_TEXT, UNAVAILABLE_TEXT, PRESENT_CAVEAT,
     normalizeForCompare, toLf, blockLines, blockIsBlank, lineBlockOccurrences, blockSpans, comparisonKey,
-    presenceState, presenceOf, isReduced, entryKey, assembleBlock, appendBlock, placeBlock, utf8Bytes, refuseBlock,
+    presenceState, presenceOf, isReduced, entryKey, assembleBlock, sentenceBlock, appendBlock, placeBlock, utf8Bytes, refuseBlock,
     createState,
     MEASUREMENT_PREFIX, measurementPart, measurementLine, withMeasurements, measurementEligible, measurementLineProblem, measurementNote,
   });

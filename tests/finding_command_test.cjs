@@ -648,7 +648,7 @@ function worklist(options) {
   // S3-U2b: the panel now refuses to mount without the citation module, because a half-updated tab
   // would otherwise assemble a block under a rule the server does not share.
   for (const name of ['finding-link-model.js', 'viewer-windows.js', 'finding-command.js', 'report-citation.js', 'reading-findings.js']) vm.runInContext(shipped(name), ctx, { filename: name });
-  const s = { selected: X, allowed: true, owner: OWNER, sub: SUB, target: null, rows: () => [], api: [], popups: [], opened: [], fetched: [], schema: '3',
+  const s = { selected: X, allowed: true, owner: OWNER, sub: SUB, target: null, rows: () => [], api: [], popups: [], opened: [], fetched: [], schema: '4',
     // S3-U2b: what the worklist was handed, and whether it opened its preview for it.
     cited: [], citeAccepts: true,
     respond: p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding()]) : page([])) };
@@ -1551,6 +1551,8 @@ test('adapter: Insert into Report hands the assembled block and the source ident
     // R5: the finding's own title and text, in that order, nothing added. schemaVersion 1 has no
     // characteristics field, so there is no third block.
     block: '결절 <img src=x onerror=alert(1)>\n본문\n둘째 줄',
+    // Write as Sentence (opt-in in the preview): the stored title made a sentence, the text kept below it.
+    sentence: '결절 <img src=x onerror=alert(1)>.\n본문\n둘째 줄',
     // Include Measurements (opt-in in the preview): every image source of this study, in order, with the name and the value
     // text the source line shows - whichever source's button was pressed.
     measurements: [
@@ -1705,7 +1707,7 @@ test('S2-L target: a saved location needs a viewer whose study list is exactly t
   assert.deepEqual(command.chooseTarget({ uid: X, exact: [X], comparison: P, windows: [win()] }), { kind: 'refused', reason: 'invalid' });
   assert.ok(command.reasonText('saved-view-viewer').includes('자동으로 열지 않습니다'));
   assert.equal(command.retryable('saved-view-viewer'), true); assert.equal(command.openable('saved-view-viewer'), false);
-  assert.equal(command.SCHEMA, 3);
+  assert.equal(command.SCHEMA, 4);
 });
 
 test('S2-L pre-call: a saved location needs the exact scope and the location API, not history navigation or a loaded history', () => {
@@ -1862,7 +1864,7 @@ test('adapter locations: the list read names the record format; characteristics 
   h.s.respond = () => Promise.resolve(page([v2Finding()]));
   await h.open();
   assert.deepEqual(h.s.fetched.map(f => [f.url, f.init.method, new Headers(f.init.headers).get('X-KIN-Finding-Schema'), new Headers(f.init.headers).get('X-KIN-CSRF'), f.init.credentials ?? 'same-origin']),
-    [['/api/studies/' + X + '/findings?includeHidden=false&limit=100', 'GET', '3', null, 'same-origin']]);
+    [['/api/studies/' + X + '/findings?includeHidden=false&limit=100', 'GET', '4', null, 'same-origin']]);
   const article = h.articles()[0];
   assert.ok(article.all().some(e => e.dataset.kinCharacteristics === '' && e.textContent === 'Characteristics (병변 특성): 경계 불명확'));
   const list = () => h.articles()[0].children.find(e => e.tagName === 'ul').children;
@@ -1912,7 +1914,7 @@ test('adapter locations: an older API answer is marked, still read-only; a plain
   await h.open();
   assert.equal(h.articles().length, 1);
   assert.ok(h.byId('reading-findings-status').textContent.endsWith(links.OLD_API_TEXT));
-  h.s.schema = '3';
+  h.s.schema = '4';
   await h.click(h.named(h.panel(), 'Reload Findings')[0]);
   assert.equal(h.byId('reading-findings-status').textContent.includes(links.OLD_API_TEXT), false);
   const reads = h.s.api.length;

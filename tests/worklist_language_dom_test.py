@@ -478,7 +478,7 @@ class WorklistLanguageDOM(unittest.TestCase):
         finding["item"].update(schemaVersion=3, title="승인", text="취소", lesionLocation="없음", characteristics="Unread")
         finding["item"]["sources"][0]["label"] = "승인"
         self.page.route("**/api/studies/*/findings?**", lambda r: r.fulfill(
-            json={"items": [finding], "nextCursor": None}, headers={"X-KIN-Finding-Schema": "3"}))
+            json={"items": [finding], "nextCursor": None}, headers={"X-KIN-Finding-Schema": "4"}))
         self.boot()
         self.page.locator("#reading-findings-open").click()
         row = self.page.locator("#reading-findings-list article").first

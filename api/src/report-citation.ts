@@ -294,6 +294,23 @@ export function citationInsertInput(value: any): ReportCitationInsert {
   };
 }
 
+/** Insert Selected into Report가 한 쓰기에 싣는 건 수의 한도(서버·화면 같은 수). */
+export const REPORT_CITATION_BATCH = 20;
+/**
+ * 여러 소견 넣기의 요청 모양: 건마다 `citationInsertInput`과 같은 모양, 1~20건, 모두 같은 칸, 서로 다른 소견.
+ * 같은 소견을 두 번 실으면 한 판의 글이 본문에 두 번 들어가는 일이 되므로 받지 않는다(단건 Insert는 그대로 된다).
+ */
+export function citationInsertList(value: any): ReportCitationInsert[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > REPORT_CITATION_BATCH)
+    throw new CitationInputError(`insert 배열은 1~${REPORT_CITATION_BATCH}건이어야 합니다`);
+  const list = value.map(citationInsertInput);
+  if (list.some(item => item.field !== list[0].field))
+    throw new CitationInputError('insert 배열의 건은 모두 같은 칸이어야 합니다');
+  if (new Set(list.map(item => item.findingId)).size !== list.length)
+    throw new CitationInputError('insert 배열에 같은 소견을 두 번 실을 수 없습니다');
+  return list;
+}
+
 /**
  * 화면으로 나가는 투영. 읽을 수 있는 건은 그대로 + `sameTextCount`, 읽을 수 없는 건은
  * **중립 상태와 네 칸만**. 인용을 원본으로 되짚는 우회 해결기는 만들지 않는다.

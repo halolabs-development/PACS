@@ -282,7 +282,7 @@ class MultiStudySite(h.Site):
             return route.fulfill(json={"text": DICTATED, "seconds": 0.1, "languagePin": DICTATION["languagePin"],
                                        "enginePin": DICTATION["enginePin"], "modelPin": DICTATION["modelPin"]})
         if method == "GET" and path == f"/api/studies/{h.UID}/findings" and self.findings is not None:
-            return route.fulfill(json={"items": self.findings, "nextCursor": None}, headers={"X-KIN-Finding-Schema": "3"})
+            return route.fulfill(json={"items": self.findings, "nextCursor": None}, headers={"X-KIN-Finding-Schema": "4"})
         if method == "DELETE" and path == f"/api/studies/{h.UID}/draft" and self.discard_answers:
             reply = self.discard_answers.pop(0)
             self.discards.append(request.post_data_json)

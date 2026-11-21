@@ -18,7 +18,7 @@ from test_viewer_history import ViewerHistoryE2E, literal
 from test_worklist import psql
 from finding_api_test import BOUNDARY_COLUMNS
 
-SCHEMA = {'X-KIN-Finding-Schema': '3'}
+SCHEMA = {'X-KIN-Finding-Schema': '4'}
 FINDINGS = '#kin-viewer-findings'
 ACTIVE_VOLUME = """()=>{const v=services.cornerstoneViewportService.getCornerstoneViewport(services.viewportGridService.getState().activeViewportId);
  const m=cornerstone.metaData.get('instance',cornerstone.cache.getVolume(v.getVolumeId()).imageIds[0]);return {study:m.StudyInstanceUID,series:m.SeriesInstanceUID,frame:m.FrameOfReferenceUID}}"""

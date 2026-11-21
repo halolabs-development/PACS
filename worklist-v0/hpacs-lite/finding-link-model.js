@@ -56,12 +56,60 @@
   /* ---------- S2-L: record version 2, saved locations and live disclosure ---------- */
   // The record format this module writes and reads. The Findings section, the worklist command and its panel refuse to run
   // beside another version of this file, and the API names its own with the X-KIN-Finding-Schema response header.
-  const SCHEMA = 3, SCHEMA_HEADER = 'X-KIN-Finding-Schema';
+  const SCHEMA = 4, SCHEMA_HEADER = 'X-KIN-Finding-Schema';
   // Free-text lesion characteristics, counted in code points like the title and text (the server's rule). A native maxlength
   // counts UTF-16 units, so typing stops earlier for astral characters; a longer value is refused, never cut.
   const CHARACTERISTICS = 1000;
   // Version 3: the free-text lesion location (the reader's own words, e.g. an anatomic segment), the same code-point rule.
   const LESION_LOCATION = 200;
+  // Version 4: the free-text lesion size as the reader writes it (`8mm`, `12 x 8 mm`), never converted; the same code-point rule.
+  const SIZE = 40;
+  /* Fixed pick lists for Location and Characteristics. A pick only appends the term to that field's own text, which stays
+   * free text the reader can change; Quick Entry recognises the same terms. These first lists are general radiology terms. */
+  const LOCATION_TERMS = Object.freeze(['RUL', 'RML', 'RLL', 'LUL', 'Lingula', 'LLL', 'Liver S1', 'Liver S2', 'Liver S3', 'Liver S4',
+    'Liver S5', 'Liver S6', 'Liver S7', 'Liver S8', 'Right kidney', 'Left kidney', 'Thyroid right lobe', 'Thyroid left lobe',
+    'Right breast', 'Left breast']);
+  const CHARACTERISTIC_TERMS = Object.freeze(['solid', 'part-solid', 'ground-glass', 'calcified', 'well-defined', 'ill-defined',
+    'spiculated', 'lobulated', 'cystic', 'enhancing']);
+  /** A picked term after the field's own text: `, ` between, nothing removed or reordered. */
+  function appendTerm(value, term) {
+    const current = String(value ?? '');
+    return current.trim() ? current.replace(/[\s,]+$/u, '') + ', ' + term : term;
+  }
+  /* Quick Entry: one short line such as `폐결절 8mm RLL solid` split into Title, Size, Location and Characteristics. Only a clearly
+   * separable line is split: one size written as a number and mm/cm (`8mm`, `1.2 cm`, `12 x 8 mm`, `12 × 8 × 5 mm` - kept as
+   * typed, never converted), the pick-list terms (longest first, each once, whole words) and the rest as the title. A line with a
+   * negation, a range, a comparison or a size qualifier, two sizes or a line break is not split at all: taking a part out of it
+   * could turn "no solid component" into "solid" or "8-12 mm" into one size. Nothing here writes to the server. */
+  const SIZE_PATTERN = /(^|[\s,(])(\d+(?:\.\d+)?(?:\s*[x×X*]\s*\d+(?:\.\d+)?){0,2}\s*(?:mm|cm))(?=$|[\s,.;)])/giu;
+  const AMBIGUOUS = /(?:^|[^\p{L}])(?:no|not|without|non|negative|absent|rule|r\/o|vs|or|about|approx|approximately|up|less|more|least|than|over|under|maximum|max|min)(?=$|[^\p{L}])|[<>≤≥~±?]|\d\s*[-–—]\s*\d|약|최대|최소|이하|이상|미만|초과|정도|가량|내외|없|아닌|아님|배제|의심|또는/iu;
+  const escapeTerm = term => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
+  function quickEntry(input) {
+    const line = String(input ?? '');
+    if (!line.trim()) return { split: false, reason: 'empty' };
+    if (/[\r\n]/.test(line) || [...line].length > LIMITS.title) return { split: false, reason: 'shape' };
+    if (AMBIGUOUS.test(line)) return { split: false, reason: 'ambiguous' };
+    const sizes = [...line.matchAll(SIZE_PATTERN)];
+    if (sizes.length > 1) return { split: false, reason: 'sizes' };
+    let rest = line, size = '';
+    // Blanked to the same length, so later positions (the order of the found terms) do not move.
+    const cut = (at, length) => { rest = rest.slice(0, at) + ' '.repeat(length) + rest.slice(at + length); };
+    if (sizes.length === 1) { size = sizes[0][2].trim(); cut(sizes[0].index + sizes[0][1].length, sizes[0][2].length); }
+    const take = terms => {
+      const found = [];
+      for (const term of [...terms].sort((a, b) => b.length - a.length)) {
+        const match = new RegExp('(^|[\\s,(])(' + escapeTerm(term) + ')(?=$|[\\s,.;)])', 'iu').exec(rest);
+        if (!match) continue;
+        const at = match.index + match[1].length;
+        cut(at, match[2].length);
+        found.push({ term, at });
+      }
+      return found.sort((a, b) => a.at - b.at).map(x => x.term);
+    };
+    const lesionLocation = take(LOCATION_TERMS).join(', '), characteristics = take(CHARACTERISTIC_TERMS).join(', ');
+    const title = rest.replace(/[\s,]+/gu, ' ').trim().replace(/^[,;.\s]+|[,;\s]+$/gu, '');
+    return { split: true, title, size, lesionLocation, characteristics };
+  }
   // Saved Comparison Job versions a finding may link; each has a validator, a restorer and a hosted suite.
   const JOB_VERSIONS = Object.freeze([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
   const JOB_LINK_STATES = ['current', 'metadata-changed', 'hidden', 'missing'];
@@ -447,7 +495,10 @@
   function commandBody(draft, head, action, reason, requestId, version) {
     const sources = Array.isArray(draft.sources) ? draft.sources.map(sentPair) : [];
     const primary = Number.isSafeInteger(draft.primary) && draft.primary >= 0 && draft.primary < sources.length ? draft.primary : 0;
-    const item = version === 3
+    const item = version === 4
+      ? { schemaVersion: 4, title: String(draft.title ?? ''), text: String(draft.text ?? ''), characteristics: String(draft.characteristics ?? ''),
+        lesionLocation: String(draft.lesionLocation ?? ''), size: String(draft.size ?? ''), sources, primary }
+      : version === 3
       ? { schemaVersion: 3, title: String(draft.title ?? ''), text: String(draft.text ?? ''), characteristics: String(draft.characteristics ?? ''),
         lesionLocation: String(draft.lesionLocation ?? ''), sources, primary }
       : version === 2
@@ -471,6 +522,7 @@
       if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !draft.characteristics.trim()) return '제목, 본문 또는 병변 특성을 입력하세요.';
     }
     if (draft.lesionLocation !== undefined && (typeof draft.lesionLocation !== 'string' || [...draft.lesionLocation].length > LESION_LOCATION)) return '병변 위치는 ' + LESION_LOCATION + '자 이하여야 합니다.';
+    if (draft.size !== undefined && (typeof draft.size !== 'string' || [...draft.size].length > SIZE)) return '병변 크기는 ' + SIZE + '자 이하여야 합니다.';
     if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !String(draft.characteristics ?? '').trim()) return '제목 또는 본문을 입력하세요.';
     return null;
   }
@@ -488,7 +540,8 @@
   };
   const itemOnly = head => Object.assign({ title: head.item.title, text: head.item.text },
     head.item.schemaVersion >= 2 ? { characteristics: typeof head.item.characteristics === 'string' ? head.item.characteristics : '' } : {},
-    head.item.schemaVersion === 3 ? { lesionLocation: typeof head.item.lesionLocation === 'string' ? head.item.lesionLocation : '' } : {},
+    head.item.schemaVersion >= 3 ? { lesionLocation: typeof head.item.lesionLocation === 'string' ? head.item.lesionLocation : '' } : {},
+    head.item.schemaVersion >= 4 ? { size: typeof head.item.size === 'string' ? head.item.size : '' } : {},
     { primary: head.item.primary ?? 0, sources: head.item.sources.map(s => draftPair(s, head)) });
   // `context.comparison`: the command named a comparison study, so 400/403/404 may be about that study.
   function errorMessage(error, context) {
@@ -803,7 +856,8 @@
       Object.assign(e, { id: makeId(), head: null, links: [], latest: null, pending: null, staleSource: null, editing: true, busy: false,
         draft: Object.assign({ title: e.draft.title, text: e.draft.text },
           typeof e.draft.characteristics === 'string' ? { characteristics: e.draft.characteristics } : {},
-          typeof e.draft.lesionLocation === 'string' ? { lesionLocation: e.draft.lesionLocation } : {}, { sources: own, primary: 0 }),
+          typeof e.draft.lesionLocation === 'string' ? { lesionLocation: e.draft.lesionLocation } : {},
+          typeof e.draft.size === 'string' ? { size: e.draft.size } : {}, { sources: own, primary: 0 }),
         message: '이 소견을 더 이상 볼 수 없어 저장하지 않았습니다. 작성한 제목과 본문만 이 검사의 새 소견 초안으로 남겼고 비교 검사 연결은 뺐습니다. 저장 전 내용과 연결 표식을 확인하세요.' });
       s.entries.set(e.id, e);
       return true;
@@ -842,7 +896,7 @@
     }
     function newDraft() {
       if (s.ended || s.suspended || !writable()) return null;
-      const e = { id: makeId(), head: null, draft: { title: '', text: '', characteristics: '', lesionLocation: '', sources: [], primary: 0 }, links: [], editing: true, latest: null, pending: null, busy: false, message: '', staleSource: null };
+      const e = { id: makeId(), head: null, draft: { title: '', text: '', characteristics: '', lesionLocation: '', size: '', sources: [], primary: 0 }, links: [], editing: true, latest: null, pending: null, busy: false, message: '', staleSource: null };
       s.entries.set(e.id, e); notify(); return e;
     }
     function updateDraft(e, patch) {
@@ -851,6 +905,16 @@
       if (typeof patch.text === 'string') e.draft.text = patch.text;
       if (typeof patch.characteristics === 'string') e.draft.characteristics = patch.characteristics;
       if (typeof patch.lesionLocation === 'string') e.draft.lesionLocation = patch.lesionLocation;
+      if (typeof patch.size === 'string') e.draft.size = patch.size;
+    }
+    /* New Finding from a saved mark the reader chose: a new draft with that mark and the revision they saw, checked again at the
+     * press (this study, the same mark and revision, saved, not hidden, not mid-edit). Anything changed makes no draft at all. */
+    function newDraftFrom(itemId, revision) {
+      const head = s.heads.get(itemId);
+      if (!anchorLive() || !head || head.hidden || head.working || head.revision !== revision) return null;
+      const e = newDraft();
+      if (!e) return null;
+      e.draft.sources.push({ itemId, revision: head.revision }); notify(); return e;
     }
     /* S2-L2b: this anchor's Saved Comparison Jobs, for linking a saved view. The list is the viewer-jobs summary (no study set):
      * the server checks the anchor, the study set and N2 when the finding is saved. */
@@ -994,10 +1058,11 @@
         if (e.head && action !== 'edit' && action !== 'hide' && action !== 'restore') return false;
         if (!e.head && action && action !== 'create') return false;
         if (pairBlocked(e)) { e.message = COMPARISON_DENIED; notify(); return false; }
-        // A create or an edit is version 3 (an older head is promoted); hide and restore keep the head's version and content.
-        const version = e.head && (action === 'hide' || action === 'restore') ? ([2, 3].includes(e.head.item.schemaVersion) ? e.head.item.schemaVersion : 1) : 3;
+        // A create or an edit is version 4 (an older head is promoted); hide and restore keep the head's version and content.
+        const version = e.head && (action === 'hide' || action === 'restore') ? ([2, 3, 4].includes(e.head.item.schemaVersion) ? e.head.item.schemaVersion : 1) : 4;
         const draft = { ...e.draft, ...(version >= 2 && typeof e.draft.characteristics !== 'string' ? { characteristics: '' } : {}),
-          ...(version === 3 && typeof e.draft.lesionLocation !== 'string' ? { lesionLocation: '' } : {}) };
+          ...(version >= 3 && typeof e.draft.lesionLocation !== 'string' ? { lesionLocation: '' } : {}),
+          ...(version === 4 && typeof e.draft.size !== 'string' ? { size: '' } : {}) };
         const problem = draftProblem(draft);
         if (problem) { e.message = problem; notify(); return false; }
         const body = commandBody(draft, e.head, action, reason, makeId(), version);
@@ -1170,14 +1235,14 @@
     }
     return { state: () => s, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); }, valid, writable, hasWork, held, workState,
       discardHeld, detach, pairOf, anchorLive, studyOf, comparisonOf, pairBlocked, loadPair, loadJobs, shownJob, toggleJob,
-      setScope, syncHistory, load, newDraft, updateDraft, toggleSource, setPrimary, refreshSource, useLatest, discard, edit, save, navigate, history, end,
+      setScope, syncHistory, load, newDraft, newDraftFrom, updateDraft, toggleSource, setPrimary, refreshSource, useLatest, discard, edit, save, navigate, history, end,
       dispose: () => { offEnd(); listeners.clear(); controller?.abort(); } };
   }
 
   const api = { LINK_STATES, LINK_LABELS, NAVIGATION_REASONS, ACTIVATION_REASONS, CROSS_REASONS, LIMITS, linkState, sourceStatus, valueText, reasonText, annotationText,
     phaseText, validReply, validTarget, plainState, viewerResult, activationResult, crossNavigate, comparisonHead,
     commandBody, draftProblem, itemOnly, errorMessage, createStore,
-    SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, LESION_LOCATION, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,
+    SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, LESION_LOCATION, SIZE, LOCATION_TERMS, CHARACTERISTIC_TERMS, appendTerm, quickEntry, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,
     OLD_API_TEXT, MODULE_MISMATCH_TEXT, CONTINUE_REFUSED_TEXT, LOCATION_TEXT, LIVE_TEXT,
     isJob, isJobPair, jobCopy, jobLinkState, jobStatus, jobName, liveOf, liveText, locationOutcome, locationResult, locationText, schemaOf };
   if (typeof module === 'object' && module.exports) module.exports = api;

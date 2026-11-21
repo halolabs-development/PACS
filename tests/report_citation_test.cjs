@@ -923,3 +923,64 @@ test('TEST-B23-MEASUREMENT-HISTORY: a past version says only that an entry carri
   assert.equal(read.measurementLines, true);
   assert.equal(read.head[0].measurementLine, MLINE);
 });
+/* ---------- Insert Selected into Report: `insert` as an array, one write ---------- */
+const FINDING2 = '00000000-0000-4000-8000-0000000000f2', LINE2 = '좌하엽 결절';
+const SECOND = { id: FINDING2, revision: 1, hidden: false, sources: [{ kind: 'item', itemId: 'i-2', revision: 4, studyUid: UID }],
+  links: [{ itemId: 'i-2', linkState: 'current', headRevision: 4, headHidden: false }] };
+const INSERT2 = { field: 'findings', findingId: FINDING2, findingRevision: 1, sourceIndex: 0, insertedText: LINE2, expectedLinkState: 'current', expectedHeadRevision: 4 };
+// readableFindings answers in id order: put the second finding first so a positional pairing would cross the two.
+const BOTH = [SECOND, READABLE[0]];
+
+test('TEST-B23-BATCH-ATTEST: every finding of the array is attested in request order in one write, answered as insertedAll', async () => {
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: BOTH });
+  const answer = await put(f, { findings: LINE + '\n' + LINE2, insert: [INSERT, INSERT2] });
+  const entries = stored(f);
+  assert.deepEqual(entries.map(e => [e.findingId, e.insertedText, e.sourceRef.itemId, e.sourceRef.sourceRevision]),
+    [[FINDING, LINE, 'i-1', 7], [FINDING2, LINE2, 'i-2', 4]], 'each finding keeps its own source, whatever order the read answered');
+  for (const e of entries) { assert.match(e.cid, UUID); assert.equal(e.insertedBy, CALLER.actor); assert.equal(e.v, 2, 'the stored entry shape is unchanged'); }
+  assert.notEqual(entries[0].cid, entries[1].cid);
+  assert.deepEqual(f.writes, ['reportDraft.upsert'], 'one write');
+  assert.equal(answer.inserted, undefined);
+  assert.deepEqual(answer.insertedAll, entries.map(e => ({ cid: e.cid, field: 'findings', insertedAt: e.insertedAt })));
+  assert.deepEqual(f.calls.filter(c => c.call === 'readableFindings').map(c => c.ids), [[FINDING, FINDING2]], 'one read for the whole array');
+  const detail = JSON.parse(f.audits.find(a => a.action === 'report.draft').detail);
+  assert.deepEqual(detail.cits, { n: 2, add: entries.map(e => ({ cid: e.cid, field: 'findings' })) });
+  // The stored entries keep the single-insert key order.
+  const single = fixture({ draft: { baseVersion: 4, citations: [] } });
+  await put(single, { insert: INSERT });
+  assert.deepEqual(Object.keys(entries[0]), Object.keys(stored(single)[0]));
+});
+
+test('TEST-B23-BATCH-REFUSE: one refused element writes nothing for any of them', async () => {
+  const cases = [
+    ['one finding moved on', [INSERT, { ...INSERT2, findingRevision: 2 }], LINE + '\n' + LINE2, 409, 'REPORT_CITATION_STALE'],
+    ['one finding is unreadable', [INSERT, { ...INSERT2, findingId: '00000000-0000-4000-8000-00000000dead' }], LINE + '\n' + LINE2, 409, 'REPORT_CITATION_SOURCE'],
+    ['one source moved on', [INSERT, { ...INSERT2, expectedHeadRevision: 3 }], LINE + '\n' + LINE2, 409, 'REPORT_CITATION_STALE'],
+    // Each text is in the field, but not as the one contiguous run in request order.
+    ['the blocks are not together in request order', [INSERT, INSERT2], LINE2 + '\n' + LINE, 409, 'REPORT_CITATION_TEXT'],
+    ['one text shared by two findings', [{ ...INSERT, insertedText: LINE2 }, INSERT2], LINE2, 409, 'REPORT_CITATION_TEXT'],
+    ['an empty array', [], LINE, 400, undefined],
+    ['twenty-one entries', Array(21).fill(INSERT), LINE, 400, undefined],
+    ['the same finding twice', [INSERT, INSERT], LINE + '\n' + LINE, 400, undefined],
+    ['two fields', [INSERT, { ...INSERT2, field: 'conclusion' }], LINE + '\n' + LINE2, 400, undefined],
+    ['a malformed element', [INSERT, { ...INSERT2, insertedText: '' }], LINE + '\n' + LINE2, 400, undefined],
+  ];
+  for (const [name, insert, findings, status, code] of cases) {
+    const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: BOTH });
+    const body = await refusal(put(f, { findings, insert }), status);
+    if (code) assert.equal(body.code, code, name);
+    assert.deepEqual(f.writes, [], name);
+  }
+  // An array may not ride with a structured entry, a drawing or an emptied report either.
+  const emptied = fixture({ draft: { baseVersion: 4, citations: [] }, readable: BOTH });
+  await refusal(emptied.svc.putReport(UID, { findings: '', conclusion: '', recommendation: '', baseVersion: 4, insert: [INSERT] }, CALLER, null), 409);
+  assert.deepEqual(emptied.writes, []);
+});
+
+test('TEST-B23-BATCH-LIMIT: the array is checked against the citation cap with the head and the kept entries, once', async () => {
+  const head = Array.from({ length: 63 }, (_, i) => carried('h' + i));
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: BOTH, versions: new Map([[4, { uid: UID, version: 4, citations: head }]]) });
+  const body = await refusal(put(f, { findings: LINE + '\n' + LINE2, insert: [INSERT, INSERT2] }), 409);
+  assert.equal(body.code, 'REPORT_CITATION_LIMIT');
+  assert.deepEqual(f.writes, []);
+});

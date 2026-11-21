@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaService } from '../prisma.service';
 import type { FindingService } from '../finding.service';
 import { canonical } from '../viewer-input';
-import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationInsertInput, citationSourceRef, measurementEligible,
+import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationInsertInput, citationInsertList, citationSourceRef, measurementEligible,
   CitationInputError, lineBlockOccurrences, presenceState, projectCitation, sameTextCounts, REPORT_CITATION_FIELDS,
   REPORT_CITATION_LIMITS, REPORT_CITATION_SCHEMA, SOURCE_UNAVAILABLE } from '../report-citation';
 import { applyStructureKeepList, isStructureEntry, projectStructure, structureApplyInput, structureArray,
@@ -98,13 +98,35 @@ export class PacsReportEvidence {
     const wantsInsert = body.insert !== undefined;
     const { kept, ignored } = applyKeepList(citationArray(locked?.citations), keep);
     let inserted: { cid: string; field: string; insertedAt: string; measurementRecorded?: true } | null = null;
+    const receipt = (entry: any) => ({ cid: entry.cid, field: entry.field, insertedAt: entry.insertedAt,
+      ...(typeof entry.measurementLine === 'string' ? { measurementRecorded: true as const } : {}) });
+    /**
+     * Insert Selected into Report: `insert`가 배열이면 서로 다른 소견 1~20건을 **이 쓰기 하나로**. 건마다 단건과 같은
+     * 판정(가독·판·숨김·출처 상태·측정 대상 집합)을 요청 순서로 하고, 그 칸의 본문에 요청 순서 그대로 LF로 이은 글 전체가
+     * 줄 블록으로 있어야 한다 — 같은 글의 두 소견이 본문의 한 자리를 함께 쓰지 못하게. 하나라도 거절이면 아무것도 기록하지 않는다.
+     * 저장 모양은 단건과 같은 건이 여럿이고(형식 판 그대로), 답은 `insertedAll`로 같은 순서다.
+     */
+    if (wantsInsert && Array.isArray(body.insert)) {
+      const inserts = this.citationInputs(body.insert);
+      const rows = await this.findings.readableFindings(tx, c, uid, inserts.map(insert => insert.findingId));
+      const byId = new Map<string, any>(rows.map((row: any) => [row.id, row]));
+      const entries = inserts.map(insert => this.verifiedEntry(uid, insert, byId.get(insert.findingId), content));
+      if (!lineBlockOccurrences(content[inserts[0].field], inserts.map(insert => insert.insertedText).join('\n')))
+        throw new ConflictException({ code: 'REPORT_CITATION_TEXT',
+          message: '삽입한 문구가 그 칸의 본문에 줄 단위로 그대로 있지 않습니다' });
+      const at = new Date().toISOString();
+      for (const entry of entries) kept.push({ ...entry, cid: randomUUID(), insertedAt: at, insertedBy: c.actor });
+      const added = kept.slice(kept.length - entries.length);
+      await this.citationBudget(tx, [...await this.versionCitations(tx, uid, headVersion), ...kept]);
+      const detail = { n: kept.length, add: added.map(entry => ({ cid: entry.cid, field: entry.field })), ...(ignored ? { ignored } : {}) };
+      return { entries: kept, inserted: null, insertedAll: added.map(receipt), detail };
+    }
     if (wantsInsert) {
       const entry = await this.verifiedInsertion(tx, uid, body.insert, content, c);
       kept.push(entry);
       // `measurementRecorded`: 이 기록에 측정 줄과 그 출처 번호를 **실제로 저장했을 때만**. 화면은 이 답이 있을 때만
       // 그 건을 측정 줄 포함으로 붙인다 — 모르는 키를 버리는 옛 서버의 200을 측정 기록으로 읽지 않게.
-      inserted = { cid: entry.cid, field: entry.field, insertedAt: entry.insertedAt,
-                   ...(typeof entry.measurementLine === 'string' ? { measurementRecorded: true as const } : {}) };
+      inserted = receipt(entry);
       /**
        * 예방적 검사다. 머리 판을 **잠그지 않고** 읽으므로 두 방향 모두 틀릴 수 있다 —
        * 넘치는데 통과하거나, 여유가 있는데 거절할 수 있다. 실제 상한은 확정 시의
@@ -116,7 +138,7 @@ export class PacsReportEvidence {
     const detail = (kept.length || ignored) ? { n: kept.length,
       ...(inserted ? { add: [{ cid: inserted.cid, field: inserted.field }] } : {}),
       ...(ignored ? { ignored } : {}) } : null;
-    return { entries: kept, inserted, detail };
+    return { entries: kept, inserted, insertedAll: null as any[] | null, detail };
   }
 
   /**
@@ -242,6 +264,11 @@ export class PacsReportEvidence {
     // `Finding.studyUid === uid`는 이 메서드가 uid로 묻는 것 자체가 보장한다 —
     // 다른 검사의 소견은 애초에 답에 들어오지 않는다.
     const [row] = await this.findings.readableFindings(tx, c, uid, [insert.findingId]);
+    return { ...this.verifiedEntry(uid, insert, row, content), cid: randomUUID(), insertedAt: new Date().toISOString(), insertedBy: c.actor };
+  }
+
+  /** 읽어 온 소견 행 하나에 대한 삽입 판정(단건·여러 건 공통). 증언 칸(`cid`·시각·사람)은 부른 쪽이 채운다. */
+  private verifiedEntry(uid: string, insert: ReturnType<typeof citationInsertInput>, row: any, content: any) {
     // 읽을 수 없는 소견과 없는 소견은 **같은 답**이다. 어느 쪽인지 말하면 그 자체가 정보다.
     if (!row) throw new ConflictException({ code: 'REPORT_CITATION_SOURCE',
       message: '그 소견을 인용할 수 없습니다 — 소견 목록을 다시 불러오세요' });
@@ -279,12 +306,12 @@ export class PacsReportEvidence {
     if (blockIsBlank(insert.insertedText) || !lineBlockOccurrences(content[insert.field], insert.insertedText))
       throw new ConflictException({ code: 'REPORT_CITATION_TEXT',
         message: '삽입한 문구가 그 칸의 본문에 줄 단위로 그대로 있지 않습니다' });
-    return { v: REPORT_CITATION_SCHEMA, cid: randomUUID(), field: insert.field,
+    return { v: REPORT_CITATION_SCHEMA, cid: '', field: insert.field,
       findingId: insert.findingId, findingRevision: insert.findingRevision, sourceIndex: insert.sourceIndex,
       sourceRef: citationSourceRef(source), linkStateAtInsert: link.linkState,
       headRevisionAtInsert: link.headRevision ?? null, insertedText: insert.insertedText,
       ...(insert.measurement ? { measurementLine: insert.measurement.line, measurementSources: insert.measurement.sources } : {}),
-      insertedAt: new Date().toISOString(), insertedBy: c.actor };
+      insertedAt: '', insertedBy: '' };
   }
 
   /** 머리 판은 오직 `ReportVersion(uid, Report.version)` 한 행이다. 없으면 빈 배열이다. */
@@ -311,6 +338,10 @@ export class PacsReportEvidence {
   /** 모양이 틀린 입력만 400으로 옮긴다. 다른 실패는 그대로 올려보낸다. */
   citationKeys(value: any, what: string) {
     try { return citationIdList(value, what); }
+    catch (e: any) { if (e instanceof CitationInputError) throw new BadRequestException(e.message); throw e; }
+  }
+  private citationInputs(value: any) {
+    try { return citationInsertList(value); }
     catch (e: any) { if (e instanceof CitationInputError) throw new BadRequestException(e.message); throw e; }
   }
   private citationInput(value: any) {

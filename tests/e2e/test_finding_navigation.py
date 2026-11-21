@@ -74,7 +74,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
     def findings(self, f):
         # S2-L R5: a findings page holding a version 2 record is served only to a client that names that record format;
         # the viewer writes version 2 on every create and edit.
-        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '3'})
+        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '4'})
         self.assertEqual(r.status, 200, r.text); return r.body['items']
 
     def panel(self, p, reading=False):
