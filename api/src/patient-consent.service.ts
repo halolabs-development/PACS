@@ -149,9 +149,11 @@ export class PatientConsentService {
         const at = new Date();
         const row = await tx.transferBasis.create({ data: { id: randomUUID(), studyUid: null, patientId, purpose, institutionId: patient.institution,
           kind: 'PATIENT_CONSENT', reference, obtainedAt, expiresAt, recordedBy: c.actor, recordedAt: at, requestId, recordedBySub: c.sub }, select: SELECT });
+        // The answer and the audit row tell the same state (a record entered after its expiry is Expired in both).
+        const made = view(row, at);
         await tx.auditLog.create({ data: { actor: c.actor, action: 'patient.consent.record', target: row.id, at,
-          detail: JSON.stringify({ institution: patient.institution, consentId: row.id, before: null, after: 'active' }) } });
-        return { ...view(row, at), replayed: false };
+          detail: JSON.stringify({ institution: patient.institution, consentId: row.id, before: null, after: made.state }) } });
+        return { ...made, replayed: false };
       });
     } catch (e) {
       // The same request committed by a concurrent attempt: answer with that row.

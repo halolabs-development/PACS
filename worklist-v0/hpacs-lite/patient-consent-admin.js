@@ -25,8 +25,10 @@
     const on = enabled && !KinConsoleSession.ended();
     box().disabled = !on || busy;
     $('#patient-consent-load').disabled = !on || busy;
-    for (const el of $('#patient-consent-form').elements) el.disabled = !on || busy || !current;
+    // While a save's result is unknown only Retry Same Request sends it: a new submit would be a second record.
+    for (const el of $('#patient-consent-form').elements) el.disabled = !on || busy || !current || !!retry;
     $('#patient-consent-retry').hidden = !retry;
+    $('#patient-consent-retry').disabled = !on || busy || !retry;
     for (const el of $('#patient-consent-withdraw').elements) el.disabled = !on || busy || !withdrawing;
     for (const button of document.querySelectorAll('#patient-consent-rows button')) button.disabled = !on || busy;
   }
@@ -107,6 +109,16 @@
     return `${what} 결과를 확인하지 못했습니다.`;
   }
 
+  // After a write: read the patient again. A refusal (the account lost this patient) leaves nothing of the patient drawn.
+  async function reread(patientId) {
+    try { await lookup(patientId); return ''; }
+    catch (error) {
+      if (error?.ended) throw error;
+      if ([403, 404].includes(error?.status)) { clear(); return failure(error, '조회'); }
+      return '';
+    }
+  }
+
   async function lookup(patientId) {
     const mine = ++seq;
     const body = await request('/lookup', { patientId });
@@ -143,21 +155,26 @@
 
   async function send(body) {
     const patientId = body.patientId;
+    let saved = false;
     try {
       await request('', body);
-      retry = null;
-      $('#patient-consent-form').reset();
-      await lookup(patientId).catch(() => {});
-      if (current?.patientId === patientId) message('동의 기록을 저장했습니다.');
+      saved = true;
     } catch (error) {
       if (error?.ended) throw error;
       if ([400, 409].includes(error?.status)) { retry = null; throw new Error(failure(error, '저장')); }
       if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, '저장')); }
       // Lost or delayed: whether it was written is unknown. Read the patient again; the same request can be sent again.
       retry = body;
-      await lookup(patientId).catch(() => {});
+      const refused = await reread(patientId);
+      if (refused) throw new Error(refused);
       throw new Error('저장되었는지 확인하지 못했습니다. 목록을 다시 확인하고, 없으면 Retry Same Request로 같은 요청을 다시 보내세요.');
     }
+    if (!saved) return;
+    retry = null;
+    $('#patient-consent-form').reset();
+    const refused = await reread(patientId);
+    if (refused) throw new Error(refused);
+    if (current?.patientId === patientId) message('동의 기록을 저장했습니다.');
   }
 
   function openWithdraw(record) {
@@ -207,20 +224,23 @@
       const reason = $('#patient-consent-reason').value;
       try {
         await request('/' + encodeURIComponent(target.id) + '/withdraw', { patientId: target.patientId, reason });
-        withdrawing = null;
-        $('#patient-consent-withdraw').hidden = true;
-        await lookup(target.patientId).catch(() => {});
-        if (current?.patientId === target.patientId) message('동의 기록을 철회했습니다.');
       } catch (error) {
         if (error?.ended) throw error;
         if (error?.status === 400) throw new Error(failure(error, '철회'));
-        if (error?.status === 403) { clear(); throw new Error(failure(error, '철회')); }
+        // 403/404: this account can no longer reach the patient (or the record): nothing of the patient stays drawn.
+        if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, '철회')); }
         withdrawing = null;
         $('#patient-consent-withdraw').hidden = true;
-        await lookup(target.patientId).catch(() => {});
-        throw new Error(error?.status === 409 || error?.status === 404 ? failure(error, '철회')
+        const refused = await reread(target.patientId);
+        if (refused) throw new Error(refused);
+        throw new Error(error?.status === 409 ? failure(error, '철회')
           : '철회되었는지 확인하지 못했습니다. 다시 불러온 목록에서 상태를 확인하세요.');
       }
+      withdrawing = null;
+      $('#patient-consent-withdraw').hidden = true;
+      const refused = await reread(target.patientId);
+      if (refused) throw new Error(refused);
+      if (current?.patientId === target.patientId) message('동의 기록을 철회했습니다.');
     });
   });
   // Enabled only for the administrator session the Members console accepts.

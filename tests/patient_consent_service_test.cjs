@@ -133,6 +133,12 @@ const notFound = e => status(404)(e) && e.getResponse().code === 'CONSENT_PATIEN
     }
     // P9 shares 1.2.4 with P8 and has no other study; P1 with a trailing space is another ID.
     await assert.rejects(s.lookup(adminA, { patientId: 'P9' }), notFound);
+    // The same ID at two institutions: each reads only its own studies. A shared UID beside a normal study: the normal one counts.
+    w.resources.push({ uid: '1.2.12', pid: 'P1', name: 'SYN^B-ONE' }); w.states.push({ uid: '1.2.12', institutionId: B, teleInstitutionId: null });
+    w.resources.push({ uid: '1.2.13', pid: 'P9', name: 'SYN^OTHER' }); w.states.push({ uid: '1.2.13', institutionId: A, teleInstitutionId: null });
+    assert.deepEqual(await s.patientOf(adminA, 'P1'), { institution: A, patientId: 'P1', studies: ['1.2.1', '1.2.2'], names: ['SYN^ONE'] });
+    assert.deepEqual(await s.patientOf(adminB, 'P1'), { institution: B, patientId: 'P1', studies: ['1.2.12'], names: ['SYN^B-ONE'] });
+    assert.deepEqual((await s.patientOf(adminA, 'P9')).studies, ['1.2.13']);
     assert.deepEqual((await s.lookup(adminB, { patientId: 'P2' })).patient.names, ['SYN^FOREIGN'], 'the owner institution sees its own patient');
     for (const bad of [{ patientId: 'P*' }, { patientId: 'P?' }, { patientId: 'P\\1' }, { patientId: ' P1' }, { patientId: '' },
       { patientId: 'x'.repeat(65) }, { patientId: 'P\u00011' }, {}, { patientId: 'P1', extra: 1 }, { patientId: 7 }])
@@ -197,6 +203,10 @@ const notFound = e => status(404)(e) && e.getResponse().code === 'CONSENT_PATIEN
       { requestId: 'not-a-uuid' }, { requestId: undefined }, { purpose: undefined }, { kind: 'LEGAL_BASIS' }, { studyUid: '1.2.1' }])
       await assert.rejects(s.record(adminA, { ...body, requestId: rid(50), ...bad }), status(400), JSON.stringify(bad));
     assert.equal(d.audits.length, audits); assert.equal(d.bases.length, rows);
+    // A record entered after its expiry: the answer and the audit row both say Expired.
+    const late = await s.record(adminA, { ...body, requestId: rid(51), obtainedAt: past(30), expiresAt: past(1) });
+    assert.equal(late.state, 'expired');
+    assert.deepEqual(JSON.parse(d.audits.at(-1).detail), { institution: A, consentId: late.id, before: null, after: 'expired' });
   }
 
   // ── 3. Withdraw: once, with its reason; every other selection is 404 and keeps the row.

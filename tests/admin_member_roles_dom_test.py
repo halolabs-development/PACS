@@ -1216,6 +1216,10 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#patient-consent-message")).to_contain_text("저장되었는지 확인하지 못했습니다")
         expect(self.page.locator("#patient-consent-retry")).to_be_visible()
         expect(rows).to_have_count(2)
+        # Until that result is known only the same request can be sent: Record Consent and the fields are locked.
+        expect(self.page.locator("#patient-consent-record")).to_be_disabled()
+        expect(form.locator("[name=purpose]")).to_be_disabled()
+        expect(self.page.locator("#patient-consent-retry")).to_be_enabled()
         self.page.locator("#patient-consent-retry").click()
         expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 저장했습니다.")
         expect(self.page.locator("#patient-consent-retry")).to_be_hidden()
@@ -1279,6 +1283,42 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#patient-consent-message")).to_have_text("Original Patient ID를 앞뒤 공백 없이 입력하세요.")
         self.assertEqual(before, len(state["calls"]))
 
+    def test_patient_consent_section_clears_the_patient_when_a_write_or_its_reread_is_refused(self):
+        state = self.consent_server()
+        self.load()
+        self.consent_load("P1")
+        form = self.page.locator("#patient-consent-form")
+        form.locator("[name=purpose]").fill("SYN purpose")
+        form.locator("[name=reference]").fill("SYN ref")
+        form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(1)
+        # The administrator's own Study Access no longer reaches the patient: the withdraw is refused (404) and nothing of
+        # the patient stays on the screen.
+        def refused(route):
+            state["calls"].append((urlparse(route.request.url).path, route.request.post_data_json))
+            route.fulfill(status=404, json={"statusCode": 404, "code": "CONSENT_PATIENT_NOT_FOUND",
+                                            "message": "이 기관에서 이 환자 번호의 검사를 찾지 못했습니다"})
+        self.page.locator("#patient-consent-rows tr").first.get_by_role("button", name="Withdraw", exact=True).click()
+        self.page.locator("#patient-consent-reason").fill("SYN reason")
+        self.page.route("**/api/admin/patient-consent/*/withdraw", refused)
+        self.page.locator("#patient-consent-withdraw-confirm").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(form).to_be_hidden()
+        expect(self.page.locator("#patient-consent-withdraw")).to_be_hidden()
+        # A record that is saved but whose read-back is refused: the saved answer is not followed by the patient's rows.
+        self.page.unroute("**/api/admin/patient-consent/*/withdraw", refused)
+        self.consent_load("P2")
+        form.locator("[name=purpose]").fill("SYN purpose two")
+        form.locator("[name=reference]").fill("SYN ref two")
+        form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
+        self.page.route("**/api/admin/patient-consent/lookup", refused)
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(form).to_be_hidden()
     def test_patient_consent_section_is_reachable_in_a_narrow_window(self):
         state = self.consent_server()
         self.page.set_viewport_size({"width": 380, "height": 900})

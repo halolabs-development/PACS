@@ -523,7 +523,8 @@ class Pure(unittest.TestCase):
                          + 1    # Film / DICOM Print: one printed film
                          + 3    # Merge Exam: one ended merged exam and its two members
                          + 1    # Image Report: one drawing a version and a draft hold
-                         + 1)   # Auto Save View: one reader's saved view
+                         + 1    # Auto Save View: one reader's saved view
+                         + 1)   # Patient Consent: one patient row beside the study's transfer basis
         self.assert_import_operation_rows(rows['ImportOperation'])
         self.assert_insert_receipt_rows(rows['ReportDraftInsertReceipt'], rows)
         self.assertEqual(sorted((r['sub'], r['providerDoneAt'] is None, r['attempts']) for r in rows['MemberIsolation']),

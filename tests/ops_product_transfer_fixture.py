@@ -643,7 +643,7 @@ def expected_rows(uid):
     rows['MemberRightsImport'] = [dict(id='realm-v1',completedAt=STAMP)]
     rows['TransferBasis'] = [dict(id=basis_id,studyUid=uid,institutionId='SYNTHETIC-hospital',kind='PATIENT_CONSENT',
         reference='SYNTHETIC consent reference',obtainedAt=STAMP,expiresAt=None,recordedBy='SYNTHETIC-admin',recordedAt=STAMP,
-        revokedBy=None,revokedAt=None,revokeReason=None),
+        revokedBy=None,revokedAt=None,revokeReason=None,patientId=None,purpose=None,requestId=None,recordedBySub=None),
         # Patient Consent: a patient row of the same table (no study; the patient's original ID, the purpose, the request).
         dict(id='00000000-0000-4000-8000-0000000000c1',studyUid=None,patientId='SYNTHETIC-patient',purpose='SYNTHETIC consent purpose',
         requestId='00000000-0000-4000-8000-0000000000c2',recordedBySub='SYNTHETIC-admin-sub',institutionId='SYNTHETIC-hospital',
