@@ -816,21 +816,22 @@ class Queue:
         return row["phase"] == "not_routed"
 
     def purgeable(self, cutoff: float, limit: int, after: tuple[float, str] | None = None,
-                  uid: str | None = None) -> list[sqlite3.Row]:
+                  uid: str | None = None, intended: bool = False) -> list[sqlite3.Row]:
         """Studies retention_due holds for whose last destination finished at or before `cutoff` (wall clock), oldest
         first, after `after` (delivered time, UID). The delivered moment is the latest updated_at of the study row and its
         forward rows: each is written by the final transition (complete, not_routed, forward complete); reports, retry
-        polls and the purge record do not move it."""
+        polls and the purge record do not move it. `intended`: also the study whose deletion is under way (the check
+        before each of its delete requests)."""
         rows = self.db.execute("""
           SELECT * FROM (
             SELECT s.*, max(s.updated_at, coalesce((SELECT max(f.updated_at) FROM forwards f WHERE f.uid = s.uid), 0))
               AS delivered_at
             FROM studies s
-            WHERE s.phase IN ('complete', 'not_routed') AND s.purged_at IS NULL AND s.purge_intent IS NULL
+            WHERE s.phase IN ('complete', 'not_routed') AND s.purged_at IS NULL AND (s.purge_intent IS NULL OR ?)
               AND s.destinations IS NOT NULL AND (? IS NULL OR s.uid = ?)
           ) WHERE delivered_at <= ? AND (? IS NULL OR (delivered_at, uid) > (?, ?))
           ORDER BY delivered_at, uid
-        """, (uid, uid, cutoff, after and after[0], after and after[0], after and after[1])).fetchall()
+        """, (int(intended), uid, uid, cutoff, after and after[0], after and after[0], after and after[1])).fetchall()
         due = []
         for row in rows:
             if self.retention_due(row):
@@ -864,11 +865,13 @@ class Queue:
 
     def begin_purge(self, uid: str, orthanc_id: str, targets: list[dict[str, str]], modalities: set[str],
                     source_aes: set[str]) -> None:
-        """Written before Orthanc is asked: the instances about to go and the study's routing facts."""
+        """Written before Orthanc is asked: the instances about to go, the study's routing facts and the state (seq) the
+        deletion was decided in."""
+        row = self.db.execute("SELECT seq FROM studies WHERE uid=?", (uid,)).fetchone()
         with self.db:
             self.db.execute("UPDATE studies SET purge_intent=? WHERE uid=?", (json.dumps({
                 "orthancId": orthanc_id, "targets": targets, "modalities": sorted(modalities),
-                "sourceAes": sorted(source_aes)}), uid))
+                "sourceAes": sorted(source_aes), "seq": int(row["seq"]) if row else None}), uid))
 
     def intents(self) -> list[str]:
         return [str(row["uid"]) for row in self.db.execute("SELECT uid FROM studies WHERE purge_intent IS NOT NULL")]
@@ -908,8 +911,10 @@ class Queue:
                   INSERT INTO meta(key, value) VALUES ('retention_instances', ?)
                   ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)
                 """, (str(len(gone)),))
-            self.db.execute("UPDATE studies SET purge_intent=NULL, purged_at=? WHERE uid=?",
-                            (time.time() if left == 0 else None, uid))
+            # Done for the state it was decided in; images that arrived since (a new seq) make the study a candidate again.
+            self.db.execute("""
+              UPDATE studies SET purge_intent=NULL, purged_at=CASE WHEN ? AND seq = ? THEN ? ELSE NULL END WHERE uid=?
+            """, (int(left == 0), intent.get("seq") if isinstance(intent, dict) else None, time.time(), uid))
         return len(gone), left
 
     def nothing_to_purge(self, uid: str) -> None:
@@ -1668,9 +1673,10 @@ class Support:
             queue = None
         settings = self.settings.current if self.settings.known else None
         # What retention deleted, from the queue (not the log ring, which is this run's recent lines): one line, numbers only,
-        # last so that fitting the report keeps it.
+        # last so that fitting the report keeps it, in place of the oldest ring line (KIN takes at most LOG_RING_MAX lines).
         lines = list(LOG_RING)
         try:
+            lines = lines[-(LOG_RING_MAX - 1):]
             db = sqlite3.connect(Path(self.config.queue_db).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
             try:
                 totals = retention_totals(db)
@@ -1961,20 +1967,30 @@ class Agent:
             return
         modalities = self.orthanc.series_modalities(orthanc_id)
         targets = [{"id": item["id"], "sop": item["sop"], "series": str(item.get("series") or "")} for item in instances]
-        for start in range(0, len(targets), RETENTION_DELETE_CHUNK):
-            # Right before each request: the rule and the period as they are now (settings may change while Orthanc reads).
-            keep = self.retention_period()
-            if keep is None or (start == 0 and not self.queue.purgeable(time.time() - keep, 1, uid=uid)):
-                break
-            if start == 0:
-                self.queue.begin_purge(uid, orthanc_id, targets, modalities,
-                                       {item.get("source_ae", "") for item in instances} - {""})
-            try:
+        if not self.may_delete(uid):
+            return
+        self.queue.begin_purge(uid, orthanc_id, targets, modalities,
+                               {item.get("source_ae", "") for item in instances} - {""})
+        try:
+            for start in range(0, len(targets), RETENTION_DELETE_CHUNK):
+                if start and not self.may_delete(uid):
+                    break
                 self.orthanc.delete_instances([item["id"] for item in targets[start:start + RETENTION_DELETE_CHUNK]])
-            except Exception:
-                self.settle_purge(uid)
-                raise
-        self.settle_purge(uid)
+        finally:
+            self.settle_purge(uid)
+
+    def may_delete(self, uid: str) -> bool:
+        """The one check right before every delete request: the rule and the period as they are now (the settings, a stop
+        or an update may have changed while Orthanc was read or an earlier request ran)."""
+        keep = self.retention_period()
+        return keep is not None and bool(self.queue.purgeable(time.time() - keep, 1, uid=uid, intended=True))
+
+    def study_record(self, uid: str) -> dict[str, Any]:
+        """The purge record of a study about to be sent or routed. A deletion a stop left recorded but not settled is
+        settled first, so the study is counted and routed with every copy already gone (raises while Orthanc is down)."""
+        if self.queue.purge_orthanc_id(uid) is not None:
+            self.settle_purge(uid)
+        return self.queue.purge_record(uid)
 
     def settle_purge(self, uid: str) -> None:
         """Record what an intended deletion removed, by what Orthanc still holds (its answer carries no count)."""
@@ -2128,8 +2144,8 @@ class Agent:
     def process(self, row: sqlite3.Row) -> None:
         uid = str(row["uid"])
         self.queue.phase(uid, "announcing")
+        record = self.study_record(uid)
         orthanc_id, detail, instances = self.orthanc.instances(uid, str(row["orthanc_id"]))
-        record = self.queue.purge_record(uid)
         routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances, record)
         if KIN_DESTINATION not in self.decide(row, routing):
             self.queue.not_routed(uid)
@@ -2208,8 +2224,9 @@ class Agent:
             peer = json.loads(row["peer"])
         except (TypeError, ValueError):
             raise ForwardError("forward destination unknown") from None
+        record = self.study_record(uid)
         orthanc_id, _detail, instances = self.orthanc.instances(uid, self.queue.orthanc_id(uid))
-        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances, self.queue.purge_record(uid))
+        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances, record)
         routing.require_peer(dest, peer)
         self.queue.forward_phase(uid, dest, "sending")
         modality = "kin-route-" + dest

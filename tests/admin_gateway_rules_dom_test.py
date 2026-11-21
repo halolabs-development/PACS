@@ -279,11 +279,11 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         sent = self.save((200, {"settings": settings(revision=5), "changed": True}))
         self.assertIsNone(sent["retentionDays"], "empty = never delete")
         expect(days).to_have_value("")
-        for typed, value in (("0", 0), ("1.5", "1.5"), ("ten", "ten")):
+        for typed, value in (("0", 0), ("10000", 10000), ("1.5", "1.5"), ("seven", "seven")):
             with self.subTest(typed=typed):
                 days.fill(typed)
                 sent = self.save((400, {"code": "GATEWAY_SETTINGS_INVALID", "field": "retentionDays"}))
-                self.assertEqual(sent["retentionDays"], value, "anything but whole digits goes as written")
+                self.assertEqual(sent["retentionDays"], value, "sent as typed (never cut short); the server refuses it")
                 self.assertIn("1부터 3650까지", self.message())
                 expect(days).to_have_value(typed, timeout=1000)
         self.load(settings(revision=6, retention=None))

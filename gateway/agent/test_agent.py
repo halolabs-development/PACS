@@ -2648,6 +2648,72 @@ class RetentionTests(unittest.TestCase):
                 self.assertEqual(self.deletes(agent), [])
                 self.assertEqual(agent.queue.intents(), [])
 
+    def test_every_delete_request_checks_the_rule_and_period_as_they_are_then(self):
+        for change in ("lengthened", "cleared", "stop"):
+            with self.subTest(change=change):
+                agent = self.agent(days=1, name="chunks-%s.db" % change)
+                self.deliver(agent)
+                self.now += 2 * DAY
+
+                def after_first_request(agent=agent, change=change):
+                    if len(self.deletes(agent)) == 1:
+                        if change == "stop":
+                            agent.stop()
+                        else:
+                            agent.settings.accept(dict(settings_answer(revision=2),
+                                                       retentionDays=30 if change == "lengthened" else None))
+                agent.orthanc.on_delete = after_first_request
+                with patch.object(agent_module, "RETENTION_DELETE_CHUNK", 1):
+                    self.purge(agent)
+                self.assertEqual(self.deletes(agent), [("delete", self.ids(self.SOPS[0]))], "the second request never went")
+                self.assertEqual(set(agent.orthanc.held), {self.SOPS[1]})
+                self.assertEqual((self.totals(agent)["deletedInstances"], agent.queue.intents()), (1, []))
+                self.assertIsNone(self.study(agent)["purged_at"], "what is left stays a candidate")
+
+    def test_a_deletion_left_unsettled_by_a_stop_is_settled_before_a_late_image_is_sent(self):
+        agent = self.agent(routes=[rule(None, "SYN_CT", PEER)], days=1)
+        self.deliver(agent)
+        self.forward(agent)
+        self.now += DAY
+        agent.orthanc.ids_error = GatewayError("local Orthanc ConnectionError")   # stopped before the record was settled
+        self.purge(agent)
+        self.assertEqual((agent.orthanc.held, agent.queue.intents()), ({}, [self.UID]))
+        # Restarted with an SR from another device: alone it matches no rule and would go to KIN by default.
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = {"sop": late, "id": "id-" + late, "size": 16, "source_ae": "SYN_SR", "syntax": NATIVE,
+                                    "series": "series-b"}
+        agent.orthanc.modalities = {"SR"}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        restarted = Agent(config(str(self.dir / "queue.db"), client_id="gw-syn"))
+        self.addCleanup(restarted.queue.close)
+        restarted.orthanc, restarted.cloud = agent.orthanc, agent.cloud
+        self.deliver(restarted)
+        self.assertEqual(self.study(restarted)["phase"], "not_routed", "the whole study's facts: the peer only")
+        self.assertEqual(restarted.cloud.stowed, [], "nothing went to KIN")
+        self.forward(restarted)
+        self.assertEqual(restarted.queue.db.execute("SELECT phase FROM forwards").fetchone()[0], "complete")
+        self.assertEqual((self.totals(restarted)["deletedInstances"], restarted.queue.intents()), (2, []))
+        self.assertIsNone(self.study(restarted)["purged_at"], "the new image keeps the study a candidate")
+        self.now += DAY
+        self.purge(restarted)
+        self.assertEqual(self.deletes(restarted)[-1], ("delete", ("id-" + late,)))
+        self.assertEqual(self.totals(restarted)["deletedInstances"], 3)
+
+    def test_a_kin_receipt_after_an_unsettled_deletion_counts_the_whole_study(self):
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        self.now += 2 * DAY
+        agent.orthanc.ids_error = GatewayError("local Orthanc ConnectionError")
+        self.purge(agent)
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = {"sop": late, "id": "id-" + late, "size": 16, "source_ae": "SYN_CT", "syntax": NATIVE,
+                                    "series": "series-b"}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.deliver(agent)
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["localCount"], receipt["successCount"], receipt["successSeries"]),
+                         ("complete", 3, 3, 2))
+
     def test_a_stop_ends_the_pass_between_studies(self):
         agent = self.agent(days=1)
         self.deliver(agent)
@@ -2761,6 +2827,12 @@ class RetentionTests(unittest.TestCase):
                          {"event": "retention.totals", "deletedStudies": 1, "deletedInstances": 2, "keptWithoutRecord": 0,
                           "retentionDays": 7})
         self.assertNotIn(self.UID, json.dumps(line))
+        # A full ring of this run's lines: the totals take the oldest line's place, so KIN's limit still holds.
+        with patch.object(agent_module, "LOG_RING", agent_module.deque(
+                [{"at": "2026-11-21T00:00:00Z", "event": "agent.started"}] * agent_module.LOG_RING_MAX,
+                maxlen=agent_module.LOG_RING_MAX)):
+            lines = support.diagnostics()["log"]
+        self.assertEqual((len(lines), lines[-1]["event"]), (agent_module.LOG_RING_MAX, "retention.totals"))
 
 
 if __name__ == "__main__":

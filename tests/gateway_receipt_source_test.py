@@ -390,8 +390,8 @@ class AgentPins(unittest.TestCase):
         # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
         # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
         # 76 -> 89: SupportTests (signed updates' ready signal and remote support, the agent's half).
-        # 89 -> 106: RetentionTests (deleting delivered local copies after the set days).
-        self.assertEqual(count, 106)
+        # 89 -> 109: RetentionTests (deleting delivered local copies after the set days).
+        self.assertEqual(count, 109)
 
 
 class ServerPins(unittest.TestCase):
