@@ -90,10 +90,12 @@ window.fetch = async (url, init={}) => {
     row.snapshot=contractFields.some(k=>sent[k]) ? {...Object.fromEntries(contractFields.map(k=>[k,sent[k]])),
       baseVersion:sent.baseVersion,citations:[...sent.citationIds],structured:[...sent.structureIds]} : null;
     if (row.snapshot && body.inserted?.cid) row.snapshot.citations.push(body.inserted.cid);
+    // Insert Selected into Report: the server answers one receipt per element of the array, in order.
+    if (row.snapshot && Array.isArray(body.insertedAll)) row.snapshot.citations.push(...body.insertedAll.map(r=>r&&r.cid));
     const applied=body.applied;
     if (row.snapshot && applied?.sid) row.snapshot.structured=[...row.snapshot.structured.filter(sid=>sid!==sent.structure?.replacesSid),applied.sid];
     row.revision++;
-    return response(200,{...contractEnvelope(uid),inserted:body.inserted,applied});
+    return response(200,{...contractEnvelope(uid),inserted:body.inserted,applied,...(body.insertedAll?{insertedAll:body.insertedAll}:{})});
   }
   row.snapshot=null; row.revision++;
   return response(200,{...contractEnvelope(uid),state:{...body,draft:null,draftRevision:contractEnvelope(uid).revision}});

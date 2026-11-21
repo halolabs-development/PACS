@@ -10,13 +10,17 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
+import socket
 import sqlite3
+import struct
 import sys
 import time
 import math
 import tempfile
 import threading
+from collections import deque
 from contextlib import contextmanager
 import uuid
 from dataclasses import dataclass
@@ -40,6 +44,10 @@ class PermanentGatewayError(GatewayError):
     """A study cannot succeed by retrying the same bytes and needs operator action."""
 
 
+class SupportRefused(RuntimeError):
+    """A remote-support action could not be carried out; the message is a fixed code sent to KIN as the result."""
+
+
 class ForwardError(RuntimeError):
     """A delivery to a destination other than KIN failed. Safe to persist and print; never part of a KIN receipt (a
     forward row has none), so it has no receipt error code."""
@@ -54,6 +62,8 @@ GATEWAY_ERROR_CODES = {
     "invalid KIN base address": "configuration",
     "KIN destination no longer allowed": "other",
     "BYTE_BUDGET_MIB must be finite and > 0": "configuration",
+    "LOCAL_DICOM_PORT must be a port number": "configuration",
+    "LOCAL_DICOM_AET must be 1-16 printable characters": "configuration",
     "local Orthanc {}": "local_orthanc_unreachable",
     "local Orthanc HTTP {}": "local_orthanc_http",
     "local study lookup count={}": "local_study_lookup",
@@ -87,11 +97,14 @@ _ERROR_PATTERNS = tuple(
 
 def error_code(error: BaseException) -> str:
     """Only the message template decides the code; nothing of the message itself is sent."""
-    if isinstance(error, GatewayError):
-        message = str(error)
-        for pattern, code in _ERROR_PATTERNS:
-            if pattern.fullmatch(message):
-                return code
+    return error_code_of_text(str(error)) if isinstance(error, GatewayError) else GATEWAY_ERROR_FALLBACK
+
+
+def error_code_of_text(message: str) -> str:
+    """The same mapping for a reason already turned into text (a log field, a queue row's last error)."""
+    for pattern, code in _ERROR_PATTERNS:
+        if pattern.fullmatch(message):
+            return code
     return GATEWAY_ERROR_FALLBACK
 
 
@@ -125,8 +138,43 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # Operational status (heartbeat). The admin console shows, per Gateway credential, when KIN last heard from it, its queue,
 # its version, how long it has run, its last accepted STOW and whether the local DICOM listener answers. The beat runs on
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
-AGENT_VERSION = "2026.11.1"
+AGENT_VERSION = "2026.11.2"
 HEARTBEAT_SECONDS = 30.0
+# Signed updates (update.py, the container's launcher). The launcher names the signed version of the release it runs in
+# KIN_AGENT_RUN_VERSION, so the heartbeat and the console show the version that was verified, not a constant in a file.
+# It also names a ready file for this start: written once this run finished one main-loop pass and KIN stored one of
+# its heartbeats — the launcher keeps a new release only then. Exit RESTART_EXIT asks the launcher to start again now.
+RUN_VERSION = re.compile(r"[0-9]{1,9}(?:\.[0-9]{1,9}){0,7}")
+RESTART_EXIT = 75
+# Remote support: an admin of this institution asks KIN for one action on this Gateway (diagnostics, restart, update to a
+# version KIN holds); the agent fetches it over its own outbound call — nothing listens for KIN. The host can switch it
+# off (GW_REMOTE_SUPPORT=off): every request is then answered refused, and the local manual procedure still works.
+SUPPORT_SECONDS = 30.0
+SUPPORT_ACTIONS = ("diagnostics", "restart", "update")
+SUPPORT_CODE = re.compile(r"[a-z_]{1,40}")
+DIAGNOSTICS_MAX_BYTES = 256 * 1024
+DIAGNOSTICS_ROWS_MAX = 200
+UPDATE_DOWNLOAD_MAX_BYTES = 6 * 1024 * 1024
+
+
+def run_version() -> str:
+    value = os.environ.get("KIN_AGENT_RUN_VERSION", "")
+    return value if len(value) <= 32 and RUN_VERSION.fullmatch(value) else AGENT_VERSION
+# DICOM receive self-check: before each beat the heartbeat thread opens one DICOM association to the local Orthanc's
+# listener (the port the hospital's devices send to) and sends C-ECHO. Only a C-ECHO-RSP with Status 0x0000 to this
+# request on the accepted Verification context is "accepted"; an explicit association or context rejection, or a
+# valid failure Status, is "rejected"; anything else (no connection, the deadline, a close or abort without a valid
+# answer, an answer this code cannot read) is "no_answer". One deadline covers connecting through reading the answer.
+# The REST answers and the beat itself never fill this result.
+DICOM_ECHO_SECONDS = 5.0
+DICOM_AE = re.compile(r"[ -\[\]-~]{0,15}[!-\[\]-~]")   # 1-16 printable ASCII, no backslash, not only spaces
+DICOM_CALLING_AE = "KINGW-CHECK"
+VERIFICATION_SOP = "1.2.840.10008.1.1"
+IMPLICIT_LITTLE_ENDIAN = "1.2.840.10008.1.2"
+APPLICATION_CONTEXT = "1.2.840.10008.3.1.1.1"
+# This agent's DICOM implementation class (a UUID-derived UID, PS3.5 B.2) and version name.
+IMPLEMENTATION_CLASS_UID = "2.25.226347301929370163734862106327352741513"
+IMPLEMENTATION_VERSION = "KINGW-" + AGENT_VERSION
 # Gateway settings (routing rules and lossless compression) are set by the institution's
 # administrator in KIN and read by the heartbeat thread every SETTINGS_EVERY beats (the first right after start). No
 # settings = KIN only, nothing deleted, nothing transcoded: exactly the behaviour before settings existed.
@@ -277,6 +325,34 @@ class SettingsStore:
 
 
 _LOG_LOCK = threading.Lock()
+# The last LOG_RING_MAX log lines of this run, as the remote-support diagnostics carry them. Only the whole-Gateway
+# events named in LOG_RING_EVENTS are kept — each by its full name, never by prefix. Every event about one study
+# (study.*, batch.*, forward.*, receipt.*, retry_request.*, agent.retry, ...) stays out whether or not it names a UID: its
+# time alone would tell which study was handled when. A kept line carries the time, the event and only numbers,
+# true/false and error codes — never a UID, a destination or free text.
+LOG_RING_MAX = 200
+LOG_RING: deque[dict[str, Any]] = deque(maxlen=LOG_RING_MAX)
+LOG_RING_EVENTS = frozenset({
+    "agent.started", "agent.stopped", "agent.ready", "agent.identity_blocked",
+    "heartbeat.deferred", "heartbeat.queue_unreadable",
+    "settings.deferred", "settings.invalid",
+    "support.deferred", "support.invalid", "support.queue_unreadable", "support.restart",
+    "support.update_handed_over",
+})
+
+
+def _ring_line(safe: dict[str, Any]) -> dict[str, Any]:
+    line: dict[str, Any] = {"at": safe["at"], "event": safe["event"]}
+    for key, value in safe.items():
+        if key in ("at", "event") or not re.fullmatch(r"[A-Za-z]{1,32}", key):
+            continue
+        if isinstance(value, bool) or (isinstance(value, int) and abs(value) < 2 ** 53):
+            line[key] = value
+        elif isinstance(value, float) and math.isfinite(value):
+            line[key] = round(value, 3)
+        elif key in ("error", "code") and isinstance(value, str):
+            line[key] = value if value in ERROR_CODE_VALUES else error_code_of_text(value)
+    return line
 
 
 def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
@@ -288,6 +364,8 @@ def log(event: str, *, uid: str | None = None, **fields: Any) -> None:
     # the text and the newline separately, so two lines written at once could interleave into one unreadable line.
     line = json.dumps(safe, ensure_ascii=False, separators=(",", ":")) + "\n"
     with _LOG_LOCK:
+        if event in LOG_RING_EVENTS:
+            LOG_RING.append(_ring_line(safe))
         sys.stdout.write(line)
         sys.stdout.flush()
 
@@ -319,12 +397,23 @@ class Config:
     stow_timeout: float
     backoff_base: float
     backoff_max: float
+    # The local Orthanc's DICOM listener, the one the hospital's devices send to, checked with C-ECHO by the heartbeat.
+    # An empty host means the host of orthanc_url (the same container).
+    dicom_host: str = ""
+    dicom_port: int = 4242
+    dicom_aet: str = "KINGW"
 
     @classmethod
     def from_env(cls) -> "Config":
         budget_mib = float(os.environ.get("BYTE_BUDGET_MIB", "24"))
         if not math.isfinite(budget_mib) or budget_mib <= 0:
             raise GatewayError("BYTE_BUDGET_MIB must be finite and > 0")
+        port = os.environ.get("LOCAL_DICOM_PORT", "4242").strip()
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise GatewayError("LOCAL_DICOM_PORT must be a port number")
+        aet = os.environ.get("LOCAL_DICOM_AET", "KINGW").strip()
+        if not DICOM_AE.fullmatch(aet):
+            raise GatewayError("LOCAL_DICOM_AET must be 1-16 printable characters")
         return cls(
             orthanc_url=required("LOCAL_ORTHANC_URL").rstrip("/"),
             orthanc_user=required("LOCAL_ORTHANC_USER"),
@@ -340,7 +429,14 @@ class Config:
             stow_timeout=max(1, float(os.environ.get("STOW_TIMEOUT_SECONDS", "300"))),
             backoff_base=max(0.2, float(os.environ.get("BACKOFF_BASE_SECONDS", "5"))),
             backoff_max=max(1, float(os.environ.get("BACKOFF_MAX_SECONDS", "300"))),
+            dicom_host=os.environ.get("LOCAL_DICOM_HOST", "").strip(),
+            dicom_port=int(port),
+            dicom_aet=aet,
         )
+
+    def listener(self) -> tuple[str, int, str]:
+        """Where the C-ECHO goes: (host, port, called AE title)."""
+        return (self.dicom_host or urlsplit(self.orthanc_url).hostname or "", self.dicom_port, self.dicom_aet)
 
 
 class Queue:
@@ -946,6 +1042,149 @@ class Cloud:
         return failures
 
 
+def _uid_bytes(uid: str) -> bytes:
+    raw = uid.encode("ascii")
+    return raw + b"\x00" if len(raw) % 2 else raw
+
+
+def _item(kind: int, value: bytes) -> bytes:
+    return struct.pack(">BBH", kind, 0, len(value)) + value
+
+
+def _pdu(kind: int, value: bytes) -> bytes:
+    return struct.pack(">BBI", kind, 0, len(value)) + value
+
+
+def _element(group: int, element: int, value: bytes) -> bytes:
+    return struct.pack("<HHI", group, element, len(value)) + value
+
+
+def _echo_command(message_id: int) -> bytes:
+    """C-ECHO-RQ command set (PS3.7 9.3.5.1), Implicit VR Little Endian, with its group length first."""
+    rest = (_element(0x0000, 0x0002, _uid_bytes(VERIFICATION_SOP))
+            + _element(0x0000, 0x0100, struct.pack("<H", 0x0030))
+            + _element(0x0000, 0x0110, struct.pack("<H", message_id))
+            + _element(0x0000, 0x0800, struct.pack("<H", 0x0101)))
+    return _element(0x0000, 0x0000, struct.pack("<I", len(rest))) + rest
+
+
+def _associate_request(called: str, calling: str) -> bytes:
+    """A-ASSOCIATE-RQ (PS3.8 9.3.2): one presentation context, Verification in Implicit VR Little Endian."""
+    context = struct.pack(">BBBB", 1, 0, 0, 0) + _item(0x30, VERIFICATION_SOP.encode()) + _item(0x40, IMPLICIT_LITTLE_ENDIAN.encode())
+    user = (_item(0x51, struct.pack(">I", 16384)) + _item(0x52, IMPLEMENTATION_CLASS_UID.encode())
+            + _item(0x55, IMPLEMENTATION_VERSION.encode()))
+    body = (struct.pack(">HH", 1, 0) + called.ljust(16).encode("ascii") + calling.ljust(16).encode("ascii") + bytes(32)
+            + _item(0x10, APPLICATION_CONTEXT.encode()) + _item(0x20, context) + _item(0x50, user))
+    return _pdu(0x01, body)
+
+
+class _EchoEnded(Exception):
+    """The listener's side ended the exchange before a readable answer: no_answer."""
+
+
+def _read_pdu(sock: socket.socket, deadline: float) -> tuple[int, bytes]:
+    def exactly(count: int) -> bytes:
+        data = b""
+        while len(data) < count:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise socket.timeout()
+            sock.settimeout(left)
+            part = sock.recv(count - len(data))
+            if not part:
+                raise _EchoEnded()
+            data += part
+        return data
+    kind, _reserved, length = struct.unpack(">BBI", exactly(6))
+    if length > 1 << 20:
+        raise _EchoEnded()
+    return kind, exactly(length)
+
+
+def _accepted_context(body: bytes) -> bool:
+    """Whether the A-ASSOCIATE-AC accepts presentation context 1 (result 0) in Implicit VR Little Endian."""
+    at = 68   # protocol version, reserved, the two echoed AE titles and the reserved 32 bytes
+    while at + 4 <= len(body):
+        kind, _reserved, length = struct.unpack(">BBH", body[at:at + 4])
+        value = body[at + 4:at + 4 + length]
+        at += 4 + length
+        if kind == 0x21 and len(value) >= 4 and value[0] == 1:
+            if value[2] != 0:
+                return False
+            sub = value[4:]
+            return len(sub) >= 4 and sub[0] == 0x40 and sub[4:4 + struct.unpack(">H", sub[2:4])[0]].rstrip(b"\x00 ") \
+                == IMPLICIT_LITTLE_ENDIAN.encode()
+    return False
+
+
+def _command_elements(data: bytes) -> dict[tuple[int, int], bytes]:
+    elements, at = {}, 0
+    while at + 8 <= len(data):
+        group, element, length = struct.unpack("<HHI", data[at:at + 8])
+        elements[(group, element)] = data[at + 8:at + 8 + length]
+        at += 8 + length
+    return elements
+
+
+def dicom_echo(host: str, port: int, called: str, calling: str = DICOM_CALLING_AE,
+               timeout: float = DICOM_ECHO_SECONDS, message_id: int = 1) -> str:
+    """One C-ECHO to the DICOM listener at host:port: "accepted", "rejected" or "no_answer" (see DICOM_ECHO_SECONDS).
+
+    No DICOM library: the agent's dependencies stay as they are. Never raises.
+    """
+    deadline = time.monotonic() + timeout
+    sock: socket.socket | None = None
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.settimeout(max(0.01, deadline - time.monotonic()))
+        sock.sendall(_associate_request(called, calling))
+        kind, body = _read_pdu(sock, deadline)
+        if kind == 0x03:
+            return "rejected"          # A-ASSOCIATE-RJ
+        if kind != 0x02:
+            return "no_answer"         # A-ABORT or anything else
+        if not _accepted_context(body):
+            return "rejected"          # Verification refused by the listener
+        command = _echo_command(message_id)
+        sock.sendall(_pdu(0x04, struct.pack(">IBB", len(command) + 2, 1, 0x03) + command))
+        received = b""
+        while True:
+            kind, body = _read_pdu(sock, deadline)
+            if kind != 0x04:
+                return "no_answer"
+            at, last = 0, False
+            while at + 6 <= len(body):
+                length, context, header = struct.unpack(">IBB", body[at:at + 6])
+                fragment = body[at + 6:at + 4 + length]
+                at += 4 + length
+                if context == 1 and header & 0x01:
+                    received += fragment
+                    last = last or bool(header & 0x02)
+            if last:
+                break
+        elements = _command_elements(received)
+        field, answering, status = (elements.get((0x0000, 0x0100)), elements.get((0x0000, 0x0120)),
+                                    elements.get((0x0000, 0x0900)))
+        if field != struct.pack("<H", 0x8030) or answering != struct.pack("<H", message_id) \
+                or status is None or len(status) != 2:
+            return "no_answer"
+        result = "accepted" if status == b"\x00\x00" else "rejected"
+        try:   # A-RELEASE-RQ; the result is already known, a missing A-RELEASE-RP changes nothing
+            sock.sendall(_pdu(0x05, bytes(4)))
+            _read_pdu(sock, min(deadline, time.monotonic() + 1))
+        except (OSError, _EchoEnded, struct.error):
+            pass
+        return result
+    except (OSError, _EchoEnded, struct.error, UnicodeError):
+        return "no_answer"
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
 def failed_sops(payload: Any) -> set[str]:
     if isinstance(payload, list):
         payload = payload[0] if payload else {}
@@ -1079,18 +1318,29 @@ class Heartbeat:
         # the run its row holds from covering a newer one; it does not order different runs.
         self.boot_id = str(uuid.uuid4())
         self.seq = 0
+        self.stored_once = False   # KIN stored one beat of this run (part of the launcher's ready condition)
         self.orthanc = orthanc   # .observed is read, nothing else
         self.stow = stow         # .last_stow_at is read, nothing else
         self.cloud = Cloud(config)
         self.started = started
         self.stopped = threading.Event()
         self.thread: threading.Thread | None = None
+        # The last DICOM receive self-check as (result, monotonic time it ended), or None before the first one.
+        self.listener: tuple[str, float] | None = None
+
+    def check_listener(self) -> str:
+        """One C-ECHO to the local DICOM listener (DICOM_ECHO_SECONDS at most). Never raises."""
+        host, port, called = self.config.listener()
+        result = dicom_echo(host, port, called) if host else "no_answer"
+        self.listener = (result, time.monotonic())
+        return result
 
     def body(self) -> dict[str, Any]:
         self.seq += 1
         now = time.monotonic()
         last = self.stow.last_stow_at
         observed = self.orthanc.observed
+        listener = self.listener
         try:
             queue: dict[str, int] | None = queue_counts(self.config.queue_db)
         except Exception as error:
@@ -1100,18 +1350,27 @@ class Heartbeat:
             "epoch": self.epoch,
             "bootId": self.boot_id,
             "seq": self.seq,
-            "version": AGENT_VERSION,
+            "version": run_version(),
             "uptimeSeconds": max(0, int(now - self.started)),
             "queue": queue,
             "lastStowAgeSeconds": None if last is None else max(0, int(now - last)),
             "localOrthanc": None if observed is None
             else {"answered": bool(observed[0]), "ageSeconds": max(0, int(now - observed[1]))},
+            "dicomListener": None if listener is None
+            else {"result": listener[0], "ageSeconds": max(0, int(now - listener[1]))},
         }
 
     def beat(self) -> bool:
         try:
             response = self.cloud.heartbeat(self.body())
             if response.ok:
+                if not self.stored_once:
+                    try:
+                        answer = response.json()
+                    except Exception:
+                        answer = None
+                    # KIN answers 200 for a stale body too; only "stored" shows KIN took this run's status.
+                    self.stored_once = isinstance(answer, dict) and answer.get("result") == "stored"
                 return True
             log("heartbeat.deferred", status=response.status_code)
         except Exception as error:
@@ -1136,6 +1395,7 @@ class Heartbeat:
 
     def run(self) -> None:
         while not self.stopped.is_set():
+            self.check_listener()   # a failed check is a result too; the beat carries it and still goes out
             self.beat()
             if self.beats % SETTINGS_EVERY == 0:
                 self.refresh_settings()
@@ -1148,6 +1408,338 @@ class Heartbeat:
 
     def stop(self, wait: float = 5.0) -> None:
         """No new beat starts; a beat in flight gets a short while to end so the queue file is not held after stop."""
+        self.stopped.set()
+        if self.thread is not None and self.thread is not threading.current_thread():
+            self.thread.join(wait)
+
+
+def queue_diagnostics(path: str, limit: int = DIAGNOSTICS_ROWS_MAX) -> dict[str, Any]:
+    """The queue as the diagnostics report carries it, on a read-only connection of its own (the main loop stays the
+    only writer). Counts for every phase; rows (newest first, at most `limit`) only for studies whose destinations are
+    decided and include KIN, with an error code and never the free reason. Other studies are only counted."""
+    db = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    db.row_factory = sqlite3.Row
+    try:
+        counts = {str(row["phase"]): int(row["n"]) for row in db.execute(
+            "SELECT phase, count(*) AS n FROM studies GROUP BY phase")}
+        forwards: dict[str, list[dict[str, Any]]] = {}
+        for row in db.execute("SELECT uid, dest, phase, attempt, last_error FROM forwards ORDER BY uid, dest"):
+            forwards.setdefault(str(row["uid"]), []).append({
+                "destination": str(row["dest"]) if _SETTINGS_ID.fullmatch(str(row["dest"])) else "other",
+                "phase": str(row["phase"]), "attempt": int(row["attempt"]),
+                "errorCode": None if row["last_error"] is None else error_code_of_text(str(row["last_error"])),
+            })
+        rows, omitted = [], 0
+        for row in db.execute("SELECT uid, phase, attempt, error_code, last_error, destinations FROM studies "
+                              "ORDER BY updated_at DESC, uid"):
+            try:
+                destinations = json.loads(row["destinations"]) if row["destinations"] else None
+            except ValueError:
+                destinations = None
+            uid = str(row["uid"])
+            if (not isinstance(destinations, list) or KIN_DESTINATION not in destinations
+                    or str(row["phase"]) == "not_routed" or not RETRY_POLL_UID.fullmatch(uid) or len(uid) > 64
+                    or len(rows) >= limit):
+                omitted += 1
+                continue
+            code = row["error_code"] if row["error_code"] in ERROR_CODE_VALUES else (
+                None if row["last_error"] is None else error_code_of_text(str(row["last_error"])))
+            rows.append({"uid": uid, "phase": str(row["phase"]), "attempt": int(row["attempt"]), "errorCode": code,
+                         "destinations": [d if d == KIN_DESTINATION or _SETTINGS_ID.fullmatch(str(d)) else "other"
+                                          for d in destinations][:SETTINGS_DESTINATIONS_MAX + 1],
+                         "forwards": forwards.get(uid, [])[:SETTINGS_DESTINATIONS_MAX]})
+    finally:
+        db.close()
+    return {"counts": counts, "total": sum(counts.values()), "rows": rows, "omitted": omitted}
+
+
+def _launcher_view(path: str | None) -> dict[str, Any] | None:
+    """What the launcher's state says, reduced to versions and codes (the launcher is its only writer)."""
+    if not path:
+        return None
+    try:
+        state = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(state, dict):
+        return None
+
+    def name(value: Any) -> str | None:
+        return value if value == "builtin" or (isinstance(value, str) and len(value) <= 32
+                                               and RUN_VERSION.fullmatch(value)) else None
+
+    def code(value: Any) -> str | None:
+        return value if isinstance(value, str) and SUPPORT_CODE.fullmatch(value) else None
+
+    last = state.get("last") if isinstance(state.get("last"), dict) else None
+    return {"current": name(state.get("current")), "previous": name(state.get("previous")),
+            "running": name(state.get("running")), "installing": bool(state.get("pending")),
+            "last": None if last is None else {"version": name(last.get("version")), "result": code(last.get("result")),
+                                               "code": code(last.get("code"))}}
+
+
+class Support:
+    """Remote support over this agent's own outbound HTTPS — no port opens toward the hospital.
+
+    Own thread, own Cloud and read-only queue reads, so the heartbeat and the settings never wait for a download or a
+    report. Each SUPPORT_SECONDS it (1) reports every final outcome KIN has not acknowledged yet — a restart this run
+    replaced, and the launcher's install results — and (2) asks KIN for at most one request for this queue. The trust
+    decision for an update is the launcher's alone: the agent only downloads the bundle KIN holds and hands it over
+    complete. A request already carried out is never carried out again when KIN delivers it twice (support.json beside
+    the queue, bound to this credential and queue epoch); a diagnostics report may be sent again (it changes nothing).
+    """
+
+    def __init__(self, config: Config, epoch: str, owner: dict[str, str], heartbeat: "Heartbeat",
+                 settings: "SettingsStore", orthanc: "Orthanc", stow: "Cloud", started: float,
+                 stop_agent: Callable[[int], None]):
+        self.config = config
+        self.epoch = epoch
+        self.owner = owner
+        self.heartbeat = heartbeat
+        self.settings = settings
+        self.orthanc = orthanc
+        self.stow = stow
+        self.started = started
+        self.stop_agent = stop_agent
+        self.enabled = truthy(os.environ.get("GW_REMOTE_SUPPORT", "on"))
+        self.update_root = os.environ.get("KIN_UPDATE_ROOT") or None
+        self.update_state = os.environ.get("KIN_AGENT_UPDATE_STATE") or None
+        self.memo_path = Path(config.queue_db).with_name("support.json")
+        self.memo = self.load_memo()
+        self.cloud = Cloud(config)
+        self.stopped = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    # the memo: what this Gateway already did and which outcomes KIN acknowledged
+    def load_memo(self) -> dict[str, Any]:
+        fresh = {**self.owner, "epoch": self.epoch, "handled": [], "reported": [], "restart": None}
+        try:
+            memo = json.loads(self.memo_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return fresh
+        if not isinstance(memo, dict) or any(memo.get(k) != v for k, v in {**self.owner, "epoch": self.epoch}.items()):
+            return fresh
+        for key in ("handled", "reported"):
+            fresh[key] = [i for i in memo.get(key) or [] if isinstance(i, str)][-64:]
+        restart = memo.get("restart")
+        if isinstance(restart, dict) and isinstance(restart.get("requestId"), str) and isinstance(restart.get("bootId"), str):
+            fresh["restart"] = {"requestId": restart["requestId"], "bootId": restart["bootId"]}
+        return fresh
+
+    def save_memo(self) -> None:
+        for key in ("handled", "reported"):
+            self.memo[key] = self.memo[key][-64:]
+        temporary = self.memo_path.with_name(self.memo_path.name + ".tmp")
+        temporary.write_text(json.dumps(self.memo, separators=(",", ":")), encoding="utf-8")
+        os.replace(temporary, self.memo_path)
+
+    # KIN
+    def post(self, request_id: str, result: str, code: str | None = None, version: str | None = None,
+             diagnostics: dict[str, Any] | None = None) -> bool:
+        """Send one result. True when KIN gave its final answer for it (stored, the same again, unknown or conflict)."""
+        try:
+            response = self.cloud.request("POST", f"/api/gateway/support/{request_id}", json={
+                "epoch": self.epoch, "bootId": self.heartbeat.boot_id, "result": result, "code": code,
+                "version": version, "diagnostics": diagnostics})
+        except Exception as error:
+            log("support.deferred", error=error_code(error))
+            return False
+        if response.ok or response.status_code in (404, 409):
+            return True
+        log("support.deferred", status=response.status_code)
+        return False
+
+    def outcomes(self) -> list[tuple[str, dict[str, Any]]]:
+        owed: list[tuple[str, dict[str, Any]]] = []
+        restart = self.memo["restart"]
+        if restart and restart["bootId"] != self.heartbeat.boot_id:
+            owed.append((restart["requestId"], {"result": "done"}))
+        try:
+            state = json.loads(Path(self.update_state).read_text(encoding="utf-8")) if self.update_state else {}
+        except (OSError, ValueError):
+            state = {}
+        for item in (state.get("results") if isinstance(state, dict) else None) or []:
+            if not isinstance(item, dict):
+                continue
+            request_id = item.get("requestId")
+            if (isinstance(request_id, str) and _SETTINGS_ID.fullmatch(request_id) and request_id not in self.memo["reported"]
+                    and item.get("result") in ("installed", "rolled_back", "refused")):
+                code = item.get("code") if isinstance(item.get("code"), str) and SUPPORT_CODE.fullmatch(item["code"]) else None
+                version = item.get("version") if isinstance(item.get("version"), str) and RUN_VERSION.fullmatch(item["version"]) else None
+                owed.append((request_id, {"result": item["result"], "code": code, "version": version}))
+        return owed
+
+    def report_outcomes(self) -> None:
+        for request_id, body in self.outcomes():
+            if not self.post(request_id, body["result"], body.get("code"), body.get("version")):
+                return
+            self.memo["reported"].append(request_id)
+            if self.memo["restart"] and self.memo["restart"]["requestId"] == request_id:
+                self.memo["restart"] = None
+            self.save_memo()
+
+    def fetch(self) -> dict[str, Any] | None:
+        try:
+            response = self.cloud.request("GET", "/api/gateway/support", params={"epoch": self.epoch})
+        except Exception as error:
+            log("support.deferred", error=error_code(error))
+            return None
+        if not response.ok:
+            if response.status_code != 404:   # a KIN without remote support answers 404; nothing else changes
+                log("support.deferred", status=response.status_code)
+            return None
+        try:
+            request = response.json().get("request")
+        except Exception:
+            return None
+        if request is None:
+            return None
+        if (not _closed(request, {"id", "action", "version"}) or not isinstance(request["id"], str)
+                or not _SETTINGS_ID.fullmatch(request["id"]) or request["action"] not in SUPPORT_ACTIONS
+                or (request["action"] == "update") != isinstance(request["version"], str)
+                or (request["version"] is not None and not (len(request["version"]) <= 32
+                                                             and RUN_VERSION.fullmatch(request["version"])))):
+            log("support.invalid")
+            return None
+        return request
+
+    # actions
+    def diagnostics(self) -> dict[str, Any]:
+        now = time.monotonic()
+        observed = self.orthanc.observed
+        last = self.stow.last_stow_at
+        try:
+            free = shutil.disk_usage(Path(self.config.queue_db).resolve().parent).free
+        except OSError:
+            free = None
+        try:
+            queue: dict[str, Any] | None = queue_diagnostics(self.config.queue_db)
+        except Exception as error:
+            log("support.queue_unreadable", error=type(error).__name__)
+            queue = None
+        settings = self.settings.current if self.settings.known else None
+        report = {
+            "format": 1, "version": run_version(), "uptimeSeconds": max(0, int(now - self.started)),
+            "launcher": _launcher_view(self.update_state),
+            "config": {"kinBaseUrl": self.cloud.base, "clientId": self.config.client_id,
+                       "tlsVerify": self.config.tls_verify, "byteBudget": self.config.byte_budget,
+                       "pollSeconds": self.config.poll_seconds, "httpTimeoutSeconds": self.config.http_timeout,
+                       "stowTimeoutSeconds": self.config.stow_timeout, "backoffBaseSeconds": self.config.backoff_base,
+                       "backoffMaxSeconds": self.config.backoff_max, "remoteSupport": self.enabled},
+            "settings": {"known": self.settings.known, "revision": settings["revision"] if settings else None,
+                         "routes": len(settings["routes"]) if settings else None,
+                         "compression": settings["compression"] if settings else None},
+            "localOrthanc": None if observed is None
+            else {"answered": bool(observed[0]), "ageSeconds": max(0, int(now - observed[1]))},
+            "lastStowAgeSeconds": None if last is None else max(0, int(now - last)),
+            "dataFreeBytes": free,
+            "queue": queue,
+            "log": list(LOG_RING),
+        }
+        # Fit the report: fewer queue rows first, then fewer log lines; the counts always stay whole.
+        while len(json.dumps(report, separators=(",", ":"))) > DIAGNOSTICS_MAX_BYTES:
+            if queue and queue["rows"]:
+                cut = max(1, len(queue["rows"]) // 2)
+                queue["omitted"] += cut
+                queue["rows"] = queue["rows"][:-cut]
+            elif report["log"]:
+                report["log"] = report["log"][len(report["log"]) // 2 + 1:]
+            else:
+                break
+        return report
+
+    def download(self, version: str) -> bytes:
+        """The bundle KIN holds for `version`, at most UPDATE_DOWNLOAD_MAX_BYTES. Raises SupportRefused(code)."""
+        try:
+            response = self.cloud.request("GET", f"/api/gateway/update/{version}", stream=True,
+                                          timeout=self.config.stow_timeout)
+        except Exception:
+            raise SupportRefused("download_failed") from None
+        try:
+            if not response.ok:
+                raise SupportRefused("download_failed")
+            chunks, size = [], 0
+            for chunk in response.iter_content(64 * 1024):
+                size += len(chunk)
+                if size > UPDATE_DOWNLOAD_MAX_BYTES:
+                    raise SupportRefused("too_large")
+                chunks.append(chunk)
+            return b"".join(chunks)
+        except SupportRefused:
+            raise
+        except Exception:
+            raise SupportRefused("download_failed") from None
+        finally:
+            response.close()
+
+    def hand_over(self, request: dict[str, Any], raw: bytes) -> None:
+        """Publish the complete bundle with its request id and version to the launcher as one unit (one rename)."""
+        incoming = Path(self.update_root) / "incoming"
+        incoming.mkdir(parents=True, exist_ok=True)
+        staging = incoming / f".tmp-{uuid.uuid4().hex}"
+        staging.mkdir()
+        (staging / "bundle.json").write_bytes(raw)
+        (staging / "request.json").write_text(json.dumps({"requestId": request["id"], "version": request["version"]}),
+                                              encoding="utf-8")
+        os.replace(staging, incoming / f"{time.time_ns():020d}-{request['id'][:8]}")
+
+    def carry_out(self, request: dict[str, Any]) -> None:
+        request_id, action = request["id"], request["action"]
+        if not self.enabled:
+            self.post(request_id, "refused", "remote_support_off", request["version"])
+            return
+        if action == "diagnostics":
+            self.post(request_id, "done", diagnostics=self.diagnostics())
+            return
+        if request_id in self.memo["handled"]:
+            # Delivered again (an answer was lost): the action already happened once; say so, never repeat it.
+            self.post(request_id, "accepted", version=request["version"])
+            return
+        if action == "restart":
+            self.memo["restart"] = {"requestId": request_id, "bootId": self.heartbeat.boot_id}
+            self.memo["handled"].append(request_id)
+            self.save_memo()
+            self.post(request_id, "accepted")
+            log("support.restart")
+            self.stop_agent(RESTART_EXIT)
+            return
+        if not self.update_root:
+            self.post(request_id, "refused", "no_launcher", request["version"])
+            return
+        try:
+            raw = self.download(request["version"])
+        except SupportRefused as error:
+            self.post(request_id, "refused", str(error), request["version"])
+            return
+        try:
+            self.hand_over(request, raw)
+        except OSError:
+            self.post(request_id, "refused", "store_failed", request["version"])
+            return
+        self.memo["handled"].append(request_id)
+        self.save_memo()
+        self.post(request_id, "accepted", version=request["version"])
+        log("support.update_handed_over")
+
+    def tick(self) -> None:
+        try:
+            self.report_outcomes()
+            request = self.fetch()
+            if request is not None:
+                self.carry_out(request)
+        except Exception as error:   # never stops the agent
+            log("support.deferred", error=type(error).__name__)
+
+    def run(self) -> None:
+        while not self.stopped.is_set():
+            self.tick()
+            self.stopped.wait(SUPPORT_SECONDS)
+
+    def start(self) -> None:
+        self.thread = threading.Thread(target=self.run, name="support", daemon=True)
+        self.thread.start()
+
+    def stop(self, wait: float = 5.0) -> None:
         self.stopped.set()
         if self.thread is not None and self.thread is not threading.current_thread():
             self.thread.join(wait)
@@ -1192,11 +1784,31 @@ class Agent:
         # The first Now Retry poll is one full period after start, so a restart never polls sooner than a running agent.
         self.retry_poll_at = time.monotonic() + RETRY_POLL_SECONDS
         owner = {"client": config.client_id, "base": self.cloud.base}
+        self.owner = owner
         self.settings = SettingsStore(config.queue_db, owner)
         self.identity_error = self.queue.check_owner(owner, self.settings.identity_error)
+        self.exit_code = 0
+        # The launcher's ready file for this start (update.py); written once, never by an earlier run.
+        self.ready_file = os.environ.get("KIN_AGENT_READY_FILE") or None
+        self.heartbeat: Heartbeat | None = None
 
     def stop(self, *_args: Any) -> None:
         self.stopping = True
+
+    def stop_for(self, code: int) -> None:
+        """Remote restart: end after the pass in progress and leave with `code` for the launcher."""
+        self.exit_code = code
+        self.stopping = True
+
+    def mark_ready(self) -> None:
+        """Called after a main-loop pass that ended without an outer error: with one stored heartbeat, this run is good."""
+        if self.ready_file and self.heartbeat is not None and self.heartbeat.stored_once:
+            try:
+                Path(self.ready_file).write_text(json.dumps({"version": run_version()}), encoding="utf-8")
+                log("agent.ready", version=run_version())
+                self.ready_file = None
+            except OSError as error:
+                log("agent.ready_deferred", error=type(error).__name__)
 
     def report(self, uid: str) -> bool:
         """Send this study's current receipt. Never raises: a receipt must not change the transfer.
@@ -1442,7 +2054,8 @@ class Agent:
         self.queue.forward_phase(uid, dest, "complete")
         log("forward.complete", uid=uid, sops=len(self.queue.forward_successes(uid, dest)))
 
-    def run(self) -> None:
+    def run(self) -> int:
+        """Run until stopped. The exit code is 0, or RESTART_EXIT when a remote restart asked for a new start."""
         signal.signal(signal.SIGTERM, self.stop)
         signal.signal(signal.SIGINT, self.stop)
         if self.identity_error:
@@ -1451,17 +2064,23 @@ class Agent:
             while not self.stopping:
                 time.sleep(1)
             self.queue.close()
-            return
-        log("agent.started", byteBudget=self.config.byte_budget, version=AGENT_VERSION)
-        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, time.monotonic(),
-                              self.settings)
+            return self.exit_code
+        log("agent.started", byteBudget=self.config.byte_budget, version=run_version())
+        started = time.monotonic()
+        heartbeat = Heartbeat(self.config, self.queue.epoch, self.orthanc, self.cloud, started, self.settings)
+        self.heartbeat = heartbeat
+        support = Support(self.config, self.queue.epoch, self.owner, heartbeat, self.settings, self.orthanc, self.cloud,
+                          started, self.stop_for)
         heartbeat.start()
+        support.start()
         try:
             self.loop()
         finally:
+            support.stop()
             heartbeat.stop()
         self.queue.close()
-        log("agent.stopped")
+        log("agent.stopped", code=self.exit_code)
+        return self.exit_code
 
     def loop(self) -> None:
         while not self.stopping:
@@ -1505,6 +2124,7 @@ class Agent:
                             uid, str(forward["dest"]), reason, self.config.backoff_base, self.config.backoff_max,
                         )
                         log("forward.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
+                self.mark_ready()
                 if again:
                     continue
             except Exception as error:
@@ -1531,8 +2151,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "status":
         return status(args.db)
-    Agent(Config.from_env()).run()
-    return 0
+    return Agent(Config.from_env()).run()
 
 
 if __name__ == "__main__":

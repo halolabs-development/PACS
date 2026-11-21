@@ -266,9 +266,10 @@ test('FT1 native head chain from the real commit route is prepared, issued, reop
   for (const s of [a, b]) {
     const rows = await versions(s.uid), head = rows.filter(r => r.action !== 'discarded'), outcomes = await signed(s.uid);
     // Storage metadata must not add keys to ordinary native testimony or its predecessor hash.
-    // The version's account id (authorSub) is a lookup key beside the row, never part of its testimony either.
+    // The version's account id (authorSub) is a lookup key beside the row, never part of its testimony either; nor is the
+    // member name it was signed under (authorName, a display label kept beside the row).
     const ordinary = row => {
-      const { groupId, snapshotFormat, authorSub: _account, ...content } = row;
+      const { groupId, snapshotFormat, authorSub: _account, authorName: _label, ...content } = row;
       assert.equal(groupId, null); assert.equal(snapshotFormat, 1);
       return content;
     };

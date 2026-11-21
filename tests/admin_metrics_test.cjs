@@ -105,7 +105,7 @@ test('the page table is the fixed thirteen rows in the server order, frozen', ()
   assert.ok(Object.isFrozen(M.METRICS) && M.METRICS.every(Object.isFrozen));
   assert.ok(Object.isFrozen(M.ROW_STATES) && Object.values(M.ROW_STATES).every(Object.isFrozen));
   assert.ok(Object.isFrozen(M.REASONS) && Object.isFrozen(M.UNITS));
-  assert.deepEqual(json(Object.keys(M.REASONS)).sort(), ['invalid_answer', 'no_source', 'source_failed', 'timeout']);
+  assert.deepEqual(json(Object.keys(M.REASONS)).sort(), ['incomplete', 'invalid_answer', 'no_source', 'source_failed', 'timeout', 'unattributed']);
 });
 
 test('a server answer is read row by row and every row keeps its source, time, unit, denominator and scope', () => {
@@ -345,8 +345,35 @@ const STATES = [
 ];
 const APPROVED = [['1.2.1', 8 * H], ['1.2.2', 26 * H], ['1.2.3', 48 * H], ['1.2.7', 10 * 24 * H], ['1.2.9', 0.5 * H],
   ['1.2.10', 2 * H], ['1.2.12', 7 * 24 * H], ['9.9.9', 1 * H]];
-const STATISTICS = { TotalDiskSize: String(BYTES), TotalDiskSizeMB: 12800, CountStudies: 987654, CountInstances: 876543,
+// CountStudies is the number of Study resources RESOURCES lists (12): the institution storage's completeness check.
+const STATISTICS = { TotalDiskSize: String(BYTES), TotalDiskSizeMB: 12800, CountStudies: 12, CountInstances: 876543,
   CountPatients: 765432, CountSeries: 654321, TotalUncompressedSize: '999999999999' };
+// Institution storage: the Orthanc Study resources (id, StudyInstanceUID, DiskSize). hallym owns ten originals; 1.2.11 has no
+// resource (0 bytes); 1.2.5 (kin-center's, tele-read by hallym), 1.2.9 (kin-center's) and 7.7.7 (registered nowhere) are
+// stored on the same server and never counted for hallym.
+const oid = n => Array.from({ length: 5 }, (_, i) => (n * 7919 + i).toString(16).padStart(8, '0')).join('-');
+const RESOURCES = [['1.2.1', 1000], ['1.2.2', 2000], ['1.2.3', 4000], ['1.2.4', 8000], ['1.2.5', 900000], ['1.2.6', 16000],
+  ['1.2.7', 32000], ['1.2.8', 64000], ['1.2.9', 800000], ['1.2.10', 128000], ['1.2.12', 256000], ['7.7.7', 700000]]
+  .map(([uid, bytes], n) => ({ id: oid(n + 1), uid, bytes }));
+const OWN_BYTES = 1000 + 2000 + 4000 + 8000 + 16000 + 32000 + 64000 + 128000 + 256000;
+const SRC_OWN = 'Orthanc GET /studies/{id}/statistics DiskSize (studies this institution owns)';
+const METRICS_TEXT = '# HELP orthanc_up_time_s Up time\n# TYPE orthanc_up_time_s gauge\northanc_up_time_s 3600 1790000000000\n' +
+  'orthanc_count_studies 987654 1790000000000\n';
+const DB_UP = 7200;
+/** The fake Orthanc service the metrics read: statistics plus the institution storage and uptime reads. */
+function fakeOrthanc(calls, { statistics, resources = RESOURCES, metricsText = METRICS_TEXT, studyStatistics = null } = {}) {
+  return {
+    statistics,
+    metricsText: async () => { calls.push(['metrics-text']); return metricsText; },
+    studyResources: async () => { calls.push(['find']); return resources.map(({ id, uid }) => ({ id, uid })); },
+    studyStatistics: async (id, signal) => {
+      calls.push(['study-stats', id]);
+      if (studyStatistics) return studyStatistics(id, signal);
+      const found = resources.find(r => r.id === id);
+      return { DiskSize: String(found.bytes), UncompressedSize: '1', CountInstances: 3 };
+    },
+  };
+}
 
 const ADMIN = { institution: 'hallym', sub: 'SYN-ADMIN-SUB', actor: 'syn-admin', roles: ['admin'], kind: 'member' };
 const POLICY = restricted => ({ institution: 'hallym', revision: 1, reason: 'SYN', updatedBy: 'syn-admin', updatedAt: new Date(now),
@@ -359,7 +386,7 @@ const inScope = (row, where) => !where?.OR || where.OR.some(term => Object.entri
  * table) is what its next read sees. Unfiltered (the default) every row comes back, so the service's own tenant filter is
  * what keeps other institutions out; `filtered` applies the where clause, so a study that left the scope is absent. */
 function store({ policies = [[], []], statistics = STATISTICS, orthanc = null, orthancService = null, dbFail = null, approvalsFail = null,
-  recheckFail = null, filtered = false, afterStates = null } = {}) {
+  recheckFail = null, filtered = false, afterStates = null, orthancReads = {}, dbUptime = null, login = async () => true } = {}) {
   const calls = [];
   const db = structuredClone(STATES);
   let policyReads = 0, stateReads = 0;
@@ -378,27 +405,69 @@ function store({ policies = [[], []], statistics = STATISTICS, orthanc = null, o
     $queryRaw: async (strings, ...values) => {
       const sql = strings.join('?');
       if (sql.includes('"StudyAccessPolicy"')) { calls.push(['policy']); return structuredClone(policies[Math.min(policyReads++, policies.length - 1)]); }
+      if (sql.includes('pg_postmaster_start_time()')) {
+        calls.push(['db-uptime', sql]);
+        if (dbUptime) return dbUptime();
+        return [{ up: BigInt(DB_UP), started: new Date(now - DB_UP * 1000) }];
+      }
       calls.push(['approvals', sql, values]);
       if (approvalsFail) throw approvalsFail;
       return APPROVED.map(([uid, at]) => ({ uid, firstApprovedAt: ago(at) }));
     },
   };
-  const source = orthancService ?? { statistics: orthanc ? () => orthanc(db, calls) : async () => { calls.push(['orthanc']); return structuredClone(statistics); } };
+  const source = orthancService ?? fakeOrthanc(calls, { ...orthancReads,
+    statistics: orthanc ? () => orthanc(db, calls) : async () => { calls.push(['orthanc']); return structuredClone(statistics); } });
   const access = new StudyAccessService(prisma, {}, {});
   const service = new PacsMetrics(prisma, source, access, new PacsAccess(prisma, access));
+  // The login server check is a seam: these cases answer it here (its own fetch is tested on its own below).
+  const loginSeam = signal => { calls.push(['login']); return login(signal); };
+  service.metricsLoginServer = loginSeam;
   // The instance clock is the fixture's NOW, so windows and durations are the fixture's to the second.
   service.metricsClock = () => now;
   // The API process facts are the fixture's too (started 3 d 04 h 05 min before NOW).
   service.metricsProcess = () => ({ ...PROCESS });
   // The public facade over the same store: what the admin controller calls.
   const facade = new S.PacsService(prisma, source, {}, access, {});
+  facade.metricsConcern.metricsLoginServer = loginSeam;
   return { service, facade, calls };
 }
-// The fixture as the service stamps it: its one clock also stamps the Orthanc observation.
-const AT_CLOCK = () => clone(ROWS).map(row => row.key === 'storage.server' ? { ...row, observedAt: NOW } : row);
+// The fixture as the service stamps it: its one clock also stamps the Orthanc observations, and the institution storage is
+// the sum of hallym's own originals' DiskSize.
+const OWN_ROW = { ...base, key: 'storage.institution', state: 'observed', scope: 'institution', source: SRC_OWN, observedAt: NOW,
+  unit: 'byte', value: OWN_BYTES, denominator: { unit: 'byte', value: null } };
+const AT_CLOCK = () => clone(ROWS).map(row => row.key === 'storage.server' ? { ...row, observedAt: NOW }
+  : row.key === 'storage.institution' ? clone(OWN_ROW) : row);
+const SRC_SERVER = {
+  api: ['HALO PACS API process', 'HALO PACS API process (performance.now, performance.timeOrigin)'],
+  image_store: ['Orthanc GET /statistics, GET /tools/metrics-prometheus', 'Orthanc orthanc_up_time_s'],
+  database: ['HALO PACS DB', 'PostgreSQL now() - pg_postmaster_start_time()'],
+  login_server: ['Keycloak realm discovery (issuer)', null],
+};
+const serverRow = (component, answer, checkedAt, uptime) => ({ component, answer, checkedAt, source: SRC_SERVER[component][0],
+  uptime: { state: 'unobservable', reason: null, seconds: null, startedAt: null, ...uptime, source: SRC_SERVER[component][1] } });
+const SERVER_ROWS = [
+  serverRow('api', 'answered', NOW, { state: 'observed', seconds: UPTIME, startedAt: STARTED }),
+  serverRow('image_store', 'answered', NOW, { state: 'observed', seconds: 3600 }),
+  serverRow('database', 'answered', NOW, { state: 'observed', seconds: DB_UP, startedAt: new Date(now - DB_UP * 1000).toISOString() }),
+  serverRow('login_server', 'answered', NOW, { reason: 'no_source' }),
+];
+// The reads the first gates of the aggregate make, in order (the new component and storage reads are checked on their own).
+const CORE = ['policy', 'orthanc', 'states', 'approvals'];
+const core = (calls, extra = []) => calls.map(call => call[0]).filter(name => CORE.includes(name) || extra.includes(name));
 
 // REQ-S9-U0f-ORTHANC-PUBLIC -> RISK-SOURCE-CONTRACT/UNKNOWN-AS-ZERO -> ORTHANC-01..04.
 // Exercise the public service at the fetch boundary; no private transport method is replaced.
+// The other Orthanc reads of one aggregate (institution storage, uptime) at the fetch boundary, answered from the fixture;
+// undefined for /statistics, which each case answers itself.
+function otherOrthancRead(url) {
+  const path = new URL(String(url)).pathname;
+  if (path === '/tools/find') return new Response(JSON.stringify(RESOURCES.map(r => ({ ID: r.id, Type: 'Study',
+    RequestedTags: { StudyInstanceUID: r.uid } }))), { status: 200 });
+  const stats = /^\/studies\/([^/]+)\/statistics$/.exec(path);
+  if (stats) return new Response(JSON.stringify({ DiskSize: String(RESOURCES.find(r => r.id === stats[1]).bytes) }), { status: 200 });
+  if (path === '/tools/metrics-prometheus') return new Response(METRICS_TEXT, { status: 200 });
+  return undefined;
+}
 function statisticsService(t) {
   const config = { ORTHANC_URL: 'http://orthanc.synthetic.invalid:8042/', ORTHANC_USER: 'SYN-USER', ORTHANC_PASS: 'SYN-PASS' };
   const previous = Object.fromEntries(Object.keys(config).map(key => [key, process.env[key]]));
@@ -436,7 +505,7 @@ test('ORTHANC-01: public statistics reads authenticated GET /statistics once and
 test('ORTHANC-02: public statistics rejects transport, HTTP and JSON failures without retry or a zero fallback', { skip: hosted }, async t => {
   const service = statisticsService(t);
   let respond, calls = 0;
-  t.mock.method(globalThis, 'fetch', async () => { calls++; return respond(); });
+  t.mock.method(globalThis, 'fetch', async url => otherOrthancRead(url) ?? (calls++, respond()));
   const decode = new SyntaxError('SYN invalid JSON');
   const cases = [
     [() => { throw new TypeError('SYN connection refused'); }, e => e.getStatus() === 503],
@@ -454,7 +523,7 @@ test('ORTHANC-02: public statistics rejects transport, HTTP and JSON failures wi
 test('ORTHANC-03: the real public service feeds storage observations, missing data, failure and recovery to metrics', { skip: hosted }, async t => {
   const orthancService = statisticsService(t);
   let respond, calls = 0;
-  t.mock.method(globalThis, 'fetch', async () => { calls++; return respond(); });
+  t.mock.method(globalThis, 'fetch', async url => otherOrthancRead(url) ?? (calls++, respond()));
   const { service } = store({ orthancService });
   const ok = answer => () => ({ ok: true, json: async () => answer });
   for (const [response, expected] of [
@@ -483,7 +552,7 @@ test('ORTHANC-04: an unanswered real source cannot become a success or outlive t
   const releases = [];
   let responding = false;
   const sourceAnswer = { ...STATISTICS, diagnostic: 'SYN private late source wording' };
-  t.mock.method(globalThis, 'fetch', () => responding
+  t.mock.method(globalThis, 'fetch', url => otherOrthancRead(url) ? Promise.resolve(otherOrthancRead(url)) : responding
     ? Promise.resolve({ ok: true, json: async () => sourceAnswer })
     : new Promise(resolve => releases.push(() => resolve({ ok: true, json: async () => sourceAnswer }))));
   // The clock is mocked, so the silent source is held far past every wait (60 s) without sleeping or racing real time.
@@ -522,7 +591,9 @@ test('ORTHANC-04: an unanswered real source cannot become a success or outlive t
       assert.deepEqual([disk.state, disk.value, disk.observedAt], ['unobservable', null, null]);
       // timeout, or source_failed if a future own service deadline rejects first; never a value.
       assert.ok(['timeout', 'source_failed'].includes(disk.reason), disk.reason);
-      assert.deepEqual(run.answer.metrics.slice(1), AT_CLOCK().slice(1), 'the unanswered source leaves other rows intact');
+      assert.deepEqual(run.answer.metrics.slice(2), AT_CLOCK().slice(2), 'the unanswered source leaves other rows intact');
+      // The institution storage cannot prove its Study list complete without the /statistics count: never a value.
+      assert.deepEqual([run.answer.metrics[1].state, run.answer.metrics[1].value], ['unobservable', null]);
       assert.ok(!JSON.stringify(run.answer).includes('SYN'), 'source wording does not escape in the response');
     }
     snapshots = runs.map(run => clone(run.answer));
@@ -591,7 +662,7 @@ test('server: TotalDiskSize is the only value read from /statistics; anything el
 test('server: an admin reads the own-institution aggregate; filters sit in both queries; no study or server count leaves', { skip: hosted }, async () => {
   const { service, calls } = store();
   const answer = await service.adminMetrics(ADMIN);
-  assert.deepEqual(Object.keys(answer), ['institutionId', 'generatedAt', 'metrics']);
+  assert.deepEqual(Object.keys(answer), ['institutionId', 'generatedAt', 'metrics', 'server']);
   assert.deepEqual([answer.institutionId, answer.generatedAt], ['hallym', NOW]);
   assert.deepEqual(clone(answer.metrics), AT_CLOCK());
   const states = calls.find(call => call[0] === 'states')[1];
@@ -605,15 +676,27 @@ test('server: an admin reads the own-institution aggregate; filters sit in both 
   assert.deepEqual(calls.filter(call => call[0] === 'orthanc'), [['orthanc']]);
   assert.equal(calls.filter(call => call[0] === 'policy').length, 2, 'the access check runs before and after the reads');
   // S5-U6b-F01: the scope is read again after every source answered, on the same institution condition, then the policy.
-  assert.deepEqual(calls.map(call => call[0]), ['policy', 'orthanc', 'states', 'approvals', 'states', 'policy']);
+  assert.deepEqual(core(calls), ['policy', 'orthanc', 'states', 'approvals', 'states', 'policy']);
+  // The institution storage is read from the counted originals before the scope is read again (one find, one statistics
+  // read per Study resource of an owned original; never another institution's or an unregistered resource).
+  const names = calls.map(call => call[0]), recheckAt = names.lastIndexOf('states');
+  assert.ok(names.indexOf('find') > names.indexOf('approvals') && names.lastIndexOf('study-stats') < recheckAt, names.join(','));
+  assert.deepEqual(calls.filter(call => call[0] === 'study-stats').map(call => call[1]).sort(),
+    RESOURCES.filter(r => !['1.2.5', '1.2.9', '7.7.7'].includes(r.uid)).map(r => r.id).sort());
+  assert.deepEqual(names.filter(name => ['metrics-text', 'db-uptime', 'login'].includes(name)).sort(), ['db-uptime', 'login', 'metrics-text']);
   const recheck = calls.filter(call => call[0] === 'states')[1][1];
   assert.deepEqual(recheck.where, { OR: [{ institutionId: 'hallym' }, { teleInstitutionId: 'hallym' }] });
   assert.deepEqual(Object.keys(recheck.select).sort(), ['institutionId', 'teleInstitutionId', 'uid']);
   const text = JSON.stringify(answer);
-  for (const leak of ['987654', '876543', '765432', '654321', '999999999999', 'Count', '1.2.', '9.9.9', 'kin-center', 'SYN-ADMIN'])
+  for (const leak of ['987654', '876543', '765432', '654321', '999999999999', 'Count', '1.2.', '9.9.9', 'kin-center', 'SYN-ADMIN',
+    '7.7.7', '900000', '800000', '700000', oid(1), '1790000000000', 'HELP'])
     assert.ok(!text.includes(leak), `the answer carries ${leak}`);
   const page = M.readAnswer(JSON.parse(text));
   assert.equal(page.rows.filter(row => row.reason === 'invalid_answer').length, 0, 'the page reads every compiled row');
+  // Server Status: four components, each from its own answer in this request, uptime only as the component reports it.
+  assert.deepEqual(clone(answer.server), SERVER_ROWS);
+  assert.deepEqual(json(page.server), json(M.readServer(SERVER_ROWS)), 'the page reads the compiled server rows');
+  assert.equal(page.server.filter(row => row.answer === 'invalid_answer').length, 0);
 });
 
 test('server: only admin, only with an institution, never for a restricted study scope; nothing is read first', { skip: hosted }, async () => {
@@ -650,7 +733,7 @@ test('server: a tele-reading closed while the aggregate is read refuses it (409)
     // Between the first StudyState read and the approvals read.
     const between = store({ filtered, afterStates: (db, read) => { if (read === 1) closeTele(db); } });
     await assert.rejects(between.service.adminMetrics(ADMIN), scopeChanged, `between the DB reads (filtered ${filtered})`);
-    assert.deepEqual(between.calls.map(call => call[0]), ['policy', 'orthanc', 'states', 'approvals', 'states'],
+    assert.deepEqual(core(between.calls), ['policy', 'orthanc', 'states', 'approvals', 'states'],
       'refused at the scope read; the policy read after it never runs');
     // After both DB reads, while Orthanc is still out: the scope is read only once every source has answered.
     const late = store({ filtered, orthanc: async (db, calls) => {
@@ -661,7 +744,7 @@ test('server: a tele-reading closed while the aggregate is read refuses it (409)
       return structuredClone(STATISTICS);
     } });
     await assert.rejects(late.service.adminMetrics(ADMIN), scopeChanged, `during the Orthanc wait (filtered ${filtered})`);
-    assert.deepEqual(late.calls.map(call => call[0]), ['policy', 'orthanc', 'states', 'approvals', 'closed', 'states']);
+    assert.deepEqual(core(late.calls, ['closed']), ['policy', 'orthanc', 'states', 'approvals', 'closed', 'states']);
   }
   // An owned study moved out of the scope is a change too (institutionId), as is one that vanished.
   const moved = store({ afterStates: (db, read) => { if (read === 1) db.find(s => s.uid === '1.2.1').institutionId = 'kin-center'; } });
@@ -727,4 +810,170 @@ test('server: a failed DB read is Unobservable on every DB row, never 0, and log
   } finally { console.warn = warn; }
   assert.equal(warned.length, 3);
   assert.ok(warned.every(line => line.includes('P1001') && !line.includes('SYN-SECRET')), warned.join('\n'));
+});
+
+// ── institution storage and Server Status ──
+
+const SS = SERVER ? require(path.join(path.dirname(SERVER), 'pacs', 'server-status')) : null;
+const MX = SERVER ? require(path.join(path.dirname(SERVER), 'pacs', 'metrics')) : null;
+const KIN_CENTER = { ...ADMIN, institution: 'kin-center', sub: 'SYN-ADMIN-B' };
+const KIN_CENTER_BYTES = 900000 + 800000;   // its own 1.2.5 (tele-read by hallym) and 1.2.9
+const ownRow = answer => answer.metrics.find(row => row.key === 'storage.institution');
+const serverOf = (answer, component) => answer.server.find(row => row.component === component);
+
+test('server: institution storage is the sum of the own originals only; tele, other and unregistered studies never count', { skip: hosted }, async () => {
+  const hallym = clone(await store().service.adminMetrics(ADMIN));
+  assert.deepEqual([ownRow(hallym).state, ownRow(hallym).value, ownRow(hallym).source], ['observed', OWN_BYTES, SRC_OWN]);
+  // The other institution: its own two studies, the one hallym tele-reads included; none of hallym's.
+  const other = clone(await store().service.adminMetrics(KIN_CENTER));
+  assert.deepEqual([ownRow(other).state, ownRow(other).value], ['observed', KIN_CENTER_BYTES]);
+  // No own original: Orthanc is not asked and the share is a known 0.
+  const none = store({ afterStates: () => {} });
+  const empty = clone(await none.service.adminMetrics({ ...ADMIN, institution: 'syn-empty', sub: 'SYN-EMPTY' }));
+  assert.deepEqual([ownRow(empty).state, ownRow(empty).value], ['observed', 0]);
+  assert.equal(none.calls.filter(call => ['find', 'study-stats'].includes(call[0])).length, 0);
+  // Pure rule: owned UIDs, every resource of a UID once; two resources on one owned UID cannot be attributed.
+  assert.equal(RESOURCES.length, STATISTICS.CountStudies);
+  const rs = [{ id: 'a', uid: '1' }, { id: 'b', uid: '2' }, { id: 'c', uid: '3' }];
+  assert.equal(MX.institutionStorageBytes(['1', '3', '9'], rs, 3, id => ({ a: 10, c: 5 })[id]), 15, 'a missing resource is 0 bytes');
+  assert.equal(MX.institutionStorageBytes(['1', '2'], [...rs, { id: 'd', uid: '2' }], 4, () => 1), 'unattributed');
+  assert.equal(MX.institutionStorageBytes(['1'], rs, 3, () => null), null, 'one unknown size: no partial sum');
+  assert.equal(MX.institutionStorageBytes(['1', '2'], rs, 3, () => Number.MAX_SAFE_INTEGER), null, 'an unsafe sum is unknown');
+  assert.equal(MX.institutionStorageBytes([], rs, 3, () => 1), 0);
+  // A list that is not every Study resource (a find result limit, an arrival between the reads) counts nothing.
+  for (const [list, total] of [[rs.slice(0, 2), 3], [rs, 4], [rs, null], [[...rs, rs[0]], 4]])
+    assert.equal(MX.institutionStorageBytes(['1'], list, total, () => 1), 'incomplete', JSON.stringify([list.length, total]));
+  for (const [answer, bytes] of [[{ DiskSize: '12' }, 12], [{ DiskSize: 12 }, 12], [{ DiskSize: '-1' }, null], [{ DiskSize: '1.5' }, null],
+    [{}, null], [{ TotalDiskSize: '12' }, null], [null, null], [[], null]])
+    assert.equal(MX.orthancStudyDiskBytes(answer), bytes, JSON.stringify(answer));
+});
+
+test('server: one unreadable, failed or late study read makes the institution storage Unobservable, never a partial sum', { skip: hosted }, async () => {
+  const cases = [
+    ['source_failed', { studyStatistics: async id => { if (id === RESOURCES[3].id) throw new Error('SYN-ORTHANC down'); return { DiskSize: '1' }; } }],
+    ['invalid_answer', { studyStatistics: async id => ({ DiskSize: id === RESOURCES[3].id ? 'x' : '1' }) }],
+    ['unattributed', { resources: [...RESOURCES, { id: oid(99), uid: '1.2.4', bytes: 5 }] }, 13],
+    // Orthanc's find result limit: the list stops before the end, so an owned study missing from it is not 0 bytes.
+    ['incomplete', { resources: RESOURCES.slice(0, 6) }],
+    ['incomplete', { resources: RESOURCES }, null],
+    ['source_failed', { resources: null }],
+  ];
+  for (const [reason, reads, studies = 12] of cases) {
+    const statistics = { ...STATISTICS, CountStudies: studies };
+    const options = reads.resources === null
+      ? { orthancReads: { ...reads, resources: RESOURCES }, statistics } : { orthancReads: reads, statistics };
+    const built = store(options);
+    if (reads.resources === null) built.service.orthanc.studyResources = async () => { throw new Error('SYN find failed'); };
+    const answer = clone(await built.service.adminMetrics(ADMIN));
+    assert.deepEqual([ownRow(answer).state, ownRow(answer).reason, ownRow(answer).value, ownRow(answer).observedAt],
+      ['unobservable', reason, null, null], reason);
+    assert.deepEqual(answer.metrics.slice(2), AT_CLOCK().slice(2), 'the DB rows still read');
+    assert.equal(M.readAnswer(answer).rows[1].reason, reason, 'the page reads the reason');
+    assert.ok(!JSON.stringify(answer).includes('SYN'), 'no source wording');
+  }
+  // Late: one study read never answers; the wait ends the whole share, and no further study read is sent after it.
+  const sent = [];
+  const late = store({ orthancReads: { studyStatistics: (id, signal) => { sent.push(id);
+    return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))); } } });
+  late.service.metricsTimeoutMs = 30;
+  const answer = clone(await late.service.adminMetrics(ADMIN));
+  assert.deepEqual([ownRow(answer).state, ownRow(answer).reason], ['unobservable', 'timeout']);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(sent.length, 8, 'only the first parallel reads were sent; the aborted wait queues nothing more');
+  // The scope could not be read again: the bytes are not this institution's either.
+  const recheck = clone(await store({ recheckFail: Object.assign(new Error('SYN'), { code: 'P1001' }) }).service.adminMetrics(ADMIN));
+  assert.deepEqual([ownRow(recheck).state, ownRow(recheck).reason], ['unobservable', 'source_failed']);
+});
+
+test('server: Server Status answers per component from this request; a silent component has no uptime and leaves the others', { skip: hosted }, async () => {
+  // Orthanc down: the image store has no answer (and no uptime); DB, login server and API still answer.
+  const down = store({ orthanc: async () => { throw new Error('SYN refused'); },
+    orthancReads: { metricsText: null } });
+  down.service.orthanc.metricsText = async () => { throw new Error('SYN refused'); };
+  down.service.orthanc.studyResources = async () => { throw new Error('SYN refused'); };
+  const a = clone(await down.service.adminMetrics(ADMIN));
+  assert.deepEqual(serverOf(a, 'image_store'), serverRow('image_store', 'source_failed', NOW, { reason: 'source_failed' }));
+  assert.deepEqual(a.server.filter(row => row.component !== 'image_store'), SERVER_ROWS.filter(row => row.component !== 'image_store'));
+  assert.deepEqual([ownRow(a).state, ownRow(a).reason], ['unobservable', 'source_failed']);
+  // /statistics answers but the metrics text has no uptime sample (metrics disabled): answered, Uptime No Source.
+  const noSample = clone(await store({ orthancReads: { metricsText: '# nothing here\n' } }).service.adminMetrics(ADMIN));
+  assert.deepEqual(serverOf(noSample, 'image_store'), serverRow('image_store', 'answered', NOW, { reason: 'no_source' }));
+  // The metrics text read fails while /statistics answers: answered, its uptime read's reason.
+  const textFails = store();
+  textFails.service.orthanc.metricsText = async () => { throw new Error('SYN'); };
+  assert.deepEqual(serverOf(clone(await textFails.service.adminMetrics(ADMIN)), 'image_store'),
+    serverRow('image_store', 'answered', NOW, { reason: 'source_failed' }));
+  // The DB uptime query fails or answers nonsense; the login server is refused, disagrees on its issuer, or never answers.
+  for (const [dbUptime, reason] of [[async () => { throw new Error('SYN'); }, 'source_failed'], [async () => [{ up: -1n, started: new Date() }], 'invalid_answer'],
+    [async () => [], 'invalid_answer']]) {
+    const answer = clone(await store({ dbUptime }).service.adminMetrics(ADMIN));
+    assert.deepEqual(serverOf(answer, 'database'), serverRow('database', reason, NOW, { reason }), reason);
+    assert.deepEqual(answer.metrics, AT_CLOCK(), 'the DB rows are their own reads');
+  }
+  for (const [login, reason] of [[async () => { throw new Error('SYN'); }, 'source_failed'], [async () => false, 'invalid_answer'],
+    [() => new Promise(() => {}), 'timeout']]) {
+    const built = store({ login });
+    built.service.metricsTimeoutMs = 30;
+    const answer = clone(await built.service.adminMetrics(ADMIN));
+    assert.deepEqual(serverOf(answer, 'login_server'), serverRow('login_server', reason, NOW, { reason }), reason);
+  }
+  // Pure rule: nothing reported is nothing answered.
+  assert.deepEqual(clone(SS.serverComponentRows({})).map(row => [row.component, row.answer, row.uptime.state]),
+    SERVER_ROWS.map(row => [row.component, 'invalid_answer', 'unobservable']));
+  for (const [text, sample] of [[METRICS_TEXT, 3600], ['orthanc_up_time_s 12.9\n', 12], ['orthanc_up_time_s{a="b"} 5 17\n', 5],
+    ['orthanc_up_time_s -1\n', NaN], ['orthanc_up_time_s 1e3\n', NaN], ['orthanc_up_time_s 1\northanc_up_time_s 2\n', NaN],
+    ['orthanc_up_time_seconds 4\n', null], ['', null], [null, undefined], [{}, undefined]])
+    assert.ok(Object.is(SS.orthancUptimeSample(text), sample), JSON.stringify(text));
+  assert.deepEqual(SS.databaseUptime([{ up: 5n, started: new Date(1000) }]), { uptimeSeconds: 5, startedAt: 1000 });
+  for (const bad of [null, [], [{}], [{ up: 5n, started: 'x' }], [{ up: '5', started: new Date(1) }], [{ up: 5n, started: new Date(1) }, {}]])
+    assert.equal(SS.databaseUptime(bad), null, String(bad && bad.length));
+});
+
+test('server: the login server answers only when its discovery names exactly the issuer the API accepts', { skip: hosted }, async t => {
+  const previous = ['KC_ADMIN_URL', 'KC_REALM', 'KC_ISSUER'].map(key => [key, process.env[key]]);
+  t.after(() => { for (const [key, value] of previous) if (value === undefined) delete process.env[key]; else process.env[key] = value; });
+  Object.assign(process.env, { KC_ADMIN_URL: 'http://keycloak.synthetic.invalid:8080/auth/', KC_REALM: 'kin',
+    KC_ISSUER: 'https://pacs.synthetic.invalid/auth/realms/kin' });
+  const urls = [];
+  const fetcher = body => async url => { urls.push(String(url)); return typeof body === 'function' ? body() : new Response(body, { status: 200 }); };
+  const signal = new AbortController().signal;
+  assert.equal(await SS.loginServerAnswers(signal, fetcher(JSON.stringify({ issuer: process.env.KC_ISSUER }))), true);
+  assert.equal(urls[0], 'http://keycloak.synthetic.invalid:8080/auth/realms/kin/.well-known/openid-configuration');
+  for (const body of [JSON.stringify({ issuer: 'https://other.invalid/auth/realms/kin' }), JSON.stringify({}), 'not json', 'null'])
+    assert.equal(await SS.loginServerAnswers(signal, fetcher(body)), false, body);
+  await assert.rejects(SS.loginServerAnswers(signal, fetcher(() => new Response('', { status: 503 }))));
+  delete process.env.KC_ISSUER;
+  assert.equal(await SS.loginServerAnswers(signal, fetcher(JSON.stringify({ issuer: '' }))), false, 'no configured issuer: not answered');
+});
+
+test('page: Server Status reads four fixed rows; anything unproven is Answer Unreadable, never Answered', () => {
+  const rows = json(M.readServer(clone(SERVER_ROWS)));
+  assert.deepEqual(rows, clone(SERVER_ROWS));
+  assert.deepEqual(json(M.SERVER.map(item => item.key)), ['api', 'image_store', 'database', 'login_server']);
+  const unread = component => ({ component, answer: 'invalid_answer', checkedAt: null, source: null,
+    uptime: { state: 'unobservable', reason: 'invalid_answer', seconds: null, startedAt: null, source: null } });
+  const change = (i, extra) => clone(SERVER_ROWS).map((row, n) => n === i ? { ...row, ...extra } : row);
+  const up = (i, extra) => clone(SERVER_ROWS).map((row, n) => n === i ? { ...row, uptime: { ...row.uptime, ...extra } } : row);
+  for (const list of [change(1, { answer: 'ok' }), change(1, { checkedAt: 'now' }), change(1, { checkedAt: null }), change(1, { extra: 1 }),
+    change(1, { source: '' }), up(1, { state: 'observed', seconds: -1 }), up(1, { seconds: 1.5 }), up(1, { reason: 'no_source' }),
+    change(1, { answer: 'source_failed' }), up(3, { reason: 'gone' }), up(3, { seconds: 0 }), up(1, { startedAt: 'today' }),
+    [...clone(SERVER_ROWS), clone(SERVER_ROWS)[1]], clone(SERVER_ROWS).filter((_, n) => n !== 1)])
+    assert.deepEqual(json(M.readServer(list))[1].answer === 'answered' && json(M.readServer(list))[3].answer === 'answered', false, JSON.stringify(list).slice(0, 200));
+  assert.deepEqual(json(M.readServer(undefined)), SERVER_ROWS.map(row => unread(row.component)));
+  assert.deepEqual(json(M.readAnswer({ ...ANSWER, server: SERVER_ROWS }).server), clone(SERVER_ROWS));
+  const shown = rows.map(row => json(M.displayServer(row, F)));
+  assert.deepEqual(shown.map(s => [s.label, s.answer, s.checked, s.uptime, s.started]), [
+    ['HALO PACS API', 'Answered', F(NOW), '3 d 04 h 05 min', F(STARTED)],
+    ['Image Store (Orthanc)', 'Answered', F(NOW), '1 h 00 min', 'Not Reported'],
+    ['Database (PostgreSQL)', 'Answered', F(NOW), '2 h 00 min', F(new Date(now - DB_UP * 1000).toISOString())],
+    ['Login Server (Keycloak)', 'Answered', F(NOW), 'Uptime No Source', 'Not Reported']]);
+  const silent = json(M.displayServer(json(M.readServer(change(1, { answer: 'timeout', uptime: { state: 'unobservable', reason: 'timeout',
+    seconds: null, startedAt: null, source: SRC_SERVER.image_store[1] } })))[1], F));
+  assert.deepEqual([silent.answer, silent.uptime, silent.started], ['No Answer in Time', 'Unobservable', 'Not Reported']);
+  const hangul = /[\uac00-\ud7a3]/;
+  for (const s of shown) {
+    assert.deepEqual([s.label, s.answer, s.checked, s.uptime, s.started].filter(text => hangul.test(text)), [], 'words in English');
+    assert.deepEqual([s.labelTitle, s.answerTitle, s.checkedTitle, s.uptimeTitle, s.startedTitle].filter(text => !hangul.test(text)), [],
+      'every title explains itself in Korean');
+  }
 });

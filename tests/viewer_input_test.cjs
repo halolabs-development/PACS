@@ -60,6 +60,32 @@ test('actual metadata contract: missing/malformed identity, integer and frame ta
   reject(() => v.verifyViewerReference('2.25.1', { ...key, frame: 4 }, multi));
   reject(() => v.verifyViewerReference('2.25.1', key, { ...multi, NumberOfFrames: undefined }));
 });
+test('a Key Image on a breast image: the SOP class and frame count of the stored original decide', () => {
+  // A For Presentation mammogram as modalities store it: no IOP/IPP, ImagerPixelSpacing, single frame.
+  const mg = { StudyInstanceUID: '2.25.1', SeriesInstanceUID: item.seriesUid, SOPInstanceUID: item.sopUid, Modality: 'MG',
+    SOPClassUID: '1.2.840.10008.5.1.4.1.1.1.2', Rows: '128', Columns: '96', ImagerPixelSpacing: '0.1\\0.1',
+    PatientOrientation: 'A\\R', ImageLaterality: 'L', ViewPosition: 'CC' };
+  const key = { schemaVersion: 1, kind: 'key', seriesUid: item.seriesUid, sopUid: item.sopUid, frame: 1, title: '', description: '' };
+  for (const sopClass of ['1.2.840.10008.5.1.4.1.1.1.2', '1.2.840.10008.5.1.4.1.1.1.2.1']) {
+    v.verifyViewerReference('2.25.1', key, { ...mg, SOPClassUID: sopClass });
+    v.verifyViewerReference('2.25.1', key, { ...mg, SOPClassUID: sopClass, NumberOfFrames: '1' });
+    reject(() => v.verifyViewerReference('2.25.1', { ...key, frame: 2 }, { ...mg, SOPClassUID: sopClass }));
+    reject(() => v.verifyViewerReference('2.25.1', key, { ...mg, SOPClassUID: sopClass, NumberOfFrames: '2' }));
+  }
+  // The key names the stored image, never another one: identity is still checked.
+  reject(() => v.verifyViewerReference('2.25.1', key, { ...mg, SOPInstanceUID: '2.25.9' }));
+  // Breast tomosynthesis and breast projection objects are multi-frame: NumberOfFrames is required and bounds the frame.
+  for (const sopClass of ['1.2.840.10008.5.1.4.1.1.13.1.3', '1.2.840.10008.5.1.4.1.1.13.1.4', '1.2.840.10008.5.1.4.1.1.13.1.5']) {
+    const dbt = { ...mg, SOPClassUID: sopClass, NumberOfFrames: '5' };
+    v.verifyViewerReference('2.25.1', { ...key, frame: 5 }, dbt);
+    reject(() => v.verifyViewerReference('2.25.1', { ...key, frame: 6 }, dbt));
+    reject(() => v.verifyViewerReference('2.25.1', key, { ...dbt, NumberOfFrames: undefined }));
+  }
+  // A mark other than a Key Image is still not stored on a mammogram (MG Length has its own calibrated path).
+  reject(() => v.verifyViewerReference('2.25.1', { ...item, frameOfReferenceUid: item.frameOfReferenceUid }, { ...mg, FrameOfReferenceUID: item.frameOfReferenceUid }));
+  // An image class outside the list stays refused for a Key Image.
+  reject(() => v.verifyViewerReference('2.25.1', key, { ...mg, SOPClassUID: '1.2.840.10008.5.1.4.1.1.7' }));
+});
 test('plane/edge bounds, swapped spacing, oblique and rounded IOP preserve input', () => {
   for (const orientation of [[1,0,0,0,1,0], [0,1,0,0,0,1], [0,0,1,1,0,0], [-1,0,0,0,-1,0],
     [.70710678,.70710678,0,-.61237244,.61237244,.5]]) {

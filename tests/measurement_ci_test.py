@@ -29,13 +29,14 @@ AFTER_SIBLING_FAILURE = '${{ !cancelled()' + NOT_DRAFT
 HOST_OS_ENV = {key: os.environ[key] for key in ('SYSTEMROOT', 'USERPROFILE') if key in os.environ}
 
 
-PROFILE_DEADLINES = {'hanging-protocols': 1884, 'measurements': 3300, 'exam-merge': 2100, 'gateway-e2e': 1860}
+PROFILE_DEADLINES = {'hanging-protocols': 1884, 'measurements': 3300, 'exam-merge': 2100, 'gateway-e2e': 1935}
 
 # Public CI contract: these suites must have an automatic PR owner.
 # Keep the inventory independent of the workflow so removing a command fails.
 REGRESSION_SUITES = {
     'source-regressions': """
         scripts/test_ops_soup_vulns.py
+        tests/access_alerts_rules_test.cjs
         tests/access_record_writes_test.cjs
         tests/admin_audit_attribution_test.cjs
         tests/clinician_policy_test.py
@@ -131,6 +132,7 @@ REGRESSION_SUITES = {
         tests/viewer_cell_text_dom_test.py
         tests/viewer_cell_tools_dom_test.py
         tests/viewer_panels_dom_test.py
+        tests/viewer_dock_autohide_dom_test.py
         tests/viewer_hanging_protocol_display_dom_test.py
         tests/viewer_hanging_protocol_dom_test.py
         tests/viewer_hanging_protocol_mount_dom_test.py
@@ -171,8 +173,10 @@ REGRESSION_SUITES = {
         tests/audit_rights_dom_test.py
         tests/audit_intake_refusal_dom_test.py
         tests/audit_record_kind_dom_test.py
+        tests/admin_access_alerts_dom_test.py
         tests/admin_audit_dom_test.py
         tests/admin_gateway_rules_dom_test.py
+        tests/admin_gateway_support_dom_test.py
         tests/admin_gateway_status_dom_test.py
         tests/admin_member_roles_dom_test.py
         tests/admin_metrics_dom_test.py
@@ -2089,7 +2093,8 @@ class MeasurementCiTests(unittest.TestCase):
         tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
         cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
         declared = [node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')]
-        self.assertEqual(declared, ['test_image_report_01_draw_attach_approve_preview_history_and_clinician'])
+        self.assertEqual(declared, ['test_image_report_01_draw_attach_approve_preview_history_and_clinician',
+                                    'test_image_report_02_mammogram_key_image_is_the_saved_image_drawn_and_attached'])
         self.assertTrue(any(isinstance(node, ast.FunctionDef) and node.name == 'load_tests' for node in tree.body))
         self.assertNotIn('image-report', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
@@ -2246,6 +2251,34 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- viewer-overlay-units', dispatch)
         self.assertIn('tests/e2e/artifacts/viewer-overlay-units-ci/', dispatch)
 
+    def test_suspended_reader_pickers_profile_is_exact_and_dispatch_only(self):
+        # A suspended reader in Assign Reader and Consultation: the declared cases of one class in one unit, reached only
+        # through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['suspended-reader-pickers']
+        suite, class_name, unit = 'e2e/test_suspended_reader_pickers.py', 'SuspendedReaderPickersE2E', 'ci-suspended-reader-pickers'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'suspended-reader-pickers-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-suspended-reader-pickers-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 575)
+        for name, other in ci.PROFILES.items():
+            if name != 'suspended-reader-pickers':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_suspended_reader_01_pickers_and_saves',
+                          'test_suspended_reader_02_assign_dialog_says_why',
+                          'test_suspended_reader_03_saved_records_stay'])
+        self.assertNotIn('suspended-reader-pickers', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- suspended-reader-pickers', dispatch)
+        self.assertIn('tests/e2e/artifacts/suspended-reader-pickers-ci/', dispatch)
+
     def test_profiles_are_exact_and_use_separate_owned_artifacts(self):
         self.assertEqual(set(ci.PROFILES),
                          {'context-loss', 'measurement-accuracy', 'measurements', 'volume-rendering', 'output-integration',
@@ -2298,6 +2331,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'login-error-page',
                           # Overlay planes, Freehand ROI units and the saved-item count, Focused integration dispatch only.
                           'viewer-overlay-units',
+                          # A suspended reader in Assign Reader and Consultation, Focused integration dispatch only.
+                          'suspended-reader-pickers',
                           # S7-U5: the session contract job's eight profiles (validate.yml s7-u5-session-contracts matrix);
                           # u5-fixups is the fix round's five screen regressions (final review part 1, blocker 3).
                           'u5-session-api', 'u5-session-draft', 'u5-session-regression', 'u5-session-boundaries',
@@ -3571,15 +3606,15 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual(profile['suites'], (('gateway_pipeline_live.py', 'GatewayPipelineLive', 'ci-eg1-gateway'),))
         self.assertEqual(profile['out'].name, 'gateway-e2e-ci')
         self.assertEqual(profile['project_prefix'], 'kin-gateway-e2e-ci-')
-        self.assertEqual(profile['suite_timeout'], 1620)
+        self.assertEqual(profile['suite_timeout'], 1695)
         self.assertNotIn('suite_budgets', profile)
         command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
         self.assertEqual(command[command.index('--module')+1], 'tests/gateway_pipeline_live.py')
         self.assertEqual(command[command.index('--class')+1], 'GatewayPipelineLive')
         self.assertEqual(command[command.index('--unit')+1], 'ci-eg1-gateway')
-        self.assertEqual(command[command.index('--timeout')+1], '1620')
-        self.assertEqual(outer, 1655)
-        # A1 and Block G: 1620+35 = 1655 <= 1860-205, and 205s is about 2.5x the recorded hosted stack setup and cleanup.
+        self.assertEqual(command[command.index('--timeout')+1], '1695')
+        self.assertEqual(outer, 1730)
+        # A1, Block G and the receive self-check: 1695+35 = 1730 <= 1935-205, and 205s is about 2.5x the recorded hosted stack setup and cleanup.
         self.assertTrue(all(ci.profile_deadline_seconds(name) == PROFILE_DEADLINES.get(name, 1500) for name in ci.PROFILES))
         self.assertLessEqual(profile['suite_timeout'] + 35, ci.profile_deadline_seconds('gateway-e2e') - 205)
         for name, other in ci.PROFILES.items():

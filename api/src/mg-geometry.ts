@@ -1,11 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 
+// The breast image SOP classes, the one list for MG Length and for a Key Image on a breast image:
+// Digital Mammography X-Ray Image (For Presentation, For Processing), single frame;
+// Breast Tomosynthesis and Breast Projection X-Ray Image (For Presentation, For Processing), multi-frame.
+export const MG_CLASSIC: readonly string[] = Object.freeze(['1.2.840.10008.5.1.4.1.1.1.2', '1.2.840.10008.5.1.4.1.1.1.2.1']);
+export const MG_ENHANCED: readonly string[] = Object.freeze(['1.2.840.10008.5.1.4.1.1.13.1.3', '1.2.840.10008.5.1.4.1.1.13.1.4', '1.2.840.10008.5.1.4.1.1.13.1.5']);
+
 // MG coordinates stay in the source image plane. Projection fallbacks are image-local,
 // never a claimed patient Frame of Reference; the SOP/frame still identifies the image.
 export function mgGeometry(tags: any, frame: number) {
   const dbt = '1.2.840.10008.5.1.4.1.1.13.1.3';
-  const enhanced = [dbt, '1.2.840.10008.5.1.4.1.1.13.1.4', '1.2.840.10008.5.1.4.1.1.13.1.5'];
-  const classic = ['1.2.840.10008.5.1.4.1.1.1.2', '1.2.840.10008.5.1.4.1.1.1.2.1'];
+  const enhanced = MG_ENHANCED;
+  const classic = MG_CLASSIC;
   if (tags?.Modality !== 'MG' || ![...enhanced, ...classic].includes(tags.SOPClassUID)) return null;
   const fail = () => { throw new BadRequestException('MG 원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
   const numbers = (value, count) => {

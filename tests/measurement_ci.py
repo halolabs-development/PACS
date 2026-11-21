@@ -606,10 +606,11 @@ PROFILES = {
         'project_prefix': 'kin-gateway-e2e-ci-',
         # S4-EG1, dispatch only (.github/workflows/gateway-e2e.yml): the real Gateway agent and hospital Orthanc in their
         # own Compose project against this stack, six fixed methods. The cap is the contract's segment deadlines after A1
-        # (backoff 90/90) and Block G (Gateway settings, 360s) plus a teardown margin: (1620+35) = 1655s leaves 205s of its
-        # 1860s deadline for a stack whose recorded hosted setup and cleanup took about 80s. A ceiling, not an estimate.
-        'suite_timeout': 1620,
-        'deadline_seconds': 1860,
+        # (backoff 90/90), Block G (Gateway settings, 360s) and the DICOM receive self-check after it (75s) plus a teardown
+        # margin: (1695+35) = 1730s leaves 205s of its 1935s deadline for a stack whose recorded hosted setup and cleanup took
+        # about 80s. A ceiling, not an estimate.
+        'suite_timeout': 1695,
+        'deadline_seconds': 1935,
         'suites': (('gateway_pipeline_live.py', 'GatewayPipelineLive', 'ci-eg1-gateway'),),
     },
     'critical-result-screens': {
@@ -727,6 +728,15 @@ PROFILES = {
         # single-suite cap is a hang ceiling, not an estimate.
         'suite_timeout': 900,
         'suites': (('e2e/test_viewer_overlay_units.py', 'ViewerOverlayUnitsE2E', 'ci-viewer-overlay-units'),),
+    },
+    'suspended-reader-pickers': {
+        'out': ROOT / 'tests/e2e/artifacts/suspended-reader-pickers-ci',
+        'project_prefix': 'kin-suspended-reader-pickers-ci-',
+        # Dispatch only (Focused integration): a reader the administrator suspended through the product's own command is
+        # not offered by Assign Reader or Consultation and a save prepared before is refused with its reason; rows saved
+        # before stay. Three cases; the single-suite cap is a hang ceiling, not an estimate.
+        'suite_timeout': 540,
+        'suites': (('e2e/test_suspended_reader_pickers.py', 'SuspendedReaderPickersE2E', 'ci-suspended-reader-pickers'),),
     },
 }
 

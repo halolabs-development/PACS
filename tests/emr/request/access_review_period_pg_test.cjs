@@ -8,6 +8,8 @@
 //    the reference field by field, and the reader's own access record names the served rows;
 //  - the previous definition does not answer a day within 20 s (the defect this replaces);
 //  - a request the browser abandons ends in PostgreSQL by the 30 s limit, while an unbounded read would stay.
+// Then Access Alerts on the same 30-day ledger: direct study openings of the real producers' shapes mixed in (and list,
+// preload, write, audit and follow-up entries that must not count), a day and a week through HTTP within 60 s.
 // Synthetic rows only; the bulk rows copy entries this test appends through the normal writer.
 const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -18,6 +20,7 @@ const build = process.env.KIN_ACCESS_REVIEW_BUILD;
 const compiled = name => require(path.join(build, name));
 const { AdminController } = compiled('admin.controller.js');
 const { AdminAccessReview } = compiled('admin-access-review.js');
+const { AdminAccessAlerts } = compiled('admin-access-alerts.js');
 const { AdminService } = compiled('admin.service.js'), { PacsService } = compiled('pacs.service.js');
 const { PrismaService } = compiled('prisma.service.js'), { StudyAccessService } = compiled('study-access.service.js');
 const { createRecordPort } = compiled('emr-runtime/record-port.js');
@@ -51,7 +54,7 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const db = new PrismaClient(), witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
   const store = new AccessLedgerStore(db, new FailureJournal(db, new FailureSpool(process.env.KIN_B2R_SPOOL)));
   const requests = createRequestContext({ resolve: async () => ({ status: 'unresolved', reason: 'not-observed' }) }, createRecordPort(store).port);
-  const access = { snapshot: async () => ({ policy: { restricted: false } }), unchanged: async () => {} };
+  const access = { snapshot: async c => ({ policy: { restricted: c.sub === 'restricted' } }), unchanged: async () => {} };
   const measured = {};
   let app;
   try {
@@ -174,13 +177,15 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     console.log(`previous definition, one day: ${stalled.value} (${stalled.ms} ms)`);
 
     class Fixture {}
-    Module({ controllers: [AdminController], providers: [AdminAccessReview,
+    Module({ controllers: [AdminController], providers: [AdminAccessReview, AdminAccessAlerts,
       { provide: PrismaService, useValue: db }, { provide: StudyAccessService, useValue: access },
       { provide: AdminService, useValue: { auditEvents: () => ({ legacy: true }) } },
       { provide: PacsService, useValue: {} }, { provide: REQUEST_CONTEXT_SOURCE, useValue: requests.source }] })(Fixture);
     app = await NestFactory.create(Fixture, { logger: false });
     app.setGlobalPrefix('api');
-    app.use((req, res, next) => { Object.assign(req, { sub: 'admin', actor: 'SYN-ADMIN', institution: 'SYN-A', roles: ['admin'], kind: 'member' });
+    // x-syn-caller: another caller for the Access Alerts checks (institution, roles, restricted account).
+    app.use((req, res, next) => { Object.assign(req, { sub: 'admin', actor: 'SYN-ADMIN', institution: 'SYN-A', roles: ['admin'], kind: 'member' },
+        req.headers['x-syn-caller'] ? JSON.parse(req.headers['x-syn-caller']) : {});
       requests.capture.capture(req, res, { issuer: 'SYN-ISSUER', subject: req.sub, roles: req.roles,
         institution: req.institution, rightsVersion: 1, binding: { method: 'bearer', sessionRef: null } },
         { method: 'GET', route: 'admin/audit', purpose: 'clinical' }, async () => {});
@@ -352,9 +357,138 @@ const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
     const month = await elapsed(() => review(30 * DAY, {}, AbortSignal.timeout(90000)).catch(error => ({ status: error.name })));
     measured.month = { status: month.value.status, ms: month.ms };
     console.log(`1.02M: thirty days (not required) answered ${month.value.status} in ${month.ms} ms`);
+    // ── Access Alerts on the 30-day ledger ──
+    // Events in the shapes their producers record (image delivery V1; local reads V2), two stream copies each where the
+    // ledger keeps two. Inserted as copies like the bulk rows; the SQL reads only the stored payload.
+    const copies = await witness.$queryRawUnsafe(`SELECT DISTINCT ON (stream) stream, statutory_act, retention_class
+      FROM emr_access.access_entry WHERE statutory_act = (SELECT statutory_act FROM emr_access.access_entry
+      WHERE payload::jsonb->>'action' = 'provide-prepared' LIMIT 1) ORDER BY stream`);
+    assert.ok(copies.length >= 1, 'a read entry to copy the stream columns from');
+    const unresolved = { status: 'unresolved', reason: 'not-observed' };
+    const person = name => known({ id: `SYN-${name}`, issuer: 'SYN-ISSUER', subject: `SYN-${name}-SUB` });
+    const SHA = 'a'.repeat(64);
+    const v1 = (who, acting, managing, at, surface, kind, uid, extra = {}) => ({ formatVersion: 1, eventId: randomUUID(), surface,
+      userId: person(who), rolesAtTime: known(['radiologist']), actingInstitution: known(acting), managingInstitution: known(managing),
+      occurredAt: iso(at), trustedProxyIp: unresolved, cause: 'user-view', executor: 'member',
+      context: { basis: 'worklist', studyId: uid, relatedStudyId: null, reason: null },
+      targets: [{ kind, patientLinkSnapshot: known({ linkId: 'SYN-LINK', patientId: 'SYN-PATIENT', assigningAuthority: managing }),
+        studyId: known(uid), recordId: known(uid), versionId: known('1') }],
+      action: 'provide-prepared', result: 'prepared', requestId: randomUUID(), auditLinkId: `audit:${randomUUID()}`, relatedEventId: null, ...extra });
+    const v2 = (who, managing, at, surface, kinds, uids, extra = {}) => ({ formatVersion: 2, branch: 'local-read', surface, eventId: randomUUID(),
+      userId: person(who), rolesAtTime: known(['radiologist']), rightsVersion: 1, actingInstitution: known(managing), managingInstitution: known(managing),
+      occurredAt: iso(at), trustedProxyIp: unresolved, session: { method: 'bearer', sessionRef: null }, cause: 'user-view', executor: 'member',
+      context: { basis: 'worklist', studyId: uids[0], relatedStudyId: null, reason: null },
+      targets: uids.map((uid, i) => ({ kind: kinds[i] ?? kinds[0], studyId: known(uid), recordId: known(uid), versionId: unresolved,
+        sourcePatientId: known('SYN-PATIENT'), sourceInstitution: unresolved, projectionSha256: SHA })),
+      action: 'provide-prepared', result: 'prepared', requestId: randomUUID(), auditLinkId: `audit:${randomUUID()}`, relatedEventId: null, ...extra });
+    const FRAMES = 'GET dicom-web/studies/:study/series/:series/instances/:sop/frames/:frames';
+    const span = 9 * 60000, base0 = until.getTime();
+    // D: 50 different studies opened in 9 minutes by every counted path; one study reopened; one event with two studies.
+    const dAt = i => base0 - 3 * 3600000 + Math.round(i * span / 50);
+    const opened = [];
+    for (let i = 0; i < 50; i++) {
+      const uid = `SYN-D-${i}`, at = dAt(i);
+      if (i === 11) continue;  // carried by the two-study viewing-set event at i = 10
+      opened.push(i < 10 ? v1('D', 'SYN-A', 'SYN-A', at, FRAMES, 'image', uid)
+        : i < 20 ? v2('D', 'SYN-A', at, 'POST studies/viewing-set/resolve', ['study-metadata'], i === 10 ? [uid, 'SYN-D-11'] : [uid])
+        : i < 30 ? v2('D', 'SYN-A', at, 'GET clinician/studies/:uid/report', ['report-version'], [uid])
+        : i < 40 ? v2('D', 'SYN-A', at, 'GET studies/:uid/report-preview', ['report-head'], [uid])
+        : v2('D', 'SYN-A', at, 'GET studies/:uid/related-report', ['report-version'], [uid], { action: 'client-shown', result: 'reported' }));
+    }
+    opened.push(v1('D', 'SYN-A', 'SYN-A', dAt(49) + 1000, FRAMES, 'image', 'SYN-D-0'));
+    // R: a remote reader of SYN-B opening 50 SYN-A studies. B2: a SYN-B reader opening 50 SYN-B studies.
+    const burst = (who, acting, managing, start) => Array.from({ length: 50 }, (_, i) =>
+      v1(who, acting, managing, start + i * 10000, FRAMES, 'image', `SYN-${who}-${i}`));
+    const remote = burst('R', 'SYN-B', 'SYN-A', base0 - 2 * 3600000), other = burst('B2', 'SYN-B', 'SYN-B', base0 - 3 * 3600000);
+    // N: 49 different studies, one short of the default threshold.
+    const short = burst('N', 'SYN-A', 'SYN-A', base0 - 5 * 3600000).slice(0, 49);
+    // L: 80 different studies in 9 minutes, none of them opened: lists, preloads, follow-ups, writes, audits, status-only.
+    const lAt = i => base0 - 4 * 3600000 + i * 6000;
+    const listed = [];
+    for (let i = 0; i < 10; i++) {
+      listed.push(v2('L', 'SYN-A', lAt(i), 'GET worklist', ['study-metadata', 'report-head'], [`SYN-L-${i}`, `SYN-L-${i}`]));
+      listed.push(v1('L', 'SYN-A', 'SYN-A', lAt(10 + i), FRAMES, 'image', `SYN-L-${10 + i}`,
+        { cause: 'background-fetch', context: { basis: 'background-fetch', studyId: `SYN-L-${10 + i}`, relatedStudyId: null, reason: null } }));
+      listed.push(v1('L', 'SYN-A', 'SYN-A', lAt(20 + i), FRAMES, 'image', `SYN-L-${20 + i}`, { action: 'transfer-ended', result: 'succeeded' }));
+      listed.push(v1('L', 'SYN-A', 'SYN-A', lAt(30 + i), 'POST studies/:uid/report/commit', 'report-version', `SYN-L-${30 + i}`, { action: 'write', result: 'succeeded' }));
+      listed.push(v2('L', 'SYN-A', lAt(40 + i), 'GET studies/:uid/audit', ['access-audit'], [`SYN-L-${40 + i}`]));
+      listed.push(v2('L', 'SYN-A', lAt(50 + i), 'GET clinician/studies/:uid/report', ['study-metadata'], [`SYN-L-${50 + i}`]));
+      listed.push(v2('L', 'SYN-A', lAt(60 + i), 'GET studies/:uid/report-preview', ['study-metadata'], [`SYN-L-${60 + i}`]));
+      listed.push(v1('L', 'SYN-A', 'SYN-A', lAt(70 + i), 'GET studies/:uid/original-downloads/:operationId/archive', 'download', `SYN-L-${70 + i}`));
+    }
+    const all = [...opened, ...remote, ...other, ...short, ...listed];
+    await witness.$transaction([witness.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`),
+      ...all.flatMap(e => copies.map(c => witness.$executeRawUnsafe(`INSERT INTO emr_access.access_entry(entry_id, operation_id, stream,
+        event_id, payload, occurred_at, statutory_act, retention_class) VALUES (gen_random_uuid(), gen_random_uuid(), $1, $2, $3, $4::timestamptz, $5, $6)`,
+        c.stream, e.eventId, JSON.stringify(e), e.occurredAt, c.statutory_act, c.retention_class)))]);
+    await witness.$executeRawUnsafe('ANALYZE emr_access.access_entry');
+    const entryOf = async event => (await witness.$queryRawUnsafe(`SELECT entry_id::text FROM emr_access.access_entry
+      WHERE event_id = $1 ORDER BY sequence LIMIT 1`, event.eventId))[0].entry_id;
+    const expect = async (who, events, studies, evidence) => ({ userId: person(who),
+      firstAt: events.map(e => e.occurredAt).sort()[0], lastAt: events.map(e => e.occurredAt).sort().at(-1),
+      studies, events: events.length, evidenceEntryId: await entryOf(evidence) });
+    // The event that brought D to 50 different studies is the last new study; the reopening after it is in the span.
+    const wantA = [await expect('D', opened, 50, opened[opened.length - 2]), await expect('R', remote, 50, remote[49])];
+    const alerts = async (spanMs, caller, signal) => {
+      const query = new URLSearchParams({ report: 'access-alerts', from: ago(spanMs), until: UNTIL });
+      const r = await fetch(`${base}/api/admin/audit?${query}`, { signal: signal ?? AbortSignal.timeout(60000),
+        headers: caller ? { 'x-syn-caller': JSON.stringify(caller) } : {} });
+      return { status: r.status, body: await r.json() };
+    };
+    for (const [label, spanMs] of [['1.02M: alerts, one day', DAY], ['1.02M: alerts, one week', 7 * DAY]]) {
+      const got = await elapsed(() => alerts(spanMs));
+      assert.equal(got.value.status, 200, `${label}: ${JSON.stringify(got.value.body).slice(0, 300)}`);
+      assert.deepEqual(got.value.body.threshold, { studies: 50, minutes: 10 }, `${label}: the default threshold`);
+      assert.deepEqual(got.value.body.alerts, wantA, `${label}: D and the remote reader; not the list-only, short or other-institution accounts`);
+      const own = await served();
+      assert.deepEqual(own.targets.map(t => [t.kind, t.recordId.value, t.studyId.status]),
+        wantA.map(a => ['access-audit', a.evidenceEntryId, 'not-applicable']), `${label}: the reader's record names each alert's evidence`);
+      measured[label] = got.ms;
+      console.log(`${label}: ${got.ms} ms, ${got.value.body.alerts.length} alerts`);
+    }
+    // The administrator's own reads are not openings: asking again gives the same alerts.
+    assert.deepEqual((await alerts(DAY)).body.alerts, wantA, 'the alert reads themselves raise no alert');
+    // SYN-B's administrator sees only its own reader, never the remote reader's SYN-A openings.
+    const bAlerts = await alerts(DAY, { institution: 'SYN-B', sub: 'admin-b', actor: 'SYN-ADMIN-B' });
+    assert.equal(bAlerts.status, 200);
+    assert.deepEqual(bAlerts.body.alerts, [await expect('B2', other, 50, other[49])], 'SYN-B: its own reader only');
+    // A period with no openings answers no alert and is still recorded, with no target.
+    const quiet = await alerts(5 * 60000);
+    assert.deepEqual([quiet.status, quiet.body.alerts], [200, []]);
+    assert.deepEqual((await served()).targets, [], 'an empty answer is recorded too');
+    // Refusals: not an administrator, a restricted account, a malformed period, a malformed threshold setting.
+    assert.equal((await alerts(DAY, { roles: ['radiologist'] })).status, 403, 'not an administrator');
+    assert.equal((await alerts(DAY, { sub: 'restricted' })).status, 403, 'a restricted account');
+    const malformedPeriod = await fetch(`${base}/api/admin/audit?${new URLSearchParams({ report: 'access-alerts', from: UNTIL, until: ago(DAY) })}`);
+    assert.equal(malformedPeriod.status, 400, 'a period that ends before it starts');
+    process.env.KIN_ACCESS_ALERT_THRESHOLD = '50 per 10';
+    try { assert.equal((await alerts(DAY)).status, 503, 'a malformed threshold refuses, never a default in its place'); }
+    finally { delete process.env.KIN_ACCESS_ALERT_THRESHOLD; }
+    process.env.KIN_ACCESS_ALERT_THRESHOLD = '3/10';
+    try {
+      const lower = await alerts(DAY);
+      assert.deepEqual(lower.body.threshold, { studies: 3, minutes: 10 }, 'the applied threshold is the setting');
+      assert.ok(lower.body.alerts.some(a => a.userId.value.id === 'SYN-N'), 'a lower setting raises the short account too');
+      assert.ok(!lower.body.alerts.some(a => a.userId.value.id === 'SYN-L'), 'list-only entries never count');
+    } finally { delete process.env.KIN_ACCESS_ALERT_THRESHOLD; }
+    // More counted rows than the cap: refused, never judged on part of the period (a stand-in returns the cap + 1).
+    const alertSignature = 'emr_access.alert_entries(text,timestamptz,timestamptz,integer)';
+    const [{ sql: alertCurrent }] = await witness.$queryRawUnsafe(`SELECT pg_get_functiondef('${alertSignature}'::regprocedure) AS sql`);
+    try {
+      await witness.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION emr_access.alert_entries(p_institution text, p_from timestamptz,
+        p_until timestamptz, p_cap integer) RETURNS TABLE(entry_id uuid, sequence bigint, event_id text, occurred_at timestamptz,
+        account text, study_id text) LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+        SELECT gen_random_uuid(), g, 'SYN-CAP-' || g, p_from, '["SYN-CAP","SYN-ISSUER","SYN-CAP-SUB"]', 'SYN-CAP-' || g
+        FROM generate_series(1, p_cap + 1) g $$`);
+      const capped = await alerts(DAY);
+      assert.equal(capped.status, 503, 'more counted rows than the cap is refused');
+      assert.match(capped.body.message, /기간을 줄여/);
+    } finally { await witness.$executeRawUnsafe(alertCurrent); }
+    assert.deepEqual((await alerts(DAY)).body.alerts, wantA, 'the current alert definition is back');
+    console.log('Access Alerts: day and week answered with the expected alerts; other institution, list-only, short, refusals and cap checked');
     console.log(`compared ${compared} answers in all`);
     console.log('MEASURED ' + JSON.stringify(measured));
-    console.log('PASS: Access Review over a day, five days and a week on 170k and 1.02M entries; same answers as before; abandoned reads end in PostgreSQL');
+    console.log('PASS: Access Review over a day, five days and a week on 170k and 1.02M entries; same answers as before; abandoned reads end in PostgreSQL; Access Alerts over a day and a week');
   } finally {
     if (app) await app.close();
     await db.$disconnect(); await witness.$disconnect();

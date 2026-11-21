@@ -228,6 +228,23 @@ class RunnerTests(unittest.TestCase):
                            ("schema_unchanged", False), ("deployment_authorized", True)):
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 runner.check_observation({**good, key: value}, plan)
+        # The storage encryption report is a warning: any well-formed status passes, a malformed or missing one does not.
+        runner.check_observation(good, plan)
+        report = good["storage_encryption"]
+        for status in ("encrypted", "not-detected", "unknown"):
+            runner.check_observation({**good, "storage_encryption": {**report, "status": status}}, plan)
+        # This observation is made without a backup root, so the backup key is never called configured by it.
+        for state in ("unknown", "absent", "invalid"):
+            runner.check_observation({**good, "storage_encryption": {**report, "backup_encryption": state}}, plan)
+        with self.assertRaises(RuntimeError):
+            runner.check_observation({**good, "storage_encryption": {**report, "backup_encryption": "fine"}}, plan)
+        missing = dict(good)
+        missing.pop("storage_encryption")
+        for label, observation in (("missing", missing), ("status", {**good, "storage_encryption": {**report, "status": "fine"}}),
+                                   ("locations", {**good, "storage_encryption": {**report, "locations": []}}),
+                                   ("extra", {**good, "storage_encryption": {**report, "extra": 1}})):
+            with self.subTest(storage=label), self.assertRaises(RuntimeError):
+                runner.check_observation(observation, plan)
 
     def test_09_backup_competitor_cannot_enter_any_transition(self):
         self.host.faults["smoke_target"] = {"health": True}
