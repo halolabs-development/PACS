@@ -391,7 +391,8 @@ class AgentPins(unittest.TestCase):
         # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
         # 76 -> 82: the DICOM receive self-check (DicomListenerCheckTests, six cases against a real DICOM SCP).
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
-        self.assertEqual(count, 95)
+        # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
+        self.assertEqual(count, 115)
 
 
 class ServerPins(unittest.TestCase):

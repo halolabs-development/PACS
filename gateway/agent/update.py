@@ -328,6 +328,13 @@ class Launcher:
         env["KIN_AGENT_UPDATE_STATE"] = str(self.paths.state)
         env["KIN_UPDATE_ROOT"] = str(self.paths.root)
         env.pop("KIN_AGENT_RUN_VERSION", None)
+        # The image's own agent, the floor every fallback ends at: the agent deletes delivered copies only when it can
+        # read what was deleted (agent.py keeps_purge_record). An older image's launcher says nothing, so nothing is deleted.
+        env.pop("KIN_AGENT_BUILTIN_VERSION", None)
+        try:
+            env["KIN_AGENT_BUILTIN_VERSION"] = self.builtin_version()
+        except (OSError, RuntimeError):
+            pass
         if release is None:
             script = self.builtin
         else:

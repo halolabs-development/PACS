@@ -8,7 +8,7 @@ import { GATEWAY_SETTINGS_INVALID, GATEWAY_SETTINGS_RESTRICTED, GATEWAY_SETTINGS
   storedGatewaySettings } from './gateway-settings';
 
 /**
- * Gateway settings of an institution (routing rules and lossless compression). The rule is
+ * Gateway settings of an institution (routing rules, lossless compression and the retention of delivered copies). The rule is
  * gateway-settings.ts; this service reads and writes the one Institution column. The administrator reads and saves the
  * own institution's settings (accounts with a restricted study scope are refused, as for Gateway Status); the
  * institution's Gateways read them on GET /api/gateway/settings with their own credential.
@@ -46,7 +46,7 @@ export class GatewaySettingsService {
   }
 
   /**
-   * `PUT /api/admin/gateway-settings` with `{ revision, routes, compression }`. The row lock, the check of
+   * `PUT /api/admin/gateway-settings` with `{ revision, routes, compression, retentionDays }` (no retentionDays = keep it). The row lock, the check of
    * the revision the form started from, the write and the audit row are one transaction; the same settings again write
    * nothing.
    */
@@ -59,7 +59,7 @@ export class GatewaySettingsService {
       const current = storedGatewaySettings(locked[0].gatewaySettings);
       const peers = await this.storePeers(tx, me);
       let input;
-      try { input = parseGatewaySettingsInput(body, new Set(peers.map(p => p.id))); }
+      try { input = parseGatewaySettingsInput(body, new Set(peers.map(p => p.id)), current.retentionDays); }
       catch (error) {
         if (error instanceof GatewaySettingsInputError)
           throw new BadRequestException({ code: error.code, field: error.field });
@@ -70,7 +70,8 @@ export class GatewaySettingsService {
           message: '다른 곳에서 Gateway 규칙이 바뀌었습니다. 다시 불러온 뒤 저장하세요.' });
       // The scope the save was admitted with still holds, checked before anything is written (a refusal writes nothing).
       await this.studyAccess.unchanged(c, access, tx);
-      const same = JSON.stringify({ routes: current.routes, compression: current.compression }) === JSON.stringify(input.settings);
+      const same = JSON.stringify({ routes: current.routes, compression: current.compression, retentionDays: current.retentionDays })
+        === JSON.stringify(input.settings);
       if (same) return { settings: current, changed: false };
       const next: GatewaySettings = { revision: current.revision + 1, ...input.settings };
       await tx.institution.update({ where: { id: me }, data: { gatewaySettings: next as any } });
@@ -81,12 +82,16 @@ export class GatewaySettingsService {
     return result;
   }
 
-  /** `GET /api/gateway/settings`: a Gateway credential only, its own institution (the token's binding). */
-  async gatewayRead(c: Caller) {
+  /**
+   * `GET /api/gateway/settings`: a Gateway credential only, its own institution (the token's binding). `withRetention`:
+   * the Gateway asked for retentionDays (`?retention=1`); an older one does not and never gets the key.
+   */
+  async gatewayRead(c: Caller, withRetention = false) {
     needExact(c, 'gateway', 'Gateway 설정 조회');
     const me = inst(c);
     const own = await this.prisma.institution.findUnique({ where: { id: me }, select: { gatewaySettings: true } });
     if (!own) throw new BadRequestException({ code: GATEWAY_SETTINGS_INVALID, message: `알 수 없는 기관입니다: ${me}` });
-    return gatewaySettingsAnswer(storedGatewaySettings(own.gatewaySettings), await this.storePeers(this.prisma, me));
+    return gatewaySettingsAnswer(storedGatewaySettings(own.gatewaySettings), await this.storePeers(this.prisma, me),
+      withRetention);
   }
 }

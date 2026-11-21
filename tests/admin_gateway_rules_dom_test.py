@@ -58,8 +58,8 @@ PEERS = [{"id": P1, "name": "SYN PACS A", "aet": "SYNPACSA", "host": "pacs-a.syn
          {"id": P2, "name": "SYN PACS B", "aet": "SYNPACSB", "host": "10.0.0.9", "port": 11112}]
 
 
-def settings(revision=3, routes=None, compression="lossless"):
-    return {"revision": revision, "compression": compression,
+def settings(revision=3, routes=None, compression="lossless", retention=None):
+    return {"revision": revision, "compression": compression, "retentionDays": retention,
             "routes": [{"modality": "CT", "sourceAe": None, "destinations": ["kin", P1]},
                        {"modality": "US", "sourceAe": "SYN_US", "destinations": [P2]}] if routes is None else routes}
 
@@ -214,7 +214,7 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
                                              {"modality": "MG", "sourceAe": None, "destinations": ["kin", P2]}],
                          compression="none")
         sent = self.save((200, {"settings": saved, "changed": True}))
-        self.assertEqual(sent, {"revision": 3, "compression": "none", "routes": [
+        self.assertEqual(sent, {"revision": 3, "compression": "none", "retentionDays": None, "routes": [
             {"modality": "CT", "sourceAe": None, "destinations": ["kin", P1]},
             {"modality": "MG", "sourceAe": None, "destinations": ["kin", P2]}]})
         self.assertIn("판 4", self.message())
@@ -262,6 +262,32 @@ class AdminGatewayRulesDOMTest(unittest.TestCase):
         self.assertEqual(self.rows(), [])
         for control in ("#gateway-rules-refresh", "#gateway-rule-add", "#gateway-rules-save"):
             expect(self.page.locator(control)).to_be_disabled()
+
+    def test_07_the_retention_days_load_save_clear_and_refuse(self):
+        self.open()
+        expect(self.page.locator("#gateway-retention-days")).to_be_disabled()
+        self.load(settings(retention=30))
+        days = self.page.locator("#gateway-retention-days")
+        expect(days).to_be_enabled()
+        expect(days).to_have_value("30")
+        self.assertEqual(days.get_attribute("placeholder"), "Never")
+        days.fill("90")
+        sent = self.save((200, {"settings": settings(revision=4, retention=90), "changed": True}))
+        self.assertEqual(sent["retentionDays"], 90)
+        expect(days).to_have_value("90")
+        days.fill("")
+        sent = self.save((200, {"settings": settings(revision=5), "changed": True}))
+        self.assertIsNone(sent["retentionDays"], "empty = never delete")
+        expect(days).to_have_value("")
+        for typed, value in (("0", 0), ("10000", 10000), ("1.5", "1.5"), ("seven", "seven")):
+            with self.subTest(typed=typed):
+                days.fill(typed)
+                sent = self.save((400, {"code": "GATEWAY_SETTINGS_INVALID", "field": "retentionDays"}))
+                self.assertEqual(sent["retentionDays"], value, "sent as typed (never cut short); the server refuses it")
+                self.assertIn("1부터 3650까지", self.message())
+                expect(days).to_have_value(typed, timeout=1000)
+        self.load(settings(revision=6, retention=None))
+        expect(days).to_have_value("")
 
     def test_06_wording(self):
         self.open()

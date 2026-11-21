@@ -67,7 +67,7 @@ U3_RULE_SHA256 = "e038ba9382b21d536aa5a27a717b10dfd111fef1429abb51325cb7886e57ff
 # says why it did not compare exactly when that answer did not (count unknown, or the report arrived after the list read began).
 # It moved once more for the series count (a10685cc…bfd06f before): "compared" is the images' answer, so a series answer
 # alone never drops the "count unknown" title; the label text and keys are unchanged (study_observation_vectors.json).
-U1B_GATEWAY_LABEL_SHA256 = "4504020d7d3fee787a4a4f20bbe54d33cfd2142c05afde921278dc05041a328f"
+U1B_GATEWAY_LABEL_SHA256 = "b1d0b38b3459d7f807c5e308d177866dd1ccf86d875f8bac6dbe60ad3466be6c"
 
 
 def sha(value):
