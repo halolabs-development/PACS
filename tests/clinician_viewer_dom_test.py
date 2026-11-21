@@ -924,6 +924,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.rows = copy.deepcopy(ROWS)
         self.extra_reports = {}
         self.citations, self.finding_revisions, self.finding_reads = {}, {}, []
+        self.hold_findings, self.held_findings = False, []
         self.scope_reads = []
         self.files = dict(SHIPPED)
         self.config = CONFIG
@@ -1094,7 +1095,12 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             key = (unquote(found.group(1)), unquote(found.group(2)))
             self.finding_reads.append((key, parse_qs(url.query, keep_blank_values=True)))
             answer = getattr(self, 'finding_revisions', {}).get(key)
-            if answer is None:
+            if request.headers.get('x-kin-finding-schema') != '3':
+                # api/src/finding.service.ts: a reader naming no record version reads version 1 only; these rows are 3.
+                route.fulfill(status=409, json={'statusCode': 409, 'code': 'FINDING_SCHEMA_OUTDATED', 'message': 'SYN client outdated'})
+            elif getattr(self, 'hold_findings', False):
+                self.held_findings.append((route, answer))
+            elif answer is None:
                 route.fulfill(status=NOT_FOUND[0], json=NOT_FOUND[1])
             else:
                 route.fulfill(json=answer)
@@ -1504,9 +1510,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             'findingId': finding, 'findingRevision': 2, 'sourceIndex': 0, 'sourceRef': ref or {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
         self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
             cite('conclusion', 'SYN conclusion', n=2, cid='c-2'), cite('conclusion', 'SYN conclusion', n=2, cid='c-3')], 'draft': []}
+        v3 = lambda *sources: {'schemaVersion': 3, 'title': 'SYN finding', 'text': '', 'characteristics': '', 'lesionLocation': '',
+                               'sources': list(sources), 'primary': 0}
         self.finding_revisions[(A, finding)] = {'revisions': [
-            {'revision': 1, 'item': {'sources': [{'itemId': item_id(1), 'revision': 1, 'studyUid': A}]}},
-            {'revision': 2, 'item': {'sources': [{'itemId': item_id(2), 'revision': 1, 'studyUid': A}]}}], 'nextCursor': None}
+            {'revision': 1, 'item': v3({'itemId': item_id(1), 'revision': 1, 'studyUid': A})},
+            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': A})}], 'nextCursor': None}
         self.items[A] = {'pages': [[]]}
         self.open_home()
         self.pick(A)
@@ -1542,9 +1550,13 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.')
         self.assertFalse(popup.is_closed())
         self.assertEqual(1, len(self.viewer_opens))
-        # A citation read of another version links nothing; nor does a job source.
+        # A citation read of another version links nothing; nor does a job source, nor an image line that a job citation's
+        # lines overlap.
+        job = {'kind': 'job', 'jobId': finding, 'sourceRevision': 1}
         for answer in ({'version': FINAL['version'] + 1, 'head': self.citations[A]['head'], 'draft': []},
-                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.', ref={'kind': 'job', 'jobId': finding, 'sourceRevision': 1})], 'draft': []}):
+                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.', ref=job)], 'draft': []},
+                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
+                                                              cite('findings', text, ref=job, cid='c-4')], 'draft': []}):
             with self.subTest(answer=answer['version']):
                 self.citations[A] = answer
                 self.pick(B)
@@ -1556,7 +1568,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         # the mark's own frame of its own study.
         self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.')], 'draft': []}
         self.finding_revisions[(A, finding)] = {'revisions': [
-            {'revision': 2, 'item': {'sources': [{'itemId': item_id(2), 'revision': 1, 'studyUid': P1}]}}], 'nextCursor': None}
+            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': P1})}], 'nextCursor': None}
         self.items[P1] = {'pages': [[mark_item(2, 'length', 'SYN-P1 length')]]}
         self.pick(B)
         self.pick(A)
@@ -1567,6 +1579,62 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual({'studyUid': P1, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
                          popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
         self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+
+    def test_01d_cited_line_paths_split_part_late_answer_and_stored_head(self):
+        """A cited mark on a split comparison study opens the part whose series holds it (not merely the original's first
+        row); a lookup answered after the user opened the viewer otherwise (Compare) does not take that window back; the
+        report opened by its version (an Exam Reports button) links its lines when that version is the head the citations
+        were read from."""
+        row = next(r for r in self.rows if r['uid'] == A)
+        finding = 'b0000000-0000-4000-8000-000000000002'
+        original, other_series = uid(77), uid(901)
+        text = 'Liver lesion 12 mm.'
+        cite = {'cid': 'c-9', 'field': 'findings', 'insertedText': text, 'sameTextCount': 1, 'findingId': finding, 'findingRevision': 1,
+                'sourceIndex': 0, 'sourceRef': {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
+        self.extra_reports[A] = {**report_of(row), 'report': {**report_of(row)['report'], 'findings': text}}
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite], 'draft': []}
+        source = {'itemId': item_id(2), 'revision': 1, 'studyUid': original}
+        self.finding_revisions[(A, finding)] = {'revisions': [{'revision': 1, 'item': {'schemaVersion': 3, 'title': 'SYN', 'text': '',
+            'characteristics': '', 'lesionLocation': '', 'sources': [source], 'primary': 0}}], 'nextCursor': None}
+        self.items[original] = {'pages': [[mark_item(2, 'length', 'SYN split length')]]}
+        part = lambda report, n, series: {'reportUid': report, 'groupId': 'syn-split', 'kind': 'split', 'part': n, 'active': True,
+                                          'generation': 'syn-1', 'sources': [{'studyUid': original, 'series': {'mode': 'include', 'uids': [series]}}]}
+        for peer, n, series in ((P1, 0, other_series), (P2, 1, SERIES)):
+            target = next(r for r in self.rows if r['uid'] == peer)
+            target['exam'] = {'scope': part(peer, n, series)}
+            target['reportScope'] = part(peer, n, series)
+        self.open_home()
+        self.pick(A)
+        link = self.page.locator('#report-body button.cited-line')
+        expect(link).to_have_count(1)
+        with self.page.expect_popup() as info:
+            link.click()
+        popup = info.value
+        opened = self.opened(1)
+        self.assertEqual([A + ',' + original], opened['StudyInstanceUIDs'])
+        self.assertEqual(P2, json.loads(opened['kinExamScopes'][0])['prior']['reportUid'], 'the part whose series holds the mark')
+        popup.wait_for_function('window.verified===true')
+        self.assertEqual(original, popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET.studyUid'))
+        # A lookup still on its way when Compare is pressed: its late answer opens nothing.
+        self.hold_findings = True
+        link.click()
+        self.wait_until(lambda: self.held_findings, 'the finding lookup held')
+        self.page.locator(f'#compare-list li[data-uid="{P1}"] button').click()
+        self.wait_until(lambda: len(self.viewer_opens) == 2, 'the Compare opening')
+        route, answer = self.held_findings.pop()
+        self.hold_findings = False
+        route.fulfill(json=answer)
+        self.settle()
+        self.assertEqual(2, len(self.viewer_opens), 'the late lookup does not take the window back')
+        self.assertNotEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+        # The report opened by its version from Exam Reports: it is the head the citations were read from, so its line links.
+        row['exam'] = {'reports': [{'uid': A, 'version': FINAL['version'], 'action': 'approve', 'scope': exam_scope(A)}]}
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        self.page.get_by_role('button', name=f"Original exam · v{FINAL['version']}").click()
+        expect(self.page.locator('#report-target')).to_be_visible()
+        expect(link).to_have_count(1)
 
     def test_02_candidates_are_the_same_server_patient_key_only(self):
         self.open_home()
@@ -1846,6 +1914,12 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                     self.assertEqual(moved, self.page.evaluate('synIndexed.length'))
                     self.assertEqual([0, 0], self.page.evaluate(holds), 'the opening hold let go')
                     self.assertEqual('read-only', self.session())
+                    if moved:
+                        # A mode re-entry in the same document does not open the target again (the user's view stays).
+                        self.page.evaluate('synReenter()')
+                        self.wait_panel('ready', VA)
+                        self.settle()
+                        self.assertEqual(moved, self.page.evaluate('synIndexed.length'), 'no second move at a mode re-entry')
             # A reload of the tab: no hand-off, so no target and no hold.
             self.viewer_handoff = False
             self.open_viewer(before_boot=navigable)

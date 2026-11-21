@@ -304,11 +304,11 @@
     line.textContent = notice;
   });
 
-  async function request(path) {
+  async function request(path, headers = null) {
     const context = KinWorkContext.capture('document');
     try {
       const response = await KinSessionTransport.page().request(API + path,
-        { context, deadlineMs: TIMEOUT_MS });
+        { context, deadlineMs: TIMEOUT_MS, ...(headers ? { headers } : {}) });
       if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
       if (!response.ok) throw failure(response.status, response.body);
       return response.body;
@@ -1019,7 +1019,9 @@
     open.addEventListener('click', () => {
       const target = imageTarget(key?.sourceUid || selected, item, key?.id);
       if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
-      openViewer(null, target);
+      let place;
+      try { place = imageExam(selected, target); } catch (error) { $('#viewer-note').textContent = describe(error); return; }
+      openViewer(place.other, target);
     });
     entry.append(open);
     return entry;
@@ -1082,18 +1084,20 @@
   let citeSequence = 0;
   function citedLinks(text, entries) {
     const C = root.KinReportCitation;
+    // Every citation whose text stands in this field claims its lines, whatever its source; only an image item cited once
+    // that stands at exactly one place, sharing no line with any other claim, becomes a link.
     const claims = [];
     for (const entry of entries) {
-      if (!entry || typeof entry.insertedText !== 'string' || entry.sameTextCount !== 1 || entry.sourceRef?.kind !== 'item'
-          || typeof entry.sourceRef.itemId !== 'string' || typeof entry.findingId !== 'string' || !Number.isSafeInteger(entry.findingRevision)
-          || !Number.isSafeInteger(entry.sourceIndex) || entry.sourceIndex < 0) continue;
+      if (!entry || typeof entry.insertedText !== 'string') continue;
       const spans = C.blockSpans(text, entry.insertedText);
-      if (spans.length === 1) claims.push({ from: spans[0][0], to: spans[0][1], entry });
+      for (const [from, to] of spans) claims.push({ from, to, entry, single: spans.length === 1 });
     }
-    // Lines two citations claim (the same lines or overlapping ones) say nothing about which image they mean.
-    return claims.filter(a => !claims.some(b => b !== a && b.from < a.to && a.from < b.to)).sort((a, b) => a.from - b.from);
+    const linkable = claim => claim.single && claim.entry.sameTextCount === 1 && claim.entry.sourceRef?.kind === 'item'
+      && typeof claim.entry.sourceRef.itemId === 'string' && typeof claim.entry.findingId === 'string'
+      && Number.isSafeInteger(claim.entry.findingRevision) && Number.isSafeInteger(claim.entry.sourceIndex) && claim.entry.sourceIndex >= 0;
+    return claims.filter(a => linkable(a) && !claims.some(b => b !== a && b.from < a.to && a.from < b.to)).sort((a, b) => a.from - b.from);
   }
-  function linkedBody(text, links) {
+  function linkedBody(text, links, reportUid) {
     const p = node('p', 'body-text'), lines = String(text).replace(/\r\n?/g, '\n').split('\n');
     let at = 0;
     const plain = (from, to) => { if (from < to) p.append(document.createTextNode(lines.slice(from, to).join('\n') + (to < lines.length ? '\n' : ''))); };
@@ -1102,7 +1106,7 @@
       const line = node('button', 'cited-line', lines.slice(link.from, link.to).join('\n'));
       line.type = 'button'; line.title = say(TEXT.citedTitle); line.setAttribute('translate', 'no');
       line.dataset.citation = link.entry.cid || '';
-      line.addEventListener('click', () => openCited(link.entry));
+      line.addEventListener('click', () => openCited(link.entry, reportUid));
       p.append(line);
       if (link.to < lines.length) p.append(document.createTextNode('\n'));
       at = link.to;
@@ -1110,10 +1114,10 @@
     plain(at, lines.length);
     return p;
   }
-  function paintCitations(mine, uid, view) {
+  function paintCitations(mine, uid, reportUid, view) {
     const shown = view.final ? view : view.text;
     if (!shown || !Number.isSafeInteger(view.version) || !root.KinReportCitation) return;
-    request(`/studies/${encodeURIComponent(uid)}/report/citations`).then(body => {
+    request(`/studies/${encodeURIComponent(reportUid)}/report/citations`).then(body => {
       if (!reportFresh(mine, uid)) return;
       if (!body || body.version !== view.version || !Array.isArray(body.head)) return;
       for (const field of ['findings', 'conclusion', 'recommendation']) {
@@ -1121,7 +1125,7 @@
         const links = text.trim() ? citedLinks(text, body.head.filter(e => e && e.field === field)) : [];
         const section = $(`#report-body section[data-field="${field}"]`);
         const old = section && section.querySelector('.body-text');
-        if (links.length && old) old.replaceWith(linkedBody(text, links));
+        if (links.length && old) old.replaceWith(linkedBody(text, links, reportUid));
       }
     }, () => {
       if (!reportFresh(mine, uid)) return;
@@ -1130,15 +1134,32 @@
     });
   }
   /**
-   * The image a cited line points at: the finding revision it was cited from names the saved item and that item's own study
-   * (GET findings/:id/revisions); the study's current list says whether the item is still there and where it is
-   * (GET viewer-items?recheck=). It opens beside this exam when it is another study of the same patient.
+   * Which viewer opens an original image (a key image, a cited line): the exam shown when its scope holds that study and
+   * series, otherwise the listed exam of the same patient whose scope holds it (a split part by its series,
+   * KinExamScope.listedExam), opened beside it. One rule for both; anything else is refused.
    */
-  async function citedImage(uid, entry) {
+  function imageExam(rowUid, image) {
+    const shown = displayedExam && Array.isArray(displayedExam.sources) ? displayedExam : null;
+    if (shown ? shown.sources.some(source => source.studyUid === image.studyUid && root.KinExamScope.allows(source, image.seriesUid))
+      : image.studyUid === rowUid) return { other: null };
+    const row = byUid.get(rowUid), key = row ? patientKey(row) : null;
+    const peers = key === null ? [] : studies.filter(other => other.uid !== rowUid && patientKey(other) === key)
+      .map(other => ({ ...other, examScope: other.exam?.scope || other.report?.scope || undefined }));
+    const peer = root.KinExamScope.listedExam(peers, image.studyUid, image.seriesUid);
+    if (!peer) throw new Error(say(TEXT.citedElsewhere));
+    return { other: peer.uid };
+  }
+  /**
+   * The image a cited line points at: the finding revision it was cited from names the saved item and that item's own study
+   * (GET findings/:id/revisions, read as the record versions this page knows), and the study's current list says whether
+   * the item is still there and where it is (GET viewer-items?recheck=).
+   */
+  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '3' };
+  async function citedImage(rowUid, reportUid, entry) {
     let revision = null, cursor = null;
     for (let n = 0; n < 100 && !revision; n++) {
-      const page = await request(`/studies/${encodeURIComponent(uid)}/findings/${encodeURIComponent(entry.findingId)}/revisions?limit=100`
-        + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`));
+      const page = await request(`/studies/${encodeURIComponent(reportUid)}/findings/${encodeURIComponent(entry.findingId)}/revisions?limit=100`
+        + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`), FINDING_SCHEMA);
       if (!page || !Array.isArray(page.revisions)) throw new Error(say(TEXT.citedSource));
       revision = page.revisions.find(r => r && r.revision === entry.findingRevision) || null;
       if (revision || page.nextCursor === null || page.nextCursor === undefined || page.nextCursor === cursor) break;
@@ -1153,29 +1174,25 @@
     if (!item) throw new Error(say(TEXT.citedGone));
     const image = imageTarget(source.studyUid, item.item, item.id);
     if (!image) throw new Error(say(TEXT.citedSource));
-    const exam = Array.isArray(displayedExam?.sources) ? displayedExam.sources.map(s => s.studyUid) : [];
-    let other = null;
-    if (source.studyUid !== uid && !exam.includes(source.studyUid)) {
-      const row = byUid.get(uid), peer = byUid.get(source.studyUid);
-      if (!row || !peer || patientKey(row) === null || patientKey(peer) !== patientKey(row)) throw new Error(say(TEXT.citedElsewhere));
-      other = source.studyUid;
-    }
+    const { other } = imageExam(rowUid, image);
     const then = entry.sourceRef.sourceRevision;
     return { image, other, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
   }
-  function openCited(entry) {
+  function openCited(entry, reportUid) {
     if (leaving || selected === null) return;
-    const note = $('#viewer-note'), uid = selected, mine = reportSeq, at = ++citeSequence;
+    // `opened`: any other opening of the viewer meanwhile (Open Viewer, Compare, a key image) is newer than this press.
+    const note = $('#viewer-note'), uid = selected, mine = reportSeq, at = ++citeSequence, opened = viewerSequence;
     // The window is taken at the click, before the lookups (a later open would be a pop-up the browser may refuse).
     let held = null; try { held = root.open('', VIEWER_WINDOW); } catch (_) {}
     if (!held) { note.textContent = TEXT.viewerBlocked; return; }
     note.textContent = say(TEXT.citedLooking);
-    const fresh = () => !leaving && selected === uid && mine === reportSeq && at === citeSequence;
-    citedImage(uid, entry).then(found => {
-      if (!fresh()) { if (at === citeSequence) dropWindow(held); return; }
+    const newest = () => at === citeSequence && opened === viewerSequence;
+    const fresh = () => !leaving && selected === uid && mine === reportSeq && newest();
+    citedImage(uid, reportUid, entry).then(found => {
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
       openViewer(found.other, found.image, held, found.asked);
     }, error => {
-      if (!fresh()) { if (at === citeSequence) dropWindow(held); return; }
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
       note.textContent = describe(error); dropWindow(held);
     });
   }
@@ -1260,7 +1277,8 @@
         return;
       }
       paintReport(view);
-      if (!reportTarget) paintCitations(mine, uid, view);
+      // Links only when the citation read (the head of that report) is of the very version shown (paintCitations).
+      paintCitations(mine, uid, reportUid, view);
       // A stored version opens its own images (purpose stored, that version), signed or not; the latest read opens the
       // exam as it is now.
       if (version) displayedReport = { uid: reportUid, version: view.version };

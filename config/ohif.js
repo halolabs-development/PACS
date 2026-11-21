@@ -354,6 +354,10 @@ function kinViewerEntryTarget(value) {
   return Object.freeze({ studyUid: value.studyUid, seriesUid: value.seriesUid, sopUid: value.sopUid, frame: value.frame,
     ...(value.itemId ? { itemId: value.itemId } : {}) });
 }
+// The target is opened once in this document: the first panel that takes it has it, a later mode entry gets none.
+function kinViewerEntryTake() {
+  const target = KIN_VIEWER_ENTRY_TARGET; KIN_VIEWER_ENTRY_TARGET = null; return target;
+}
 function kinViewerEntryRelease() {
   const hold = KIN_VIEWER_ENTRY_HOLD, openings = window.kinViewerOpeningRestore; KIN_VIEWER_ENTRY_HOLD = null;
   if (hold && openings?.holds?.delete(hold)) {
@@ -2692,8 +2696,9 @@ function kinCreateViewerHistory() {
       return navigateTo(target);
     }
     function openEntryTarget() {
-      const target = KIN_VIEWER_ENTRY_TARGET;
-      if (!target || entryTried) return;
+      if (entryTried) return;
+      const target = kinViewerEntryTake();
+      if (!target) return;
       entryTried = true;
       entryNavigate(target).then(outcome => {
         if (ended) return;

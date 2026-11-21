@@ -1093,8 +1093,9 @@ function kinCreateViewerHistory() {
       return navigateTo(target);
     }
     function openEntryTarget() {
-      const target = KIN_VIEWER_ENTRY_TARGET;
-      if (!target || entryTried) return;
+      if (entryTried) return;
+      const target = kinViewerEntryTake();
+      if (!target) return;
       entryTried = true;
       entryNavigate(target).then(outcome => {
         if (ended) return;
