@@ -3113,6 +3113,8 @@ test('An ultrasound region Length is named in mm with its Region Calibration bas
   const format = require('../worklist-v0/hpacs-lite/finding-link-model.js').valueText;
   for (const source of ['server-copy', 'live-head'])
     assert.equal(format('length', 'kin-planar-manual-v1:us', [13.416407864998739], source), '13.4 mm · US Region Calibration');
+  // 17 columns of 0.15 mm: the cell says 2.6 mm too (config/ohif/history.js planarText).
+  assert.equal(format('length', 'kin-planar-manual-v1:us', [17 * 0.15], 'server-copy'), '2.6 mm · US Region Calibration');
   for (const kind of ['angle', 'ellipse']) assert.ok(format(kind, 'kin-planar-manual-v1:us', [12], 'server-copy').includes('단위 미확인'), kind);
   assert.ok(format('length', 'kin-planar-manual-v1:us', [12, 3], 'server-copy').includes('단위 미확인'));
 });

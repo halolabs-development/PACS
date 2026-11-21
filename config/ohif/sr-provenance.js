@@ -243,6 +243,26 @@ function kinCreateSRProvenance() {
       services.cornerstoneViewportService.getCornerstoneViewport(grid.activeViewportId)?.render();
     };
     const timer = setInterval(refresh, 250);
+    // The pinned SR viewport opens its source stack at the image its measurement names, looked up among the source's
+    // instances: a frame after the first of a multi-frame source is no instance there, and the stack opens away from the
+    // mark. Once, as an SR cell's stack is set: if no measurement of the SR is on the shown image but one is in the stack,
+    // the stack goes to the first such measurement's frame (as the native next / previous measurement already finds it).
+    const newStack = event => {
+      if (ended) return;
+      let viewport; try { viewport = window.cornerstone.getEnabledElement(event.detail?.element || event.target)?.viewport; } catch (_) { viewport = null; }
+      const view = viewport && services.viewportGridService.getState().viewports.get(viewport.id);
+      const ds = view?.displaySetInstanceUIDs?.map(uid => displaySets.getDisplaySetByUID(uid)).find(d => d?.Modality === 'SR' && guarded.has(d));
+      if (!ds || typeof viewport.getImageIds !== 'function') return;
+      setTimeout(() => {
+        if (ended) return;
+        let ids, current; try { ids = viewport.getImageIds(); current = viewport.getCurrentImageId(); } catch (_) { return; }
+        const marks = (ds.measurements || []).filter(m => ids.includes(m.imageId));
+        if (marks.length && !marks.some(m => m.imageId === current)) viewport.setImageIdIndex(ids.indexOf(marks[0].imageId));
+      });
+    };
+    const stackEvent = window.cornerstone?.Enums?.Events?.STACK_VIEWPORT_NEW_STACK || 'CORNERSTONE_STACK_VIEWPORT_NEW_STACK';
+    document.addEventListener(stackEvent, newStack, true);
+    restores.push(() => document.removeEventListener(stackEvent, newStack, true));
     const end = () => {
       if (ended) return;
       ended = true; panel.hidden = true; panel.replaceChildren();

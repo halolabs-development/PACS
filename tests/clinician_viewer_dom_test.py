@@ -2858,6 +2858,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         # Inside the right region, its own deltas: (160,10)→(190,50) is hypot(30 × 0.5, 40 × 0.4) = 21.9 mm.
         self.page.evaluate('([uid]) => synPlace(uid, [[0, 160, -10], [0, 190, -50]])', [uid])
         self.assertEqual(['21.9 mm', 'US Region Calibration'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        # 17 columns of 0.15 mm are 2.55 mm: one decimal as the saved value is said (History, Findings) — 2.6 mm.
+        self.page.evaluate("() => { window.synTwoRegions = synMeta.SequenceOfUltrasoundRegions; synMeta = {...synMeta, SequenceOfUltrasoundRegions: [synRegion(0, 299, 0.015, 0.03)]}; }")
+        self.page.evaluate('([uid]) => synPlace(uid, [[0, 20, -20], [0, 37, -20]])', [uid])
+        self.assertEqual(['2.6 mm', 'US Region Calibration'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        self.page.evaluate("() => { synMeta = {...synMeta, SequenceOfUltrasoundRegions: synTwoRegions}; }")
         # Across the two regions: no value, the reason.
         self.page.evaluate('([uid]) => synPlace(uid, [[0, 100, -20], [0, 200, -20]])', [uid])
         self.assertEqual(['초음파 보정 영역 안에서만 mm로 잴 수 있습니다'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))

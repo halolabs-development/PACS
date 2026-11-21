@@ -265,6 +265,10 @@ function kinCreateViewerHistory() {
       })) return '측정이 원본 영상 범위를 벗어났습니다';
       return '';
     }
+    // A value of the planar geometry in one decimal on the cell and in the Measurements panel. An ultrasound region's Length
+    // is rounded as its saved value is said (finding-link-model.js valueText), so the cell, the panel, the History and the
+    // Findings give the same number; the others keep the words they had.
+    const planarText = (geometry, value) => geometry.calculator === 'kin-planar-manual-v1:us' ? (Math.round(value * 10) / 10).toFixed(1) : value.toFixed(1);
     const calculatedGeometry = new WeakMap(), trackedMeasurements = new WeakSet();
     const geometry = data => JSON.stringify(data.handles.points);
     const freshStats = (data, target) => {
@@ -332,7 +336,7 @@ function kinCreateViewerHistory() {
         const kind = kinds[a.metadata.toolName], geometry = planar(a.metadata.referencedImageId, kind);
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
-          checked.displayText = { primary: [value.toFixed(1) + ' ' + unit, geometry.label], secondary: [] };
+          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, geometry.label], secondary: [] };
           // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
           const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
           checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
@@ -1365,7 +1369,7 @@ function kinCreateViewerHistory() {
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
-            return [value.toFixed(1) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
+            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
           }
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);
