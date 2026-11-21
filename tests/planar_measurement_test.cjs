@@ -133,3 +133,18 @@ test('selected multiframe spacing and detector calibration remain explicit',()=>
  assert.match(planarGeometry(detector,1).label,/검출기/);
  assert.throws(()=>planarGeometry({...detector,ImagerPixelSpacing:undefined},1));
 });
+// A CT Ellipse ROI is saved in HU when the original's values are HU: Rescale Type HU, or not given (the CT Image module's
+// default, PS3.3 C.8.2.1) unless the acquisition is multi-energy; another Rescale Type, a Modality LUT or slope 0 is refused.
+test('CT Ellipse ROI: HU unless the original names another rescale',()=>{
+ const ct={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',SOPClassUID:'1.2.840.10008.5.1.4.1.1.2',Modality:'CT',Rows:128,Columns:128,
+  PixelSpacing:['0.5','0.25'],ImagePositionPatient:['0','0','0'],ImageOrientationPatient:['1','0','0','0','1','0'],FrameOfReferenceUID:'2.25.9',RescaleSlope:'1',RescaleIntercept:'-1000'};
+ const item=viewerCommand(Buffer.from(JSON.stringify({requestId:'00000000-0000-4000-8000-000000000002',item:{schemaVersion:1,kind:'ellipse',seriesUid:ct.SeriesInstanceUID,
+  sopUid:ct.SOPInstanceUID,frame:1,frameOfReferenceUid:ct.FrameOfReferenceUID,label:'ROI',points:[[4,6,0],[4,2,0],[1,4,0],[7,4,0]],viewPlaneNormal:[0,0,1],viewUp:[0,-1,0],
+  baseline:{calculator:'kin-native-manual-v1',values:[Math.PI*6,-1000,-1000,-1000,24]}}})),true).item;
+ const omit=(tags,key)=>{const copy={...tags};delete copy[key];return copy;};
+ for(const tags of [{...ct,RescaleType:'HU'},ct,{...ct,RescaleType:''},{...ct,RescaleType:' HU '},{...ct,MultienergyCTAcquisition:'NO'},{...ct,MultienergyCTAcquisition:'YES',RescaleType:'HU'}])
+  assert.doesNotThrow(()=>verifyViewerReference(ct.StudyInstanceUID,item,tags),JSON.stringify(tags));
+ for(const tags of [{...ct,RescaleType:'OD'},{...ct,RescaleType:'US'},{...ct,ModalityLUTSequence:[{}]},{...ct,RescaleSlope:'0'},{...ct,MultienergyCTAcquisition:'YES'},{...ct,Modality:'MR'}])
+  assert.throws(()=>verifyViewerReference(ct.StudyInstanceUID,item,tags),/HU 보정을 확인할 수 없습니다|지원하지 않는 측정 보정입니다/,JSON.stringify(tags));
+ for(const key of ['RescaleSlope','RescaleIntercept'])assert.throws(()=>verifyViewerReference(ct.StudyInstanceUID,item,omit(ct,key)),undefined,key);
+});

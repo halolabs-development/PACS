@@ -1590,6 +1590,63 @@ class MultiInstitutionWorklist(unittest.TestCase):
         until(lambda: info() == [True, ""] and marks() == [], 10, "cleared once HALO PACS holds what was sent")
         screen.finish()
 
+    def test_mi13_missing_series_shows_beside_the_images_in_both_languages_and_an_older_report_stays_images_only(self):
+        # The Gateway sent 15 images in 3 series (counted by the Gateway, before this list was read). HALO PACS holds
+        # 12 images in 2 series of one study, and 20 images in 2 series of another (enough images, one series short).
+        # A third own study's report comes from a Gateway that does not count series: images only, as before.
+        session = {**SESSION_A, "roles": ["radiologist", "technician"]}
+        report = lambda sent, series: {"phase": "retry", "successCount": sent, "localCount": 20, "attempt": 1,
+                                       "errorCode": "stow_http", "serverReceivedAt": "2026-01-01T00:00:00.000Z", "agentSeq": 3,
+                                       "epoch": "0a1b2c3d-0000-4000-8000-00000000000a",
+                                       **({} if series is None else {"successSeries": series})}
+        both = row("2.25.921", "SYN-S-BOTH", inst=A)
+        both.update(count=12, series=2, gatewayReceipt=report(15, 3))
+        series_only = row("2.25.922", "SYN-S-SERIES", inst=A)
+        series_only.update(count=20, series=2, gatewayReceipt=report(15, 3))
+        older = row("2.25.923", "SYN-S-OLDER", inst=A)
+        older.update(count=12, series=2, gatewayReceipt=report(15, None))
+        server = Server(rows=[both, series_only, older], session=session)
+        screen = self.boot(server)
+        screen.wait_rows(["SYN-S-BOTH", "SYN-S-SERIES", "SYN-S-OLDER"])
+        texts = {"2.25.921": "Needs Check · 영상 누락: Gateway 전송 15건 중 HALO PACS 보유 12건 · 기대 series 3 가운데 2",
+                 "2.25.922": "Needs Check · series 누락 · 기대 series 3 가운데 2",
+                 "2.25.923": "Needs Check · 영상 누락: Gateway 전송 15건 중 HALO PACS 보유 12건"}
+        marks = lambda: screen.page.evaluate("""()=>Object.fromEntries([...document.querySelectorAll('#rows .receipt-gap:not([hidden])')]
+          .map(m=>[m.closest('tr').dataset.uid,[m.title,m.getAttribute('aria-label'),m.closest('td').textContent]]))""")
+        info = lambda: screen.page.evaluate("()=>{const l=document.querySelector('#receipt-gap');return [l.hidden,l.textContent,l.title]}")
+        self.assertEqual({}, marks(), "the Radiology tab draws nothing new")
+        screen.page.get_by_text("Technician", exact=True).first.click()
+        until(lambda: "Count" in screen.heads(), 10, "Technician columns")
+        until(lambda: marks() == {uid: [text, text, count] for uid, text, count in
+                                  (("2.25.921", texts["2.25.921"], "12"), ("2.25.922", texts["2.25.922"], "20"),
+                                   ("2.25.923", texts["2.25.923"], "12"))}, 10, "every short study's mark, with its own words")
+        for pid, uid, why in (("SYN-S-BOTH", "2.25.921", "영상이 적습니다"), ("SYN-S-SERIES", "2.25.922", "series가 적습니다"),
+                              ("SYN-S-OLDER", "2.25.923", "영상이 적습니다")):
+            screen.data_row(pid).get_by_role("cell", name=pid, exact=True).click()
+            until(lambda: info()[:2] == [False, texts[uid]], 10, "the Info line of " + pid)
+            self.assertIn(why, info()[2])
+        # A real tab click takes every one away and brings them back.
+        screen.page.get_by_text("Radiology", exact=True).first.click()
+        until(lambda: info()[:2] == [True, ""] and marks() == {}, 10, "nothing new on the Radiology tab")
+        screen.page.get_by_text("Technician", exact=True).first.click()
+        until(lambda: info()[:2] == [False, texts["2.25.923"]] and len(marks()) == 3, 10, "back on the Technician tab")
+        # The same answers in English (the screen language), the numbers unchanged.
+        self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
+        english = {"2.25.921": "Needs Check · Missing images: HALO PACS holds 12 of 15 sent by the Gateway · HALO PACS holds 2 of 3 expected series",
+                   "2.25.922": "Needs Check · Missing series · HALO PACS holds 2 of 3 expected series",
+                   "2.25.923": "Needs Check · Missing images: HALO PACS holds 12 of 15 sent by the Gateway"}
+        until(lambda: info()[:2] == [False, english["2.25.923"]], 10, "the Info line in English")
+        screen.data_row("SYN-S-SERIES").get_by_role("cell", name="SYN-S-SERIES", exact=True).click()
+        until(lambda: info()[:2] == [False, english["2.25.922"]], 10, "the series line in English")
+        until(lambda: {uid: value[1] for uid, value in marks().items()} == english, 10, "every list mark in English")
+        # The missing series arrive: the next list read clears the series-only mark and keeps the others.
+        filled = copy.deepcopy(series_only)
+        filled["series"] = 3
+        server.rows = [both, filled, older]
+        screen.refresh()
+        until(lambda: set(marks()) == {"2.25.921", "2.25.923"}, 10, "the series-only mark cleared once HALO PACS holds 3")
+        screen.finish()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

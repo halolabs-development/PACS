@@ -1070,6 +1070,36 @@ class ViewerAutoSaveViewDOMTest(unittest.TestCase):
         left = self.posts(page)[0]['cells'][0]
         self.assertEqual((SORT_DOWN, SA + '.8'), (left['display'], left['sop']), 'saved with the rule standing')
 
+    def test_07b_an_image_a_series_export_shows_on_its_way_is_not_saved_as_the_readers(self):
+        page = self.open()
+        self.started(page)
+        move = """image => { const v = synViewports.get('left'); v.setImageIdIndex(image);
+          return new Promise(resolve => v.element.addEventListener('syn-rendered', resolve, { once: true })); }"""
+        first = page.evaluate("synViewports.get('left').getCurrentImageIdIndex()")
+        # Save Series JPEG or Save Video is walking the left cell through its series (viewer-export.js moving()).
+        page.evaluate("() => { window.synExporting = true; window.KinViewerExport = { moving: () => synExporting }; }")
+        page.evaluate(move, 5)
+        page.wait_for_timeout(2500)
+        # Neither a quiet moment, nor a patient switch, nor the window closing saves the image on the export's way.
+        page.evaluate("dispatchEvent(new Event('pagehide'))")
+        page.evaluate("document.body.classList.add('kin-patient-switching')")
+        page.wait_for_timeout(300)
+        page.evaluate("document.body.classList.remove('kin-patient-switching')")
+        self.assertEqual([], self.posts(page))
+        # The export goes back to the reader's image and is over: the view is the one the reader had, so nothing is saved.
+        page.evaluate(move, first)
+        page.evaluate("() => { synExporting = false; }")
+        page.wait_for_timeout(2700)
+        self.assertEqual([], self.posts(page))
+        # The reader takes the cell in the middle of another export: from then on its image is the reader's, and is saved.
+        page.evaluate("() => { synExporting = true; }")
+        page.evaluate(move, 3)
+        page.wait_for_timeout(2500)
+        self.assertEqual([], self.posts(page))
+        page.evaluate("() => { synExporting = false; }")
+        page.wait_for_function('synServer.posts.length === 1', timeout=5000)
+        self.assertEqual(SA + '.4', self.posts(page)[0]['cells'][0]['sop'])
+
     def test_08_discard_wins_over_a_save_on_its_way(self):
         page = self.open(saved=view([cell(SA, 3), cell(SB, 2)]))
         page.wait_for_function("document.querySelector('[data-auto-view-badge]')", timeout=8000)
