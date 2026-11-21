@@ -207,10 +207,24 @@ class DockAutohideDOM(unittest.TestCase):
         self.open_with_mouse()
         self.press_image()
         self.expect_folded()
-        # Focus Comparison / the Tools shortcut call focus() on the dock tab, which still has focus: no focusin fires.
-        self.page.evaluate(f"() => document.querySelector('{COMPARISON}').focus({{preventScroll: true}})")
+        # Focus Comparison / the Tools shortcut go through the dock's focusTab on the tab, which still has focus: no
+        # focusin fires.
+        self.page.evaluate(f"() => document.getElementById('kin-workspace-dock').focusTab(document.querySelector('{COMPARISON}'), {{preventScroll: true}})")
         expect(self.tab()).to_have_attribute("aria-expanded", "true")
         self.stays_open()
+
+    def test_11_focus_given_back_to_the_tab_by_a_closing_key_panel_keeps_it_folded(self):
+        self.autohide_on()
+        self.open_with_mouse()
+        x, y = self.image_point()
+        self.page.mouse.move(x, y)
+        self.page.mouse.wheel(0, 120)
+        self.expect_folded()
+        # F.Leader opened from the image keys remembers the focused element (the tab) and gives focus back on Esc.
+        self.page.evaluate(f"() => document.querySelector('{COMPARISON}').focus()")
+        self.page.wait_for_timeout(1600)
+        expect(self.tab()).to_have_attribute("aria-expanded", "false")
+        self.assertFalse(self.page.evaluate(OPEN))
 
     def test_09_keyboard_work_that_changes_no_value_keeps_the_dock_held(self):
         self.autohide_on()

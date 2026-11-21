@@ -85,9 +85,6 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
       pointerButton=null;selected = selected === i && !autoHidden ? -1 : i;autoHidden=false;
       apply();save();
     };
-    // A focus command (Tools shortcut, Focus Measurements/Comparison, Open Measurements List) on a tab that already
-    // has focus fires no focusin; it is dock use all the same and reveals the remembered panel like keyboard focus.
-    const nativeFocus=b.focus;b.focus=function(...args){if(!ended&&d.activeElement===b)focus({target:b});return nativeFocus.apply(b,args);};
     return b;
   };
   const buttons = ['Measurements', 'Comparison'].map((label, i) => { const b = tab(label, i); nav.append(b); return b; });
@@ -186,6 +183,10 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   dock.end=end;
   dock.applyPreference=next=>{const clean=normalize(next);if(work.state()!=='active'||!live()||!clean)return false;placement=clean.placement;selected=usable(clean.panel);autoHide=clean.autoHide??autoHide;autoHidden=false;apply();save(true);return true;};
   dock.preference=()=>live()?value():null;
+  // The explicit focus commands (Tools shortcut, Focus Measurements/Comparison) come through here: on a tab that
+  // already has focus no focusin fires, yet the command is dock use and reveals the remembered panel like keyboard
+  // focus. Plain focus() calls that only give focus back (a closing key panel) do not count as dock use.
+  dock.focusTab=(target,options)=>{if(!ended&&buttons.includes(target)&&d.activeElement===target)focus({target});target.focus(options);};
   dock.dispose=()=>{
     end();
     for(const origin of origins){const p=origin.panel;if(p.parentNode!==dock)continue;const parent=origin.parent.isConnected?origin.parent:d.body;parent.insertBefore(p,origin.next?.parentNode===parent?origin.next:null);p.open=origin.open;p.hidden=origin.hidden;}
