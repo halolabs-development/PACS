@@ -11185,5 +11185,161 @@
         "optional": []
       }
     }
+  },
+  "di_additions_gateway_support": {
+    "unit": "gateway-support",
+    "decision": "Gateway remote support",
+    "note": "Gateway remote support and signed updates: the admin's read, request and diagnostics download, and the Gateway's poll, result and update download, on a feature controller of its own with its service. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "GatewaySupportController"
+    ],
+    "providers": [
+      "GatewaySupportService"
+    ],
+    "routes": [
+      {
+        "controller": "GatewaySupportController",
+        "handler": "bundle",
+        "method": "GET",
+        "paths": [
+          "/|gateway/update/:version"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "5:0@0:\"version\":0"
+        ]
+      },
+      {
+        "controller": "GatewaySupportController",
+        "handler": "diagnostics",
+        "method": "GET",
+        "paths": [
+          "/|admin/gateway-support/:id/diagnostics"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "5:0@0:\"id\":0"
+        ]
+      },
+      {
+        "controller": "GatewaySupportController",
+        "handler": "list",
+        "method": "GET",
+        "paths": [
+          "/|admin/gateway-support"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewaySupportController",
+        "handler": "poll",
+        "method": "GET",
+        "paths": [
+          "/|gateway/support"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [
+          {
+            "name": "Cache-Control",
+            "value": "no-store"
+          }
+        ],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "4:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewaySupportController",
+        "handler": "request",
+        "method": "POST",
+        "paths": [
+          "/|admin/gateway-support"
+        ],
+        "public": null,
+        "status": 200,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "3:0@0:null:0"
+        ]
+      },
+      {
+        "controller": "GatewaySupportController",
+        "handler": "result",
+        "method": "POST",
+        "paths": [
+          "/|gateway/support/:id"
+        ],
+        "public": null,
+        "status": 200,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:2@2:null:0",
+          "3:1@1:null:0",
+          "5:0@0:\"id\":0"
+        ]
+      }
+    ],
+    "injectables": {
+      "GatewaySupportController": {
+        "params": [
+          "GatewaySupportService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      },
+      "GatewaySupportService": {
+        "params": [
+          "PrismaService",
+          "StudyAccessService",
+          "GatewayStatusService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
   }
 }
