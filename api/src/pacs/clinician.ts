@@ -23,8 +23,8 @@ import { versionDrawings, drawingEntries } from '../image-report';
 import { reportBodyLock, storedVersionReadable } from '../report-visibility';
 
 /**
- * The state table (report-visibility.ts) on the clinician list and timeline rows: a caller who is not clinician-only gets
- * no text of another physician's unsigned head (the row's state stays). ows are blanked in place, as examOf does.
+ * The state table (report-visibility.ts) on the clinician list and timeline rows: a clinician, like any reader
+ * who did not write it, gets no text of another physician's unsigned head (the row's state stays). ows are blanked in place, as examOf does.
  */
 function withholdUnsigned(rows: any[], c: Caller) {
   for (const row of rows)
@@ -219,8 +219,8 @@ export class PacsClinician {
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
         select: { id: true, version: true, action: true, author: true, authorSub: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
-      // The state table (report-visibility.ts): another physician's unsigned text is not read here by a caller who is not
-      // clinician-only (an administrator, or a radiologist who also holds the clinician role).
+      // The state table (report-visibility.ts): another physician's unsigned text is not read here, by a clinician as by
+      // any reader who did not write it.
       // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.
       const withheld = !!head && !await storedVersionReadable(tx, uid, head, c);
       return work(tx, state, withheld ? { ...head, findings: '', conclusion: '', recommendation: '', drawings: null } : head, scope);

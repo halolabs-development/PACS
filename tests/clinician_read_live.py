@@ -546,8 +546,9 @@ class ClinicianReadLive(unittest.TestCase):
             self.assertEqual([row["id"] for row in self.items(uid).body["items"]], [key["id"]])
 
             v = self.commit(uid, "save", 0, findings=secret + " saved")
-            self.assert_open(self.report(uid).body, uid, "T", draft)
-            self.assertEqual(self.report(uid).body["report"]["findings"], secret + " saved")
+            # A Save is read only by the physician who wrote it (the report state table): the clinician gets the state, not the text.
+            self.assert_open(self.report(uid).body, uid, "T", draft, secret)
+            self.assertEqual(self.report(uid).body["report"]["findings"], "")
             v = self.commit(uid, "approve", v, findings=secret, conclusion="approved", recommendation="none")
             answer = self.report(uid).body
             self.assertEqual(sorted(answer), sorted(C["report_read_keys"]))
@@ -754,13 +755,15 @@ class ClinicianReadLive(unittest.TestCase):
             self.assertEqual(reads[0], reads[2], "the same study read again answers the same")
             self.assertEqual(reads[0]["report"]["findings"], first.secret)
             self.assertNotIn(second.secret, json.dumps(reads[0], ensure_ascii=False))
-            self.assert_open(reads[1], b, "T", first.secret)
-            self.assertEqual(reads[1]["report"]["findings"], second.secret)
+            # b is a radiologist's Save: its state, not its text (the report state table)
+            self.assert_open(reads[1], b, "T", first.secret, second.secret)
+            self.assertEqual(reads[1]["report"]["findings"], "")
             pages = [self.items(uid).body for uid in (a, b, a)]
             self.assertEqual([p["items"][0]["studyUid"] for p in pages], [a, b, a])
             self.assertEqual(pages[0], pages[2])
             listed = {r["uid"]: r["report"] for r in self.clinician_rows("clinician")}
-            self.assertEqual((listed[a]["findings"], listed[b]["findings"]), (first.secret, second.secret))
+            self.assertEqual((listed[a]["findings"], listed[b]["findings"], listed[b]["rs"]), (first.secret, "", "T"))
+            self.assertNotIn(second.secret, json.dumps(listed, ensure_ascii=False))
 
     def hide(self, uid: str, item: dict, reason: str) -> None:
         self.call("POST", f"/studies/{quote(uid)}/viewer-items/{item['id']}/revisions", "doctor",

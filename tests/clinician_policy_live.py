@@ -542,9 +542,11 @@ class ClinicianPolicyLive(unittest.TestCase):
             "expectedOwner": member_owner(self.stack, "physician-matrix-admin"), "revision": 0,
             "command": {"action": "save-folder", "path": "SYNTHETIC source", "description": "", "ordinal": 0}})
         self.assertEqual(library.status, 201, library.text[:300])
-        # Use a real version for the version-specific citations reader, without changing the signed CVR fixture.
+        # Use a real version for the version-specific citations reader, without changing the signed CVR fixture. It is an
+        # approved one: a Save is read only by the physician who wrote it (the report state table), and this matrix is about
+        # which routes a clinician reaches, not about another physician's unsigned text.
         committed = self.stack.request("POST", f"/studies/{uid}/report/commit", "doctor", {
-            "action": "save", "baseVersion": 0, "findings": "SYNTHETIC physician matrix body",
+            "action": "approve", "baseVersion": 0, "findings": "SYNTHETIC physician matrix body",
             "conclusion": "", "recommendation": ""})
         self.assertEqual(committed.status, 201, committed.text[:300])
 

@@ -718,6 +718,11 @@ test('report state table: a Save of drawings alone belongs to its writer too - l
   assert.deepEqual([other.bodyLock, other.prelimHidden, other.savedBy], ['in-progress', true, RAD_A.actor]);
   const mine = (await w.worklist.bootstrap(RAD_A)).states[s.uid];
   assert.deepEqual([mine.bodyLock, mine.prelimHidden, mine.savedBy], [null, false, RAD_A.actor]);
+  // a clinician as another radiologist: locked, and the detail read carries no saved drawing
+  const clin = (await w.worklist.bootstrap(CLIN_A)).states[s.uid];
+  assert.deepEqual([clin.bodyLock, clin.prelimHidden, clin.savedBy], ['in-progress', true, RAD_A.actor]);
+  const clinRead = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([clinRead.report.rs, clinRead.drawings], ['T', undefined]);
   await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', s.draftEpoch, 0, 1, { findings: 'over it' }), RAD_A2, null), 403, 'REPORT_IN_PROGRESS');
   await refused(() => w.hold.hold(s.uid, RAD_A2), 403, 'REPORT_IN_PROGRESS');
   const reset = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'reset', s.draftEpoch, 0, 1), RAD_A2, null);
@@ -773,22 +778,83 @@ test('report state table: a tele request cancelled while bootstrap reads the hea
   assert.ok(!JSON.stringify(boot).includes('SYN APPROVED TEXT'));
   assert.equal((await w.worklist.bootstrap(RAD_A)).states[s.uid].findings, 'SYN APPROVED TEXT', 'the owner still reads it');
 });
-test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader keeps the 2026-11-02 reads', async () => {
+test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader reads as a radiologist who did not write the Save', async () => {
   const w = world();
   await w.boot();
   const s = w.study();
   w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
   const epoch = s.draftEpoch;
-  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', epoch, 0, 0, { findings: 'SYN DRAFT' }), RAD_A, null);
-  // the open question of the state table: left as the product has it
-  const clin = (await w.worklist.bootstrap(CLIN_A)).states[s.uid];
-  assert.deepEqual([clin.findings, clin.bodyLock], ['SYN DRAFT', null]);
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', epoch, 0, 0, { findings: 'SYN DRAFT', conclusion: 'SYN DRAFT C' }), RAD_A, null);
+  // A Save is read only by the physician who wrote it: the clinician gets the state and who is on it, never the text -
+  // in the lists, the clinician's own list, timeline and report read, the history, and the head's evidence reads.
+  const leaks = value => JSON.stringify(value).includes('SYN DRAFT');
+  for (const read of [async () => (await w.worklist.bootstrap(CLIN_A)).states[s.uid],
+    async () => (await w.worklist.listStudies(CLIN_A)).studies.find(r => r.uid === s.uid).state]) {
+    const clin = await read();
+    assert.deepEqual([clin.rs, clin.findings, clin.conclusion, clin.bodyLock, clin.prelimHidden, clin.savedBy], ['T', '', '', 'in-progress', true, RAD_A.actor]);
+  }
+  const list = readBody(await w.clinician.clinicianStudies(CLIN_A));
+  assert.deepEqual(list.studies.map(r => [r.uid, r.report.rs, r.report.findings, r.report.conclusion]), [[s.uid, 'T', '', '']]);
+  const timeline = readBody(await w.clinician.clinicianTimeline(s.uid, CLIN_A, { limit: '10' }));
+  assert.ok(!leaks(timeline), 'the timeline carries no saved text');
+  const detail = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([detail.report.rs, detail.report.final, detail.report.findings, detail.report.conclusion], ['T', false, '', '']);
+  assert.ok(!leaks(list) && !leaks(detail));
+  const clinHistory = readBody(await w.evidence.versions(s.uid, CLIN_A));
+  assert.deepEqual(clinHistory.map(v => [v.action, v.author, v.findings, v.bodyHidden]), [['save', RAD_A.actor, '', 'in-progress']]);
+  for (const read of [() => w.evidence.reportCitations(s.uid, CLIN_A), () => w.evidence.reportStructure(s.uid, CLIN_A)])
+    await refused(read, 403, 'REPORT_IN_PROGRESS');
+  // the writer still reads it
+  assert.equal(readBody(await w.evidence.versions(s.uid, RAD_A))[0].findings, 'SYN DRAFT');
   await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 1, 1, { findings: 'SYN FINAL' }), RAD_A, null);
   const other = (await w.worklist.bootstrap(RAD_A2)).states[s.uid];
   assert.deepEqual([other.rs, other.findings, other.bodyLock], ['A', 'SYN FINAL', null]);
   const history = readBody(await w.evidence.versions(s.uid, RAD_A2));
   assert.deepEqual(history.map(v => [v.action, v.findings, v.bodyHidden]), [['approve', 'SYN FINAL', undefined], ['save', '', 'in-progress']]);
-  assert.deepEqual(readBody(await w.evidence.versions(s.uid, CLIN_A)).map(v => v.findings), ['SYN FINAL', 'SYN DRAFT']);
+  // approved text is the clinician's to read, in every read; the earlier Save stays with its writer
+  assert.deepEqual(readBody(await w.evidence.versions(s.uid, CLIN_A)).map(v => [v.findings, v.bodyHidden]), [['SYN FINAL', undefined], ['', 'in-progress']]);
+  assert.deepEqual([(await w.worklist.bootstrap(CLIN_A)).states[s.uid].findings, readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report.findings,
+    readBody(await w.clinician.clinicianStudies(CLIN_A)).studies[0].report.findings], ['SYN FINAL', 'SYN FINAL', 'SYN FINAL']);
+});
+
+test('report state table: approved, Reset and Saved again by another radiologist - a clinician-only reader opens the approved version, never the new Save', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study();
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  const epoch = s.draftEpoch;
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 0, 0, { findings: 'SYN APPROVED' }), RAD_A, null);
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'reset', epoch, 1, 1, { reason: 'SYN reopen' }), RAD_A, null);
+  const again = w.db.rows('studyState').find(r => r.uid === s.uid).draftEpoch;
+  const saved = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', again, 0, 3, { findings: 'SYN SECOND SAVE' }), RAD_A2, null);
+  assert.equal(saved.state.rs, 'T');
+  const leaks = value => JSON.stringify(value).includes('SYN SECOND SAVE');
+  const detail = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([detail.report.rs, detail.report.findings], ['T', '']);
+  const history = readBody(await w.evidence.versions(s.uid, CLIN_A));
+  assert.deepEqual(history.filter(v => v.action !== 'discarded').map(v => [v.version, v.action, v.findings, v.bodyHidden]),
+    [[4, 'save', '', 'in-progress'], [3, 'reset', '', undefined], [1, 'approve', 'SYN APPROVED', undefined]]);
+  // the version the screen opens from the history: the approved one is read, the new Save is not
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '1')).report.findings, 'SYN APPROVED');
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '4')).report.findings, '');
+  const lists = [(await w.worklist.bootstrap(CLIN_A)).states[s.uid], readBody(await w.clinician.clinicianStudies(CLIN_A)),
+    readBody(await w.clinician.clinicianTimeline(s.uid, CLIN_A, { limit: '10' }))];
+  assert.ok(![detail, history, ...lists].some(leaks), 'no clinician read carries the new Save');
+  // its writer still reads it
+  assert.equal((await w.worklist.bootstrap(RAD_A2)).states[s.uid].findings, 'SYN SECOND SAVE');
+});
+
+test('report state table: a Save inside a signed Preliminary stays shared; a Save or Defer outside one is its writer\'s alone, for a clinician too', () => {
+  // A Save written inside a Preliminary belongs to the preliminary reading; once it is signed it is shared history.
+  const { versionClasses, versionBodyReadable } = require('/app/dist/report-visibility');
+  const rows = [{ version: 1, action: 'preliminary', author: 'w' }, { version: 2, action: 'save', author: 'w', authorSub: 'sub-w' }, { version: 3, action: 'approve', author: 's' }];
+  const classes = versionClasses(rows);
+  assert.equal(versionBodyReadable(rows[1], classes.get(2), CLIN_A), true);
+  // A Save or a Defer outside a Preliminary is its writer's alone, for a clinician as for another radiologist.
+  for (const action of ['save', 'defer']) {
+    const own = [{ version: 1, action, author: 'w', authorSub: 'sub-w' }];
+    assert.deepEqual([CLIN_A, RAD_A2].map(c => versionBodyReadable(own[0], versionClasses(own).get(1), c)), [false, false], action);
+  }
 });
 
 test('report state table: a destroyed report is read-only for everyone and the clinician list names it', async () => {
@@ -837,7 +903,7 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('w')), true);
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('w', 'w-renamed@synthetic.test')), true);
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('o', 'w@synthetic.test')), false);
-  assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), true);
+  assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), false, 'a clinician reads as a radiologist who did not write it');
   assert.equal(versionBodyReadable({ action: 'discarded', author: 'x', authorSub: 'sub-x' }, 'private', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), false);
   assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'a', sub: 'sub-a', roles: ['admin', 'clinician'] }), false);
   assert.equal(senderReadsHead({ rs: 'T' }, saved, reader('o')), false);
