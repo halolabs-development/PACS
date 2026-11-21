@@ -42,7 +42,14 @@ function memoryDisk() {
         for (const value of puts[name] || []) map.set(value.entryId || value.manifestId, structuredClone(value));
       }
     },
-    async sweep(now) { let removed=0; for (const map of [frames, studies]) for (const [id, value] of map) if (value.expiresAt <= now) { map.delete(id); deleted.push(id); removed++; } return removed; },
+    // As preload-disk.js: a live study record keeps the frames it lists; an expired one takes them; a frame no live record
+    // lists goes at its own expiry.
+    async sweep(now) {
+      let removed=0; const live=new Set(), gone=new Set();
+      for (const [id, value] of studies) { if (value.expiresAt > now) (value.frameIds||[]).forEach(f=>live.add(f)); else { (value.frameIds||[]).forEach(f=>gone.add(f)); studies.delete(id); deleted.push(id); removed++; } }
+      for (const [id, value] of frames) if (!live.has(id) && (gone.has(id) || value.expiresAt <= now)) { frames.delete(id); deleted.push(id); removed++; }
+      return removed;
+    },
     async estimate() { return {usage: [...frames.values(), ...studies.values()].reduce((n,r)=>n+r.ct.byteLength,0), quota: Infinity}; },
   };
 }
@@ -50,7 +57,10 @@ const { webcrypto, randomBytes } = require('node:crypto');
 const KEY = randomBytes(32), SERVER_START = Date.parse('2026-10-30T00:00:00Z');
 function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyResponse, unavailableDisk = false } = {}) {
   const requests = [], timers = [], imports = [], decryptKeys = [];
-  let clock = SERVER_START;
+  // `clock` is the server's time and the time that really passes; the PC's own clock reads `skew` off it, and `setSkew`
+  // is someone setting the PC clock while the worker runs. The ticks (performance.now()) follow the time that passes,
+  // except while the PC `sleep`s with its ticks stopped.
+  let clock = SERVER_START, asleep = 0;
   const me = () => new Response(JSON.stringify({ kind: 'member', preloadDiskGb: diskGb }), { headers: { 'Content-Type': 'application/json' } });
   const images = respond || (async url => {
     const study = /\/studies\/([0-9.]+)\//.exec(url)[1];
@@ -64,6 +74,7 @@ function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyRespon
   const context = {
     navigator: {storage:{estimate:()=>disk.estimate()}}, Blob, Response, DecompressionStream, AbortController, URL, URLSearchParams, Headers, setTimeout, console,
     TextEncoder, TextDecoder, atob, Uint8Array, Date: class extends Date { static now(){return clock+skew;} },
+    performance: { now: () => clock - SERVER_START - asleep },
     crypto: { randomUUID:()=>webcrypto.randomUUID(), getRandomValues:b=>webcrypto.getRandomValues(b),
       subtle: { encrypt:(...a)=>webcrypto.subtle.encrypt(...a),
         decrypt:(...a)=> { decryptKeys.push(a[1]); return webcrypto.subtle.decrypt(...a); },
@@ -96,7 +107,7 @@ function boot({ diskGb = 0.25, respond, disk = memoryDisk(), skew = 0, keyRespon
     return port;
   };
   const reads = () => requests.filter(r => !r.url.startsWith('/api/'));
-  return { requests, reads, connect, disk, imports, decryptKeys, advance:ms=>{clock+=ms;}, sweep:()=>timers.forEach(fn=>fn()),
+  return { requests, reads, connect, disk, imports, decryptKeys, advance:ms=>{clock+=ms;}, sleep:ms=>{clock+=ms;asleep+=ms;}, now:()=>clock, setSkew:ms=>{skew=ms;}, sweep:()=>timers.forEach(fn=>fn()),
     hold: () => { let open; gate = new Promise(resolve => { open = resolve; }); return () => { gate = null; open(); }; } };
 }
 
@@ -291,6 +302,53 @@ test('a refused, missing or changing study fails with a reason and Retry; a brow
   await until(() => statusOf(bare, STUDY)?.status === 'Failed', 'failed without usable disk');
   assert.match(statusOf(bare, STUDY).reason, /저장소/);
   assert.equal(bare.state().budget, null);
+});
+
+// An image archive that does not answer is one temporary failure on every row, whichever request met it - the gate's
+// 403 with its AUTH_* code (metadata through nginx, a frame from the API), a busy session check, the exam scope's 503 before
+// or after the frames, the frame route's 5xx. Only a plain 403 is a refused study. A cut or unreadable JSON body is the
+// network's or the server's failure, never the browser's store. Once the archive answers, Retry reaches Ready.
+test('an archive that does not answer fails every row as busy with Retry; only a plain 403 is refused', async () => {
+  const BUSY = /서버가 바쁘거나 응답하지 않았습니다/;
+  const code = value => ({ status: 403, headers: { 'X-KIN-Auth-Code': value } });
+  const uid = n => '1.2.840.9.6' + n;
+  let down = true;
+  const scopeAnswer = study => ({ sources: [{ studyUid: study, series: { mode: 'all', uids: [] } }] });
+  const scopeReads = new Map();
+  const cases = {
+    [uid(1)]: { metadata: () => new Response('', code('AUTH_SOURCE_UNAVAILABLE')), reason: BUSY },
+    [uid(2)]: { frame: () => new Response('', code('AUTH_SOURCE_UNAVAILABLE')), reason: BUSY },
+    [uid(3)]: { metadata: () => new Response('', code('AUTH_SESSION_BUSY')), reason: BUSY },
+    [uid(4)]: { scope: n => n === 1 ? new Response('', { status: 503 }) : null, reason: BUSY },
+    [uid(5)]: { scope: n => n === 2 ? new Response('', { status: 503 }) : null, reason: BUSY, partial: true },
+    [uid(6)]: { frame: () => new Response('', { status: 502 }), reason: BUSY },
+    [uid(7)]: { metadata: () => new Response('', { status: 403 }), reason: /거절/ },
+    [uid(8)]: { metadata: () => new Response(new ReadableStream({ start(c) { c.error(new TypeError('cut')); } })), reason: /서버에 연결하지 못했습니다/ },
+    [uid(9)]: { metadata: () => new Response('{not json'), reason: /해석하지 못했습니다/ },
+  };
+  const { connect } = boot({ respond: async url => {
+    const scope = /^\/api\/studies\/([0-9.]+)\/exam-scope/.exec(url);
+    if (scope) {
+      const study = scope[1].replace(/\.0$/, ''), n = (scopeReads.get(study) || 0) + 1; scopeReads.set(study, n);
+      return (down && cases[study]?.scope?.(n)) || new Response(JSON.stringify(scopeAnswer(study)));
+    }
+    const study = /\/studies\/([0-9.]+)\//.exec(url)[1], how = down ? cases[study] : null;
+    if (url.endsWith('/metadata')) return how?.metadata?.() || new Response(JSON.stringify(metadata(study)));
+    if (how?.frame) return how.frame();
+    return new Response(zlib.gzipSync(multipart('x')), { headers: { 'Content-Type': 'application/gzip', 'X-KIN-Part-Type': PART, 'X-KIN-Study-Revision': 'r' } });
+  } });
+  const list = connect();
+  list.send({ type: 'hello', role: 'list' });
+  const studies = Object.keys(cases).map(study => ({ uid: study,
+    ...(cases[study].scope ? { examRefs: [{ reportUid: study + '.0', key: 'exam-' + study }] } : {}) }));
+  list.send({ type: 'add', session: 'sess-1', studies });
+  await until(() => studies.every(s => statusOf(list, s.uid)?.status === 'Failed'), 'every row failed');
+  for (const [study, how] of Object.entries(cases)) assert.match(statusOf(list, study).reason, how.reason, study);
+  assert.equal(scopeReads.get(uid(5)), 2, 'the exam scope is asked again after the frames; its 503 is no Ready');
+  assert.equal(list.state().studies.reduce((n, s) => n + s.bytes, 0), 0, 'no frame of a failed row is kept');
+  down = false;
+  for (const study of Object.keys(cases)) list.send({ type: 'retry', uid: study });
+  await until(() => studies.every(s => statusOf(list, s.uid)?.status === 'Ready'), 'Ready after the archive answers');
 });
 
 test('a study that could not fit alone in the disk cap fails with the size reason, its bytes go, and the next study loads', async () => {
@@ -500,9 +558,13 @@ test('R1 R2 R15 encrypted exact manifests and unchanged frame bodies, zeroed inp
   const diskKey=await webcrypto.subtle.importKey('raw',KEY,'AES-GCM',false,['decrypt']);
   const D=require('../worklist-v0/hpacs-lite/preload-disk.js');
   for(const r of h.disk.studies.values()) {
-    assert.deepEqual(Object.keys(r).sort(),['manifestId','keyId','expiresAt','iv','ct'].sort());
+    // In clear: the record's own random ID, the key's ID, the expiry and its frames' random IDs (a used copy's frames live
+    // as long as its record) - nothing of the study.
+    assert.deepEqual(Object.keys(r).sort(),['manifestId','keyId','expiresAt','frameIds','iv','ct'].sort());
     const m=JSON.parse(new TextDecoder().decode(await D.open(diskKey,r,D.studyAAD(r.keyId,r.manifestId))));
-    assert.deepEqual(Object.keys(m).sort(),['uid','label','status','reason','revision','copy','seq','total','queuedAt','fetchedAt','bytes','frames'].sort());
+    assert.deepEqual(Object.keys(m).sort(),['uid','label','status','reason','revision','copy','seq','total','queuedAt','fetchedAt','usedAt','bytes','frames'].sort());
+    assert.deepEqual([...r.frameIds].sort(),Object.values(m.frames).sort());
+    assert.equal(m.usedAt,null);
     assert.equal(m.label,'SYN-123 · Synthetic^Patient');
     for(const [path,id] of Object.entries(m.frames)) {
       const f=h.disk.frames.get(id);
@@ -576,7 +638,8 @@ test('R6 R17 refused and retired keys never serve; opaque entries are reclaimed 
 test('R7 R9 R16 evict, Clear All and corrupt frame delete real adapter records and miss thereafter',async()=>{
   for(const how of ['evict','clear','corrupt','swap','missing']) {
     const h=boot(),list=await ready(h),held=(await query(list)).held;
-    if(how==='evict'||how==='clear') list.send({type:how,uid:STUDY,reason:'closed access'});
+    // A viewer's evict names its session and the copy its check found.
+    if(how==='evict'||how==='clear') list.send({type:how,uid:STUDY,reason:'closed access',...(how==='evict'?{session:'sess-A',copy:held.copy}:{})});
     else {
       const entries=[...h.disk.frames.values()],first=entries[0];
       if(how==='corrupt') new Uint8Array(first.ct)[0]^=1;
@@ -648,7 +711,10 @@ test('R6 setup Retry recovers a transient key failure and a successful session i
   await until(()=>statusOf(p,STUDY)?.status==='Failed','initial key refusal');
   p.send({type:'retry',uid:STUDY});await until(()=>statusOf(p,STUDY)?.status==='Ready','retry recovers');
   p.send({type:'session',session:'sess-A'});await query(p);
-  assert.equal(attempts,2,'one failure then one successful issue, reused for the session');
+  // One failure, one successful setup reused for the session (one key import), and the key issued again before the
+  // copy's first frame (the copy counts from its receipt and the key outlives it).
+  assert.equal(attempts,3,'one failure, one setup, one issue at the first frame');
+  assert.equal(h.imports.length,1,'the setup is reused for the session');
 });
 
 test('R9 a reauthenticated changed manifest cannot relabel an existing frame',async()=>{
@@ -711,7 +777,7 @@ test('FC-073 an auto add while preload cannot run queues nothing and fails nothi
   assert.equal(reads().length, 0);
   list.send({ type: 'add', session: 'sess-1', auto: true, studies: [{ uid: STUDY }] });
   await until(() => statusOf(list, STUDY)?.status === 'Ready', 'Ready after the retried setup');
-  assert.equal(keyReads, 2);
+  assert.equal(keyReads, 3, 'the failed setup, the retried setup, the issue at the copy\'s first frame');
   assert.equal(list.state().unavailable, null);
 });
 
@@ -778,7 +844,7 @@ test('FC-072 Clear All: emptied, taken off the queue, or left as it was; every r
   assert.equal(statusOf(list, SECOND).status, 'Queued');
   const failed = statusOf(list, OTHER), expired = statusOf(list, EXPIRED);
   assert.match(failed.reason, /거절/);
-  assert.match(expired.reason, /72시간이 지나/);
+  assert.match(expired.reason, /표시된 보관 기한이 지나 자동으로 지웠습니다/);
 
   list.send({ type: 'clear' });
   await until(() => statusOf(list, STUDY)?.status === 'Evicted' && statusOf(list, SECOND)?.status === 'Evicted', 'cleared');
@@ -826,4 +892,475 @@ test('a Preload for another exam of the same original replaces its entry; the ol
   await until(() => statusOf(list, STUDY)?.status === 'Ready', 'second part Ready');
   assert.deepEqual(statusOf(list, STUDY).examRefs, [part(1)]);
   assert.equal(metadataReads, 2);
+});
+// ── Only unused copies go 72 hours after they were received; a used copy counts again from its last use ──
+const HOUR = 3600000;
+/** A viewer window of the session: its live check confirmed `copy` (viewer-preload.js posts open with it). */
+async function viewerOf(h, uid = STUDY) {
+  const viewer = h.connect(); viewer.send({ type: 'hello', role: 'viewer' });
+  const { held } = await viewer.ask({ type: 'query', uid, session: 'sess-A' });
+  assert.ok(held, 'the viewer finds the copy held');
+  return { viewer, copy: held.copy };
+}
+const studyRecord = (h, uid, key = KEY) => (async () => {
+  const D = require('../worklist-v0/hpacs-lite/preload-disk.js');
+  const diskKey = await webcrypto.subtle.importKey('raw', key, 'AES-GCM', false, ['decrypt']);
+  for (const r of h.disk.studies.values()) {
+    const m = JSON.parse(new TextDecoder().decode(await D.open(diskKey, r, D.studyAAD(r.keyId, r.manifestId))));
+    if (m.uid === uid) return { record: r, manifest: m };
+  }
+  return null;
+})();
+const keyReads = h => h.requests.filter(r => r.url === '/api/preload/cache-key').length;
+
+test('two copies received together: the one opened and left counts from its leaving, the unopened one goes at 72 hours', async () => {
+  for (const skew of [0, 6 * HOUR]) {
+    const h = boot({ skew }), list = await ready(h);
+    list.send({ type: 'add', session: 'sess-A', studies: [{ uid: OTHER }] });
+    await until(() => statusOf(list, OTHER)?.status === 'Ready', 'both Ready');
+    const received = statusOf(list, STUDY).expiresAt;
+    assert.equal(received, SERVER_START + 72 * HOUR, 'received at server hour 0');
+    h.advance(24 * HOUR);
+    const { viewer, copy } = await viewerOf(h);
+    const writes = [], gets = [];
+    const { write, get } = h.disk;
+    h.disk.write = async (puts = {}, deletes = {}) => { writes.push({ frames: (puts.frames || []).length, studies: (puts.studies || []).length }); return write(puts, deletes); };
+    h.disk.get = async id => { gets.push(id); return get(id); };
+    viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+    await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 96 * HOUR, 'the open counts from hour 24');
+    assert.equal(statusOf(list, STUDY).open, true);
+    h.advance(HOUR);
+    viewer.send({ type: 'bye' });
+    await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 97 * HOUR, 'leaving counts from hour 25');
+    assert.equal(statusOf(list, OTHER).expiresAt, SERVER_START + 72 * HOUR, 'the unopened copy keeps its expiry');
+    // A use writes the study record only: no frame ciphertext was read or written again.
+    assert.deepEqual([writes.every(w => w.frames === 0), writes.some(w => w.studies === 1), gets.length], [true, true, 0]);
+    const { record, manifest } = await studyRecord(h, STUDY);
+    assert.deepEqual([record.expiresAt, manifest.usedAt], [SERVER_START + 97 * HOUR, SERVER_START + 25 * HOUR]);
+    assert.ok(record.frameIds.every(id => h.disk.frames.get(id).expiresAt === SERVER_START + 72 * HOUR), 'frames keep their own date');
+    h.disk.write = write; h.disk.get = get;
+    list.send({ type: 'session', session: null });
+    // Hour 73, same key, the worker started again: only the unopened copy went; the used one reads and shows hour 97.
+    const again = boot({ disk: h.disk, skew, keyResponse: () => new Response(JSON.stringify({ keyId: 'key-A', key: KEY.toString('base64'),
+      serverTime: new Date(SERVER_START + 73 * HOUR).toISOString() })) });
+    const restarted = again.connect(); restarted.send({ type: 'hello', role: 'list' }); restarted.send({ type: 'session', session: 'sess-A' });
+    await until(() => statusOf(restarted, OTHER)?.status === 'Evicted' && statusOf(restarted, STUDY)?.status === 'Ready', 'restored');
+    assert.match(statusOf(restarted, OTHER).reason, /표시된 보관 기한이 지나 자동으로 지웠습니다/);
+    assert.equal(statusOf(restarted, STUDY).expiresAt, SERVER_START + 97 * HOUR);
+    const { viewer: later, copy: same } = await viewerOf(again);
+    const path = `/dicom-web/studies/${STUDY}/series/${STUDY}.1/instances/${STUDY}.1.1/frames/1`;
+    assert.ok((await later.ask({ type: 'frame', path, session: 'sess-A', copy: same })).bytes, 'past its frames\' own date, still readable');
+    assert.ok([...again.disk.frames.values()].length > 0 && (await studyRecord(again, OTHER)) === null);
+    // Hour 97 exactly: the used copy is no longer served, and every record of it goes.
+    again.advance(24 * HOUR);
+    assert.equal((await later.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null);
+    assert.equal((await later.ask({ type: 'frame', path, session: 'sess-A', copy: same })).bytes, null);
+    assert.deepEqual([again.disk.frames.size, again.disk.studies.size], [0, 0]);
+    assert.equal(statusOf(restarted, STUDY).status, 'Evicted');
+  }
+});
+
+test('two viewers of one copy: one leaving keeps it in use; each window counts once; the last to leave sets the date', async () => {
+  const h = boot(), list = await ready(h);
+  const first = await viewerOf(h), second = await viewerOf(h);
+  h.advance(2 * HOUR);
+  for (const { viewer, copy } of [first, first, second]) viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 74 * HOUR, 'opened at hour 2');
+  h.advance(HOUR);
+  first.viewer.send({ type: 'close', uid: STUDY, copy: first.copy, session: 'sess-A' });
+  first.viewer.send({ type: 'close', uid: STUDY, copy: first.copy, session: 'sess-A' });
+  first.viewer.send({ type: 'bye' });
+  await tick(); await tick();
+  assert.deepEqual([statusOf(list, STUDY).open, statusOf(list, STUDY).expiresAt], [true, SERVER_START + 74 * HOUR], 'still in use, date unchanged');
+  h.advance(HOUR);
+  second.viewer.send({ type: 'bye' });
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 76 * HOUR, 'the last viewer left at hour 4');
+  assert.equal(statusOf(list, STUDY).open, false);
+  // An open without this session, or of no copy the check confirmed, is not a use.
+  const stray = h.connect(); stray.send({ type: 'hello', role: 'viewer' });
+  h.advance(HOUR);
+  stray.send({ type: 'open', uid: STUDY, copy: first.copy });
+  stray.send({ type: 'open', uid: STUDY, copy: first.copy + 1, session: 'sess-A' });
+  await tick(); await tick();
+  assert.deepEqual([statusOf(list, STUDY).open, statusOf(list, STUDY).expiresAt], [false, SERVER_START + 76 * HOUR]);
+});
+
+test('a viewer that keeps showing a copy moves it on near its expiry; an open count alone does not, and an expired copy stays gone', async () => {
+  const h = boot(), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => keyReads(h) >= 1 && statusOf(list, STUDY).open, 'open');
+  h.advance(50 * HOUR);
+  viewer.send({ type: 'using', uid: STUDY, copy, session: 'sess-A' });
+  await tick(); await tick();
+  assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 72 * HOUR, 'not yet within the hour before its expiry');
+  h.advance(21.5 * HOUR);
+  viewer.send({ type: 'using', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 143.5 * HOUR, 'moved on from hour 71.5');
+  h.advance(HOUR); h.sweep(); await tick();
+  assert.equal(statusOf(list, STUDY).status, 'Ready', 'read past 72 hours while shown');
+  // Shown but never confirmed again: the open count alone keeps nothing past the date.
+  h.advance(72 * HOUR); h.sweep();
+  await until(() => statusOf(list, STUDY).status === 'Evicted', 'expired while still open');
+  viewer.send({ type: 'using', uid: STUDY, copy, session: 'sess-A' });
+  viewer.send({ type: 'bye' });
+  await tick(); await tick();
+  assert.equal(statusOf(list, STUDY).status, 'Evicted', 'a late use brings nothing back');
+  assert.deepEqual([h.disk.frames.size, h.disk.studies.size], [0, 0]);
+});
+
+test('a new copy counts its own uses: an earlier copy\'s close or check reaches nothing of it', async () => {
+  const h = boot(), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).open, 'open');
+  // The viewer's check found another revision: it drops the copy it checked.
+  viewer.send({ type: 'evict', uid: STUDY, copy, session: 'sess-A', reason: 'changed' });
+  await until(() => statusOf(list, STUDY).status === 'Evicted', 'dropped');
+  h.advance(3 * HOUR);
+  list.send({ type: 'retry', uid: STUDY });
+  await until(() => statusOf(list, STUDY).status === 'Ready', 'a new copy');
+  const fresh = (await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held.copy;
+  assert.notEqual(fresh, copy);
+  assert.deepEqual([statusOf(list, STUDY).open, statusOf(list, STUDY).expiresAt], [false, SERVER_START + 75 * HOUR]);
+  h.advance(HOUR);
+  viewer.send({ type: 'bye' });
+  viewer.send({ type: 'evict', uid: STUDY, copy, session: 'sess-A', reason: 'late' });
+  await tick(); await tick();
+  assert.deepEqual([statusOf(list, STUDY).status, statusOf(list, STUDY).expiresAt], ['Ready', SERVER_START + 75 * HOUR],
+    'the old window\'s leaving and its late evict reach nothing of the new copy');
+  assert.equal((await studyRecord(h, STUDY)).manifest.usedAt, null);
+});
+
+test('a use counts only once the key is issued again; another key stops the old key, a failure keeps the date', async () => {
+  let answer = 'same';
+  const h = boot({ keyResponse: () => answer === 'down' ? new Response('', { status: 503 })
+    : new Response(JSON.stringify({ keyId: answer === 'same' ? 'key-A' : 'key-N', key: KEY.toString('base64'), serverTime: new Date(h.now()).toISOString() })) });
+  const list = await ready(h);
+  const opened = async () => { const v = await viewerOf(h); v.viewer.send({ type: 'open', uid: STUDY, copy: v.copy, session: 'sess-A' }); return v; };
+  h.advance(5 * HOUR); answer = 'down';
+  const down = await opened();
+  await until(() => statusOf(list, STUDY).open && keyReads(h) >= 2, 'asked the key');
+  await tick();
+  assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 72 * HOUR, 'no issue, no move');
+  down.viewer.send({ type: 'bye' });
+  h.advance(HOUR); answer = 'same';
+  const fine = await opened();
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 78 * HOUR, 'issued again at hour 6');
+  fine.viewer.send({ type: 'bye' });
+  await until(() => statusOf(list, STUDY).open === false, 'left');
+  h.advance(HOUR); answer = 'other';
+  const swapped = await opened();
+  await until(() => keyReads(h) >= 4 && !list.state().studies.some(s => s.uid === STUDY && s.status === 'Ready') , 'old key no longer serves');
+  assert.equal((await swapped.viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null);
+});
+/** The worker started again on the same disk at server hour `hour` (same key): its list port once the store is restored. */
+async function restartedAt(h, hour, skew = 0) {
+  const again = boot({ disk: h.disk, skew, keyResponse: () => new Response(JSON.stringify({ keyId: 'key-A', key: KEY.toString('base64'),
+    serverTime: new Date(SERVER_START + hour * HOUR).toISOString() })) });
+  again.advance(hour * HOUR);
+  const list = again.connect(); list.send({ type: 'hello', role: 'list' }); list.send({ type: 'session', session: 'sess-A' });
+  await until(() => statusOf(list, STUDY), 'restored');
+  return { again, list };
+}
+/** A copy received at hour 0, open in a viewer, whose viewer says at hour 71.9 that it still shows it. */
+async function usedNearItsDate() {
+  const h = boot(), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  // Key reads so far: the setup, the issue at the copy's first frame, the issue for this open.
+  await until(() => statusOf(list, STUDY).open && keyReads(h) >= 3, 'open');
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 72 * HOUR, 'opened at hour 0: the date is hour 72');
+  h.advance(71.9 * HOUR);
+  const records = [], write = h.disk.write;
+  return { h, list, viewer, copy, records, write,
+    /** `during(n, puts)` runs inside the n-th write of the study record from here on (1: the claim, 2: the approval). */
+    using(during) {
+      h.disk.write = async (puts = {}, deletes = {}) => {
+        if ((puts.studies || []).length) { records.push(puts.studies[0].expiresAt); await during(records.length); }
+        return write(puts, deletes);
+      };
+      viewer.send({ type: 'using', uid: STUDY, copy, session: 'sess-A' });
+    } };
+}
+
+test('a use is two writes of the record, judged once when the first has ended: a write that ends past the copy\'s date leaves that date - on disk, after a restart and in memory - with no query or sweep sent first', async () => {
+  const t = await usedNearItsDate();
+  // The claim's write starts at hour 71.9 and ends at hour 72.1.
+  t.using(async n => { if (n === 1) t.h.advance(0.2 * HOUR); });
+  await until(() => t.records.length >= 1, 'the claim written');
+  for (let i = 0; i < 40; i++) await tick();
+  assert.deepEqual(t.records, [SERVER_START + 72 * HOUR], 'one write, with the date the copy had: no approval follows');
+  const { record, manifest } = await studyRecord(t.h, STUDY);
+  assert.deepEqual([record.expiresAt, manifest.usedAt], [SERVER_START + 72 * HOUR, SERVER_START], 'the record still says hour 72');
+  assert.ok(t.h.disk.frames.size > 0, 'nothing was swept: the old worker was asked nothing');
+  // Hour 73, the worker started again on that disk - the old worker was sent no query and ran no sweep.
+  const { again, list } = await restartedAt(t.h, 73);
+  assert.equal(statusOf(list, STUDY).status, 'Evicted', 'not Ready after the restart');
+  assert.match(statusOf(list, STUDY).reason, /표시된 보관 기한이 지나/);
+  const viewer = again.connect(); viewer.send({ type: 'hello', role: 'viewer' });
+  assert.equal((await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null);
+  assert.equal((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: t.copy })).bytes, null, 'no frame');
+  assert.deepEqual([again.disk.frames.size, again.disk.studies.size], [0, 0]);
+  // The old worker itself: its model kept hour 72 too.
+  assert.equal(t.list.state().studies.find(s => s.uid === STUDY).expiresAt, SERVER_START + 72 * HOUR);
+});
+
+test('a use whose approval is not stored - the write fails, or the worker stops between the two writes - leaves the earlier date; one approved in time holds across a restart even when its write ends later', async () => {
+  for (const how of ['approval fails', 'stopped between']) {
+    const t = await usedNearItsDate();
+    t.using(n => n !== 2 ? null : how === 'approval fails' ? Promise.reject(Object.assign(new Error('quota'), { name: 'QuotaExceededError' }))
+      : new Promise(() => {}));                                          // the worker never gets past this write
+    await until(() => t.records.length >= 2, how + ': both writes begun');
+    for (let i = 0; i < 20; i++) await tick();
+    // The second write would have carried hour 143.9; it never reached the disk.
+    assert.deepEqual(t.records, [SERVER_START + 72 * HOUR, SERVER_START + 143.9 * HOUR], how);
+    const { record, manifest } = await studyRecord(t.h, STUDY);
+    assert.deepEqual([record.expiresAt, manifest.usedAt, manifest.claimedUse], [SERVER_START + 72 * HOUR, SERVER_START, SERVER_START + 71.9 * HOUR],
+      how + ': the disk holds the claim only, under the date the copy had');
+    assert.equal(statusOf(t.list, STUDY).expiresAt, SERVER_START + 72 * HOUR, how + ': the model kept the date');
+    const { again, list } = await restartedAt(t.h, 73);
+    assert.equal(statusOf(list, STUDY).status, 'Evicted', how + ': a claim counts for nothing after a restart');
+    assert.deepEqual([again.disk.frames.size, again.disk.studies.size], [0, 0], how);
+  }
+  // Approved at hour 71.9 (the claim's write ended before the date); the approval's own write ends at hour 72.1.
+  const t = await usedNearItsDate();
+  let during = null;
+  t.using(async n => {
+    if (n !== 2) return;
+    t.h.advance(0.2 * HOUR);
+    // A panel opened while the approval is being stored, the earlier date already past: the row is not said gone.
+    const panel = t.h.connect(); panel.send({ type: 'hello', role: 'list' });
+    during = statusOf(panel, STUDY);
+  });
+  await until(() => statusOf(t.list, STUDY).expiresAt === SERVER_START + 143.9 * HOUR, 'the model moves once the approval is stored');
+  assert.equal(statusOf(t.list, STUDY).status, 'Ready', 'panel, model and disk say the same date');
+  assert.deepEqual([during.status, during.reason], ['Ready', null], 'never shown gone and then Ready again');
+  // An approval that fails after the earlier date has passed: the row is gone from then on, as the disk says.
+  const late = await usedNearItsDate();
+  late.using(n => { if (n === 2) { late.h.advance(0.2 * HOUR); return Promise.reject(new Error('disk')); } });
+  await until(() => statusOf(late.list, STUDY).status === 'Evicted', 'refused: gone at the date it had');
+  assert.match(statusOf(late.list, STUDY).reason, /표시된 보관 기한이 지나/);
+  assert.equal((await studyRecord(late.h, STUDY)).record.expiresAt, SERVER_START + 72 * HOUR);
+  const { record, manifest } = await studyRecord(t.h, STUDY);
+  assert.deepEqual([record.expiresAt, manifest.usedAt, manifest.claimedUse], [SERVER_START + 143.9 * HOUR, SERVER_START + 71.9 * HOUR, undefined]);
+  assert.ok((await t.viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: t.copy })).bytes);
+  t.list.send({ type: 'session', session: null });
+  const { again, list } = await restartedAt(t.h, 73);
+  assert.deepEqual([statusOf(list, STUDY).status, statusOf(list, STUDY).expiresAt], ['Ready', SERVER_START + 143.9 * HOUR], 'the use holds after a restart');
+  const viewer = again.connect(); viewer.send({ type: 'hello', role: 'viewer' });
+  const held = (await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held;
+  assert.ok((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: held.copy })).bytes);
+});
+
+test('server time is not the PC clock: set back, or forward and back again, while the worker runs, a copy still ends at its server date - no query, no frame, and no Ready on a panel opened before the next sweep', async () => {
+  for (const turns of [[-6], [-30 * 24], [3, -9]]) {
+    const h = boot(), list = await ready(h);
+    const { viewer, copy } = await viewerOf(h);
+    h.advance(10 * HOUR);
+    for (const hours of turns) { h.setSkew(hours * HOUR); h.advance(HOUR); }   // someone sets the PC clock
+    h.advance((72 - 10 - turns.length) * HOUR - 1);
+    if (turns.every(hours => hours < 0)) assert.ok((await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, 'held until its date');
+    h.advance(1);                                                         // server hour 72 exactly
+    // A panel opened now, before any query or sweep: the row is not Ready and says why.
+    const panel = h.connect(); panel.send({ type: 'hello', role: 'list' });
+    const row = statusOf(panel, STUDY);
+    assert.deepEqual([row.status, row.open, row.done, row.bytes], ['Evicted', false, 0, 0], JSON.stringify(turns));
+    assert.match(row.reason, /표시된 보관 기한이 지나/);
+    assert.ok(h.disk.frames.size > 0, 'shown so before the sweep removed anything');
+    assert.equal((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy })).bytes, null, 'no frame at its date');
+    assert.equal((await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null, 'not held at its date');
+    assert.deepEqual([h.disk.frames.size, h.disk.studies.size], [0, 0]);
+  }
+});
+
+test('the PC clock decides nothing: set forward under a copy in use, the copy is read until its server date; after a sleep with the ticks stopped, or while the server cannot be asked, nothing is served until the server has said the time', async () => {
+  const frame = (viewer, copy) => viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy });
+  // The PC clock is set three hours forward at server hour 70, a viewer showing the copy (its date: hour 72).
+  const h = boot(), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).open && keyReads(h) >= 3, 'open');
+  for (let i = 0; i < 20; i++) await tick();
+  h.advance(70 * HOUR);
+  h.setSkew(3 * HOUR);
+  const asked = keyReads(h);
+  // Two reads at once: both wait for the one question to the server, and both are served.
+  const both = await Promise.all([frame(viewer, copy), frame(viewer, copy)]);
+  assert.ok(both[0].bytes && both[1].bytes, 'still read: by the server it is hour 70');
+  assert.equal(keyReads(h), asked + 1, 'the two clocks disagreed: the server was asked the time, once');
+  assert.ok((await frame(viewer, copy)).bytes);
+  assert.equal(keyReads(h), asked + 1, 'and not again');
+  assert.deepEqual([statusOf(list, STUDY).status, statusOf(list, STUDY).expiresAt, h.disk.frames.size > 0], ['Ready', SERVER_START + 72 * HOUR, true]);
+  h.advance(2 * HOUR - 1);
+  assert.ok((await frame(viewer, copy)).bytes, 'until its date');
+  h.advance(1);
+  assert.equal((await frame(viewer, copy)).bytes, null, 'and not at it');
+  // The PC sleeps 80 hours and its ticks stop: on waking, the server says the time before anything is served.
+  const s = boot(), slept = await ready(s), sleeper = await viewerOf(s);
+  s.sleep(80 * HOUR);
+  assert.equal((await frame(sleeper.viewer, sleeper.copy)).bytes, null, 'not read after its date, although the ticks say hour 0');
+  await until(() => statusOf(slept, STUDY).status === 'Evicted', 'gone');
+  assert.deepEqual([s.disk.frames.size, s.disk.studies.size], [0, 0]);
+  // The clocks disagree and the server cannot be asked: nothing is served, nothing is removed, no row is said gone.
+  let down = false;
+  const u = boot({ keyResponse: () => down ? new Response('', { status: 503 })
+    : new Response(JSON.stringify({ keyId: 'key-A', key: KEY.toString('base64'), serverTime: new Date(u.now()).toISOString() })) });
+  const unsure = await ready(u), reader = await viewerOf(u);
+  u.advance(10 * HOUR); u.setSkew(3 * HOUR); down = true;
+  assert.equal((await frame(reader.viewer, reader.copy)).bytes, null, 'not served while the time is in doubt');
+  assert.equal((await reader.viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held, null);
+  assert.deepEqual([statusOf(unsure, STUDY).status, u.disk.frames.size > 0], ['Ready', true], 'kept: it may well be within its date');
+  down = false; u.advance(6000);
+  assert.ok((await frame(reader.viewer, reader.copy)).bytes, 'served again once the server has said the time');
+});
+
+test('an open still waiting its turn when its window leaves is a copy used and left - never one left open with no window to close it', async () => {
+  const h = boot({ diskGb: 1800 / 1024 ** 3 }), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; }), get = h.disk.get;
+  h.disk.get = async id => { await gate; return get(id); };             // a frame read holds the worker's queue
+  const reading = viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy });
+  for (let i = 0; i < 5; i++) await tick();
+  h.advance(HOUR);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });     // the check's frame came in ...
+  viewer.send({ type: 'bye' });                                           // ... and the window closed at once
+  h.disk.get = get; release();
+  assert.ok((await reading).bytes);
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 73 * HOUR, 'the use counts, from hour 1');
+  assert.equal(statusOf(list, STUDY).open, false, 'not left open');
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: OTHER }] });
+  await until(() => statusOf(list, OTHER)?.status === 'Ready', 'the next study gets the room');
+  assert.equal(statusOf(list, STUDY).status, 'Evicted');
+});
+
+test('a row shown gone at its date can be fetched again at once: Retry, or Preload again, before any sweep has run', async () => {
+  for (const how of ['retry', 'add']) {
+    const h = boot(), list = await ready(h), first = (await viewerOf(h)).copy;
+    h.advance(72 * HOUR);
+    const panel = h.connect(); panel.send({ type: 'hello', role: 'list' });
+    assert.equal(statusOf(panel, STUDY).status, 'Evicted', 'the panel offers Retry');
+    assert.ok(h.disk.frames.size > 0, 'no sweep has run');
+    if (how === 'retry') panel.send({ type: 'retry', uid: STUDY });
+    else panel.send({ type: 'add', session: 'sess-A', studies: [{ uid: STUDY }] });
+    await until(() => statusOf(list, STUDY)?.status === 'Ready', how + ': fetched again');
+    const viewer = h.connect(); viewer.send({ type: 'hello', role: 'viewer' });
+    const held = (await viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held;
+    assert.ok(held && held.copy !== first, how + ': a new copy');
+    assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 144 * HOUR, how + ': counted from its own receipt');
+  }
+});
+
+test('a copy fetched after the key was replaced is another copy: the earlier copy\'s late open, close and drop reach nothing of it', async () => {
+  let keyName = 'key-A';
+  const h = boot({ keyResponse: () => new Response(JSON.stringify({ keyId: keyName, key: KEY.toString('base64'), serverTime: new Date(h.now()).toISOString() })) });
+  const list = await ready(h), old = await viewerOf(h);
+  // The server retired the key; the next issue (asked for a use) answers another. The old key serves nothing more.
+  keyName = 'key-N';
+  old.viewer.send({ type: 'open', uid: STUDY, copy: old.copy, session: 'sess-A' });
+  await until(() => !statusOf(list, STUDY), 'the old key\'s store is gone');
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: STUDY }] });
+  await until(() => statusOf(list, STUDY)?.status === 'Ready', 'fetched again under the new key');
+  const fresh = (await old.viewer.ask({ type: 'query', uid: STUDY, session: 'sess-A' })).held.copy;
+  assert.notEqual(fresh, old.copy, 'the same session, the same study, another copy');
+  h.advance(HOUR);
+  // Late messages of the viewer that checked the earlier copy: same session, the earlier copy's name.
+  old.viewer.send({ type: 'open', uid: STUDY, copy: old.copy, session: 'sess-A' });
+  old.viewer.send({ type: 'evict', uid: STUDY, copy: old.copy, session: 'sess-A', reason: 'late' });
+  old.viewer.send({ type: 'close', uid: STUDY, copy: old.copy, session: 'sess-A' });
+  for (let i = 0; i < 20; i++) await tick();
+  const row = statusOf(list, STUDY);
+  assert.deepEqual([row.status, row.open, row.expiresAt], ['Ready', false, SERVER_START + 72 * HOUR], 'neither opened, dropped nor moved on');
+  assert.equal((await old.viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: old.copy })).bytes, null, 'nor read under the old name');
+  assert.ok((await old.viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy: fresh })).bytes);
+});
+
+test('a copy whose key could not be issued again at its first frame ends at the date its row shows, and is said to have gone at that date - not after 72 hours', async () => {
+  let issues = 0;
+  const h = boot({ keyResponse: () => ++issues === 1 ? new Response(JSON.stringify({ keyId: 'key-A', key: KEY.toString('base64'), serverTime: new Date(h.now()).toISOString() }))
+    : new Response('', { status: 503 }) });
+  const release = h.hold();
+  const list = h.connect(); list.send({ type: 'hello', role: 'list' });
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: STUDY }] });
+  await until(() => h.reads().length >= 1, 'the first image read waits');
+  h.advance(3 * HOUR);                            // the frames come in three hours after the key was issued
+  release();
+  await until(() => statusOf(list, STUDY)?.status === 'Ready', 'Ready');
+  // Received at hour 3 under a key last issued at hour 0: the row says hour 72, and that is when reading ends.
+  assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 72 * HOUR);
+  const { viewer, copy } = await viewerOf(h);
+  h.advance(69 * HOUR - 1);
+  assert.ok((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy })).bytes, 'read until the date shown');
+  h.advance(1);
+  assert.equal((await viewer.ask({ type: 'frame', path: FRAME, session: 'sess-A', copy })).bytes, null, 'and not at it');
+  await until(() => statusOf(list, STUDY).status === 'Evicted', 'gone');
+  assert.match(statusOf(list, STUDY).reason, /표시된 보관 기한이 지나 자동으로 지웠습니다/);
+  assert.doesNotMatch(statusOf(list, STUDY).reason, /72시간/, 'the copy was kept 69 hours: the words claim no 72');
+});
+
+test('the last viewer closing a copy (another patient shown, last tab closed) lets a study waiting for space go on, as leaving the window does', async () => {
+  const h = boot({ diskGb: 1800 / 1024 ** 3 }), list = await ready(h), { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).open, 'open');
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: OTHER }] });
+  await until(() => statusOf(list, OTHER)?.waiting, 'waiting while the open copy may not go');
+  viewer.send({ type: 'close', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, OTHER)?.status === 'Ready', 'the closed copy made room');
+  assert.equal(statusOf(list, STUDY).status, 'Evicted');
+});
+
+test('space is given back from another account by the real expiry: a used copy\'s frames go with its record, after a copy that ends sooner', async () => {
+  const disk = memoryDisk();
+  const issue = (id, time) => () => new Response(JSON.stringify({ keyId: id, key: KEY.toString('base64'), serverTime: new Date(time).toISOString() }));
+  // Account B receives two studies at hour 0; it uses the first at hour 24 (record until 96), the second stays until 72.
+  const b = boot({ disk, keyResponse: () => issue('key-B', b.now())() }), lb = await ready(b);
+  lb.send({ type: 'add', session: 'sess-A', studies: [{ uid: OTHER }] });
+  await until(() => statusOf(lb, OTHER)?.status === 'Ready', 'second Ready');
+  b.advance(24 * HOUR);
+  const { viewer, copy } = await viewerOf(b);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(lb, STUDY).expiresAt === SERVER_START + 96 * HOUR, 'used');
+  lb.send({ type: 'session', session: null });
+  const used = (await studyRecord(b, STUDY)).record, unused = (await studyRecord(b, OTHER)).record;
+  const bytes = [...disk.frames.values(), ...disk.studies.values()].reduce((n, r) => n + r.ct.byteLength, 0);
+  // Account C at hour 30 needs about one study's room.
+  const c = boot({ disk, diskGb: (bytes + 100) / 1024 ** 3, keyResponse: issue('key-C', SERVER_START + 30 * HOUR) });
+  await ready(c, '1.2.840.9.3');
+  assert.equal(disk.studies.has(unused.manifestId), false, 'the copy ending at hour 72 went first');
+  assert.ok(unused.frameIds.every(id => !disk.frames.has(id)), 'with its frames');
+  assert.ok(disk.studies.has(used.manifestId) && used.frameIds.every(id => disk.frames.has(id)), 'the used copy is whole');
+});
+
+test('a copy counts from its own receipt and its own use, never shortened by an earlier key issue', async () => {
+  const h = boot();
+  const release = h.hold();
+  const list = h.connect(); list.send({ type: 'hello', role: 'list' });
+  list.send({ type: 'add', session: 'sess-A', studies: [{ uid: STUDY }] });
+  await until(() => h.reads().length >= 1, 'the first image read waits');
+  h.advance(3 * HOUR);                            // the frames come in three hours after the key was issued
+  release();
+  await until(() => statusOf(list, STUDY)?.status === 'Ready', 'Ready');
+  assert.equal(statusOf(list, STUDY).expiresAt, SERVER_START + 75 * HOUR);
+  h.advance(5 * 60000);
+  const { viewer, copy } = await viewerOf(h);
+  viewer.send({ type: 'open', uid: STUDY, copy, session: 'sess-A' });
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 3 * HOUR + 5 * 60000 + 72 * HOUR, 'opened at 3h05');
+  h.advance(4 * 60000);
+  viewer.send({ type: 'bye' });
+  await until(() => statusOf(list, STUDY).expiresAt === SERVER_START + 3 * HOUR + 9 * 60000 + 72 * HOUR, 'left at 3h09');
+});
+
+test('the exam scope asked again after the frames must come in full: a body cut after its headers is no Ready', async () => {
+  let scopeReads = 0;
+  const { connect, disk } = boot({ respond: async url => {
+    if (url.startsWith('/api/studies/')) {
+      const body = JSON.stringify({ sources: [{ studyUid: STUDY, series: { mode: 'all', uids: [] } }] });
+      return ++scopeReads === 2 ? new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(body.slice(0, 5))); c.error(new TypeError('cut')); } }))
+        : new Response(body);
+    }
+    if (url.endsWith('/metadata')) return new Response(JSON.stringify(metadata(STUDY)));
+    return new Response(zlib.gzipSync(multipart('x')), { headers: { 'Content-Type': 'application/gzip', 'X-KIN-Part-Type': PART, 'X-KIN-Study-Revision': 'r' } });
+  } });
+  const list = connect(); list.send({ type: 'hello', role: 'list' });
+  list.send({ type: 'add', session: 'sess-1', studies: [{ uid: STUDY, examRefs: [{ reportUid: STUDY + '.0', key: 'exam' }] }] });
+  await until(() => statusOf(list, STUDY)?.status === 'Failed', 'failed');
+  assert.match(statusOf(list, STUDY).reason, /서버에 연결하지 못했습니다/);
+  assert.equal(disk.frames.size, 0);
 });

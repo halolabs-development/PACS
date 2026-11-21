@@ -557,8 +557,22 @@ test('TEST-WSU-08 scope and role refusals come first and say nothing about the s
   const c = caller();
   await rejects(down.pacs.readDraft(SPLIT, c), 503, 'STUDY_SOURCE_UNAVAILABLE');
   await rejects(down.pacs.putReport(SPLIT, draftBody(c), c, null), 503, 'STUDY_SOURCE_UNAVAILABLE');
-  await rejects(down.pacs.authzDicom('/dicom-web/studies/' + SPLIT + '/series', 'GET', c), 403);
+  // The DICOM gate can carry only 403: an unobserved source is the temporary refusal (its AUTH_* code), never the plain
+  // refusal a refused study gets - for the metadata and frame reads a preload makes alike.
+  for (const uri of ['/dicom-web/studies/' + SPLIT + '/series', '/dicom-web/studies/' + SPLIT + '/metadata',
+    '/dicom-web/studies/' + SPLIT + '/series/2.25.5/instances/2.25.6/frames/1'])
+    await rejects(down.pacs.authzDicom(uri, 'GET', c), 403, 'AUTH_SOURCE_UNAVAILABLE');
+  // A refusal the database decides is not hidden behind it: a withdrawn attachment's series stays the plain refusal.
+  down.prisma.studyAttachment.findMany = async () => [{ seriesInstanceUid: '2.25.5', sopInstanceUid: '2.25.6', orthancId: null }];
+  await assert.rejects(down.pacs.authzDicom('/dicom-web/studies/' + SPLIT + '/series/2.25.5/instances/2.25.6/frames/1', 'GET', c),
+    e => code(e) === undefined);
+  // So is a split UID, and a study outside the account's scope says nothing about the source.
+  await assert.rejects(w.pacs.authzDicom('/dicom-web/studies/' + SPLIT + '/series', 'GET', outsider), e => e.getStatus() === 403 && code(e) === undefined);
   assert.deepEqual(down.writes, []);
+});
+test('TEST-WSU-08 a split UID image read is the plain refusal, without a temporary code', async () => {
+  const w = await clinical([A(), B()]);
+  await assert.rejects(w.pacs.authzDicom('/dicom-web/studies/' + SPLIT + '/metadata', 'GET', caller()), e => e.getStatus() === 403 && code(e) === undefined);
 });
 test('TEST-WSU-08 a source observation is per request: an earlier single answer does not admit a later split', async () => {
   const c1 = caller(), w = await clinical([A()]);

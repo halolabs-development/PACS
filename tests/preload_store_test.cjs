@@ -10,6 +10,8 @@ const path = (study, n = 1, sop = '9.1') => `/dicom-web/studies/${study}/series/
 let nextId = 0;
 const frame = bytes => ({ entryId: 'opaque-' + (++nextId), bytes });
 const status = (store, uid) => store.snapshot().studies.find(s => s.uid === uid);
+/** The copy a viewer's live check confirmed (open and close name it). */
+const copy = (store, uid) => store.get(uid).copy;
 
 /** Fetch `count` frames of `uid` of `bytes` each, as the worker does, and mark it Ready. */
 function fill(store, uid, count, bytes, revision = 'r1') {
@@ -41,8 +43,8 @@ test('disk space stays within the budget: the opened-and-closed study goes first
   fill(store, '1.1', 3, 10);           // read, then closed
   fill(store, '1.2', 3, 10);           // open in a viewer
   fill(store, '1.3', 3, 10);           // not read yet
-  store.open('1.1'); assert.equal(store.close('1.1'), true);
-  store.open('1.2');
+  store.open('1.1', copy(store, '1.1')); assert.equal(store.close('1.1', copy(store, '1.1')), true);
+  store.open('1.2', copy(store, '1.2'));
   store.start('1.4', 2);
   assert.equal(store.put('1.4', path('1.4', 1), frame(10), 'r1'), 'stored');   // 100 of 100
   assert.equal(store.put('1.4', path('1.4', 2), frame(25), 'r1'), 'stored', 'room made by dropping A');
@@ -61,7 +63,7 @@ test('disk space stays within the budget: the opened-and-closed study goes first
   assert.equal(status(store, '1.3').status, STATUS.ready);
   assert.ok(store.used() <= store.budget());
   // The viewer closes B: it may go now, and the queue resumes with D, keeping D's frames.
-  assert.equal(store.close('1.2'), true);
+  assert.equal(store.close('1.2', copy(store, '1.2')), true);
   assert.equal(store.wake(), true);
   assert.equal(store.next().uid, '1.4');
   store.start('1.4', 3);
@@ -75,12 +77,12 @@ test('a study open in two viewers stays until both closed it', () => {
   const store = create(30);
   store.add([{ uid: '1.1' }, { uid: '1.2' }]);
   fill(store, '1.1', 2, 10);
-  store.open('1.1'); store.open('1.1');
-  assert.equal(store.close('1.1'), false);
+  store.open('1.1', copy(store, '1.1')); store.open('1.1', copy(store, '1.1'));
+  assert.equal(store.close('1.1', copy(store, '1.1')), false);
   store.start('1.2', 1);
   assert.equal(store.put('1.2', path('1.2'), frame(20), 'r1'), 'full');
   assert.equal(status(store, '1.1').status, STATUS.ready);
-  assert.equal(store.close('1.1'), true);
+  assert.equal(store.close('1.1', copy(store, '1.1')), true);
   store.wake(); store.start('1.2', 1);
   assert.equal(store.put('1.2', path('1.2'), frame(20), 'r1'), 'stored');
   assert.equal(status(store, '1.1').status, STATUS.evicted);
@@ -103,7 +105,8 @@ test('held frames are answered by path and revision; failed, evicted and cleared
   const store = create(1000);
   store.add([{ uid: '1.1', label: 'SYN-1 · Synthetic' }, { uid: '1.2' }]);
   fill(store, '1.1', 2, 10, 'rev-A');
-  assert.deepEqual(store.held('1.1'), { revision: 'rev-A', status: STATUS.ready, copy: 1 });
+  assert.deepEqual(store.held('1.1'), { revision: 'rev-A', status: STATUS.ready, copy: copy(store, '1.1') });
+  assert.match(String(copy(store, '1.1')), /^[0-9a-f-]{36}$/, 'a copy is named by a random token');
   assert.equal(store.frame(path('1.1', 2)).bytes, 10);
   assert.equal(store.frame(path('1.1', 3)), null);
   assert.equal(store.held('1.2'), null, 'queued with nothing fetched is not held');
@@ -196,10 +199,43 @@ test('R5 fixed 72-hour window blocks held/frame before sweep and releases every 
   assert.equal(store.frame(path('1.1')), null);
   assert.deepEqual(store.expire(), [id]);
   assert.equal(store.used(), 0);
-  assert.match(status(store, '1.1').reason, /72시간/);
+  assert.match(status(store, '1.1').reason, /표시된 보관 기한이 지나/);
+  assert.doesNotMatch(status(store, '1.1').reason, /72시간/, 'the words name the date the row showed, not a count of hours');
   assert.match(status(store, '1.2').reason, /대기열/);
   assert.equal(store.retry('1.1'), true);
   assert.equal(status(store, '1.1').expiresAt, now + 72*3600000);
+});
+
+test('a use moves the date only as approved and then stored: approved while the copy is within its date, refused once past it, and a row past its date is shown gone before any sweep', () => {
+  const HOUR = 3600000;
+  let now = 1000;
+  const store = create(100, () => now);
+  store.add([{ uid: '1.1' }]);
+  store.fetched('1.1', now);
+  fill(store, '1.1', 1, 10);
+  const c = copy(store, '1.1'), received = now;
+  now += 10 * HOUR;
+  assert.equal(store.use('1.1', c, now), false, 'nothing is counted that was not approved');
+  assert.equal(store.approve('1.1', 'another-copy', now), false);
+  assert.equal(store.approve('1.1', c, now), true);
+  assert.equal(status(store, '1.1').expiresAt, received + 72 * HOUR, 'approved, not yet stored: the date it had');
+  assert.equal(store.use('1.1', c, now), true);
+  assert.equal(status(store, '1.1').expiresAt, received + 82 * HOUR, 'stored: 72 hours from the use');
+  // An approval that could not be stored leaves the date.
+  now += HOUR;
+  assert.equal(store.approve('1.1', c, now), true);
+  store.refuse('1.1');
+  assert.equal(store.use('1.1', c, now), false);
+  assert.equal(status(store, '1.1').expiresAt, received + 82 * HOUR);
+  // While an approved use is being stored the row is not said gone, even past the date it had; refused, it is.
+  assert.equal(store.approve('1.1', c, now), true);
+  now = received + 82 * HOUR;
+  assert.equal(status(store, '1.1').status, STATUS.ready);
+  store.refuse('1.1');
+  assert.deepEqual([status(store, '1.1').status, status(store, '1.1').done, status(store, '1.1').bytes], [STATUS.evicted, 0, 0], 'shown gone before any sweep');
+  assert.match(status(store, '1.1').reason, /표시된 보관 기한이 지나/);
+  assert.equal(store.approve('1.1', c, now), false, 'no use is approved at or past the date');
+  assert.equal(store.usable('1.1', c, now - 1), false, 'nor one made before it, asked after it');
 });
 
 test('R5 a still-queued study expires at its original deadline after restart', () => {
