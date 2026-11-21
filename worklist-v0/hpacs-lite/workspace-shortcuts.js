@@ -223,13 +223,13 @@
     }
     button(kinSay('Apply & Save'),'workspace-shortcuts-apply',()=>{
       if(ended||!allowed()||!draftOwner||owner()!==draftOwner){kinWrite(message, kinSay('계정이 바뀌었습니다. 창을 닫고 다시 확인하세요.'));return;}
-      if(accountBusy)return;
       const next=draft();
       if(!valid(next)){
         const conflicts=ids.filter(id=>next[id]&&ids.some(other=>other!==id&&next[other]===next[id]));
         message.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
       }
       if(!toolChanged()){applyLocal(next,false);return;}
+      if(accountBusy){kinWrite(message, kinSay('계정 단축키를 확인하는 중…'));return;}
       // Changed tool keys exist only in the account: they are saved there first, and nothing is applied if that fails.
       if(toolConflicts().length){kinWrite(message, kinSay('중복 영상 도구 키: {0}. 서로 다른 키로 지정하세요.',toolConflicts().map(toolName).join(', ')));return;}
       try{if(localBaseline(storage(),draftOwner)!==baseline){kinWrite(message, kinSay('다른 창에서 설정이 바뀌었습니다. 취소 후 다시 열어 확인하세요.'));return;}}catch(_){}
