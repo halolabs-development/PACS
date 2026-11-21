@@ -9387,7 +9387,7 @@
     "emr/deploy/docker-compose.signing.yml": "74a3e444b5618fface6a9a3cfb0ce9f00622ff8d5324fe0bf4ef664ea9844e1b",
     "gateway/agent/Dockerfile": "3673cbf2a3df392ed5bc1d188e5f30f9bb2fded8707f1fe66272a0a92a28aa54",
     "gateway/agent/requirements.txt": "6f27c1c7f1918d97eee24a188b7ca45b2610504193e1e601506abe423b0a841f",
-    "gateway/docker-compose.yml": "d11db072033f8aed7939387de17303a1f80753464f1565e229fe37cb068b4149",
+    "gateway/docker-compose.yml": "3d0139a2de22a1ab53c5b7d59863bb4bf43f268db5f82f0e01269e0e6d9f9b03",
     "proxy/Dockerfile": "8076d70c79aa32480ed900851cce99b8836ef4e67d4fdace739a021174663dc1",
     "scripts/asr_engine_attest.py": "898682d3ec50f6f41c41db1b24aa15e3eb8455d34ac92a64761ba44db2fa816c",
     "scripts/sof3/kin_sof3.c": "7645ce429e01514a4f152e1d0c0f3c2150bee32a0f135be88c39573647799ea2",
