@@ -252,12 +252,12 @@ class WorklistLanguageDOM(unittest.TestCase):
         message exactly as the server gave it."""
         self.boot()
         page = self.page
-        known, other = "계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요", "SYN 처음 보는 서버 오류"
+        known, other, plain = "계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요", "SYN 처음 보는 서버 오류", "Not Found"
         box = page.locator("#hist-body [data-kin-error]")
         for lang in (None, "ko", "en"):
             if lang:
                 page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang)
-            for message in (known, other):
+            for message in (known, other, plain):
                 with self.subTest(lang=lang, message=message):
                     page.route("**/report/versions*", lambda route, request, m=message: route.fulfill(status=409, json={"message": m}))
                     page.locator("#b-history").dispatch_event("click")
@@ -265,7 +265,7 @@ class WorklistLanguageDOM(unittest.TestCase):
                     if lang == "en" and message == known:
                         expect(box).to_have_text("Account settings have changed. Load them, then save again")
                     elif lang == "en":
-                        expect(box).to_have_text("The request could not be processed. Original message: " + other)
+                        expect(box).to_have_text("The request could not be processed. Original message: " + message)
                     else:
                         expect(box).to_have_text(message)
                     page.locator("#hist-close").dispatch_event("click")

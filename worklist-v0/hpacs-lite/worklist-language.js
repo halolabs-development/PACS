@@ -54,20 +54,20 @@
       const part = arg && typeof arg === 'object' && !isSentence(arg) ? arg.t ?? arg.e ?? '' : arg;
       return String(tr(part, lang, visiting));
     });
-    if (lang === 'en' && unknownErrors.has(value) && HANGUL.test(result))
+    if (lang === 'en' && unknownErrors.has(value))
       result = (glossary.get(UNKNOWN_ERROR)?.en || UNKNOWN_ERROR) + ' ' + result;
     visiting.delete(value);
     return result;
   }
   // ── An error as a page shows it (a place marked data-kin-error) ──
-  // The message as the server or the page gave it. A known sentence — the whole message is one Korean entry of the glossary,
-  // such as a known refusal of the server — reads in English on an English screen. Any other message stays as written and,
-  // on an English screen, follows the general English sentence that the request failed. Korean or no choice: as written.
+  // The message as the server or the page gave it. A known sentence — the whole message is one entry of the glossary, such as
+  // a known refusal of the server — reads in English on an English screen. Any other message stays as written and, on an
+  // English screen, follows the general English sentence that the request failed. Korean or no choice: as written.
   const UNKNOWN_ERROR = '요청을 처리하지 못했습니다. 원문:';
   const unknownErrors = new WeakSet();
   function error(message) {
     const text = String(message ?? '');
-    if (HANGUL.test(text) && glossary.has(keyOf(text))) return sayEnglish(text);
+    if (text.trim() && glossary.has(keyOf(text))) return sayEnglish(text);
     const sentence = sayEnglish('{e0}', text);
     unknownErrors.add(sentence);
     return sentence;
