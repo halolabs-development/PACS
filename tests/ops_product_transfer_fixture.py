@@ -159,6 +159,7 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261121120000_unread_seen/migration.sql',
               'api/prisma/migrations/20261121130000_access_alerts/migration.sql',
               'api/prisma/migrations/20261121160000_report_version_signer_name/migration.sql',
+              'api/prisma/migrations/20261121220000_patient_consent_record/migration.sql',
               'api/prisma/migrations/20261122120000_reading_request/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
@@ -652,7 +653,12 @@ def expected_rows(uid):
     rows['MemberRightsImport'] = [dict(id='realm-v1',completedAt=STAMP)]
     rows['TransferBasis'] = [dict(id=basis_id,studyUid=uid,institutionId='SYNTHETIC-hospital',kind='PATIENT_CONSENT',
         reference='SYNTHETIC consent reference',obtainedAt=STAMP,expiresAt=None,recordedBy='SYNTHETIC-admin',recordedAt=STAMP,
-        revokedBy=None,revokedAt=None,revokeReason=None)]
+        revokedBy=None,revokedAt=None,revokeReason=None,patientId=None,purpose=None,requestId=None,recordedBySub=None),
+        # Patient Consent: a patient row of the same table (no study; the patient's original ID, the purpose, the request).
+        dict(id='00000000-0000-4000-8000-0000000000c1',studyUid=None,patientId='SYNTHETIC-patient',purpose='SYNTHETIC consent purpose',
+        requestId='00000000-0000-4000-8000-0000000000c2',recordedBySub='SYNTHETIC-admin-sub',institutionId='SYNTHETIC-hospital',
+        kind='PATIENT_CONSENT',reference='SYNTHETIC patient consent reference',obtainedAt=STAMP,expiresAt=None,recordedBy='SYNTHETIC-admin',
+        recordedAt=STAMP,revokedBy=None,revokedAt=None,revokeReason=None)]
     rows['ProcessingAgreement'] = [dict(id=agreement_id,fromInstitutionId='SYNTHETIC-hospital',toInstitutionId='SYNTHETIC-tele',
         kind='CONTRACT',reference='SYNTHETIC agreement reference',validFrom=STAMP,validTo=None,status='active',
         recordedBy='SYNTHETIC-admin',recordedAt=STAMP,terminatedBy=None,terminatedAt=None,terminationReason=None)]
@@ -1285,6 +1291,10 @@ def constraint_probes(name, product):
         RAISE EXCEPTION 'missing transfer basis FK'; EXCEPTION WHEN foreign_key_violation THEN NULL; END;
       BEGIN UPDATE "TransferBasis" SET "revokedAt"=now(),"revokedBy"='SYNTHETIC';
         RAISE EXCEPTION 'missing revocation reason check'; EXCEPTION WHEN check_violation THEN NULL; END;
+      BEGIN UPDATE "TransferBasis" SET purpose=NULL WHERE "studyUid" IS NULL;
+        RAISE EXCEPTION 'missing patient consent purpose check'; EXCEPTION WHEN check_violation THEN NULL; END;
+      BEGIN UPDATE "TransferBasis" SET "patientId"='SYNTHETIC-patient' WHERE "studyUid" IS NOT NULL;
+        RAISE EXCEPTION 'missing transfer basis subject check'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "StudyAccessPolicy" SET policy='{}'::jsonb;
         RAISE EXCEPTION 'missing access shape'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "StudyAccessPolicy" SET revision=0;

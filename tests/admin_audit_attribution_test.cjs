@@ -141,6 +141,10 @@ Object.assign(CONTRACT.field_rules, {
 /* Modality Worklist: a device's query belongs to the institution its AE Title was registered to; a refused one (no single
    institution) to none. */
 CONTRACT.field_rules["modality-worklist.query"] = {"source":"detail.institution","meaning":"the calling device's registered institution (device, outcome and match count only)"};
+/* Patient Consent: a recorded or withdrawn consent belongs to the administrator's institution it was recorded in (target = record id). */
+Object.assign(CONTRACT.field_rules, {
+  "patient.consent.record":{"source":"detail.institution","meaning":"recording administrator's institution (record id and state only)"},
+  "patient.consent.revoke":{"source":"detail.institution","meaning":"withdrawing administrator's institution (record id and state only)"}});
 /* Merge Exam / Unmerge: the calling technician's institution, which owns every study of the group (detail.by). */
 Object.assign(CONTRACT.field_rules, {
   "study.merge":{"source":"detail.by","meaning":"merging technician's institution (owner of the studies)"},
@@ -964,6 +968,19 @@ test('a hospital inbox save belongs to the institution it changed (target) and t
   assert.equal(A.auditRule('institution.critical-result-inbox.save'), 'field:target');
   assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, { member: 'syn-desk@inst-a' });
   assert.equal(A.projectAuditRow(source, 'inst-b'), null);
+});
+
+test('Patient Consent rows belong to the institution they were recorded in and to no other', () => {
+  for (const [action, detail] of [
+    ['patient.consent.record', { institution: 'inst-a', consentId: '00000000-0000-4000-8000-000000000001', before: null, after: 'active' }],
+    ['patient.consent.revoke', { institution: 'inst-a', consentId: '00000000-0000-4000-8000-000000000001', before: 'active', after: 'withdrawn' }]]) {
+    const source = { ...ROWS.get(29), action, target: '00000000-0000-4000-8000-000000000001', detail: JSON.stringify(detail) };
+    assert.equal(A.auditRule(action), 'field:detail.institution');
+    assert.deepEqual(A.projectAuditRow(source, 'inst-a').detail, detail);
+    assert.equal(A.projectAuditRow(source, 'inst-b'), null);
+  }
+  // The Connect basis rows stay hidden as before.
+  for (const action of ['basis.record', 'basis.revoke']) assert.equal(A.auditRule(action), 'hidden:connect_out_of_scope');
 });
 
 test('FC-076 Attach Document rows belong to the institution they were written for and to no other', () => {

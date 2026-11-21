@@ -5,7 +5,9 @@
 const { fixture: inspectionFixture, actor, F, EmrAuditController } = require('./inspection_harness.cjs');
 const { generateServerKeyPair, signServerPayload } = require('../../../api/src/emr-signature/server-crypto.ts');
 const patient = { linkId: 'SYN-LINK', patientId: 'SYN-PATIENT', assigningAuthority: 'SYN-SITE' };
-function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
+/** `author` is who wrote the signed C2 report versions; the signer is always `actor` (a preliminary another doctor approved
+ * names its own author, online-approval.ts). */
+function fixture(scopes = ['disclosure'], institution = 'SYN-SITE', author = actor) {
   const f = inspectionFixture(scopes, institution), baseQuery = f.tx.$queryRaw;
   const requests = [], issuances = [], duties = [], copies = new Map();
   // CD-09-D: the studies whose report the retention unit destroyed (rs D), by record ID.
@@ -18,7 +20,7 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
     const previous = originals.at(-1);
     const content = { formatVersion: 'emr-signature/1', text: { kind: 'report', findings: `합성 원문 ${index} <script>unsafe</script>`, conclusion: '정상', recommendation: '' },
       patient, studyId: 'SYN-STUDY', managingInstitutionId: 'SYN-SITE', actingInstitutionId: 'SYN-SITE', recordKind: 'report-version',
-      recordId: 'SYN-RECORD', versionId: `SYN-V${index}`, author: actor, signer: actor, identityRegistrationId: 'SYN-DOCTOR',
+      recordId: 'SYN-RECORD', versionId: `SYN-V${index}`, author, signer: actor, identityRegistrationId: 'SYN-DOCTOR',
       action: index === 1 ? 'approve-sign' : 'addendum', previousVersion: previous ? { recordId: 'SYN-RECORD', versionId: previous.versionId, sha256: previous.versionSha256 } : null,
       attachments: [], reason: null };
     originals.push({ ...signServerPayload(content, kid, key.privateKey), versionId: content.versionId, kid, keyAtSigning: registration });

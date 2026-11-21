@@ -186,7 +186,7 @@
     const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending&&gap.held!==null;
     if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
-    return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+N+'건 중 '+M+'건 전송',
+    return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): Gateway가 집계한 '+N+'건 중 '+M+'건 전송',
       title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending&&gap.held!==null
         ?' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
   }
@@ -332,7 +332,7 @@
   function gatewayStatus(receipt,requestedKey=null,format=localTime){
     const pick=(key,detail,reason,retry)=>({key,text:GATEWAY_STATUS[key].text,title:GATEWAY_STATUS[key].title,detail,reason,retry});
     if(!readableReceipt(receipt))return pick('unknown','Gateway 보고 형식을 확인할 수 없습니다','',null);
-    const detail='Gateway 보고('+format(receipt.serverReceivedAt)+'): 병원 보유 '+receipt.localCount+'건 중 '+receipt.successCount+'건 전송';
+    const detail='Gateway 보고('+format(receipt.serverReceivedAt)+'): Gateway가 집계한 '+receipt.localCount+'건 중 '+receipt.successCount+'건 전송';
     const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?['오류 코드 '+receipt.errorCode]:[];
     const retry=gatewayRetryAction(receipt);
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.

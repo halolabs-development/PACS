@@ -70,7 +70,7 @@ ORIGIN = "https://members.test"
 BASE = "/worklist/hpacs-lite/"
 PAGE_PATH = BASE + "admin.html"
 ARRIVALS_PATH = BASE + "study-arrivals.js"
-SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in ("auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js", "study-arrivals.js", "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js", "gateway-rules-admin.js", "gateway-support-admin.js",
+SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in ("auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js", "study-arrivals.js", "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js", "gateway-rules-admin.js", "gateway-support-admin.js", "patient-consent-admin.js",
     # CD-01: the shared Product Information panel and its embedded facts.
     "product-info-data.js", "product-info.js")}
 INDEX = "<!doctype html><title>SYN index</title><p id=index>SYN INDEX</p>"
@@ -164,7 +164,7 @@ RETRY_REASON = "Gateway 자동 재시도 대기 · 시도 1회 · 오류 코드 
 
 
 def reported(minute, success, local):
-    return "Gateway 보고(%s): 병원 보유 %d건 중 %d건 전송" % (shown(minute), local, success)
+    return "Gateway 보고(%s): Gateway가 집계한 %d건 중 %d건 전송" % (shown(minute), local, success)
 
 
 # (uid, status, chip, study line, detail, Now Retry shown, note), in the order the page lists them.

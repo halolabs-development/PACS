@@ -26,11 +26,13 @@ function routeController(controller) {
 const known = value => ({ status: 'known', value });
 const actor = { id: 'synthetic-auditor', issuer: 'synthetic', subject: 'auditor' };
 function fixture(scopes = ['inspection'], institution = 'SYN-SITE', storage = [], requestActor = actor) {
-  const records = [], reads = [];
+  const records = [], reads = [], members = [];
   const events = ['download', 'copy', 'provide-prepared'].map((action, i) => ({ eventId: `SYN-${i}`, action,
     occurredAt: '2026-09-30T15:00:00.000Z', userId: known(requestActor), result: 'succeeded', targets: [] }));
   const tx = {
     institution: { findUnique: async () => ({ createdAt: new Date('2026-08-31T15:00:00Z') }) },
+    // The account rows member-rights.ts memberNames reads; a test adds a member by pushing { sub, name }.
+    memberRights: { findMany: async ({ where }) => members.filter(m => where.sub.in.includes(m.sub)).map(m => ({ sub: m.sub, name: m.name })) },
     auditLog: {
       findMany: async ({ where }) => storage.filter(r => r.target === where.target && r.action === where.action).map(r => ({ ...r })),
       findFirst: async ({ where, orderBy }) => {
@@ -59,7 +61,7 @@ function fixture(scopes = ['inspection'], institution = 'SYN-SITE', storage = []
     requestId: 'SYN-REQUEST' }, requireCurrent: async () => {}, assertActive: () => {},
     work: { transactionWithRecords: async fn => fn(tx, async (event, effect) => { records.push(parseAccessEvent(event)); return effect(); }) } };
   return { controller: routeController(new EmrAuditController(new EmrAuditService({}, { withWork: async (req, fn) =>
-    fn({ ...ctx, facts: { ...ctx.facts, surface: req[routeSurface] } }) }))), storage, reads, records, events, tx };
+    fn({ ...ctx, facts: { ...ctx.facts, surface: req[routeSurface] } }) }))), storage, reads, records, events, tx, members };
 }
 
 module.exports = { fixture, actor, F, EmrAuditController, routeController, routeSurface };

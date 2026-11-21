@@ -411,7 +411,14 @@ model TechNoteRevision {
 /// Evidence records precede any new institution-to-institution access grant.
 model TransferBasis {
   id String @id @db.Uuid
-  studyUid String
+  /// A study's transfer basis names its study; a patient consent (studyUid null) names the patient instead.
+  studyUid String?
+  /// Patient consent only: the exact original Patient ID within institutionId, what the consent is for, and the
+  /// screen's request id with the recording account's fixed id (a retried request returns the same row).
+  patientId String? @db.VarChar(64)
+  purpose String? @db.VarChar(500)
+  requestId String? @db.Uuid
+  recordedBySub String?
   institutionId String
   kind String
   reference String @db.VarChar(1000)
@@ -422,10 +429,12 @@ model TransferBasis {
   revokedBy String?
   revokedAt DateTime?
   revokeReason String? @db.VarChar(1000)
-  study StudyState @relation(fields: [studyUid], references: [uid], onDelete: Restrict)
+  study StudyState? @relation(fields: [studyUid], references: [uid], onDelete: Restrict)
   institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   transfers Transfer[]
   @@index([studyUid, id])
+  @@index([institutionId, patientId, id])
+  @@unique([institutionId, recordedBySub, requestId])
 }
 
 model ProcessingAgreement {

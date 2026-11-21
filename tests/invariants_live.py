@@ -346,6 +346,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     # The critical result hospital inbox: admin only, one setting of the own institution (read and set).
     ("GET", "admin/critical-result-inbox"): Route(Kind.TENANT),
     ("PATCH", "admin/critical-result-inbox"): Route(Kind.TENANT),
+    # Patient Consent: admin only, one patient of the own institution (lookup, record, withdraw); the patient ID is in the body.
+    ("POST", "admin/patient-consent/lookup"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent/:id/withdraw"): Route(Kind.TENANT),
     # FC-070 Query/Retrieve: 자기 기관의 상대 PACS만 등록·삭제(admin)·검색·가져오기(판독의·방사선사), 검색 답·작업은 요청자에 묶인다.
     ("GET", "admin/dicom-peers"): Route(Kind.TENANT),
     ("POST", "admin/dicom-peers"): Route(Kind.TENANT),
@@ -4768,7 +4772,8 @@ class LiveInvariantTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertIn("Ran 25 tests", completed.stderr + completed.stdout)
+        # 25 -> 26: every child is told the image agent version (retention of delivered copies reads it).
+        self.assertIn("Ran 26 tests", completed.stderr + completed.stdout)
 
     def test_gateway_agent_queue_and_batch_contract(self) -> None:
         completed = subprocess.run(
@@ -4784,7 +4789,8 @@ class LiveInvariantTests(unittest.TestCase):
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
-        self.assertIn("Ran 95 tests", completed.stderr + completed.stdout)
+        # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
+        self.assertIn("Ran 115 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

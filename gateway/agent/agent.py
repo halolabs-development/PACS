@@ -122,6 +122,19 @@ RECEIPT_COLUMNS = (
     ("announced", "announced INTEGER NOT NULL DEFAULT 0"),
     ("reported_seq", "reported_seq INTEGER NOT NULL DEFAULT 0"),
 )
+# Retention (Queue.retention_due is the one rule). confirmed_seq: the seq of the last receipt KIN answered stored or
+# duplicate for this study (a stale answer or a refusal ends the report but confirms nothing). kin_stored_sops: the SOPs
+# KIN named as stored (00081199) in a STOW answer and did not name as failed — NULL for a row from before this column,
+# which is never deleted. purged: {"sops": {SOP: series}, "modalities": [...], "sourceAes": [...]} of the copies deleted
+# (NULL = none), so a late image of the study is counted and routed with them. purge_intent: the instances one deletion
+# is about to remove, written before Orthanc is asked and settled against what Orthanc still holds.
+RETENTION_COLUMNS = (
+    ("confirmed_seq", "confirmed_seq INTEGER NOT NULL DEFAULT 0"),
+    ("kin_stored_sops", "kin_stored_sops TEXT"),
+    ("purged", "purged TEXT"),
+    ("purge_intent", "purge_intent TEXT"),
+    ("purged_at", "purged_at REAL"),
+)
 # not_routed: the study's destinations do not include KIN, so KIN is never announced to and gets no receipt.
 FINAL_STUDY_PHASES = ("complete", "failed", "not_routed")
 # KIN's final answers for one receipt: stored/replayed/stale (2xx) or refused for this body. Anything
@@ -138,7 +151,7 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # Operational status (heartbeat). The admin console shows, per Gateway credential, when KIN last heard from it, its queue,
 # its version, how long it has run, its last accepted STOW and whether the local DICOM listener answers. The beat runs on
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
-AGENT_VERSION = "2026.11.2"
+AGENT_VERSION = "2026.11.3"
 HEARTBEAT_SECONDS = 30.0
 # Signed updates (update.py, the container's launcher). The launcher names the signed version of the release it runs in
 # KIN_AGENT_RUN_VERSION, so the heartbeat and the console show the version that was verified, not a constant in a file.
@@ -175,10 +188,20 @@ APPLICATION_CONTEXT = "1.2.840.10008.3.1.1.1"
 # This agent's DICOM implementation class (a UUID-derived UID, PS3.5 B.2) and version name.
 IMPLEMENTATION_CLASS_UID = "2.25.226347301929370163734862106327352741513"
 IMPLEMENTATION_VERSION = "KINGW-" + AGENT_VERSION
-# Gateway settings (routing rules and lossless compression) are set by the institution's
-# administrator in KIN and read by the heartbeat thread every SETTINGS_EVERY beats (the first right after start). No
-# settings = KIN only, nothing deleted, nothing transcoded: exactly the behaviour before settings existed.
+# Gateway settings (routing rules, lossless compression and how long delivered copies are kept) are set by the
+# institution's administrator in KIN and read by the heartbeat thread every SETTINGS_EVERY beats (the first right after
+# start). No settings = KIN only, nothing deleted, nothing transcoded: exactly the behaviour before settings existed.
 SETTINGS_EVERY = 2
+# Retention of delivered local copies (Agent.purge_delivered, the rule in Queue.retention_due). retentionDays null = never
+# delete. The first version that keeps the purge record (purged SOPs and routing facts) a later image must read: a
+# launcher whose image agent or fallback release is older never lets this agent delete (an older agent would refuse a
+# late image of a purged study). The cadence is fixed like the retry poll; a changed period is looked at on the next pass.
+RETENTION_SINCE = "2026.11.3"
+RETENTION_CHECK_SECONDS = 300.0
+RETENTION_STUDIES_PER_PASS = 10
+RETENTION_DELETE_CHUNK = 500
+RETENTION_DAYS_MAX = 3650
+DAY_SECONDS = 86400
 KIN_DESTINATION = "kin"
 # The stored transfer syntaxes lossless compression may replace (native, uncompressed pixel data), and the one it sends:
 # JPEG Lossless, Non-Hierarchical, First-Order Prediction. Anything else (already compressed, lossy or unknown) is sent
@@ -191,7 +214,22 @@ _SETTINGS_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 _SETTINGS_AE = re.compile(r"[ -~]{1,16}")
 _SETTINGS_MODALITY = re.compile(r"[A-Z0-9]{1,16}")
 _SETTINGS_HOST = re.compile(r"[A-Za-z0-9.:\-]{1,253}")
-NO_SETTINGS: dict[str, Any] = {"revision": 0, "routes": [], "compression": "none", "peers": {}}
+NO_SETTINGS: dict[str, Any] = {"revision": 0, "routes": [], "compression": "none", "peers": {}, "retentionDays": None}
+SETTINGS_KEYS = {"revision", "routes", "compression", "destinations"}
+
+
+def version_key(value: str) -> tuple[int, ...]:
+    """Numeric parts; missing trailing parts are 0 (update.py's order)."""
+    parts = [int(part) for part in value.split(".")]
+    while len(parts) > 1 and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+def keeps_purge_record(version: Any) -> bool:
+    """Whether an agent of `version` reads the purge record (RETENTION_SINCE or newer)."""
+    return (isinstance(version, str) and len(version) <= 32 and RUN_VERSION.fullmatch(version) is not None
+            and version_key(version) >= version_key(RETENTION_SINCE))
 
 
 def _closed(value: Any, keys: set[str]) -> bool:
@@ -202,8 +240,13 @@ def parse_settings(payload: Any) -> dict[str, Any] | None:
     """KIN's GET /api/gateway/settings answer as the agent uses it, or None when its shape is not exactly the contract.
 
     Closed shape on purpose: an answer this agent does not understand is never half applied; the last good settings stay.
+    retentionDays is there only because this agent asked for it (Cloud.settings); a KIN that does not know it answers the
+    other keys, which means "never delete".
     """
-    if not _closed(payload, {"revision", "routes", "compression", "destinations"}):
+    if not (_closed(payload, SETTINGS_KEYS) or _closed(payload, SETTINGS_KEYS | {"retentionDays"})):
+        return None
+    days = payload.get("retentionDays")
+    if days is not None and not (isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= RETENTION_DAYS_MAX):
         return None
     revision, routes = payload["revision"], payload["routes"]
     if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
@@ -241,7 +284,7 @@ def parse_settings(payload: Any) -> dict[str, Any] | None:
             return None
         normalized.append({"modality": modality, "sourceAe": source, "destinations": list(targets)})
     return {"revision": revision, "routes": normalized, "compression": payload["compression"],
-            "peers": peers}
+            "peers": peers, "retentionDays": days}
 
 
 def route_for(routes: list[dict[str, Any]], modalities: set[str], source_aes: set[str]) -> list[str]:
@@ -286,6 +329,9 @@ class SettingsStore:
     `.current` and `.known`. Unknown is not "no rules": until a good answer was taken once (now or by an earlier run of
     this same Gateway credential, kept in the file), `.known` is False and the main loop sends nothing, because a study
     a rule keeps away from KIN must not go to KIN by default. KIN answers empty settings when none are set.
+
+    The file's `answer` is always the shape an older agent reads (an image rolled back finds its settings); retentionDays
+    is kept beside it, so an older agent never deletes and never refuses the copy.
     """
 
     def __init__(self, queue_db: str, owner: dict[str, str]):
@@ -297,6 +343,8 @@ class SettingsStore:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(saved, dict) and all(saved.get(k) == v for k, v in owner.items()):
                 stored = saved.get("answer")
+                if isinstance(stored, dict) and "retentionDays" in saved:
+                    stored = {**stored, "retentionDays": saved["retentionDays"]}
             else:
                 self.identity_error = "settings_identity_mismatch"
         except FileNotFoundError:
@@ -315,8 +363,10 @@ class SettingsStore:
             return False
         if payload != self.raw or not self.known:
             temporary = self.path.with_name(self.path.name + ".tmp")
-            temporary.write_text(json.dumps({**self.owner, "answer": payload}, separators=(",", ":")),
-                                 encoding="utf-8")
+            saved: dict[str, Any] = {**self.owner, "answer": {k: v for k, v in payload.items() if k != "retentionDays"}}
+            if "retentionDays" in payload:
+                saved["retentionDays"] = payload["retentionDays"]
+            temporary.write_text(json.dumps(saved, separators=(",", ":")), encoding="utf-8")
             os.replace(temporary, self.path)
             self.raw = payload
             self.current = parsed
@@ -481,7 +531,8 @@ class Queue:
         # KIN refuses it for studies an earlier epoch already reported (no automatic rollover, H-1).
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
-            for table, additions in (("studies", (*RECEIPT_COLUMNS, ("destinations", "destinations TEXT"))),
+            for table, additions in (("studies", (*RECEIPT_COLUMNS, ("destinations", "destinations TEXT"),
+                                                  *RETENTION_COLUMNS)),
                                      ("forwards", (("peer", "peer TEXT"),))):
                 columns = {row["name"] for row in self.db.execute(f"PRAGMA table_info({table})")}
                 for name, ddl in additions:
@@ -501,13 +552,15 @@ class Queue:
         now = time.time()
         with self.db:
             for uid, orthanc_id in studies:
+                # A new row records KIN's stored SOPs from its first STOW; a row from before that column keeps NULL.
+                # A purge is done for the state it was decided in: new images make the study a candidate again later.
                 self.db.execute("""
-                  INSERT INTO studies(uid, orthanc_id, phase, next_at, updated_at)
-                  VALUES (?, ?, 'pending', 0, ?)
+                  INSERT INTO studies(uid, orthanc_id, phase, next_at, updated_at, kin_stored_sops)
+                  VALUES (?, ?, 'pending', 0, ?, '[]')
                   ON CONFLICT(uid) DO UPDATE SET
                     orthanc_id=excluded.orthanc_id,
                     phase='pending', batch_index=0, attempt=0, next_at=0,
-                    last_error=NULL, error_code=NULL, seq=seq+1, updated_at=excluded.updated_at
+                    last_error=NULL, error_code=NULL, seq=seq+1, updated_at=excluded.updated_at, purged_at=NULL
                 """, (uid, orthanc_id, now))
                 # Every destination the study already has looks again at what is local now (only the delta goes out).
                 self.db.execute("""
@@ -659,12 +712,24 @@ class Queue:
               UPDATE studies SET local_count=?, success_count=?, success_series=?, seq=seq+1, updated_at=? WHERE uid=?
             """, (local_count, success_count, success_series, time.time(), uid))
 
-    def add_successes(self, uid: str, sops: set[str], batch_index: int) -> None:
+    def add_successes(self, uid: str, sops: set[str], batch_index: int, stored: set[str] = frozenset()) -> None:
+        """`stored` are the SOPs of `sops` KIN named as stored; they join kin_stored_sops unless the row predates it."""
         merged = self.successes(uid) | sops
         with self.db:
             self.db.execute("""
               UPDATE studies SET successful_sops=?, batch_index=?, updated_at=? WHERE uid=?
             """, (json.dumps(sorted(merged)), batch_index, time.time(), uid))
+            if stored:
+                self.db.execute("UPDATE studies SET kin_stored_sops=? WHERE uid=? AND kin_stored_sops IS NOT NULL",
+                                (json.dumps(sorted(self.kin_stored(uid) | (stored & sops))), uid))
+
+    def kin_stored(self, uid: str) -> set[str]:
+        row = self.db.execute("SELECT kin_stored_sops FROM studies WHERE uid=?", (uid,)).fetchone()
+        try:
+            value = json.loads(row["kin_stored_sops"]) if row and row["kin_stored_sops"] is not None else []
+            return {str(item) for item in value if isinstance(item, str)}
+        except (TypeError, json.JSONDecodeError):
+            return set()
 
     def complete(self, uid: str, sops: int, success_series: int | None = None) -> None:
         # complete is exactly "the local SOP set equals the sent set at this check", so M == N here.
@@ -740,6 +805,11 @@ class Queue:
         with self.db:
             self.db.execute("UPDATE studies SET reported_seq=? WHERE uid=? AND reported_seq < ?", (seq, uid, seq))
 
+    def confirmed(self, uid: str, seq: int) -> None:
+        """KIN answered stored or duplicate to the receipt of this seq (Agent.report): the only basis retention reads."""
+        with self.db:
+            self.db.execute("UPDATE studies SET confirmed_seq=? WHERE uid=? AND confirmed_seq < ?", (seq, uid, seq))
+
     def waiting(self, uid: str, seq: int, now: float) -> bool:
         """This exact retry state is still waiting out its backoff (the retry_now condition, read only)."""
         return self.db.execute(
@@ -759,6 +829,139 @@ class Queue:
             )
         return cursor.rowcount == 1
 
+    # ── retention: deleting a delivered local copy (the rule is retention_due; Agent.purge_delivered runs it) ──
+
+    def retention_due(self, row: sqlite3.Row) -> bool:
+        """The one rule: every destination decided for the study has finished it by this Gateway's own record, and its
+        final state is confirmed. KIN: complete, KIN answered stored/duplicate to that exact receipt (confirmed_seq = seq)
+        and the row records which SOPs KIN named as stored. Each other destination: its forward row exists and is complete.
+        A study KIN is not a destination of is not_routed. Anything else (undecided, pending, retry, failed, a peer that
+        was removed or changed and so stays in retry, a refused receipt, a row from before the record) is kept."""
+        try:
+            destinations = json.loads(row["destinations"]) if row["destinations"] else None
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(destinations, list) or not destinations or not all(isinstance(d, str) for d in destinations):
+            return False
+        forwards = {str(f["dest"]): str(f["phase"]) for f in self.db.execute(
+            "SELECT dest, phase FROM forwards WHERE uid=?", (row["uid"],))}
+        if set(forwards) != set(destinations) - {KIN_DESTINATION} or any(p != "complete" for p in forwards.values()):
+            return False
+        if KIN_DESTINATION in destinations:
+            return (row["phase"] == "complete" and int(row["confirmed_seq"]) == int(row["seq"])
+                    and row["kin_stored_sops"] is not None)
+        return row["phase"] == "not_routed"
+
+    def purgeable(self, cutoff: float, limit: int, after: tuple[float, str] | None = None,
+                  uid: str | None = None, intended: bool = False) -> list[sqlite3.Row]:
+        """Studies retention_due holds for whose last destination finished at or before `cutoff` (wall clock), oldest
+        first, after `after` (delivered time, UID). The delivered moment is the latest updated_at of the study row and its
+        forward rows: each is written by the final transition (complete, not_routed, forward complete); reports, retry
+        polls and the purge record do not move it. `intended`: also the study whose deletion is under way (the check
+        before each of its delete requests)."""
+        rows = self.db.execute("""
+          SELECT * FROM (
+            SELECT s.*, max(s.updated_at, coalesce((SELECT max(f.updated_at) FROM forwards f WHERE f.uid = s.uid), 0))
+              AS delivered_at
+            FROM studies s
+            WHERE s.phase IN ('complete', 'not_routed') AND s.purged_at IS NULL AND (s.purge_intent IS NULL OR ?)
+              AND s.destinations IS NOT NULL AND (? IS NULL OR s.uid = ?)
+          ) WHERE delivered_at <= ? AND (? IS NULL OR (delivered_at, uid) > (?, ?))
+          ORDER BY delivered_at, uid
+        """, (int(intended), uid, uid, cutoff, after and after[0], after and after[0], after and after[1])).fetchall()
+        due = []
+        for row in rows:
+            if self.retention_due(row):
+                due.append(row)
+                if len(due) >= limit:
+                    break
+        return due
+
+    def delivered_sops(self, uid: str) -> set[str]:
+        """SOPs every destination of the study holds by this Gateway's record (KIN: sent and named stored)."""
+        destinations = self.destinations(uid) or []
+        sets = [self.successes(uid) & self.kin_stored(uid)] if KIN_DESTINATION in destinations else []
+        sets += [self.forward_successes(uid, dest) for dest in destinations if dest != KIN_DESTINATION]
+        return set.intersection(*sets) if sets else set()
+
+    def purge_record(self, uid: str) -> dict[str, Any]:
+        """The copies of this study deleted so far: {"sops": {SOP: series id}, "modalities": [...], "sourceAes": [...]}."""
+        row = self.db.execute("SELECT purged FROM studies WHERE uid=?", (uid,)).fetchone()
+        record: dict[str, Any] = {"sops": {}, "modalities": [], "sourceAes": []}
+        try:
+            value = json.loads(row["purged"]) if row and row["purged"] else {}
+        except (TypeError, ValueError):
+            value = {}
+        if isinstance(value, dict):
+            sops = value.get("sops")
+            record["sops"] = {str(k): str(v) for k, v in sops.items()} if isinstance(sops, dict) else {}
+            for key in ("modalities", "sourceAes"):
+                items = value.get(key)
+                record[key] = sorted({str(i) for i in items}) if isinstance(items, list) else []
+        return record
+
+    def begin_purge(self, uid: str, orthanc_id: str, targets: list[dict[str, str]], modalities: set[str],
+                    source_aes: set[str]) -> None:
+        """Written before Orthanc is asked: the instances about to go, the study's routing facts and the state (seq) the
+        deletion was decided in."""
+        row = self.db.execute("SELECT seq FROM studies WHERE uid=?", (uid,)).fetchone()
+        with self.db:
+            self.db.execute("UPDATE studies SET purge_intent=? WHERE uid=?", (json.dumps({
+                "orthancId": orthanc_id, "targets": targets, "modalities": sorted(modalities),
+                "sourceAes": sorted(source_aes), "seq": int(row["seq"]) if row else None}), uid))
+
+    def intents(self) -> list[str]:
+        return [str(row["uid"]) for row in self.db.execute("SELECT uid FROM studies WHERE purge_intent IS NOT NULL")]
+
+    def purge_orthanc_id(self, uid: str) -> str | None:
+        """The Orthanc study id of a recorded intent, or None when there is none."""
+        row = self.db.execute("SELECT purge_intent FROM studies WHERE uid=?", (uid,)).fetchone()
+        try:
+            intent = json.loads(row["purge_intent"]) if row and row["purge_intent"] else None
+        except (TypeError, ValueError):
+            intent = None
+        if not isinstance(intent, dict):
+            return None
+        return str(intent.get("orthancId") or "")
+
+    def settle_purge(self, uid: str, present: set[str]) -> tuple[int, int]:
+        """Settle the recorded intent against the instance ids Orthanc holds now: each target no longer there joins the
+        purge record and the count once; the intent is cleared. Returns (deleted, still there)."""
+        row = self.db.execute("SELECT purge_intent FROM studies WHERE uid=?", (uid,)).fetchone()
+        try:
+            intent = json.loads(row["purge_intent"]) if row and row["purge_intent"] else None
+        except (TypeError, ValueError):
+            intent = None
+        targets = intent.get("targets") if isinstance(intent, dict) and isinstance(intent.get("targets"), list) else []
+        targets = [t for t in targets if isinstance(t, dict) and isinstance(t.get("id"), str) and isinstance(t.get("sop"), str)]
+        gone = [t for t in targets if t["id"] not in present]
+        left = len(targets) - len(gone)
+        record = self.purge_record(uid)
+        if gone:
+            record["sops"].update({t["sop"]: str(t.get("series") or "") for t in gone})
+            for key in ("modalities", "sourceAes"):
+                record[key] = sorted(set(record[key]) | {str(i) for i in (intent.get(key) or [])})
+        with self.db:
+            if gone:
+                self.db.execute("UPDATE studies SET purged=? WHERE uid=?", (json.dumps(record, sort_keys=True), uid))
+                self.db.execute("""
+                  INSERT INTO meta(key, value) VALUES ('retention_instances', ?)
+                  ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + CAST(excluded.value AS INTEGER) AS TEXT)
+                """, (str(len(gone)),))
+            # Done for the state it was decided in; images that arrived since (a new seq) make the study a candidate again.
+            self.db.execute("""
+              UPDATE studies SET purge_intent=NULL, purged_at=CASE WHEN ? AND seq = ? THEN ? ELSE NULL END WHERE uid=?
+            """, (int(left == 0), intent.get("seq") if isinstance(intent, dict) else None, time.time(), uid))
+        return len(gone), left
+
+    def nothing_to_purge(self, uid: str) -> None:
+        """The study is due but Orthanc holds none of it (deleted by someone else): nothing is counted."""
+        with self.db:
+            self.db.execute("UPDATE studies SET purged_at=? WHERE uid=? AND purge_intent IS NULL", (time.time(), uid))
+
+    def retention_totals(self) -> dict[str, int]:
+        return retention_totals(self.db)
+
     def summary(self) -> dict[str, Any]:
         counts = {row["phase"]: row["n"] for row in self.db.execute(
             "SELECT phase, count(*) AS n FROM studies GROUP BY phase"
@@ -776,10 +979,12 @@ class Queue:
             "lastError": row["last_error"],
             "destinations": json.loads(row["destinations"]) if row["destinations"] else [KIN_DESTINATION],
             "forwards": forwards.get(str(row["uid"]), []),
+            "purgedSops": len(self.purge_record(str(row["uid"]))["sops"]),
         } for row in self.db.execute("SELECT * FROM studies ORDER BY updated_at, uid")]
         error = self.db.execute("SELECT value FROM meta WHERE key='identity_error'").fetchone()
         return {
             "identityError": error["value"] if error else None,
+            "retention": self.retention_totals(),
             "pending": sum(
                 count for phase, count in counts.items() if phase not in FINAL_STUDY_PHASES
             ),
@@ -788,6 +993,16 @@ class Queue:
             "notRouted": counts.get("not_routed", 0),
             "rows": rows,
         }
+
+
+def retention_totals(db: sqlite3.Connection) -> dict[str, int]:
+    """What retention deleted, from the queue (any connection, read-only included): studies with at least one deleted
+    copy, instances deleted, and studies kept because their row predates the record of KIN's stored SOPs."""
+    studies = db.execute("SELECT count(*) FROM studies WHERE purged IS NOT NULL").fetchone()[0]
+    kept = db.execute("""SELECT count(*) FROM studies WHERE kin_stored_sops IS NULL
+                         AND (destinations IS NULL OR destinations LIKE '%"kin"%')""").fetchone()[0]
+    row = db.execute("SELECT value FROM meta WHERE key='retention_instances'").fetchone()
+    return {"deletedStudies": int(studies), "deletedInstances": int(row[0]) if row else 0, "keptWithoutRecord": int(kept)}
 
 
 def queue_counts(path: str) -> dict[str, int]:
@@ -906,6 +1121,21 @@ class Orthanc:
         series = self.request("GET", f"/studies/{orthanc_id}/series").json()
         return {str((item.get("MainDicomTags") or {}).get("Modality", "")) for item in series} - {""}
 
+    def delete_instances(self, instance_ids: list[str]) -> None:
+        """Delete exactly these instances (by Orthanc id, never a whole study: an instance that arrived meanwhile stays).
+        Orthanc skips an id it no longer has and answers no count, so the caller reads what is still there."""
+        self.request("POST", "/tools/bulk-delete", json={"Resources": instance_ids})
+
+    def instance_ids(self, orthanc_id: str) -> set[str]:
+        """The instance ids Orthanc holds now for this study; none once the study is gone (404)."""
+        try:
+            items = self.request("GET", f"/studies/{orthanc_id}/instances").json()
+        except GatewayError as error:
+            if str(error) == "local Orthanc HTTP 404":
+                return set()
+            raise
+        return {str(item.get("ID", "")) for item in items if isinstance(item, dict)} - {""}
+
     def put_modality(self, name: str, peer: dict[str, Any]) -> None:
         # A destination only: it is given no right to send to, query or retrieve from this Gateway (the receiving
         # devices stay the ones in orthanc.json).
@@ -1018,7 +1248,8 @@ class Cloud:
         return self.request("POST", "/api/gateway/heartbeat", json=body)
 
     def settings(self) -> requests.Response:
-        return self.request("GET", "/api/gateway/settings")
+        # retention=1: this agent reads retentionDays; KIN leaves it out for an agent that does not ask (an older one).
+        return self.request("GET", "/api/gateway/settings", params={"retention": "1"})
 
     def stow(self, uid: str, body: bytes, content_type: str, source_ae: str,
              before_send: Callable[[], None] | None = None) -> set[str]:
@@ -1232,6 +1463,13 @@ def sent_series(instances: list[dict[str, Any]], sent: set[str]) -> int | None:
     return len({item["series"] for item in held})
 
 
+def held_view(instances: list[dict[str, Any]], record: dict[str, Any]) -> list[dict[str, Any]]:
+    """The study as the receipt counts it: the instances held now and the copies retention deleted after every destination
+    had them (Queue.purge_record), each SOP once. Without a purge it is exactly `instances`."""
+    local = {item["sop"] for item in instances}
+    return instances + [{"sop": sop, "series": series} for sop, series in sorted(record["sops"].items()) if sop not in local]
+
+
 def plan_batches(instances: list[dict[str, Any]], budget: int) -> list[list[dict[str, Any]]]:
     batches: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
@@ -1275,6 +1513,15 @@ def multipart(instances, copy_file, copy_lossless=None):
         size = body.tell()
         body.seek(0)
         yield body, f'multipart/related; type="application/dicom"; boundary={boundary}', size
+
+
+def receipt_confirmed(response: requests.Response, uid: str) -> bool:
+    """KIN's 2xx answer to this study's receipt says it stored that state or already held exactly it."""
+    try:
+        answer = response.json()
+    except Exception:
+        return False
+    return isinstance(answer, dict) and answer.get("studyUid") == uid and answer.get("result") in ("stored", "duplicate")
 
 
 def retry_request_uids(response: requests.Response) -> list[str] | None:
@@ -1618,6 +1865,21 @@ class Support:
             log("support.queue_unreadable", error=type(error).__name__)
             queue = None
         settings = self.settings.current if self.settings.known else None
+        # What retention deleted, from the queue (not the log ring, which is this run's recent lines): one line, numbers only,
+        # last so that fitting the report keeps it, in place of the oldest ring line (KIN takes at most LOG_RING_MAX lines).
+        lines = list(LOG_RING)
+        try:
+            lines = lines[-(LOG_RING_MAX - 1):]
+            db = sqlite3.connect(Path(self.config.queue_db).resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+            try:
+                totals = retention_totals(db)
+            finally:
+                db.close()
+            days = settings.get("retentionDays") if settings else None
+            lines.append(_ring_line({"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "event": "retention.totals",
+                                     **totals, **({"retentionDays": days} if isinstance(days, int) else {})}))
+        except Exception as error:
+            log("support.queue_unreadable", error=type(error).__name__)
         report = {
             "format": 1, "version": run_version(), "uptimeSeconds": max(0, int(now - self.started)),
             "launcher": _launcher_view(self.update_state),
@@ -1634,7 +1896,7 @@ class Support:
             "lastStowAgeSeconds": None if last is None else max(0, int(now - last)),
             "dataFreeBytes": free,
             "queue": queue,
-            "log": list(LOG_RING),
+            "log": lines,
         }
         # Fit the report: fewer queue rows first, then fewer log lines; the counts always stay whole.
         while len(json.dumps(report, separators=(",", ":"))) > DIAGNOSTICS_MAX_BYTES:
@@ -1748,17 +2010,21 @@ class Support:
 class StudyRouting:
     """Match current rules against this delivery's study facts, including settings received between batches."""
 
-    def __init__(self, settings: SettingsStore, orthanc: Orthanc, orthanc_id: str, instances: list[dict[str, Any]]):
+    def __init__(self, settings: SettingsStore, orthanc: Orthanc, orthanc_id: str, instances: list[dict[str, Any]],
+                 record: dict[str, Any] | None = None):
         self.settings = settings
         self.orthanc = orthanc
         self.orthanc_id = orthanc_id
-        self.source_aes = {item.get("source_ae", "") for item in instances} - {""}
+        # The facts of copies retention deleted stay facts of the study: a late image alone is routed as the whole study.
+        self.purged_modalities = set((record or {}).get("modalities") or [])
+        self.source_aes = ({item.get("source_ae", "") for item in instances}
+                           | set((record or {}).get("sourceAes") or [])) - {""}
         self.modalities: set[str] | None = None
 
     def current(self) -> tuple[dict[str, Any], list[str]]:
         settings = self.settings.current
         if self.modalities is None and settings["routes"]:
-            self.modalities = self.orthanc.series_modalities(self.orthanc_id)
+            self.modalities = self.orthanc.series_modalities(self.orthanc_id) | self.purged_modalities
             settings = self.settings.current
         return settings, route_for(settings["routes"], self.modalities or set(), self.source_aes)
 
@@ -1790,7 +2056,11 @@ class Agent:
         self.exit_code = 0
         # The launcher's ready file for this start (update.py); written once, never by an earlier run.
         self.ready_file = os.environ.get("KIN_AGENT_READY_FILE") or None
+        self.launched_ready_file = self.ready_file
         self.heartbeat: Heartbeat | None = None
+        # Retention: the next check (monotonic) and where the last full pass stopped (delivered time, UID).
+        self.purge_at = 0.0
+        self.purge_after: tuple[float, str] | None = None
 
     def stop(self, *_args: Any) -> None:
         self.stopping = True
@@ -1810,6 +2080,119 @@ class Agent:
             except OSError as error:
                 log("agent.ready_deferred", error=type(error).__name__)
 
+    # ── retention of delivered copies ──
+
+    def release_settled(self) -> bool:
+        """No update swap, probation or rollback is under way for this run, and every release the launcher could start
+        instead reads the purge record. Without the launcher (KIN_AGENT_UPDATE_STATE unset) nothing swaps this agent."""
+        state_path = os.environ.get("KIN_AGENT_UPDATE_STATE")
+        if not state_path:
+            return True
+        # This start proved itself (its ready file is written), and the image's own agent reads the record.
+        if not self.launched_ready_file or self.ready_file is not None:
+            return False
+        if not keeps_purge_record(os.environ.get("KIN_AGENT_BUILTIN_VERSION")):
+            return False
+        try:
+            state = json.loads(Path(state_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(state, dict) or "pending" not in state or state["pending"] is not None:
+            return False
+        running, current, previous = state.get("running"), state.get("current"), state.get("previous")
+        mine = os.environ.get("KIN_AGENT_RUN_VERSION") or "builtin"
+        # A manual rollback names the other release current before it stops this one.
+        if running != mine or current != mine:
+            return False
+        return previous in (None, "builtin") or keeps_purge_record(previous)
+
+    def retention_period(self) -> float | None:
+        """The seconds a delivered copy is kept, when a deletion may run now; None when none may: no period set, the
+        settings never known, stopping, or the release not settled."""
+        if self.stopping or not self.settings.known:
+            return None
+        days = self.settings.current.get("retentionDays")
+        if days is None or not self.release_settled():
+            return None
+        return float(days) * DAY_SECONDS
+
+    def purge_delivered(self) -> None:
+        """Delete the local copies every destination has once the set period has passed (Queue.retention_due). Never
+        raises: a failure keeps the copies, the transfers go on, and the next check tries again."""
+        if time.monotonic() < self.purge_at:
+            return
+        try:
+            intents = self.queue.intents()
+            keep = self.retention_period()
+            if keep is None and not intents:
+                return
+            self.purge_at = time.monotonic() + RETENTION_CHECK_SECONDS
+            for uid in intents:   # a stop or a failure between the record and Orthanc's answer
+                self.settle_purge(uid)
+            if keep is None:
+                return
+            due = self.queue.purgeable(time.time() - keep, RETENTION_STUDIES_PER_PASS, self.purge_after)
+            # The next check goes on after the last one looked at, so a study skipped every time never holds others back.
+            self.purge_after = ((float(due[-1]["delivered_at"]), str(due[-1]["uid"]))
+                                if len(due) >= RETENTION_STUDIES_PER_PASS else None)
+            for row in due:
+                if self.retention_period() is None:
+                    return
+                self.purge_study(str(row["uid"]))
+        except Exception as error:
+            log("retention.deferred", error=error_code(error))
+
+    def purge_study(self, uid: str) -> None:
+        """Delete one due study's local instances, all of them delivered everywhere, or nothing."""
+        try:
+            orthanc_id, _detail, instances = self.orthanc.instances(uid, self.queue.orthanc_id(uid))
+        except GatewayError as error:
+            if str(error) != "local study lookup count=0":
+                raise
+            self.queue.nothing_to_purge(uid)
+            log("study.purged", uid=uid, sops=0, failed=0)
+            return
+        delivered = self.queue.delivered_sops(uid)
+        waiting = [item for item in instances if item["sop"] not in delivered]
+        if waiting:
+            # An image the change feed has not reported yet, or one a destination lacks: the whole study stays.
+            log("study.purge_skipped", uid=uid, pending=len(waiting))
+            return
+        modalities = self.orthanc.series_modalities(orthanc_id)
+        targets = [{"id": item["id"], "sop": item["sop"], "series": str(item.get("series") or "")} for item in instances]
+        if not self.may_delete(uid):
+            return
+        self.queue.begin_purge(uid, orthanc_id, targets, modalities,
+                               {item.get("source_ae", "") for item in instances} - {""})
+        try:
+            for start in range(0, len(targets), RETENTION_DELETE_CHUNK):
+                if start and not self.may_delete(uid):
+                    break
+                self.orthanc.delete_instances([item["id"] for item in targets[start:start + RETENTION_DELETE_CHUNK]])
+        finally:
+            self.settle_purge(uid)
+
+    def may_delete(self, uid: str) -> bool:
+        """The one check right before every delete request: the rule and the period as they are now (the settings, a stop
+        or an update may have changed while Orthanc was read or an earlier request ran)."""
+        keep = self.retention_period()
+        return keep is not None and bool(self.queue.purgeable(time.time() - keep, 1, uid=uid, intended=True))
+
+    def study_record(self, uid: str) -> dict[str, Any]:
+        """The purge record of a study about to be sent or routed. A deletion a stop left recorded but not settled is
+        settled first, so the study is counted and routed with every copy already gone (raises while Orthanc is down)."""
+        if self.queue.purge_orthanc_id(uid) is not None:
+            self.settle_purge(uid)
+        return self.queue.purge_record(uid)
+
+    def settle_purge(self, uid: str) -> None:
+        """Record what an intended deletion removed, by what Orthanc still holds (its answer carries no count)."""
+        orthanc_id = self.queue.purge_orthanc_id(uid)
+        if orthanc_id is None:
+            return
+        gone, left = self.queue.settle_purge(uid, self.orthanc.instance_ids(orthanc_id))
+        log("study.purged", uid=uid, sops=gone, failed=left)
+
     def report(self, uid: str) -> bool:
         """Send this study's current receipt. Never raises: a receipt must not change the transfer.
 
@@ -1823,6 +2206,9 @@ class Agent:
             response = self.cloud.receipt(body)
             if response.ok or response.status_code in RECEIPT_FINAL_REFUSALS:
                 self.queue.reported(uid, body["seq"])
+                # Retention deletes only on a receipt KIN stored or already held as is, never on stale or a refusal.
+                if response.ok and receipt_confirmed(response, uid):
+                    self.queue.confirmed(uid, body["seq"])
                 if not response.ok:
                     try:
                         code = response.json().get("code")
@@ -1951,8 +2337,9 @@ class Agent:
     def process(self, row: sqlite3.Row) -> None:
         uid = str(row["uid"])
         self.queue.phase(uid, "announcing")
+        record = self.study_record(uid)
         orthanc_id, detail, instances = self.orthanc.instances(uid, str(row["orthanc_id"]))
-        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances)
+        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances, record)
         if KIN_DESTINATION not in self.decide(row, routing):
             self.queue.not_routed(uid)
             return
@@ -1960,10 +2347,12 @@ class Agent:
         institution_name = str((detail.get("MainDicomTags") or {}).get("InstitutionName", ""))
         self.cloud.announce(uid, institution_name, routing.require_kin)
 
-        local_sops = {item["sop"] for item in instances}
+        # The receipt counts the study held now plus the copies retention deleted (held_view; without a purge, held now).
+        held = held_view(instances, record)
+        local_sops = {item["sop"] for item in held}
         successful = self.queue.successes(uid)
-        # M counts only SOPs this Gateway still holds, so 0 <= M <= N holds in every receipt.
-        self.queue.announced(uid, len(local_sops), len(successful & local_sops), sent_series(instances, successful))
+        # M counts only SOPs this Gateway holds or deleted after delivery, so 0 <= M <= N holds in every receipt.
+        self.queue.announced(uid, len(local_sops), len(successful & local_sops), sent_series(held, successful))
         self.report(uid)
         pending = [item for item in instances if item["sop"] not in successful]
         batches = plan_batches(pending, self.config.byte_budget)
@@ -1982,9 +2371,9 @@ class Agent:
             unknown = failures - batch_sops
             if unknown:
                 raise GatewayError("STOW response named an unknown failed SOP")
-            self.queue.add_successes(uid, batch_sops - failures, batch_index)
+            self.queue.add_successes(uid, batch_sops - failures, batch_index, self.cloud.last_stored)
             sent = self.queue.successes(uid)
-            self.queue.counts(uid, len(local_sops), len(sent & local_sops), sent_series(instances, sent))
+            self.queue.counts(uid, len(local_sops), len(sent & local_sops), sent_series(held, sent))
             if lossless is None:
                 log(
                     "batch.stored", uid=uid, batch=batch_index, sops=len(batch),
@@ -2001,6 +2390,7 @@ class Agent:
 
         # 전송 중 새 인스턴스가 도착했을 수 있다. 개수가 아니라 양쪽 SOP 집합이 같아야 끝난다.
         _orthanc_id, _detail, latest = self.orthanc.instances(uid, orthanc_id)
+        latest = held_view(latest, record)
         latest_sops = {item["sop"] for item in latest}
         successful = self.queue.successes(uid)
         missing = latest_sops - successful
@@ -2027,8 +2417,9 @@ class Agent:
             peer = json.loads(row["peer"])
         except (TypeError, ValueError):
             raise ForwardError("forward destination unknown") from None
+        record = self.study_record(uid)
         orthanc_id, _detail, instances = self.orthanc.instances(uid, self.queue.orthanc_id(uid))
-        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances)
+        routing = StudyRouting(self.settings, self.orthanc, orthanc_id, instances, record)
         routing.require_peer(dest, peer)
         self.queue.forward_phase(uid, dest, "sending")
         modality = "kin-route-" + dest
@@ -2124,6 +2515,8 @@ class Agent:
                             uid, str(forward["dest"]), reason, self.config.backoff_base, self.config.backoff_max,
                         )
                         log("forward.retry", uid=uid, attempt=attempt, afterSeconds=round(delay, 2), error=reason)
+                # After both deliveries of this pass, so a clean-up never holds a transfer back for long.
+                self.purge_delivered()
                 self.mark_ready()
                 if again:
                     continue

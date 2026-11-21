@@ -191,6 +191,7 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/dicom-peers-admin.js",
     "worklist-v0/hpacs-lite/gateway-rules-admin.js",
     "worklist-v0/hpacs-lite/gateway-support-admin.js",
+    "worklist-v0/hpacs-lite/patient-consent-admin.js",
     "worklist-v0/hpacs-lite/clinician.html",
     "worklist-v0/hpacs-lite/clinician.js",
     # In-app unread marks of Clinician Home and the reading screen (main.html tags it right before the bundle).

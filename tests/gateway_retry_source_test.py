@@ -67,7 +67,7 @@ U3_RULE_SHA256 = "e038ba9382b21d536aa5a27a717b10dfd111fef1429abb51325cb7886e57ff
 # says why it did not compare exactly when that answer did not (count unknown, or the report arrived after the list read began).
 # It moved once more for the series count (a10685cc…bfd06f before): "compared" is the images' answer, so a series answer
 # alone never drops the "count unknown" title; the label text and keys are unchanged (study_observation_vectors.json).
-U1B_GATEWAY_LABEL_SHA256 = "4504020d7d3fee787a4a4f20bbe54d33cfd2142c05afde921278dc05041a328f"
+U1B_GATEWAY_LABEL_SHA256 = "b1d0b38b3459d7f807c5e308d177866dd1ccf86d875f8bac6dbe60ad3466be6c"
 
 
 def sha(value):
@@ -661,9 +661,10 @@ class MigrationPins(unittest.TestCase):
         # Auto Save View: 61 tables (ViewerAutoView), rows + its one saved view, 113.
         # Merge Exam / Split: 63 tables (StudyGroup, StudyGroupMember), rows + one merged exam and its two members, 116.
         # In-app unread: 65 tables (StudyQuestionSeen, StudyImageRequestSeen), rows + one seen mark each, 118.
+        # Patient Consent: no new table, rows + one patient consent row beside the study basis, 119.
         self.assertEqual(len(restore_fixture.TABLES), 65)
         self.assertEqual(set(rows), set(restore_fixture.TABLES))
-        self.assertEqual(sum(len(value) for value in rows.values()), 118)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Merge Exam: + 3; in-app unread: + 2
+        self.assertEqual(sum(len(value) for value in rows.values()), 119)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Merge Exam: + 3; in-app unread: + 2; Patient Consent: + 1
         self.assertEqual({table: len(rows[table]) for table in ("GatewayRetryRequest", "CriticalResult", "CriticalResultEvent",
                                                                 "CriticalResultReceipt")},
                          {"GatewayRetryRequest": 1, "CriticalResult": 4, "CriticalResultEvent": 7, "CriticalResultReceipt": 6})

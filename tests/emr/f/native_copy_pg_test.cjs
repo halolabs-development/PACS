@@ -803,6 +803,11 @@ test('FT11/FT12 only the designated auditor issues; an issued copy is independen
   const html = Buffer.from(issued.artifact, 'base64').toString('utf8');
   fs.writeFileSync(path.join(spool, 'native-fixed-copy.html'), html);
   assert.equal(stored.sha256, sha(Buffer.from(issued.artifact, 'base64')));
+  // Each version's author by the member name of the account on its stored ReportVersion row, the identifier beside it.
+  const authors = [...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]);
+  assert.equal(authors.length, 2, html);
+  assert.ok(authors.every(author => author.startsWith('Synthetic fn-doctor (')), JSON.stringify(authors));
+  assert.deepEqual([...html.matchAll(/<dt>Signature<\/dt><dd>([^<]*)<\/dd>/g)].map(m => m[1]), ['Not Signed', 'Signed']);
   const [grants] = await ctx.witness.$queryRaw`SELECT has_table_privilege('kin_runtime','emr_audit.fixed_copy','SELECT') AS s,
     has_table_privilege('kin_runtime','emr_audit.fixed_copy','INSERT') AS i, has_table_privilege('kin_runtime','emr_audit.fixed_copy','UPDATE') AS u,
     has_table_privilege('kin_runtime','emr_audit.fixed_copy','DELETE') AS d, has_table_privilege('kin_runtime','emr_audit.fixed_copy','TRUNCATE') AS t`;
