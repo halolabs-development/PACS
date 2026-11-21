@@ -3,6 +3,7 @@ import dataclasses
 import http.server
 import io
 import json
+import os
 import re
 import socketserver
 import sqlite3
@@ -1372,7 +1373,8 @@ class HeartbeatTests(unittest.TestCase):
             with patch.object(agent_module, "Queue", side_effect=no_queue):
                 agent.run()
         self.assertIs(agent_module.Queue, agent_module_queue)
-        self.assertEqual(extra, ["heartbeat"])
+        # Remote support has a thread of its own too, so neither waits for the other; neither builds a Queue.
+        self.assertEqual(sorted(extra), ["heartbeat", "support"])
         self.assertTrue(cloud.bodies, "the beat went out with Queue unavailable")
         self.assertEqual(cloud.bodies[0]["queue"], {"waiting": 0, "retry": 0, "failed": 0})
         self.assertEqual(set(threading.enumerate()) - before, set(), "nothing is left running after run()")
@@ -2029,6 +2031,301 @@ class RoutingTests(unittest.TestCase):
         for odd in ({}, {"00081199": []}, None, "x", {"00081199": {"Value": "x"}},
                     {"00081199": {"Value": [{"00081155": None}, {"00081155": {"Value": None}}, None]}}):
             self.assertEqual(agent_module.stored_sops(odd), set())
+
+
+# ── signed updates (the agent's half) and remote support ──────────────────────────────────────────────────────────────
+
+REQ = "5a5a5a5a-1111-4222-8333-944455556666"
+REQ_B = "6b6b6b6b-1111-4222-8333-944455556666"
+
+
+class StreamResponse(FakeResponse):
+    def __init__(self, status, chunks):
+        super().__init__(status)
+        self.chunks, self.closed = chunks, False
+
+    def iter_content(self, _size):
+        yield from self.chunks
+
+    def close(self):
+        self.closed = True
+
+
+class SupportCloud:
+    """KIN's support routes as the agent calls them: records each call; answers from a table (default 200 stored)."""
+
+    def __init__(self, answers=None):
+        self.base, self.calls, self.answers = "https://cloud.invalid", [], dict(answers or {})
+
+    def request(self, method, path, **kwargs):
+        body = kwargs.get("json")
+        self.calls.append((method, path, None if body is None else json.loads(json.dumps(body)), kwargs.get("params")))
+        answer = self.answers.get((method, path))
+        if isinstance(answer, list):
+            answer = answer.pop(0) if answer else None
+        if isinstance(answer, Exception):
+            raise answer
+        return answer or FakeResponse(200, {"result": "stored"})
+
+    def posts(self):
+        return [(path.rsplit("/", 1)[1], body) for method, path, body, _ in self.calls if method == "POST"]
+
+
+class SupportTests(unittest.TestCase):
+    """Remote support and the launcher's ready signal, on the agent's side."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.dir = Path(directory.name)
+        self.path = str(self.dir / "queue.db")
+        self.env = patch.dict(os.environ, {"KIN_UPDATE_ROOT": str(self.dir / "agent-releases"),
+                                           "KIN_AGENT_UPDATE_STATE": str(self.dir / "agent-releases" / "state.json")})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        os.environ.pop("GW_REMOTE_SUPPORT", None)
+        os.environ.pop("KIN_AGENT_RUN_VERSION", None)
+        self.stops = []
+
+    def agent(self, **changes) -> Agent:
+        agent = Agent(config(self.path, **changes))
+        self.addCleanup(agent.queue.close)
+        return agent
+
+    def support(self, agent: Agent, cloud: SupportCloud | None = None):
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        support = agent_module.Support(agent.config, agent.queue.epoch, agent.owner, beat, agent.settings, agent.orthanc,
+                                       agent.cloud, time.monotonic(), self.stops.append)
+        self.addCleanup(support.cloud.session.close)
+        support.cloud = cloud or SupportCloud()
+        return support
+
+    def row(self, agent: Agent, uid, phase="complete", destinations=("kin",), last_error=None):
+        with agent.queue.db:
+            agent.queue.db.execute(
+                "INSERT INTO studies(uid, orthanc_id, phase, last_error, destinations, updated_at) VALUES (?,?,?,?,?,?)",
+                (uid, "o-" + uid, phase, last_error, None if destinations is None else json.dumps(list(destinations)),
+                 time.time()))
+
+    def test_the_heartbeat_names_the_signed_version_the_launcher_gave(self):
+        agent = self.agent()
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        self.assertEqual(beat.body()["version"], agent_module.AGENT_VERSION)
+        for value, shown in (("2026.12.1", "2026.12.1"), ("v2", agent_module.AGENT_VERSION),
+                             ("1." * 20 + "1", agent_module.AGENT_VERSION)):
+            with patch.dict(os.environ, {"KIN_AGENT_RUN_VERSION": value}):
+                self.assertEqual(beat.body()["version"], shown)
+
+    def test_the_ready_file_needs_a_stored_beat_and_a_finished_pass(self):
+        ready = self.dir / "start.ready"
+        with patch.dict(os.environ, {"KIN_AGENT_READY_FILE": str(ready)}):
+            agent = self.agent()
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        beat.cloud = BeatCloud([FakeResponse(200, {"result": "stale"}), FakeResponse(503),
+                                FakeResponse(200, {"result": "stored"})])
+        agent.heartbeat = beat
+        agent.mark_ready()
+        self.assertFalse(ready.exists(), "no beat yet")
+        beat.beat()   # 200 but stale: KIN did not take this run's status
+        beat.beat()   # refused
+        agent.mark_ready()
+        self.assertFalse(ready.exists())
+        beat.beat()
+        self.assertTrue(beat.stored_once)
+        agent.mark_ready()
+        self.assertEqual(json.loads(ready.read_text()), {"version": agent_module.AGENT_VERSION})
+        ready.unlink()
+        agent.mark_ready()
+        self.assertFalse(ready.exists(), "written once per start")
+
+    def test_a_pass_that_ended_in_an_outer_error_does_not_make_the_run_ready(self):
+        ready = self.dir / "start.ready"
+        with patch.dict(os.environ, {"KIN_AGENT_READY_FILE": str(ready)}):
+            agent = self.agent()
+        agent.heartbeat = type("Beat", (), {"stored_once": True})()
+        passes = []
+
+        def poll_changes():
+            passes.append(1)
+            if len(passes) == 1:
+                raise GatewayError("local Orthanc HTTP 500")
+            agent.stopping = True
+
+        agent.flush_receipts = lambda: None
+        agent.retry_requests = lambda: None
+        agent.poll_changes = poll_changes
+        seen = []
+        with patch.object(agent_module.time, "sleep", lambda _s: seen.append(ready.exists())):
+            agent.loop()
+        self.assertEqual(seen, [False, True], "not after the failed pass; after the next clean one")
+
+    def test_the_log_ring_keeps_only_listed_gateway_events_without_destination_or_free_text(self):
+        agent_module.LOG_RING.clear()
+        with patch.object(agent_module.sys, "stdout", io.StringIO()):
+            agent_module.log("forward.complete", uid="1.2.840.99", sops=2)   # one study's history: not kept at all
+            agent_module.log("study.gone")                                   # about one study even without a UID
+            agent_module.log("forward.stored", dest=PEER, sops=3)            # same: one study's transfer history
+            agent_module.log("agent.retry", attempt=2, afterSeconds=1.5, error="local_change_invalid")
+            agent_module.log("agent.started", version="2026.11.2", queueRows=4, dest=PEER, note="PATIENT^NAME")
+            agent_module.log("heartbeat.deferred", error="Patient Name Something")
+        self.assertEqual([line["event"] for line in agent_module.LOG_RING], ["agent.started", "heartbeat.deferred"])
+        first, second = agent_module.LOG_RING
+        self.assertEqual(first, {"at": first["at"], "event": "agent.started", "queueRows": 4})
+        self.assertEqual(second, {"at": second["at"], "event": "heartbeat.deferred", "error": "other"})
+    def test_diagnostics_are_a_closed_report_without_secrets_names_or_unrouted_studies(self):
+        agent = self.agent(client_secret="SECRET-VALUE-1", orthanc_pass="ORTHANC-PASS-1")
+        self.row(agent, "1.2.3.1", "retry", ("kin", PEER), "announce HTTP 503")
+        self.row(agent, "1.2.3.2", "not_routed", (PEER,))
+        self.row(agent, "1.2.3.3", "pending", None)
+        cloud = SupportCloud()
+        support = self.support(agent, cloud)
+        with patch.object(agent_module.sys, "stdout", io.StringIO()):
+            agent_module.log("study.retry", uid="1.2.3.2", error="announce HTTP 503")
+        support.carry_out({"id": REQ, "action": "diagnostics", "version": None})
+        (request_id, body), = cloud.posts()
+        self.assertEqual(request_id, REQ)
+        self.assertEqual(set(body), {"epoch", "bootId", "result", "code", "version", "diagnostics"})
+        self.assertEqual((body["epoch"], body["result"]), (agent.queue.epoch, "done"))
+        report = body["diagnostics"]
+        self.assertEqual(set(report), {"format", "version", "uptimeSeconds", "launcher", "config", "settings",
+                                       "localOrthanc", "lastStowAgeSeconds", "dataFreeBytes", "queue", "log"})
+        self.assertEqual(report["queue"]["counts"], {"retry": 1, "not_routed": 1, "pending": 1})
+        self.assertEqual(report["queue"]["omitted"], 2)
+        self.assertEqual(report["queue"]["rows"], [{"uid": "1.2.3.1", "phase": "retry", "attempt": 0,
+                                                    "errorCode": "announce_http", "destinations": ["kin", PEER],
+                                                    "forwards": []}])
+        text = json.dumps(report)
+        for absent in ("SECRET-VALUE-1", "ORTHANC-PASS-1", "1.2.3.2", "1.2.3.3", "announce HTTP 503"):
+            self.assertNotIn(absent, text)
+        self.assertEqual(report["config"]["clientId"], "c")
+        self.assertLessEqual(len(json.dumps(report, separators=(",", ":"))), agent_module.DIAGNOSTICS_MAX_BYTES)
+
+    def test_a_large_queue_still_fits_with_whole_counts(self):
+        agent = self.agent()
+        for index in range(300):
+            self.row(agent, f"1.2.840.10008.{index}", "complete")
+        support = self.support(agent)
+        with patch.object(agent_module, "DIAGNOSTICS_MAX_BYTES", 6000):
+            report = support.diagnostics()
+            self.assertLessEqual(len(json.dumps(report, separators=(",", ":"))), 6000)
+        self.assertEqual(report["queue"]["total"], 300)
+        self.assertEqual(len(report["queue"]["rows"]) + report["queue"]["omitted"], 300)
+        self.assertGreater(report["queue"]["omitted"], 100)
+
+    def test_a_restart_happens_once_and_the_next_run_reports_it_done(self):
+        agent = self.agent()
+        cloud = SupportCloud()
+        support = self.support(agent, cloud)
+        support.carry_out({"id": REQ, "action": "restart", "version": None})
+        self.assertEqual(self.stops, [agent_module.RESTART_EXIT])
+        self.assertEqual([(i, b["result"]) for i, b in cloud.posts()], [(REQ, "accepted")])
+        support.carry_out({"id": REQ, "action": "restart", "version": None})   # delivered again: no second restart
+        self.assertEqual(self.stops, [agent_module.RESTART_EXIT])
+        support.report_outcomes()   # the same run: not done yet
+        self.assertEqual(len(cloud.posts()), 2)
+        later = self.support(agent, SupportCloud({("POST", f"/api/gateway/support/{REQ}"): [FakeResponse(503)]}))
+        later.report_outcomes()      # KIN busy: owed still
+        later.report_outcomes()
+        self.assertEqual([(i, b["result"]) for i, b in later.cloud.posts()], [(REQ, "done"), (REQ, "done")])
+        later.report_outcomes()
+        self.assertEqual(len(later.cloud.posts()), 2, "acknowledged once, never again")
+        self.assertIsNone(self.support(agent).memo["restart"])
+
+    def test_an_update_is_downloaded_whole_and_handed_to_the_launcher_once(self):
+        agent = self.agent()
+        bundle = b'{"format":1}' * 10
+        cloud = SupportCloud({("GET", "/api/gateway/update/2026.12.1"): StreamResponse(200, [bundle[:50], bundle[50:]])})
+        support = self.support(agent, cloud)
+        support.carry_out({"id": REQ, "action": "update", "version": "2026.12.1"})
+        incoming = [p for p in (self.dir / "agent-releases" / "incoming").iterdir()]
+        self.assertEqual([p.name.startswith(".") for p in incoming], [False])
+        self.assertEqual((incoming[0] / "bundle.json").read_bytes(), bundle)
+        self.assertEqual(json.loads((incoming[0] / "request.json").read_text()), {"requestId": REQ, "version": "2026.12.1"})
+        self.assertEqual([(i, b["result"], b["version"]) for i, b in cloud.posts()], [(REQ, "accepted", "2026.12.1")])
+        support.carry_out({"id": REQ, "action": "update", "version": "2026.12.1"})
+        self.assertEqual(len(list((self.dir / "agent-releases" / "incoming").iterdir())), 1, "not handed over twice")
+        self.assertEqual(self.stops, [])
+
+    def test_an_update_that_cannot_be_downloaded_or_kept_is_refused_with_a_code(self):
+        agent = self.agent()
+        cases = [(StreamResponse(404, []), "download_failed"),
+                 (StreamResponse(200, [b"x" * 4096] * 3), "too_large"),
+                 (GatewayError("cloud request ConnectionError"), "download_failed")]
+        for answer, code in cases:
+            cloud = SupportCloud({("GET", "/api/gateway/update/2026.12.1"): answer})
+            support = self.support(agent, cloud)
+            with patch.object(agent_module, "UPDATE_DOWNLOAD_MAX_BYTES", 10000):
+                support.carry_out({"id": REQ_B, "action": "update", "version": "2026.12.1"})
+            self.assertEqual([(b["result"], b["code"]) for _i, b in cloud.posts()], [("refused", code)])
+        self.assertFalse((self.dir / "agent-releases" / "incoming").exists()
+                         and [p for p in (self.dir / "agent-releases" / "incoming").iterdir() if not p.name.startswith(".")])
+        with patch.dict(os.environ, {"KIN_UPDATE_ROOT": ""}):
+            support = self.support(agent)
+            support.carry_out({"id": REQ, "action": "update", "version": "2026.12.1"})
+            self.assertEqual([(b["result"], b["code"]) for _i, b in support.cloud.posts()], [("refused", "no_launcher")])
+
+    def test_remote_support_off_refuses_every_action_and_does_nothing(self):
+        agent = self.agent()
+        with patch.dict(os.environ, {"GW_REMOTE_SUPPORT": "off"}):
+            support = self.support(agent)
+        for action, version in (("diagnostics", None), ("restart", None), ("update", "2026.12.1")):
+            support.carry_out({"id": REQ, "action": action, "version": version})
+        self.assertEqual([(b["result"], b["code"], b["diagnostics"]) for _i, b in support.cloud.posts()],
+                         [("refused", "remote_support_off", None)] * 3)
+        self.assertEqual([c for c in support.cloud.calls if c[0] == "GET"], [])
+        self.assertEqual(self.stops, [])
+
+    def test_the_launcher_outcomes_are_reported_until_kin_acknowledges_them(self):
+        agent = self.agent()
+        state = self.dir / "agent-releases" / "state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text(json.dumps({"current": "2026.12.1", "results": [
+            {"version": "2026.12.1", "result": "installed", "code": None, "requestId": REQ},
+            {"version": "2026.12.2", "result": "refused", "code": "bad_signature", "requestId": REQ_B},
+            {"version": "2026.12.3", "result": "rolled_back", "code": "exited", "requestId": "not-a-request-id"}]}))
+        cloud = SupportCloud({("POST", f"/api/gateway/support/{REQ_B}"): [FakeResponse(503)]})
+        support = self.support(agent, cloud)
+        support.report_outcomes()
+        self.assertEqual([(i, b["result"], b["code"], b["version"]) for i, b in cloud.posts()],
+                         [(REQ, "installed", None, "2026.12.1"), (REQ_B, "refused", "bad_signature", "2026.12.2")])
+        support.report_outcomes()
+        support.report_outcomes()
+        self.assertEqual([i for i, _b in cloud.posts()], [REQ, REQ_B, REQ_B])
+        # Another start of the same Gateway remembers what KIN acknowledged.
+        again = self.support(agent)
+        again.report_outcomes()
+        self.assertEqual(again.cloud.posts(), [])
+
+    def test_only_a_well_formed_request_is_carried_out(self):
+        agent = self.agent()
+        bad = [{"id": REQ, "action": "shell", "version": None}, {"id": "x", "action": "restart", "version": None},
+               {"id": REQ, "action": "update", "version": None}, {"id": REQ, "action": "restart", "version": "1"},
+               {"id": REQ, "action": "update", "version": "1.0; rm"}, {"id": REQ, "action": "restart"},
+               {"id": REQ, "action": "restart", "version": None, "command": "x"}]
+        for request in bad:
+            cloud = SupportCloud({("GET", "/api/gateway/support"): FakeResponse(200, {"request": request})})
+            support = self.support(agent, cloud)
+            support.tick()
+            self.assertEqual(cloud.posts(), [], request)
+        self.assertEqual(self.stops, [])
+        cloud = SupportCloud({("GET", "/api/gateway/support"): FakeResponse(200, {"request": None})})
+        self.support(agent, cloud).tick()
+        self.assertEqual(cloud.calls[-1][3], {"epoch": agent.queue.epoch})
+        # A KIN without remote support answers 404: nothing happens.
+        cloud = SupportCloud({("GET", "/api/gateway/support"): FakeResponse(404)})
+        self.support(agent, cloud).tick()
+        self.assertEqual(cloud.posts(), [])
+
+    def test_the_memo_belongs_to_this_credential_and_queue(self):
+        agent = self.agent()
+        memo = Path(self.path).with_name("support.json")
+        memo.write_text(json.dumps({"client": "c", "base": "https://cloud.invalid", "epoch": "other-epoch",
+                                    "handled": [REQ], "reported": [], "restart": None}))
+        support = self.support(agent)
+        self.assertEqual(support.memo["handled"], [])
 
 
 if __name__ == "__main__":

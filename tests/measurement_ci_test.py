@@ -173,6 +173,7 @@ REGRESSION_SUITES = {
         tests/audit_record_kind_dom_test.py
         tests/admin_audit_dom_test.py
         tests/admin_gateway_rules_dom_test.py
+        tests/admin_gateway_support_dom_test.py
         tests/admin_gateway_status_dom_test.py
         tests/admin_member_roles_dom_test.py
         tests/admin_metrics_dom_test.py
