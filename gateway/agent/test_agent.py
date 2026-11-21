@@ -125,6 +125,8 @@ class FakeOrthanc:
 
 
 class FakeCloud:
+    last_stored = frozenset()   # KIN names no stored SOP: these tests never reach retention
+
     def __init__(self, receipt):
         self.announced, self.stowed, self.answer = [], [], receipt
 
@@ -681,6 +683,8 @@ def duplicate_or_stored(body):
 
 class RetryCloud:
     """The Now Retry poll and the receipt route; queued answers first, then `default`. Records every call."""
+
+    last_stored = frozenset()
 
     def __init__(self):
         self.polls, self.confirms, self.default = [], [], duplicate_or_stored
@@ -1408,6 +1412,25 @@ class RouteOrthanc:
         self.store_error = None
         self.store_answer = None
         self.refuse_lossless = False
+        # Retention: a deletion removes the held instances it names; hooks let a test act at the moment of a call.
+        self.delete_error = self.ids_error = None
+        self.on_delete = self.on_series = None
+
+    def delete_instances(self, instance_ids):
+        self.calls.append(("delete", tuple(instance_ids)))
+        if self.delete_error is not None:
+            raise self.delete_error
+        if self.on_delete:
+            self.on_delete()
+        for sop in [sop for sop, item in self.held.items() if item["id"] in instance_ids]:
+            del self.held[sop]
+
+    def instance_ids(self, orthanc_id):
+        self.calls.append("ids")
+        if self.ids_error is not None:
+            error, self.ids_error = self.ids_error, None
+            raise error
+        return {item["id"] for item in self.held.values()}
 
     def instances(self, uid, preferred_id):
         self.calls.append("instances")
@@ -1418,6 +1441,8 @@ class RouteOrthanc:
 
     def series_modalities(self, orthanc_id):
         self.calls.append("series")
+        if self.on_series:
+            self.on_series()
         return set(self.modalities)
 
     def copy_file(self, instance_id, sink):
@@ -1448,6 +1473,9 @@ class RouteCloud:
     def __init__(self):
         self.announced, self.stowed, self.receipts = [], [], []
         self.bodies = []
+        # What KIN names as stored (00081199) in a STOW answer: `names` (a test may point it at the held SOPs).
+        self.names, self.last_stored = (), set()
+        self.answer = lambda body: FakeResponse(200, {"studyUid": body["studyUid"], "result": "stored"})
 
     def announce(self, uid, institution_name, before_send):
         before_send()
@@ -1457,11 +1485,12 @@ class RouteCloud:
         before_send()
         self.stowed.append(uid)
         self.bodies.append(body.read())
+        self.last_stored = set(self.names)
         return set()
 
     def receipt(self, body):
         self.receipts.append(body)
-        return FakeResponse(200, {"result": "stored"})
+        return self.answer(body)
 
 
 class LogLineTests(unittest.TestCase):
@@ -2452,6 +2481,484 @@ class DicomListenerCheckTests(unittest.TestCase):
             with patch.dict("os.environ", {**env, name: value}, clear=True):
                 with self.assertRaises(GatewayError, msg=name + "=" + value):
                     Config.from_env()
+
+
+DAY = agent_module.DAY_SECONDS
+LAUNCHER_ENV = ("KIN_AGENT_UPDATE_STATE", "KIN_AGENT_READY_FILE", "KIN_AGENT_BUILTIN_VERSION", "KIN_AGENT_RUN_VERSION",
+                "KIN_UPDATE_ROOT")
+
+
+class RetentionTests(unittest.TestCase):
+    """Delivered local copies are deleted once the set days have passed; nothing undelivered or unconfirmed ever is.
+    The clock is turned (time.time patched), never waited for."""
+
+    UID = "1.2.840.99.8"
+    SOPS = ("1.2.840.99.8.1", "1.2.840.99.8.2")
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.dir = Path(directory.name)
+        self.events = []
+        logging = patch.object(agent_module, "log", side_effect=lambda event, **fields: self.events.append((event, fields)))
+        logging.start()
+        self.addCleanup(logging.stop)
+        environment = patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        for name in LAUNCHER_ENV:
+            os.environ.pop(name, None)
+        self.now = 1_800_000_000.0
+        clock = patch.object(agent_module.time, "time", side_effect=lambda: self.now)
+        clock.start()
+        self.addCleanup(clock.stop)
+
+    def agent(self, routes=(), days=7, name="queue.db", **orthanc) -> Agent:
+        agent = Agent(config(str(self.dir / name), client_id="gw-syn"))
+        self.addCleanup(agent.queue.close)
+        agent.orthanc = RouteOrthanc(self.SOPS, **orthanc)
+        for index, sop in enumerate(sorted(agent.orthanc.held)):
+            agent.orthanc.held[sop]["series"] = "series-a"
+        agent.cloud = RouteCloud()
+        agent.cloud.names = agent.orthanc.held   # KIN names every SOP it stored
+        self.assertTrue(agent.settings.accept(dict(settings_answer(routes), retentionDays=days)))
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 1)
+        return agent
+
+    def deliver(self, agent):
+        """KIN's part of one pass: the study row, then the owed receipts."""
+        row = agent.queue.due()
+        if row is not None:
+            agent.process(row)
+        agent.flush_receipts()
+
+    def forward(self, agent):
+        row = agent.queue.forward_due()
+        self.assertIsNotNone(row)
+        try:
+            agent.process_forward(row)
+        except (GatewayError, agent_module.ForwardError) as error:
+            agent.queue.forward_retry(str(row["uid"]), str(row["dest"]), str(error), 1, 10)
+
+    def purge(self, agent):
+        agent.purge_at = 0.0
+        agent.purge_delivered()
+
+    def deletes(self, agent):
+        return [call for call in agent.orthanc.calls if isinstance(call, tuple) and call[0] == "delete"]
+
+    def study(self, agent):
+        return agent.queue.db.execute("SELECT * FROM studies WHERE uid=?", (self.UID,)).fetchone()
+
+    def totals(self, agent):
+        return agent.queue.summary()["retention"]
+
+    def ids(self, *sops):
+        return tuple("id-" + sop for sop in sops)
+
+    # ── when a copy goes ──
+
+    def test_a_kin_copy_goes_exactly_when_its_days_have_passed_and_is_counted(self):
+        agent = self.agent(days=7)
+        start = self.now
+        self.deliver(agent)
+        self.assertEqual((self.study(agent)["phase"], self.study(agent)["confirmed_seq"]),
+                         ("complete", self.study(agent)["seq"]))
+        self.now = start + 7 * DAY - 1
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "one second before the period ends the copy stays")
+        self.assertEqual(set(agent.orthanc.held), set(self.SOPS))
+        self.now = start + 7 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [("delete", self.ids(*self.SOPS))], "exactly the delivered instances")
+        self.assertEqual(agent.orthanc.held, {})
+        self.assertEqual(self.totals(agent), {"deletedStudies": 1, "deletedInstances": 2, "keptWithoutRecord": 0})
+        self.assertEqual(agent.queue.summary()["rows"][0]["purgedSops"], 2)
+        self.assertEqual(agent.cloud.stowed, [self.UID], "KIN's copy is untouched and nothing went again")
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["localCount"], receipt["successCount"]), ("complete", 2, 2))
+        self.now += 30 * DAY
+        self.purge(agent)
+        self.assertEqual(len(self.deletes(agent)), 1, "a purged study is not looked at again")
+        self.assertEqual(self.totals(agent)["deletedInstances"], 2)
+        self.assertIn(("study.purged", {"uid": self.UID, "sops": 2, "failed": 0}), self.events)
+
+    def test_no_period_unknown_settings_or_an_unsent_study_delete_nothing(self):
+        agent = self.agent(days=None)
+        self.deliver(agent)
+        self.now += 20 * 366 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "no period set: today's behaviour, every copy stays")
+        unknown = self.agent(days=1, name="unknown.db")
+        self.deliver(unknown)
+        unknown.settings.known = False
+        self.now += 2 * DAY
+        self.purge(unknown)
+        self.assertEqual(self.deletes(unknown), [])
+        for phase in ("pending", "retry", "failed", "sending"):
+            with self.subTest(phase=phase):
+                held = self.agent(days=1, name=phase + ".db")
+                self.deliver(held)
+                held.queue.db.execute("UPDATE studies SET phase=?", (phase,))
+                self.now += 2 * DAY
+                self.purge(held)
+                self.assertEqual(self.deletes(held), [], "a study not finished keeps every copy at any age")
+
+    def test_a_receipt_kin_did_not_confirm_keeps_the_copy(self):
+        answers = {"stale": lambda body: FakeResponse(200, {"studyUid": body["studyUid"], "result": "stale"}),
+                   "refused": lambda body: FakeResponse(409, {"code": "GATEWAY_RECEIPT_CONFLICT"}),
+                   "other study": lambda body: FakeResponse(200, {"studyUid": "1.2.3", "result": "stored"}),
+                   "no body": lambda body: FakeResponse(200)}
+        for name, answer in answers.items():
+            with self.subTest(answer=name):
+                agent = self.agent(days=1, name=name.replace(" ", "-") + ".db")
+                agent.cloud.answer = answer
+                self.deliver(agent)
+                self.assertEqual(agent.queue.unreported(), [], "the report itself is final as before")
+                self.now += 2 * DAY
+                self.purge(agent)
+                self.assertEqual(self.deletes(agent), [])
+                self.assertEqual(set(agent.orthanc.held), set(self.SOPS))
+        duplicate = self.agent(days=1, name="duplicate.db")
+        duplicate.cloud.answer = lambda body: FakeResponse(200, {"studyUid": body["studyUid"], "result": "duplicate"})
+        self.deliver(duplicate)
+        self.now += 2 * DAY
+        self.purge(duplicate)
+        self.assertEqual(len(self.deletes(duplicate)), 1, "KIN already held exactly this state: confirmed")
+
+    def test_a_sop_kin_did_not_name_as_stored_keeps_the_study(self):
+        agent = self.agent(days=1)
+        agent.cloud.names = {self.SOPS[0]}
+        self.deliver(agent)
+        self.assertEqual(self.study(agent)["phase"], "complete")
+        self.now += 2 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [])
+        self.assertIn(("study.purge_skipped", {"uid": self.UID, "pending": 1}), self.events)
+
+    def test_a_row_from_before_the_record_is_kept_and_counted_as_such(self):
+        agent = self.agent(days=1)
+        agent.queue.db.execute("UPDATE studies SET kin_stored_sops=NULL")
+        self.deliver(agent)
+        self.now += 2 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [])
+        self.assertEqual(self.totals(agent), {"deletedStudies": 0, "deletedInstances": 0, "keptWithoutRecord": 1})
+
+    def test_two_destinations_count_from_the_last_one_and_a_dead_peer_keeps_everything(self):
+        agent = self.agent(routes=[rule("CT", None, "kin", PEER)], days=1)
+        self.deliver(agent)
+        agent.orthanc.store_error = GatewayError("forward C-STORE HTTP 500")
+        self.forward(agent)
+        self.assertEqual(agent.queue.db.execute("SELECT phase FROM forwards").fetchone()[0], "retry")
+        self.now += 30 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "the peer lacks the study: every copy stays")
+        agent.orthanc.store_error = None
+        agent.queue.db.execute("UPDATE forwards SET next_at=0")
+        self.forward(agent)
+        finished = self.now
+        self.now = finished + DAY - 1
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "the period counts from the last destination")
+        self.now = finished + DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [("delete", self.ids(*self.SOPS))])
+        self.assertEqual(json.loads(agent.queue.db.execute("SELECT successful_sops FROM forwards").fetchone()[0]),
+                         sorted(self.SOPS), "the peer's record stays")
+
+    def test_a_peer_only_study_goes_after_the_peer_finished(self):
+        agent = self.agent(routes=[rule("CT", None, PEER)], days=1)
+        self.deliver(agent)
+        self.assertEqual(self.study(agent)["phase"], "not_routed")
+        self.forward(agent)
+        finished = self.now
+        self.now = finished + DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [("delete", self.ids(*self.SOPS))])
+        self.assertEqual(agent.cloud.stowed, [])
+
+    def test_a_removed_peer_keeps_the_copy_in_retry(self):
+        agent = self.agent(routes=[rule("CT", None, "kin", PEER)], days=1)
+        self.deliver(agent)
+        self.assertTrue(agent.settings.accept(dict(settings_answer([rule("CT", None, "kin")], peers=(PEER_B,), revision=2),
+                                                   retentionDays=1)))
+        self.forward(agent)
+        self.now += 30 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [])
+
+    # ── images that arrive late ──
+
+    def test_an_image_not_yet_reported_keeps_the_study_and_one_arriving_during_the_delete_stays(self):
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = dict(agent.orthanc.held[self.SOPS[0]], sop=late, id="id-" + late)
+        self.now += 2 * DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "an undelivered image is in the study: nothing goes")
+        del agent.orthanc.held[late]
+        agent.orthanc.on_delete = lambda: agent.orthanc.held.setdefault(
+            late, dict(agent.orthanc.held[self.SOPS[0]], sop=late, id="id-" + late))
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [("delete", self.ids(*self.SOPS))])
+        self.assertEqual(set(agent.orthanc.held), {late}, "an image that arrived after the read is not deleted")
+        self.assertEqual(self.totals(agent)["deletedInstances"], 2)
+
+    def test_an_image_after_a_purge_is_routed_and_counted_with_the_deleted_copies(self):
+        agent = self.agent(routes=[rule("CT", "SYN_CT", "kin", PEER)], days=1)
+        self.deliver(agent)
+        self.forward(agent)
+        self.now += DAY
+        self.purge(agent)
+        self.assertEqual(agent.orthanc.held, {})
+        # Another device adds an SR series: alone it matches no rule, but it belongs to the CT study the rule took.
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = {"sop": late, "id": "id-" + late, "size": 16, "source_ae": "SYN_SR", "syntax": NATIVE,
+                                    "series": "series-b"}
+        agent.orthanc.modalities = {"SR"}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.deliver(agent)
+        self.assertEqual(agent.cloud.stowed, [self.UID, self.UID])
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["localCount"], receipt["successCount"], receipt["successSeries"]),
+                         ("complete", 3, 3, 2), "the deleted copies still count: 3 images in 2 series")
+        self.forward(agent)
+        stores = [call for call in agent.orthanc.calls if isinstance(call, tuple) and call[0] == "store"]
+        self.assertEqual(stores[-1][2], ("id-" + late,), "only the new image goes to the peer")
+        self.assertEqual(agent.queue.db.execute("SELECT phase FROM forwards").fetchone()[0], "complete")
+        finished = self.now
+        self.now = finished + DAY - 1
+        self.purge(agent)
+        self.assertEqual(len(self.deletes(agent)), 1, "the new image ages from its own delivery")
+        self.now = finished + DAY
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent)[-1], ("delete", ("id-" + late,)))
+        self.assertEqual(self.totals(agent), {"deletedStudies": 1, "deletedInstances": 3, "keptWithoutRecord": 0})
+
+    # ── failures and restarts ──
+
+    def test_a_failed_delete_counts_nothing_and_a_stop_before_the_record_counts_once(self):
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        self.now += 2 * DAY
+        agent.orthanc.delete_error = GatewayError("local Orthanc HTTP 500")
+        self.purge(agent)   # never raises
+        self.assertEqual(set(agent.orthanc.held), set(self.SOPS))
+        self.assertEqual((self.totals(agent)["deletedInstances"], agent.queue.intents()), (0, []))
+        self.assertIn("retention.deferred", [event for event, _fields in self.events])
+        agent.orthanc.delete_error = None
+        agent.orthanc.ids_error = GatewayError("local Orthanc ConnectionError")   # the answer is lost after the delete
+        self.purge(agent)
+        self.assertEqual(agent.orthanc.held, {})
+        self.assertEqual((self.totals(agent)["deletedInstances"], agent.queue.intents()), (0, [self.UID]))
+        restarted = Agent(config(str(self.dir / "queue.db"), client_id="gw-syn"))
+        self.addCleanup(restarted.queue.close)
+        restarted.orthanc, restarted.cloud = agent.orthanc, agent.cloud
+        self.purge(restarted)
+        self.assertEqual((self.totals(restarted)["deletedInstances"], restarted.queue.intents()), (2, []))
+        self.purge(restarted)
+        self.assertEqual(self.totals(restarted), {"deletedStudies": 1, "deletedInstances": 2, "keptWithoutRecord": 0})
+        self.assertEqual(len(self.deletes(restarted)), 2, "the settled study is not deleted again")
+
+    def test_a_period_cleared_or_lengthened_while_orthanc_is_read_deletes_nothing(self):
+        for days in (None, 30):
+            with self.subTest(days=days):
+                agent = self.agent(days=1, name="changed-%s.db" % days)
+                self.deliver(agent)
+                self.now += 2 * DAY
+                agent.orthanc.on_series = lambda: agent.settings.accept(
+                    dict(settings_answer(revision=2), retentionDays=days))
+                self.purge(agent)
+                self.assertEqual(self.deletes(agent), [])
+                self.assertEqual(agent.queue.intents(), [])
+
+    def test_every_delete_request_checks_the_rule_and_period_as_they_are_then(self):
+        for change in ("lengthened", "cleared", "stop"):
+            with self.subTest(change=change):
+                agent = self.agent(days=1, name="chunks-%s.db" % change)
+                self.deliver(agent)
+                self.now += 2 * DAY
+
+                def after_first_request(agent=agent, change=change):
+                    if len(self.deletes(agent)) == 1:
+                        if change == "stop":
+                            agent.stop()
+                        else:
+                            agent.settings.accept(dict(settings_answer(revision=2),
+                                                       retentionDays=30 if change == "lengthened" else None))
+                agent.orthanc.on_delete = after_first_request
+                with patch.object(agent_module, "RETENTION_DELETE_CHUNK", 1):
+                    self.purge(agent)
+                self.assertEqual(self.deletes(agent), [("delete", self.ids(self.SOPS[0]))], "the second request never went")
+                self.assertEqual(set(agent.orthanc.held), {self.SOPS[1]})
+                self.assertEqual((self.totals(agent)["deletedInstances"], agent.queue.intents()), (1, []))
+                self.assertIsNone(self.study(agent)["purged_at"], "what is left stays a candidate")
+
+    def test_a_deletion_left_unsettled_by_a_stop_is_settled_before_a_late_image_is_sent(self):
+        agent = self.agent(routes=[rule(None, "SYN_CT", PEER)], days=1)
+        self.deliver(agent)
+        self.forward(agent)
+        self.now += DAY
+        agent.orthanc.ids_error = GatewayError("local Orthanc ConnectionError")   # stopped before the record was settled
+        self.purge(agent)
+        self.assertEqual((agent.orthanc.held, agent.queue.intents()), ({}, [self.UID]))
+        # Restarted with an SR from another device: alone it matches no rule and would go to KIN by default.
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = {"sop": late, "id": "id-" + late, "size": 16, "source_ae": "SYN_SR", "syntax": NATIVE,
+                                    "series": "series-b"}
+        agent.orthanc.modalities = {"SR"}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        restarted = Agent(config(str(self.dir / "queue.db"), client_id="gw-syn"))
+        self.addCleanup(restarted.queue.close)
+        restarted.orthanc, restarted.cloud = agent.orthanc, agent.cloud
+        self.deliver(restarted)
+        self.assertEqual(self.study(restarted)["phase"], "not_routed", "the whole study's facts: the peer only")
+        self.assertEqual(restarted.cloud.stowed, [], "nothing went to KIN")
+        self.forward(restarted)
+        self.assertEqual(restarted.queue.db.execute("SELECT phase FROM forwards").fetchone()[0], "complete")
+        self.assertEqual((self.totals(restarted)["deletedInstances"], restarted.queue.intents()), (2, []))
+        self.assertIsNone(self.study(restarted)["purged_at"], "the new image keeps the study a candidate")
+        self.now += DAY
+        self.purge(restarted)
+        self.assertEqual(self.deletes(restarted)[-1], ("delete", ("id-" + late,)))
+        self.assertEqual(self.totals(restarted)["deletedInstances"], 3)
+
+    def test_a_kin_receipt_after_an_unsettled_deletion_counts_the_whole_study(self):
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        self.now += 2 * DAY
+        agent.orthanc.ids_error = GatewayError("local Orthanc ConnectionError")
+        self.purge(agent)
+        late = self.UID + ".3"
+        agent.orthanc.held[late] = {"sop": late, "id": "id-" + late, "size": 16, "source_ae": "SYN_CT", "syntax": NATIVE,
+                                    "series": "series-b"}
+        agent.queue.record_changes([(self.UID, "orthanc-id")], 2)
+        self.deliver(agent)
+        receipt = agent.queue.receipt(self.UID)
+        self.assertEqual((receipt["phase"], receipt["localCount"], receipt["successCount"], receipt["successSeries"]),
+                         ("complete", 3, 3, 2))
+
+    def test_a_stop_ends_the_pass_between_studies(self):
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        self.now += 2 * DAY
+        agent.stop()
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [])
+
+    def test_a_study_skipped_every_time_never_holds_the_others_back(self):
+        agent = self.agent(days=1)
+        uids = ["1.2.840.99.9.%02d" % n for n in range(12)]
+        for index, uid in enumerate(uids):
+            agent.queue.db.execute("""
+              INSERT INTO studies(uid, orthanc_id, phase, destinations, kin_stored_sops, seq, confirmed_seq, updated_at)
+              VALUES (?, ?, 'complete', '["kin"]', '[]', 3, 3, ?)""", (uid, "o-" + uid, self.now + index))
+        self.now += 2 * DAY
+        looked = []
+        agent.purge_study = looked.append   # each one skipped (an image still on its way, say)
+        self.purge(agent)
+        self.purge(agent)
+        self.purge(agent)
+        self.assertEqual(looked[:12], uids[:10] + uids[10:], "the second check goes on after the tenth")
+        self.assertEqual(looked[12:22], uids[:10], "then it starts over")
+
+    # ── an update in progress ──
+
+    def test_nothing_is_deleted_while_an_update_is_not_settled(self):
+        state = self.dir / "state.json"
+        ready = self.dir / "start.ready"
+        good = {"current": "builtin", "previous": None, "pending": None, "running": "builtin", "failed": None}
+        os.environ.update({"KIN_AGENT_UPDATE_STATE": str(state), "KIN_AGENT_READY_FILE": str(ready),
+                           "KIN_AGENT_BUILTIN_VERSION": agent_module.AGENT_VERSION})
+        agent = self.agent(days=1)
+        self.deliver(agent)
+        self.now += 2 * DAY
+        state.write_text(json.dumps(good))
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "this start has not written its ready file yet")
+        agent.ready_file = None   # mark_ready wrote it
+        cases = {
+            "an install in probation": dict(good, pending={"from": "builtin", "to": "2026.12.1", "requestId": None}),
+            "a manual rollback switching": dict(good, current="2026.11.9"),
+            "another release runs": dict(good, running="2026.12.1", current="2026.12.1"),
+            "a fallback that predates the record": dict(good, previous="2026.11.2"),
+            "no pending key": {k: v for k, v in good.items() if k != "pending"},
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                state.write_text(json.dumps(value))
+                self.purge(agent)
+                self.assertEqual(self.deletes(agent), [])
+        for name, builtin in (("an image agent that predates the record", "2026.11.2"), ("an older launcher", None)):
+            with self.subTest(case=name):
+                state.write_text(json.dumps(good))
+                if builtin is None:
+                    os.environ.pop("KIN_AGENT_BUILTIN_VERSION")
+                else:
+                    os.environ["KIN_AGENT_BUILTIN_VERSION"] = builtin
+                self.purge(agent)
+                self.assertEqual(self.deletes(agent), [])
+        os.environ["KIN_AGENT_BUILTIN_VERSION"] = agent_module.AGENT_VERSION
+        state.write_text("{not json")
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [], "an unreadable state")
+        state.write_text(json.dumps(dict(good, previous="2026.11.3")))
+        self.purge(agent)
+        self.assertEqual(self.deletes(agent), [("delete", self.ids(*self.SOPS))], "settled: the copy goes")
+
+    # ── the setting and the records ──
+
+    def test_the_setting_is_one_optional_key_and_an_older_agent_still_reads_the_saved_copy(self):
+        base = settings_answer()
+        self.assertIsNone(agent_module.parse_settings(base)["retentionDays"], "a KIN that does not know it: never")
+        for days in (1, 3650, None):
+            self.assertEqual(agent_module.parse_settings(dict(base, retentionDays=days))["retentionDays"], days)
+        for days in (0, 3651, 1.5, True, "7", -1):
+            with self.subTest(days=days):
+                self.assertIsNone(agent_module.parse_settings(dict(base, retentionDays=days)))
+        agent = self.agent(days=7)
+        saved = json.loads((self.dir / "settings.json").read_text())
+        self.assertEqual((set(saved["answer"]), saved["retentionDays"]),
+                         ({"revision", "routes", "compression", "destinations"}, 7))
+        self.assertEqual(agent.settings.current["retentionDays"], 7)
+        restarted = agent_module.SettingsStore(str(self.dir / "queue.db"), agent.owner)
+        self.assertEqual((restarted.known, restarted.current["retentionDays"]), (True, 7))
+        self.assertTrue(restarted.accept(base))   # a KIN without the key
+        self.assertNotIn("retentionDays", json.loads((self.dir / "settings.json").read_text()))
+        self.assertIsNone(agent_module.SettingsStore(str(self.dir / "queue.db"), agent.owner).current["retentionDays"])
+        asked = []
+        cloud = agent_module.Cloud(agent.config)
+        self.addCleanup(cloud.session.close)
+        cloud.request = lambda method, path, **kwargs: asked.append((method, path, kwargs))
+        cloud.settings()
+        self.assertEqual(asked, [("GET", "/api/gateway/settings", {"params": {"retention": "1"}})])
+
+    def test_the_diagnostics_report_carries_the_totals_last(self):
+        agent = self.agent(days=7)
+        self.deliver(agent)
+        self.now += 8 * DAY
+        self.purge(agent)
+        orthanc, cloud = agent_module.Orthanc(agent.config), agent_module.Cloud(agent.config)
+        self.addCleanup(orthanc.session.close)
+        self.addCleanup(cloud.session.close)
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, orthanc, cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        support = agent_module.Support(agent.config, agent.queue.epoch, agent.owner, beat, agent.settings, orthanc,
+                                       cloud, time.monotonic(), lambda code: None)
+        self.addCleanup(support.cloud.session.close)
+        line = support.diagnostics()["log"][-1]
+        self.assertEqual({k: v for k, v in line.items() if k != "at"},
+                         {"event": "retention.totals", "deletedStudies": 1, "deletedInstances": 2, "keptWithoutRecord": 0,
+                          "retentionDays": 7})
+        self.assertNotIn(self.UID, json.dumps(line))
+        # A full ring of this run's lines: the totals take the oldest line's place, so KIN's limit still holds.
+        with patch.object(agent_module, "LOG_RING", agent_module.deque(
+                [{"at": "2026-11-21T00:00:00Z", "event": "agent.started"}] * agent_module.LOG_RING_MAX,
+                maxlen=agent_module.LOG_RING_MAX)):
+            lines = support.diagnostics()["log"]
+        self.assertEqual((len(lines), lines[-1]["event"]), (agent_module.LOG_RING_MAX, "retention.totals"))
 
 
 if __name__ == "__main__":

@@ -80,6 +80,9 @@ class FlowSite(h.Site):
                 "confirm": "20261003" if approved else None, "ov": None, "orig": None, "oid": None, "holder": None,
                 "holdReason": None, "version": report["version"],
                 **{k: report.get(k, "") for k in FIELDS},
+                # FC-034: the 24-hour amendment facts, when a case gives them (an approved report without them takes only
+                # an Addendum).
+                **{k: report[k] for k in ("amendUntil", "amendMine", "addendumAt") if k in report},
                 "draft": {**{k: row[k] for k in FIELDS}, "baseVersion": row["baseVersion"],
                           "at": "2026-10-03T00:00:00.000Z"} if row else None,
                 "draftRevision": self.revision_of(uid), "draftEpoch": self.epoch}
@@ -841,9 +844,13 @@ class ReportFlowPage(unittest.TestCase):
 
     def test_an_approval_refused_for_the_signing_key_says_why_long_enough_to_read(self):
         """The server refuses an approval when the reader has no usable signing key (503, code DoctorSigningKeyUnavailable)
-        and its answer says so. The page shows those words and keeps them up for 12 s, where another refusal keeps its
-        4 s: this one the reader cannot solve alone and has to pass on. The typed text stays and nothing is approved."""
+        and its answer says so. The page shows that refusal in its own words for the action (the same words as the server's
+        approval refusal, so the screen language reaches them) and keeps them up for 12 s, where another refusal keeps the
+        server's words for its 4 s: this one the reader cannot solve alone and has to pass on. The typed text stays and
+        nothing is approved."""
         refusal = "SYN signing key refusal. 판독 입력은 보존됩니다."
+        approve_words = ("이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 "
+                         "계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.")
         toast, shown = self.page.locator("#toast"), re.compile(r"(^|\s)show(\s|$)")
         self.open()
         self.open_study(h.PATIENT_B)
@@ -856,7 +863,7 @@ class ReportFlowPage(unittest.TestCase):
                 self.site.commit_answers = [(503, {"code": code, "message": refusal})]
                 self.page.locator("#b-approve").click()
                 self.wait(lambda: len(self.site.flow_commits) > commits, "the refused approval")
-                expect(toast).to_have_text("저장 실패: " + refusal)
+                expect(toast).to_have_text("저장 실패: " + (approve_words if code == "DoctorSigningKeyUnavailable" else refusal))
                 expect(toast).to_have_class(shown)
                 self.page.clock.run_for(shown_ms - 500)
                 expect(toast).to_have_class(shown)
@@ -1602,6 +1609,131 @@ class ReportFlowPage(unittest.TestCase):
         expect(drawer).to_have_count(0)
         self.page.keyboard.press("Control+Alt+t")
         expect(drawer.get_by_role("tab", name="Templates", exact=True)).to_have_attribute("aria-selected", "true")
+
+    # ── An Addendum only adds to the approved report; a Save over another window of this same account ──
+
+    APPROVED_LINE = "SYN approved line."
+    APPEND_ONLY = "추가기재는 승인본에 덧붙이기만 합니다"
+
+    def approved_b(self, **facts):
+        self.site.store[h.UID_B]["report"] = {"version": 1, "rs": "A", "findings": self.APPROVED_LINE, "conclusion": "",
+                                              "recommendation": "", **facts}
+
+    def caret(self, at):
+        self.page.evaluate("at => { const el = document.querySelector('#findings'); el.focus(); "
+                           "const n = at < 0 ? el.value.length : at; el.setSelectionRange(n, n); }", at)
+
+    def test_an_addendum_pressed_with_nothing_added_is_not_sent_and_says_so(self):
+        """An approved report and Addendum pressed with its text as it is (the first time or again): no new approved
+        version is asked for - the page says nothing was added and sends nothing."""
+        self.approved_b()
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.settle(500)
+        for press in (1, 2):
+            with self.subTest(press=press):
+                commits = len(self.site.flow_commits)
+                self.page.evaluate("() => commitReport('addendum')")
+                expect(self.page.locator("#toast")).to_contain_text("덧붙인 내용이 없습니다")
+                self.settle(300)
+                self.assertEqual(commits, len(self.site.flow_commits), "nothing was sent")
+        self.assertEqual((1, "A"), (self.site.store[h.UID_B]["report"]["version"], self.site.store[h.UID_B]["report"]["rs"]))
+
+    def test_an_approved_report_that_takes_only_an_addendum_keeps_its_approved_text(self):
+        """Its 24-hour amendment is not open to this reader, so the editor keeps the approved text: typing, deleting a
+        selection or backspacing into it is put back (and said once), a command cannot write inside it, and writing after
+        it - or taking back what was written after it - works."""
+        self.approved_b()
+        self.open()
+        self.open_study(h.PATIENT_B)
+        field = self.page.locator("#findings")
+        self.caret(4)
+        self.page.keyboard.type("X")
+        expect(field).to_have_value(self.APPROVED_LINE)
+        expect(self.page.locator("#toast")).to_contain_text(self.APPEND_ONLY)
+        self.page.evaluate("() => document.querySelector('#findings').select()")
+        self.page.keyboard.press("Backspace")
+        expect(field).to_have_value(self.APPROVED_LINE)
+        self.caret(-1)
+        self.page.keyboard.press("Backspace")
+        expect(field).to_have_value(self.APPROVED_LINE)
+        self.page.keyboard.type(" Added.")
+        expect(field).to_have_value(self.APPROVED_LINE + " Added.")
+        self.assertFalse(self.page.evaluate("() => editReport([{ field: 'findings', start: 0, end: 0, text: 'Z ' }])"),
+                         "a command does not write inside the approved text")
+        expect(field).to_have_value(self.APPROVED_LINE + " Added.")
+        self.assertTrue(self.page.evaluate("() => editReport([{ field: 'findings', start: document.querySelector('#findings').value.length, "
+                                           "end: document.querySelector('#findings').value.length, text: ' More.' }])"))
+        expect(field).to_have_value(self.APPROVED_LINE + " Added. More.")
+        self.caret(-1)
+        for _ in " More.":
+            self.page.keyboard.press("Backspace")
+        expect(field).to_have_value(self.APPROVED_LINE + " Added.")
+
+    def test_the_approver_within_the_24_hours_may_change_the_middle(self):
+        """The approver's own 24-hour amendment is a separate way and stays as it is: the editor does not hold the text."""
+        self.approved_b(amendUntil="2099-01-01T00:00:00.000Z", amendMine=True)
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.caret(4)
+        self.page.keyboard.type("X")
+        expect(self.page.locator("#findings")).to_have_value("SYN Xapproved line.")
+
+    def test_a_signing_key_refusal_of_an_addendum_or_a_reset_names_that_action(self):
+        """Without a usable signing key the refusal names the action that was refused, not an approval."""
+        self.approved_b()
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.caret(-1)
+        self.page.keyboard.type(" More.")
+        for action, words in (("addendum", "추가기재(Addendum)를 저장하지 못했습니다"), ("reset", "판독 취소(Reset)를 하지 못했습니다")):
+            with self.subTest(action=action):
+                commits = len(self.site.flow_commits)
+                self.site.commit_answers = [(503, {"code": "DoctorSigningKeyUnavailable", "message": "SYN signing key refusal."})]
+                self.page.evaluate("action => commitReport(action, 'SYN reason')", action)
+                self.wait(lambda: len(self.site.flow_commits) > commits, "the refused " + action)
+                expect(self.page.locator("#toast")).to_contain_text(words)
+                expect(self.page.locator("#toast")).not_to_contain_text("승인하지 못했습니다")
+        expect(self.page.locator("#findings")).to_have_value(self.APPROVED_LINE + " More.")
+        self.assertEqual((1, "A"), (self.site.store[h.UID_B]["report"]["version"], self.site.store[h.UID_B]["report"]["rs"]))
+
+    def test_a_save_after_another_window_of_this_account_saved_asks_once_and_saves_this_windows_text(self):
+        """Two windows of the same reader: the other window saved v1 while this one still stands on v0. The server's
+        refusal names the head as this account's own; the page asks once whether to save this window's text after v1, and
+        yes sends the same Save on v1 - this window's text is v2, v1 stays in the history. Nothing is merged or lost."""
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.type("SYN window two")
+        self.settle(300)
+        self.site.store[h.UID_B]["report"] = {"version": 1, "rs": "T", "findings": "SYN window one", "conclusion": "", "recommendation": ""}
+        mine = "다른 창에서 이 계정으로 v1을 저장했습니다. 이 창의 글은 그대로 있습니다."
+        self.site.commit_answers = [(409, {"code": "REPORT_VERSION_CONFLICT", "message": mine, "head": {"version": 1, "mine": True}})]
+        self.page.locator("#b-save").click()
+        self.wait(lambda: len(self.site.flow_commits) == 2, "the Save sent again on v1")
+        first, second = (body for _, body in self.site.flow_commits)
+        self.assertEqual((0, 1), (first["baseVersion"], second["baseVersion"]))
+        self.assertEqual(("save", "save", "SYN window two", "SYN window two"),
+                         (first["action"], second["action"], first["findings"], second["findings"]))
+        self.assertEqual(1, len(self.dialogs))
+        self.assertIn("다른 창에서 이 계정으로 v1을 저장했습니다", self.dialogs[0])
+        self.wait(lambda: self.site.store[h.UID_B]["report"]["version"] == 2, "v2 is this window's text")
+        self.assertEqual(("T", "SYN window two"), (self.site.store[h.UID_B]["report"]["rs"], self.site.store[h.UID_B]["report"]["findings"]))
+        expect(self.page.locator("#findings")).to_have_value("SYN window two")
+
+    def test_a_save_without_a_draft_after_another_window_saved_is_sent_again_on_the_confirmed_version(self):
+        """The same two windows, but this one holds no draft and no typing (its editor still shows what it read): the Save
+        sent again after yes stands on the version the question named - not on the one this window last read - and is asked
+        once."""
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.settle(300)
+        self.site.store[h.UID_B]["report"] = {"version": 2, "rs": "T", "findings": "SYN window one", "conclusion": "", "recommendation": ""}
+        mine = "다른 창에서 이 계정으로 v2을 저장했습니다. 이 창의 글은 그대로 있습니다."
+        self.site.commit_answers = [(409, {"code": "REPORT_VERSION_CONFLICT", "message": mine, "head": {"version": 2, "mine": True}})]
+        self.page.evaluate("() => commitReport('save')")
+        self.wait(lambda: len(self.site.flow_commits) == 2, "the Save sent again on v2")
+        self.assertEqual([0, 2], [body["baseVersion"] for _, body in self.site.flow_commits])
+        self.assertEqual(1, len(self.dialogs))
 
 
 # Each mutant is a one-off copy of one bundle source (or main.html) served to the page; the product tree is never written.

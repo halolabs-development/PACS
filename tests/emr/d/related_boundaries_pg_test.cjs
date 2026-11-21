@@ -102,7 +102,8 @@ test('CD-09 W-R real PG boundaries, native signing and Tech Note lock order', as
       const bearer = other ? otherToken : token, principal = other ? { institution, sub: otherSub, author: otherAuthor } : owner;
       const d = await draft(uid, bearer), head = await witness.report.findUnique({ where: { uid } });
       const body = { expectedOwner: principal, expectedRevision: d.revision, baseVersion: head?.version ?? 0,
-        findings: 'SYN signed ' + uid, conclusion: '', recommendation: '', citationIds: [], structureIds: [],
+        // An Addendum adds to the approved head: its text is written after the head's.
+        findings: action === 'addendum' ? (head?.findings ?? '') + '\nSYN addendum ' + uid : 'SYN signed ' + uid, conclusion: '', recommendation: '', citationIds: [], structureIds: [],
         action, ...(action === 'reset' ? { reason: 'SYN reset' } : {}) };
       return () => send(uid, '/report/commit', body, bearer);
     };

@@ -44,7 +44,7 @@ MIGRATIONS = [
     '20261114210000_exam_scope', '20261114220000_report_snapshot_format', '20261115010000_exam_view_drawing_scope', '20261115120000_report_drawing_work', '20261116120000_order_ris_status', '20261116120000_viewer_item_delete', '20261118120000_gateway_settings', '20261118120000_institution_critical_result_inbox',
     '20261119120000_access_review_linear', '20261119160000_critical_result_send_roles', '20261120120000_study_referred_at',
     '20261120130000_study_qc_flag', '20261120140000_order_modality_worklist', '20261120150000_owner_account_keys', '20261120180000_gateway_receipt_series',
-    '20261121120000_unread_seen', '20261121130000_access_alerts', '20261121160000_report_version_signer_name',
+    '20261121120000_unread_seen', '20261121130000_access_alerts', '20261121160000_report_version_signer_name', '20261121220000_patient_consent_record',
 ]
 # docker-compose.yml refuses to resolve without these; the compose reads below give each a synthetic value.
 COMPOSE_SECRETS = ("ORTHANC_PASS", "POSTGRES_PASSWORD", "KIN_EMR_RUNTIME_PASSWORD", "KC_ADMIN_PASSWORD",

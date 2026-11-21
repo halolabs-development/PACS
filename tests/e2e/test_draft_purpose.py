@@ -511,7 +511,8 @@ class DraftPurposeServed(unittest.TestCase):
         self.wait_destroyed(kept_unit)
         # A work started after that approval (an Addendum draft) is not ended by the earlier approval; its own signed
         # Addendum ends it, and the version it signed is the Addendum.
-        addendum = "SYN-P3 addendum " + uuid.uuid4().hex
+        # (An Addendum adds to the approved text: it is written after the signed one.)
+        addendum = colleague + " signed\nSYN-P3 addendum " + uuid.uuid4().hex
         self.assertEqual(self.save(doctor, addendum, base=signed["version"]).status, 200)
         late_unit = self.row(doctor)["workUnit"]
         self.assertEqual((self.row(doctor)["workIntent"], self.phases(late_unit)), ("addendum", []))

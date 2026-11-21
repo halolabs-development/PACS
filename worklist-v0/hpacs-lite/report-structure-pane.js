@@ -227,6 +227,13 @@
       // 위에서 확인한 그 검사다. 누르는 순간의 선택이 아니라 **창이 열린 검사**를 쓴다.
       const uid = pane.uid;
       const content = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      // An approved report that takes only an Addendum keeps its approved text: the item goes after it, or not at all (the
+      // draft is written before the editor, so the rule is met here first - keepsApprovedText).
+      if (typeof keepsApprovedText === "function" && !keepsApprovedText(pane.field, fresh.text, content[pane.field])) {
+        pane.status = ADDENDUM_APPEND_ONLY;
+        renderStructure();
+        return;
+      }
       content[pane.field] = fresh.text;
       const a = appState[uid] ?? {};
       const baseVersion = reportBaseVersion(uid, a.draft?.baseVersion ?? a.version ?? 0);

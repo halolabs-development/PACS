@@ -29,6 +29,7 @@ export class GatewaySettingsController {
   @Get('gateway/settings')
   @Header('Cache-Control', 'no-store')
   gateway(@Req() req: any) {
-    return this.svc.gatewayRead(caller(req));
+    // ?retention=1: the Gateway reads retentionDays (an older one does not ask and never gets the key).
+    return this.svc.gatewayRead(caller(req), req.query?.retention === '1');
   }
 }

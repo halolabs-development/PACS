@@ -52,11 +52,11 @@
   },
   "gatewayText": {
     "none": "No Gateway Report",
-    "sending_3_of_12": "Gateway 보고(2026-09-24T01:04:00.000Z): 병원 보유 12건 중 3건 전송",
-    "complete_12_of_12": "Gateway 보고(2026-09-24T01:04:00.000Z): 병원 보유 12건 중 12건 전송",
-    "complete_13_of_13": "Gateway 보고(2026-09-24T01:04:00.000Z): 병원 보유 13건 중 13건 전송",
-    "sending_0_of_0": "Gateway 보고(2026-09-24T01:04:00.000Z): 병원 보유 0건 중 0건 전송",
-    "old_complete_12_of_12": "Gateway 보고(2026-09-24T01:00:00.000Z): 병원 보유 12건 중 12건 전송",
+    "sending_3_of_12": "Gateway 보고(2026-09-24T01:04:00.000Z): Gateway가 집계한 12건 중 3건 전송",
+    "complete_12_of_12": "Gateway 보고(2026-09-24T01:04:00.000Z): Gateway가 집계한 12건 중 12건 전송",
+    "complete_13_of_13": "Gateway 보고(2026-09-24T01:04:00.000Z): Gateway가 집계한 13건 중 13건 전송",
+    "sending_0_of_0": "Gateway 보고(2026-09-24T01:04:00.000Z): Gateway가 집계한 0건 중 0건 전송",
+    "old_complete_12_of_12": "Gateway 보고(2026-09-24T01:00:00.000Z): Gateway가 집계한 12건 중 12건 전송",
     "unreadable_phase": "Gateway 보고 형식을 확인할 수 없습니다",
     "unreadable_m_over_n": "Gateway 보고 형식을 확인할 수 없습니다",
     "unreadable_time": "Gateway 보고 형식을 확인할 수 없습니다"

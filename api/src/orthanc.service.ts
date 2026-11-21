@@ -885,6 +885,25 @@ export class OrthancService {
    * (UID, accession, instance count, description, InstitutionName and the access tags PatientID / StudyDate / Modalities).
    * A patient ID that is blank, too long or holds a wildcard asks nothing ([]); an answer of another shape is a failed read.
    */
+  /**
+   * Patient Consent: the Study UIDs whose original resource names exactly this Patient ID (any date). Only a candidate
+   * list — each UID's own resources are read again (studiesByUid) before it counts as this patient's study. A blank,
+   * too long or wildcard ID asks nothing ([]); an answer of another shape is a failed read.
+   */
+  async patientStudyUids(patientId: string): Promise<string[]> {
+    if (typeof patientId !== 'string' || !patientId.trim() || patientId.length > 64 || /[*?\\]/.test(patientId)) return [];
+    const rows = await this.get('/tools/find', { Level: 'Study', Query: { PatientID: patientId },
+      ResponseContent: ['RequestedTags'], RequestedTags: ['StudyInstanceUID', 'PatientID'] });
+    if (!Array.isArray(rows)) throw new ServiceUnavailableException('원본 환자 검사 목록을 확인할 수 없습니다');
+    const uids = new Set<string>();
+    for (const row of rows) {
+      const tags = row?.RequestedTags ?? {};
+      if (!isStudyLookupKey(tags.StudyInstanceUID)) throw new ServiceUnavailableException('원본 환자 검사 목록을 확인할 수 없습니다');
+      if (tags.PatientID === patientId) uids.add(tags.StudyInstanceUID);
+    }
+    return [...uids];
+  }
+
   async patientStudiesOnDate(patientId: string, studyDate: string): Promise<any[]> {
     if (typeof patientId !== 'string' || !patientId.trim() || patientId.length > 64 || /[*?\\]/.test(patientId) || !/^\d{8}$/.test(studyDate)) return [];
     const rows = await this.get('/tools/find', { Level: 'Study', Query: { PatientID: patientId, StudyDate: studyDate },

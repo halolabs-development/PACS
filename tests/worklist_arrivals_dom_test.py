@@ -441,7 +441,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         # The in-place poll path (same list) updates the receipt before it renders.
         self.poll(reply(self.receipt_row(receipt("sending", 3, 12, 1, 7), 12), at=self.at(2)))
         shown = self.text("#receipt-gateway")
-        self.assertTrue(shown.startswith("Gateway 보고(") and shown.endswith("): 병원 보유 12건 중 3건 전송"), shown)
+        self.assertTrue(shown.startswith("Gateway 보고(") and shown.endswith("): Gateway가 집계한 12건 중 3건 전송"), shown)
         # A failed poll and an unreadable observation both keep the last receipt.
         self.fail_next()
         self.assertEqual(shown, self.text("#receipt-gateway"))
@@ -455,7 +455,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(done, 14), at=self.at(5)))
         self.assertIn("이 세션에서 관측한 변화: 증가(", self.text("#receipt-observation"))
         shown = self.text("#receipt-gateway")
-        self.assertTrue(shown.endswith("): 병원 보유 12건 중 12건 전송"), shown)
+        self.assertTrue(shown.endswith("): Gateway가 집계한 12건 중 12건 전송"), shown)
         for banned in ("완료", "complete", "received", "실패", "오프라인", "offline"):
             self.assertNotIn(banned, shown + self.text("#receipt-observation"))
         self.assertEqual(done, self.page.evaluate("studies[0].gatewayReceipt"))
@@ -464,7 +464,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         other.update(uid="1.2.4", id="PID-2", sourcePatientKey="hospital|patient-2")
         self.poll(reply(self.receipt_row(done, 14), other, at=self.at(6)))
         self.assertEqual([done, None], self.page.evaluate("studies.map(s=>s.gatewayReceipt)"))
-        self.assertTrue(self.text("#receipt-gateway").endswith("): 병원 보유 12건 중 12건 전송"))
+        self.assertTrue(self.text("#receipt-gateway").endswith("): Gateway가 집계한 12건 중 12건 전송"))
 
     # ── Missing images: the Technician list and the Info panel draw one answer, through the same real poll ──
 
@@ -494,7 +494,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         # The list says the same answer; the cell's text stays the count (the mark is CSS) and the count is data.
         self.assertEqual((self.GAP, self.GAP, "12", "12"), (state["mark"], state["label"], state["cell"], state["data"]))
         # The Gateway line, the observation line and the retry control are what they were: three different things.
-        self.assertTrue(self.text("#receipt-gateway").endswith("): 병원 보유 20건 중 15건 전송"))
+        self.assertTrue(self.text("#receipt-gateway").endswith("): Gateway가 집계한 20건 중 15건 전송"))
         self.assertTrue(self.text("#receipt-observation").startswith("HALO PACS 보유 12건("))
         for banned in ("완료", "complete", "received"):
             self.assertNotIn(banned, state["text"] + state["title"])
@@ -672,7 +672,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(self.retry_receipt(), 12), at=self.at(1)))
         state = self.retry_state()
         self.assertEqual((state["hidden"], state["disabled"], state["text"], state["note"]), (False, False, "Now Retry", ""))
-        self.assertTrue(state["gateway"].endswith("): 병원 보유 12건 중 3건 전송"), state["gateway"])
+        self.assertTrue(state["gateway"].endswith("): Gateway가 집계한 12건 중 3건 전송"), state["gateway"])
         # KinAuth.has('technician') is what decides (auth.js has() also answers true for admin); radiologist-only: none.
         self.page.evaluate("()=>{grants=['radiologist'];renderObservation()}")
         self.assertTrue(self.retry_state()["hidden"])
@@ -686,7 +686,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(self.retry_receipt("failed", 8, 2), 12), at=self.at(2)))
         state = self.retry_state()
         self.assertEqual((state["hidden"], state["note"]), (True, self.F01))
-        self.assertTrue(state["gateway"].endswith("): 병원 보유 12건 중 3건 전송"), state["gateway"])
+        self.assertTrue(state["gateway"].endswith("): Gateway가 집계한 12건 중 3건 전송"), state["gateway"])
         # Every other phase, no receipt, an unreadable one and a retry without a bindable key: neither.
         others = [self.retry_receipt(phase, 9 + index, 3) for index, phase in enumerate(("pending", "announcing", "sending", "complete"))]
         others += [None, {**self.retry_receipt(), "successCount": 13}, {**self.retry_receipt(), "agentSeq": None},
@@ -782,7 +782,7 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         # failed: the Gateway M-of-N text and the exact F-01 sentence, never a control.
         state = self.absent_item()
         self.assertTrue(state["text"].startswith("1.2.9 · gateway · " + when + " · Gateway 보고("), state)
-        self.assertTrue(state["text"].endswith("): 병원 보유 1건 중 0건 전송"), state)
+        self.assertTrue(state["text"].endswith("): Gateway가 집계한 1건 중 0건 전송"), state)
         self.assertTrue(state["title"].startswith("Gateway가 보고한 전송 수입니다."), state)
         self.assertEqual((state["hidden"], state["note"]), (True, self.F01))
         # No receipt: the U1b text byte for byte and nothing else; unreadable: the fixed sentence and no control.

@@ -344,6 +344,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     # The critical result hospital inbox: admin only, one setting of the own institution (read and set).
     ("GET", "admin/critical-result-inbox"): Route(Kind.TENANT),
     ("PATCH", "admin/critical-result-inbox"): Route(Kind.TENANT),
+    # Patient Consent: admin only, one patient of the own institution (lookup, record, withdraw); the patient ID is in the body.
+    ("POST", "admin/patient-consent/lookup"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent/:id/withdraw"): Route(Kind.TENANT),
     # FC-070 Query/Retrieve: 자기 기관의 상대 PACS만 등록·삭제(admin)·검색·가져오기(판독의·방사선사), 검색 답·작업은 요청자에 묶인다.
     ("GET", "admin/dicom-peers"): Route(Kind.TENANT),
     ("POST", "admin/dicom-peers"): Route(Kind.TENANT),
@@ -3108,7 +3112,7 @@ class LiveInvariantTests(unittest.TestCase):
                 rejected("doctor", "preliminary", v, "되돌릴 수 없습니다", reviewer=senior)
             with self.subTest(cell="A×defer"):
                 rejected("doctor", "defer", v, "보류할 수 없습니다", reason="x")
-            v = accepted("doctor2", "addendum", v, "A", findings="addendum")          # A→A
+            v = accepted("doctor2", "addendum", v, "A", findings=fixture.secret + "\naddendum")   # A→A (added after the approved text)
             v = accepted("doctor", "reset", v, "W", reason="표 검증")                  # A→W (discarded+reset)
             v = accepted("doctor", "defer", v, "H", reason="prior 없음")              # W→H
             with self.subTest(cell="H×addendum"):
@@ -3148,7 +3152,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertIsNone(approved.body["holder"])
 
             # addendum도 승인의 한 종류다 — 추가기재자가 승인자 자리에 기록된다(코드 계약).
-            added = self.commit(fixture, "doctor2", "addendum", approved.body["version"], findings="addendum")
+            added = self.commit(fixture, "doctor2", "addendum", approved.body["version"], findings=fixture.secret + "\naddendum")
             days |= self.today_set()
             self.assert_status(added, 201)
             self.assertEqual(added.body["rs"], "A")
@@ -3204,7 +3208,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assert_status(first_save, 201)
             self.assertEqual(first_save.body["version"], 1)
             self.assert_status(self.commit(fixture, "doctor", "approve", 1), 201)
-            added = self.commit(fixture, "doctor2", "addendum", 2, findings="addendum text")
+            added = self.commit(fixture, "doctor2", "addendum", 2, findings=fixture.secret + "\naddendum text")
             self.assert_status(added, 201)
             self.assertEqual(added.body["version"], 3)
             first_three = self.versions(fixture, "doctor")
@@ -3226,7 +3230,7 @@ class LiveInvariantTests(unittest.TestCase):
             # Reset copies retain the already shared signer and cancellation provenance.
             self.assertEqual([row["author"] for row in rows], [doctor, doctor, doctor2, doctor2, doctor, doctor])
             discarded, reset_row = rows[3], rows[4]
-            self.assertEqual(discarded["findings"], "addendum text")
+            self.assertEqual(discarded["findings"], fixture.secret + "\naddendum text")
             self.assertEqual(discarded["reason"], f"판독 취소로 폐기 (취소자: {doctor})")
             stored = json.loads(psql(f'''SELECT json_build_object('author',author,'reason',reason) FROM "ReportVersion" WHERE id={int(discarded['id'])};''')[0])
             self.assertEqual(stored["author"], doctor2)
@@ -3314,7 +3318,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(seen["draft"]["findings"], "draft-on-A")
             self.assertIsNone(self.state(fixture, "doctor")["draft"], "남의 초안이 실려 나갔습니다")
             self.assert_status(self.stack.request("PUT", path + "/report", "doctor", {"findings": "doctor-draft", "baseVersion": 1}), 200)
-            self.assert_status(self.commit(fixture, "doctor2", "addendum", 1, findings="add"), 201)
+            self.assert_status(self.commit(fixture, "doctor2", "addendum", 1, findings=fixture.secret + "\nadd",
+                                           conclusion="approved", recommendation="none"), 201)
             self.assertEqual(self.state(fixture, "doctor")["draft"]["findings"], "doctor-draft", "확정이 남의 초안을 지웠습니다")
             self.assertIsNone(self.state(fixture, "doctor2")["draft"])
         with self.stack.fixture() as deferred:   # H
@@ -3593,12 +3598,12 @@ class LiveInvariantTests(unittest.TestCase):
             approved = self.commit(f2, "kdoctor", "approve", 0, findings="x")
             self.assert_status(approved, 201)
             self.assertEqual((approved.body["rs"], approved.body["ts"], approved.body["repDoc"]), ("A", "completed", self.signer("kdoctor")))
-            added = self.commit(f2, "kdoctor", "addendum", 1, findings="add")
+            added = self.commit(f2, "kdoctor", "addendum", 1, findings="x\nadd")
             self.assert_status(added, 201)
             self.assertEqual(added.body["ts"], "completed")
             self.assert_status(self.stack.request("PATCH", path, "doctor", {"ts": "cancelled"}), 400)
             seen = self.state(f2, "doctor2")
-            self.assertEqual((seen["rs"], seen["ts"], seen["findings"], seen["prelimHidden"]), ("A", "completed", "add", False))
+            self.assertEqual((seen["rs"], seen["ts"], seen["findings"], seen["prelimHidden"]), ("A", "completed", "x\nadd", False))
 
         with self.stack.fixture() as f3:   # 대조: 소유 기관 스스로 승인하면 completed가 아니다
             self.assert_status(self.stack.request("PATCH", f"/studies/{quote(f3.uid)}", "doctor", {"ts": "wait", "teleTo": "kin-center"}), 200)
@@ -4765,7 +4770,8 @@ class LiveInvariantTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertIn("Ran 25 tests", completed.stderr + completed.stdout)
+        # 25 -> 26: every child is told the image agent version (retention of delivered copies reads it).
+        self.assertIn("Ran 26 tests", completed.stderr + completed.stdout)
 
     def test_gateway_agent_queue_and_batch_contract(self) -> None:
         completed = subprocess.run(
@@ -4781,7 +4787,8 @@ class LiveInvariantTests(unittest.TestCase):
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
-        self.assertIn("Ran 95 tests", completed.stderr + completed.stdout)
+        # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
+        self.assertIn("Ran 115 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(
@@ -5243,7 +5250,8 @@ class LiveInvariantTests(unittest.TestCase):
                     self.assertIn("추가기재(Addendum) 또는 판독 취소(Reset)", result.body["message"])
                     self.assert_snapshot_unchanged(fixture, "doctor", before)
             self.assertEqual(self.report_state(fixture, "doctor")["repDoc"], self.signer("doctor"))
-            added = self.commit(fixture, "doctor2", "addendum", approved.body["version"], findings="add")
+            added = self.commit(fixture, "doctor2", "addendum", approved.body["version"], findings=fixture.secret + "\nadd",
+                                conclusion="approved", recommendation="none")
             self.assert_status(added, 201)
             reset = self.commit(fixture, "doctor", "reset", added.body["version"], reason="정정")
             self.assert_status(reset, 201)

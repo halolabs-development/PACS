@@ -1777,6 +1777,13 @@ class ClinicianPolicySpec(unittest.TestCase):
                                 cwd=ROOT, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_07c_patient_consent_records_stay_in_the_administrators_institution_and_open_nothing(self):
+        # One server rule (api/src/patient-consent.service.ts patientOf) for every Patient Consent route; patient-level
+        # permission is the existing Study Access Original Patient ID rule.
+        result = subprocess.run(["node", str(ROOT / "tests" / "patient_consent_service_test.cjs")],
+                                cwd=ROOT, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_08_realm_defines_the_role_without_users_or_secrets(self):
         realm = json.loads(REALM.read_text(encoding="utf-8"))
         names = [r["name"] for r in realm["roles"]["realm"]]
