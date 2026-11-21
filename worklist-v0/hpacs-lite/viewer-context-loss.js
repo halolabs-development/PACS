@@ -1,10 +1,13 @@
 /* REQ-S8-CTX -> RISK-CTX-BLANK/WORK/SESSION -> CTX-DOM/CONSUMER/SERVER.
  * A lost context is a renderer fact. Neither a browser event nor a slow frame proves it.
  */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
-  const REPEAT = '영상 표시 장애가 반복되고 있습니다. 3D 기능 사용을 중단하고 지원 담당자에게 문의해 주세요. 다시 불러와도 재발할 수 있습니다.';
-  const NOTICE = '영상 표시가 중단되어 영향을 받은 화면을 가렸습니다. Reload Viewer를 누르면 이 뷰어만 다시 불러옵니다.\n검사·비교·진입 시리즈와 저장된 표식·소견·Job을 다시 조회합니다. 판독문 입력과 받아쓰기는 유지됩니다.\n현재 배치, Window / Level, 확대·이동, MPR/MIP/VR 보기와 임시 미리보기, Frame Coverage 표시 기록은 초기화됩니다. 미저장 작업과 저장 결과를 확인하지 못한 항목을 먼저 확인하세요.';
+  const REPEAT = kinText("영상 표시 장애가 반복되고 있습니다. 3D 기능 사용을 중단하고 지원 담당자에게 문의해 주세요. 다시 불러와도 재발할 수 있습니다.");
+  const NOTICE = kinText("영상 표시가 중단되어 영향을 받은 화면을 가렸습니다. Reload Viewer를 누르면 이 뷰어만 다시 불러옵니다.\n검사·비교·진입 시리즈와 저장된 표식·소견·Job을 다시 조회합니다. 판독문 입력과 받아쓰기는 유지됩니다.\n현재 배치, Window / Level, 확대·이동, MPR/MIP/VR 보기와 임시 미리보기, Frame Coverage 표시 기록은 초기화됩니다. 미저장 작업과 저장 결과를 확인하지 못한 항목을 먼저 확인하세요.");
   function context(engine) {
     return engine?.offscreenMultiRenderWindow?.getOpenGLRenderWindow?.()?.getContext?.() || null;
   }
@@ -95,7 +98,7 @@
       const button = (label, run) => { const b = root.document.createElement('button'); b.type = 'button'; b.textContent = label; b.onclick = run; box.append(b); return b; };
       box.append(heading, text, repeated, status);
       button('Reload Viewer', () => retry(false));
-      const review = button('Review Unsaved Work', () => message('입력한 표식·소견·Job·Tech Note와 저장 상태를 확인하세요. 영상 영역 밖의 저장 컨트롤은 계속 사용할 수 있습니다.'));
+      const review = button('Review Unsaved Work', () => message(kinText("입력한 표식·소견·Job·Tech Note와 저장 상태를 확인하세요. 영상 영역 밖의 저장 컨트롤은 계속 사용할 수 있습니다.")));
       const discard = button('Discard Viewer Changes & Reload', () => retry(true)); discard.hidden = true; review.hidden = true;
       // The cover belongs to the renderer's image element, never its panel or the parent document.
       const position = element.style.position;
@@ -203,12 +206,12 @@
       return { dirty };
     }
     function refuse(reason) {
-      const messages = { preparing: '로그아웃 준비 중입니다. 편집으로 돌아온 뒤 다시 시도하세요.', 'session-ended': '이 뷰어의 세션이 종료되어 다시 불러올 수 없습니다.',
-        unknown: '지금 복구 허가를 확인할 수 없습니다. 같은 버튼으로 다시 시도하세요.', busy: '진행 중인 작업이 끝난 뒤 다시 시도하세요.',
-        'save-unknown': '저장 결과를 확인하지 못한 항목이 있습니다. 저장 결과를 먼저 확인하세요.',
-        'guard-unavailable': '미저장 작업의 상태를 확인할 수 없습니다. 작성 도구의 연결을 확인한 뒤 다시 시도하세요.',
-        dirty: '미저장 영상 작업이 있습니다. 저장하거나 명시적으로 폐기한 뒤 다시 불러오세요.', account: '원래 계정과 로그인 세션을 확인하지 못했습니다.',
-        request: '로그인 확인 요청이 완료되지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.', coverage: '다시 불러오기를 취소했습니다.', marker: '복구 정보를 보존하지 못했습니다. 브라우저 저장소를 확인한 뒤 다시 시도하세요.' };
+      const messages = { preparing: kinText("로그아웃 준비 중입니다. 편집으로 돌아온 뒤 다시 시도하세요."), 'session-ended': kinText("이 뷰어의 세션이 종료되어 다시 불러올 수 없습니다."),
+        unknown: kinText("지금 복구 허가를 확인할 수 없습니다. 같은 버튼으로 다시 시도하세요."), busy: kinText("진행 중인 작업이 끝난 뒤 다시 시도하세요."),
+        'save-unknown': kinText("저장 결과를 확인하지 못한 항목이 있습니다. 저장 결과를 먼저 확인하세요."),
+        'guard-unavailable': kinText("미저장 작업의 상태를 확인할 수 없습니다. 작성 도구의 연결을 확인한 뒤 다시 시도하세요."),
+        dirty: kinText("미저장 영상 작업이 있습니다. 저장하거나 명시적으로 폐기한 뒤 다시 불러오세요."), account: kinText("원래 계정과 로그인 세션을 확인하지 못했습니다."),
+        request: kinText("로그인 확인 요청이 완료되지 않았습니다. 연결을 확인한 뒤 다시 시도하세요."), coverage: kinText("다시 불러오기를 취소했습니다."), marker: kinText("복구 정보를 보존하지 못했습니다. 브라우저 저장소를 확인한 뒤 다시 시도하세요.") };
       message(messages[reason] || messages.unknown); audit('refused', reason);
     }
     async function retry(discard) {
@@ -223,7 +226,7 @@
         for (const cover of covers.values()) { cover.discard.hidden = !work.dirty || !!work.reason; cover.review.hidden = !work.dirty && !work.reason; }
         if (work.reason) return refuse(work.reason);
         if (work.dirty && !discard) return refuse('dirty');
-        if (work.dirty && !root.confirm('저장하지 않은 영상 작업을 버리고 이 뷰어를 다시 불러올까요? 판독문 입력은 유지됩니다.')) return refuse('dirty');
+        if (work.dirty && !root.confirm(kinText("저장하지 않은 영상 작업을 버리고 이 뷰어를 다시 불러올까요? 판독문 입력은 유지됩니다."))) return refuse('dirty');
         const start = now();
         const answer = await boundary.transport.request('/api/me', { context: at, deadlineMs: 10000, cache: 'no-store' });
         if (!answer.ok) return refuse('request');

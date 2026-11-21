@@ -5,6 +5,9 @@
 // given an image, not when something is pressed. Every display change is made only when the reader presses for it, at
 // once, from what is known of each cell's image then: a cell whose image is not read yet is left as it is and named,
 // and nothing is carried out later for it. A change is marked on the cell it changed and goes back in one step.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (() => {
   // A Patient ▶ move remounts the viewer, and this module with it: the keypad opens again there with the move's result.
   const carry = { busy: false, message: null, listener: null, reportTarget: null };
@@ -193,7 +196,7 @@
         const entry = look(id);
         if (!entry || entry.state === 'other') continue;
         if (entry.state === 'read') { if (entry.cell.mg) list.push(entry.cell); continue; }
-        list.left.push({ id, label: nameOf(entry.v) + (entry.state === 'unread' ? ' · 영상 머리글을 읽지 못함' : ' · 영상을 읽는 중') });
+        list.left.push({ id, label: nameOf(entry.v) + (entry.state === 'unread' ? kinText(" · 영상 머리글을 읽지 못함") : kinText(" · 영상을 읽는 중")) });
       }
       return list;
     }
@@ -203,8 +206,8 @@
     function cellsPressed() { const list = cellsNow(); askAgain(list); return list; }
     const leftOut = list => list.left.map(entry => entry.label);
     // What to say when nothing was done: the cells not read, or that there is no MG cell.
-    const NO_MG = 'MG 영상이 있는 칸이 없습니다.';
-    const nothingDone = list => list.left.length ? '바꾼 것이 없습니다. 영상을 읽지 못한 칸 — ' + leftOut(list).join(' / ') : NO_MG + ' 바꾼 것이 없습니다.';
+    const NO_MG = kinText("MG 영상이 있는 칸이 없습니다.");
+    const nothingDone = list => list.left.length ? kinText("바꾼 것이 없습니다. 영상을 읽지 못한 칸 — {0}", leftOut(list).join(' / ')) : kinText("{0} 바꾼 것이 없습니다.", NO_MG);
 
     // ── Geometry of a cell: image points (pixel edges 0 … columns), world points and the camera ──
     function toImage(v, world) {
@@ -322,14 +325,13 @@
       const panel = ui.panel({ id: 'mirrored', title: 'Mirrored' });
       if (!panel || panel === mirror.panel) return;
       mirror.panel = panel;
-      note('MG 영상의 한 점을 누르세요. 그 자리를 2배로 크게 보이고, 같은 뷰의 다른 칸(반대쪽 유방·과거 검사)은 대응하는 자리를 같은 배율로 보입니다. ' +
-        '한 칸의 확대·이동·반전·돋보기도 같은 뷰의 칸에 함께 걸립니다.', panel.body);
-      note('대응 자리는 영상 좌표로 정합니다(반대쪽은 좌우 거울). 같은 조직이 아닐 수 있습니다. CC와 MLO 사이에는 걸지 않습니다.', panel.body);
+      note(kinText("MG 영상의 한 점을 누르세요. 그 자리를 2배로 크게 보이고, 같은 뷰의 다른 칸(반대쪽 유방·과거 검사)은 대응하는 자리를 같은 배율로 보입니다. 한 칸의 확대·이동·반전·돋보기도 같은 뷰의 칸에 함께 걸립니다."), panel.body);
+      note(kinText("대응 자리는 영상 좌표로 정합니다(반대쪽은 좌우 거울). 같은 조직이 아닐 수 있습니다. CC와 MLO 사이에는 걸지 않습니다."), panel.body);
       const label = element('label', '', panel.body, 'kin-mg-row'), invert = element('input', '', label);
       invert.type = 'checkbox'; invert.checked = mirror.invert; invert.setAttribute('aria-label', 'Invert together'); element('span', 'Invert together', label);
       invert.onchange = () => { mirror.invert = invert.checked; };
       const row = element('div', '', panel.body, 'kin-mg-row');
-      button('Reset', row, () => resetMirrored(), '켜기 전의 배율·위치·반전으로 되돌립니다(뒤집기·회전은 그대로)');
+      button('Reset', row, () => resetMirrored(), kinText("켜기 전의 배율·위치·반전으로 되돌립니다(뒤집기·회전은 그대로)"));
       mirror.status = statusLine(panel.body);
       // Close turns the link off and leaves the views as they are; the lenses of the linked cells go with it (the cell
       // pressed keeps its own while it is pressed).
@@ -381,7 +383,7 @@
         badge(cell.v, 'mirrored', 'Mirrored: ' + (REASONS[reason] || reason) + ' — not linked');
         lines.push(labelOf(cell) + ': ' + (REASONS[reason] || reason));
       }
-      if (mirror.status) mirror.status.textContent = lines.length ? '연동하지 않는 칸 — ' + lines.join(' / ') : list.length ? '' : NO_MG;
+      if (mirror.status) mirror.status.textContent = lines.length ? kinText("연동하지 않는 칸 — {0}", lines.join(' / ')) : list.length ? '' : NO_MG;
     }
     // Reset: every cell in the link, back to the zoom, the centre and the inversion it entered with — what Mirrored
     // itself sets on a cell, and nothing else of its view. A flip or a rotation stays: the camera is moved with its
@@ -409,7 +411,7 @@
       const list = cellsPressed(), t = M.targets(v.id, list), unread = list.left.find(entry => entry.id === v.id);
       if (!t.source && !unread) return;
       markUnlinked(list);
-      if (unread || t.reason) { if (mirror.status) mirror.status.textContent = '이 칸은 연동할 수 없습니다: ' + (unread ? unread.label : REASONS[t.reason] || t.reason); return; }
+      if (unread || t.reason) { if (mirror.status) mirror.status.textContent = kinText("이 칸은 연동할 수 없습니다: {0}", (unread ? unread.label : REASONS[t.reason] || t.reason)); return; }
       const source = t.source;
       for (const cell of [source, ...t.linked.map(id => list.find(c => c.id === id))]) {
         const at = cell === source ? point : M.counterpart(point, source, cell), world = at && toWorld(cell.v, at);
@@ -576,9 +578,8 @@
       lens.on = on; lensUp();
       const list = on ? cellsPressed() : null;
       pressLayers();
-      ui.toast(!on ? 'Magnifier를 껐습니다.' : !list.length && !list.left.length ? 'Magnifier: ' + NO_MG
-        : 'Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.'
-          + (list.left.length ? ' 영상을 읽은 뒤에 걸리는 칸 — ' + leftOut(list).join(' / ') : ''));
+      ui.toast(!on ? kinText("Magnifier를 껐습니다.") : !list.length && !list.left.length ? 'Magnifier: ' + NO_MG
+        : kinText("Magnifier: MG 영상을 누르고 있는 동안 그 자리를 2배로 보입니다. MG ▾ › Magnifier로 끕니다.{0}", (list.left.length ? kinText(" 영상을 읽은 뒤에 걸리는 칸 — {0}", leftOut(list).join(' / ')) : '')));
     }
 
     // ── Quadrant Zoom ──
@@ -640,19 +641,18 @@
       button('Previous Quadrant', row, () => show(quad.step - 1));
       button('Next Quadrant', row, () => show(quad.step + 1));
       const how = note('', panel.body);
-      note('사분면은 유방 영역의 상자를 가로·세로 반으로 나눈 것이고(영역을 찾지 못한 칸은 영상 전체), 모든 MG 칸이 같은 사분면을 보입니다. 좌우는 거울입니다. ' +
-        '한 장의 뷰는 사분면 이름의 한 축만 보입니다(CC: 가쪽/안쪽, MLO: 위/아래). 보이지 않는 축의 두 단계는 흉벽 쪽과 유두 쪽을 나누어 훑는 순서이며, 해부학적 사분면을 구분한 것이 아닙니다.', panel.body);
+      note(kinText("사분면은 유방 영역의 상자를 가로·세로 반으로 나눈 것이고(영역을 찾지 못한 칸은 영상 전체), 모든 MG 칸이 같은 사분면을 보입니다. 좌우는 거울입니다. 한 장의 뷰는 사분면 이름의 한 축만 보입니다(CC: 가쪽/안쪽, MLO: 위/아래). 보이지 않는 축의 두 단계는 흉벽 쪽과 유두 쪽을 나누어 훑는 순서이며, 해부학적 사분면을 구분한 것이 아닙니다."), panel.body);
       const status = statusLine(panel.body);
       function explain() {
         how.textContent = carry.quadrantZoom === '4x'
-          ? '4×: 각 칸을 Fit(100 %)의 4배(400 %)로 확대해 사분면의 가운데를 보입니다. 사분면이 칸보다 크면 가장자리는 칸 밖에 있습니다(끌어 옮기거나 Fill Quadrant로 보세요).'
-          : 'Fill Quadrant: 사분면 하나를 칸에 꽉 채워 보입니다(배율은 영상과 칸 크기에 따라 다릅니다).';
+          ? kinText("4×: 각 칸을 Fit(100 %)의 4배(400 %)로 확대해 사분면의 가운데를 보입니다. 사분면이 칸보다 크면 가장자리는 칸 밖에 있습니다(끌어 옮기거나 Fill Quadrant로 보세요).")
+          : kinText("Fill Quadrant: 사분면 하나를 칸에 꽉 채워 보입니다(배율은 영상과 칸 크기에 따라 다릅니다).");
       }
       explain();
       let notes = [];
       const paint = () => {
         const clipped = [...quad.marks.values()].filter(mark => mark.clipped).map(mark => mark.label);
-        status.textContent = [...notes, clipped.length ? '4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — ' + clipped.join(' / ') : ''].filter(Boolean).join('. ');
+        status.textContent = [...notes, clipped.length ? kinText("4×에서 사분면의 가장자리가 칸 밖에 있는 칸 — {0}", clipped.join(' / ')) : ''].filter(Boolean).join('. ');
       };
       // A step on one cell: zoomed and centred, held (marked) and badged; false when it could not be drawn.
       function place(cell, step, mode) {
@@ -681,9 +681,9 @@
           if (reason) { dropQuadrant(cell.id); skipped.push(labelOf(cell) + ': ' + (REASONS[reason] || reason)); badge(cell.v, 'quadrant', 'Quadrant: ' + (REASONS[reason] || reason)); continue; }
           if (!place(cell, step, mode)) failed.push(labelOf(cell));
         }
-        notes = [list.left.length ? '확대하지 않은 칸 — ' + leftOut(list).join(' / ') : list.length ? '' : nothingDone(list),
-          skipped.length ? '방향을 확인할 수 없어 확대하지 않은 칸 — ' + skipped.join(' / ') : '',
-          failed.length ? '배율을 계산할 수 없어 확대하지 않은 칸 — ' + failed.join(' / ') : ''];
+        notes = [list.left.length ? kinText("확대하지 않은 칸 — {0}", leftOut(list).join(' / ')) : list.length ? '' : nothingDone(list),
+          skipped.length ? kinText("방향을 확인할 수 없어 확대하지 않은 칸 — {0}", skipped.join(' / ')) : '',
+          failed.length ? kinText("배율을 계산할 수 없어 확대하지 않은 칸 — {0}", failed.join(' / ')) : ''];
         paint();
       }
       // Held cells whose size changed: the step and zoom choice each holds, again, for those cells only. A cell whose
@@ -693,7 +693,7 @@
         for (const id of ids) {
           const mark = quad.marks.get(id), cell = list.find(c => c.id === id);
           if (!mark || !cell || mark.viewport !== cell.v) continue;
-          if (!place(cell, mark.step, mark.mode)) notes = [...notes.filter(Boolean), '배율을 계산할 수 없어 확대하지 않은 칸 — ' + labelOf(cell)];
+          if (!place(cell, mark.step, mark.mode)) notes = [...notes.filter(Boolean), kinText("배율을 계산할 수 없어 확대하지 않은 칸 — {0}", labelOf(cell))];
         }
         paint();
       };
@@ -780,7 +780,7 @@
         tomo.original = { id: tomo.id, viewport: v, imageId: shownId, copy: current.slice() };
       let images;
       try { images = await Promise.all(ids.slice(range.first, range.last + 1).map(id => core.imageLoader.loadAndCacheImage(id))); }
-      catch (_) { if (ticket === tomo.ticket) tomo.sync?.('Slab: 단면을 불러오지 못했습니다.'); return; }
+      catch (_) { if (ticket === tomo.ticket) tomo.sync?.(kinText("Slab: 단면을 불러오지 못했습니다.")); return; }
       if (ended || ticket !== tomo.ticket || viewportOf(tomo.id) !== v || imageIdOf(v) !== shownId) return;
       const arrays = images.map(pixelsOf), own = arrays[center - range.first], copy = tomo.original.copy;
       // Same grid, same conversion, and the slice's own pixels (the averaging input) are the values shown, every one of them:
@@ -788,7 +788,7 @@
       let sameValues = !!own && own.length === copy.length;
       for (let i = 0; sameValues && i < copy.length; i++) if (own[i] !== copy[i]) sameValues = false;
       if (!M.slabCompatible(images.map(planeOf)) || !sameValues || arrays.some(a => !a || a.length !== copy.length)) {
-        tomo.sync?.('Slab: 격자나 픽셀 값 변환이 다른 단면이 있어 합치지 않았습니다.'); return;
+        tomo.sync?.(kinText("Slab: 격자나 픽셀 값 변환이 다른 단면이 있어 합치지 않았습니다.")); return;
       }
       const out = new copy.constructor(copy.length);
       if (!M.slabAverage(arrays, out) || !putScalars(v, out)) return;
@@ -826,8 +826,7 @@
       };
       const step = choose('Step Interval', [1, 2, 3, 5, 10].map(n => [n, n + (n === 1 ? ' slice' : ' slices')]), n => { tomo.step = n; });
       const slab = choose('Slab Thickness', [1, 3, 5, 10].map(n => [n, n + (n === 1 ? ' slice' : ' slices')]), n => { tomo.slab = n; drawSlab(); });
-      note('Slab Thickness: 지금 단면을 가운데로 한 n장의 평균을 이 칸에 그립니다(짝수는 뒤쪽으로 한 장 더, 끝에서는 있는 장만). ' +
-        'Slab을 보는 동안 이 칸의 측정 표시와 마우스 도구는 꺼지고, 휠은 단면을 넘깁니다. 1 slice로 돌리면 원래 단면입니다.', panel.body);
+      note(kinText("Slab Thickness: 지금 단면을 가운데로 한 n장의 평균을 이 칸에 그립니다(짝수는 뒤쪽으로 한 장 더, 끝에서는 있는 장만). Slab을 보는 동안 이 칸의 측정 표시와 마우스 도구는 꺼지고, 휠은 단면을 넘깁니다. 1 slice로 돌리면 원래 단면입니다."), panel.body);
       const status = statusLine(panel.body);
       let message = '';
       tomo.sync = text => {
@@ -838,9 +837,9 @@
         slider.max = String(Math.max(1, total)); slider.value = String(at || 1);
         playButton.textContent = tomo.timer ? 'Stop' : 'Play';
         for (const node of [slider, prev, next, playButton, step, slab]) node.disabled = !live;
-        status.textContent = v ? (live ? message : '칸의 영상이 바뀌어 멈췄습니다. 다시 여세요.')
-          : unread.length ? 'DBT(유방 단층) 칸인지 확인하지 못했습니다 — ' + unread.join(' / ') + '. 다시 여세요.'
-          : '여러 단면이 있는 DBT(유방 단층) 칸이 없습니다. DBT 칸을 고른 뒤 다시 여세요.';
+        status.textContent = v ? (live ? message : kinText("칸의 영상이 바뀌어 멈췄습니다. 다시 여세요."))
+          : unread.length ? kinText("DBT(유방 단층) 칸인지 확인하지 못했습니다 — {0}. 다시 여세요.", unread.join(' / '))
+          : kinText("여러 단면이 있는 DBT(유방 단층) 칸이 없습니다. DBT 칸을 고른 뒤 다시 여세요.");
       };
       slider.oninput = () => tomoGo(Number(slider.value) - 1);
       panel.onClose(() => {
@@ -941,7 +940,7 @@
       const list = cellsNow(), missed = leftOut(list);
       for (const cell of list) {
         const region = regionOf(cell);
-        if (region.found) drawOutline(cell, region); else { missed.push(labelOf(cell)); badge(cell.v, 'edge', '경계를 찾지 못했습니다'); }
+        if (region.found) drawOutline(cell, region); else { missed.push(labelOf(cell)); badge(cell.v, 'edge', kinText("경계를 찾지 못했습니다")); }
       }
       return { list, missed };
     }
@@ -956,7 +955,7 @@
       const drawn = drawEdges();
       if (drawn) askAgain(drawn.list);
       say(!drawn ? '' : !drawn.list.length && !drawn.list.left.length ? nothingDone(drawn.list)
-        : drawn.missed.length ? (drawn.list.left.length ? '경계선을 그리지 않은 칸 — ' : '경계를 찾지 못한 칸 — ') + drawn.missed.join(' / ') : '유방 경계를 그렸습니다. 다시 누르면 지웁니다.');
+        : drawn.missed.length ? (drawn.list.left.length ? kinText("경계선을 그리지 않은 칸 — ") : kinText("경계를 찾지 못한 칸 — ")) + drawn.missed.join(' / ') : kinText("유방 경계를 그렸습니다. 다시 누르면 지웁니다."));
     }
     // The cell's VOI as it is (window, function, inversion and a stored table on the GPU actor), and back.
     function transfer(v) { try { return v.getDefaultActor()?.actor?.getProperty().getRGBTransferFunction(0) || null; } catch (_) { return null; } }
@@ -983,7 +982,7 @@
     // table and the inversion a cell had are taken when it is turned on there, and are what Off gives back. A cell left
     // out when it was turned on (its image not read, no region) is named then; it is not turned on later.
     function breastWl() {
-      if (show.wl.size) { wlOff(); say('Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.'); return; }
+      if (show.wl.size) { wlOff(); say(kinText("Breast W/L을 껐습니다. 원래 창(VOI LUT·반전 포함)으로 돌아갔습니다.")); return; }
       clearBadges('wl');
       const list = cellsPressed(), failed = leftOut(list);
       if (!list.length) { say(nothingDone(list)); return; }
@@ -991,7 +990,7 @@
         const region = regionOf(cell);
         let values; try { values = imageData(cell.v).getPointData().getScalars().getData(); } catch (_) { values = null; }
         const window_ = region.found && values ? M.regionWindow(values, cell.columns, cell.rows, region) : null;
-        if (!window_) { failed.push(labelOf(cell)); badge(cell.v, 'wl', 'Breast W/L: 경계를 찾지 못했습니다'); continue; }
+        if (!window_) { failed.push(labelOf(cell)); badge(cell.v, 'wl', kinText("Breast W/L: 경계를 찾지 못했습니다")); continue; }
         const before = voiNow(cell.v);
         applying.add(cell.id);
         try {
@@ -1001,8 +1000,8 @@
         show.wl.set(cell.id, { viewport: cell.v, stack: stackKey(cell.v), before, window: window_ });
         badge(cell.v, 'wl', 'Breast W/L');
       }
-      say(failed.length ? (list.left.length ? '창을 바꾸지 않은 칸 — ' : '경계를 찾지 못해 창을 바꾸지 않은 칸 — ') + failed.join(' / ')
-        : 'Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다.');
+      say(failed.length ? (list.left.length ? kinText("창을 바꾸지 않은 칸 — ") : kinText("경계를 찾지 못해 창을 바꾸지 않은 칸 — ")) + failed.join(' / ')
+        : kinText("Breast W/L: 유방 영역 픽셀(1–99 백분위)로 창을 정했습니다. 다시 누르면 원래 창입니다."));
     }
     const say = text => { if (show.status) show.status.textContent = text; };
     // True Size on one cell for a screen (its pixel pitch and scale): false when the image's pixel spacing cannot be told.
@@ -1018,7 +1017,7 @@
       const list = cellsPressed(), skipped = [], left = leftOut(list);
       if (!list.length) { say(nothingDone(list)); return; }
       if (!show.edge) clearBadges('edge');
-      const missed = cell => { skipped.push(labelOf(cell)); if (!show.edge) badge(cell.v, 'edge', '경계를 찾지 못했습니다'); };
+      const missed = cell => { skipped.push(labelOf(cell)); if (!show.edge) badge(cell.v, 'edge', kinText("경계를 찾지 못했습니다")); };
       if (kind === 'match') {
         const groups = new Map();
         for (const cell of list) { if (!cell.view) { skipped.push(labelOf(cell)); continue; } groups.set(cell.view, [...(groups.get(cell.view) || []), cell]); }
@@ -1038,8 +1037,8 @@
             else unset.push(labelOf(entry.cell));
           }
         }
-        say(left.length || unset.length ? '바꾸지 않은 칸 — ' + [...left, ...skipped, ...unset].join(' / ') : skipped.length ? '경계를 찾지 못해 맞추지 않은 칸 — ' + skipped.join(' / ')
-          : 'Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(모든 유방이 칸 안에 다 보이는 가장 큰 크기).');
+        say(left.length || unset.length ? kinText("바꾸지 않은 칸 — {0}", [...left, ...skipped, ...unset].join(' / ')) : skipped.length ? kinText("경계를 찾지 못해 맞추지 않은 칸 — {0}", skipped.join(' / '))
+          : kinText("Match Size: 같은 뷰의 칸끼리 흉벽–유두 길이를 화면에서 같게 맞췄습니다(모든 유방이 칸 안에 다 보이는 가장 큰 크기)."));
         return;
       }
       if (kind === 'true') {
@@ -1047,8 +1046,7 @@
         if (!pitch) { openPitch(); return; }
         show.screen = now;
         for (const cell of list) if (!trueSize(cell.v, pitch, now.dpr)) skipped.push(labelOf(cell));
-        say((left.length ? '바꾸지 않은 칸 — ' + left.join(' / ') + '. ' : '') + (skipped.length ? '픽셀 간격을 확인할 수 없어 바꾸지 않은 칸 — ' + skipped.join(' / ') + '. ' : '')
-          + `True Size: 이 화면의 픽셀 크기 ${pitch} mm 기준입니다.`);
+        say(kinText("{0}{1}True Size: 이 화면의 픽셀 크기 {2} mm 기준입니다.", (left.length ? kinText("바꾸지 않은 칸 — {0}. ", left.join(' / ')) : ''), (skipped.length ? kinText("픽셀 간격을 확인할 수 없어 바꾸지 않은 칸 — {0}. ", skipped.join(' / ')) : ''), pitch));
         return;
       }
       skipped.push(...left);
@@ -1068,7 +1066,7 @@
           if (zoom && world && steer(v, () => { v.setZoom(zoom); centerOn(v, world); })) setMode(v, 'Fit Breast'); else skipped.push(labelOf(cell));
         }
       }
-      say(skipped.length ? '바꾸지 않은 칸 — ' + skipped.join(' / ') : '');
+      say(skipped.length ? kinText("바꾸지 않은 칸 — {0}", skipped.join(' / ')) : '');
     }
     // The breast box as the cell shows it now, in CSS pixels: its width and height on the screen and the screen length of
     // its chest-wall-to-nipple axis (along the image rows, through the box's middle) — whatever the cell's rotation, flips
@@ -1086,7 +1084,7 @@
     function openPitch() {
       if (!show.pitchRow) return;
       show.pitchRow.hidden = false; show.pitchRow.querySelector('input').focus();
-      say('True Size에는 이 모니터의 실제 픽셀 크기가 필요합니다(브라우저는 알 수 없습니다). 모니터 사양의 픽셀 피치(mm)를 넣으세요. 이 PC의 이 브라우저에 화면별로 저장합니다.');
+      say(kinText("True Size에는 이 모니터의 실제 픽셀 크기가 필요합니다(브라우저는 알 수 없습니다). 모니터 사양의 픽셀 피치(mm)를 넣으세요. 이 PC의 이 브라우저에 화면별로 저장합니다."));
     }
     // The window moved to another screen or the browser's zoom changed: the cells True Size still stands on are drawn
     // again for that screen's value, or go back to Fit and the value is asked for. No other cell is touched.
@@ -1105,21 +1103,21 @@
       const pitch = unknown ? null : pitchFor(now.key);
       if (pitch) show.screen = now;
       for (const v of trueCells) if (!(pitch && trueSize(v, pitch, now.dpr))) { fit(v); setMode(v, 'Fit'); }
-      if (pitch) say(`True Size: 이 화면의 픽셀 크기 ${pitch} mm 기준입니다.`);
-      else if (show.panel) openPitch(); else ui.toast('화면이 바뀌어 True Size를 Fit으로 돌렸습니다. Breast Display에서 이 화면의 픽셀 크기를 넣으세요.');
+      if (pitch) say(kinText("True Size: 이 화면의 픽셀 크기 {0} mm 기준입니다.", pitch));
+      else if (show.panel) openPitch(); else ui.toast(kinText("화면이 바뀌어 True Size를 Fit으로 돌렸습니다. Breast Display에서 이 화면의 픽셀 크기를 넣으세요."));
     }
     function openBreastDisplay() {
       const panel = ui.panel({ id: 'breast', title: 'Breast Display' });
       if (!panel || panel === show.panel) return;
       show.panel = panel;
       const row = element('div', '', panel.body, 'kin-mg-row');
-      button('Breast Edge', row, () => pressEdge(), '각 MG 칸에서 유방 영역을 찾아 경계선을 그립니다');
-      button('Breast W/L', row, () => breastWl(), '유방 영역 안의 픽셀만으로 창을 정합니다');
-      button('Fit', row, () => zoomMode('fit'), '영상을 칸에 맞춥니다');
-      button('1:1', row, () => zoomMode('pixel'), '영상 픽셀 1개를 화면 픽셀 1개로');
-      button('True Size', row, () => zoomMode('true'), '화면의 1 mm를 영상의 1 mm로(모니터 픽셀 크기 필요)');
-      button('Fit Breast', row, () => zoomMode('breast'), '유방 영역을 칸에 맞춥니다');
-      button('Match Size', row, () => zoomMode('match'), '같은 뷰의 칸끼리 유방 크기를 맞춥니다');
+      button('Breast Edge', row, () => pressEdge(), kinText("각 MG 칸에서 유방 영역을 찾아 경계선을 그립니다"));
+      button('Breast W/L', row, () => breastWl(), kinText("유방 영역 안의 픽셀만으로 창을 정합니다"));
+      button('Fit', row, () => zoomMode('fit'), kinText("영상을 칸에 맞춥니다"));
+      button('1:1', row, () => zoomMode('pixel'), kinText("영상 픽셀 1개를 화면 픽셀 1개로"));
+      button('True Size', row, () => zoomMode('true'), kinText("화면의 1 mm를 영상의 1 mm로(모니터 픽셀 크기 필요)"));
+      button('Fit Breast', row, () => zoomMode('breast'), kinText("유방 영역을 칸에 맞춥니다"));
+      button('Match Size', row, () => zoomMode('match'), kinText("같은 뷰의 칸끼리 유방 크기를 맞춥니다"));
       show.pitchRow = element('label', '', panel.body, 'kin-mg-row'); show.pitchRow.hidden = true;
       element('span', 'Monitor pixel pitch (mm)', show.pitchRow);
       const pitch = element('input', '', show.pitchRow); pitch.type = 'number'; pitch.step = '0.001'; pitch.min = '0.05'; pitch.max = '1';
@@ -1127,12 +1125,12 @@
       const current = pitchFor(screenNow().key); if (current) pitch.value = String(current);
       pitch.onchange = () => {
         const value = Number(pitch.value), key = screenNow().key;
-        if (!M.validPitch(value)) { say('0.05–1 mm 사이의 값을 넣으세요.'); return; }
+        if (!M.validPitch(value)) { say(kinText("0.05–1 mm 사이의 값을 넣으세요.")); return; }
         // Without a screen key the value serves this window only (it is not stored for a screen it may not be).
         if (!savePitch(key, value)) show.sessionPitch = { key, value };
         show.pitchRow.hidden = true; zoomMode('true');
       };
-      note('표시 처리(경계·창·크기)는 누를 때만 걸리고 칸마다 표지가 붙습니다. Fit으로 돌아가고, Breast W/L은 다시 누르면 원래 창입니다.', panel.body);
+      note(kinText("표시 처리(경계·창·크기)는 누를 때만 걸리고 칸마다 표지가 붙습니다. Fit으로 돌아가고, Breast W/L은 다시 누르면 원래 창입니다."), panel.body);
       show.status = statusLine(panel.body);
       panel.onClose(() => { if (show.panel !== panel) return; show.panel = show.status = show.pitchRow = null; });
     }
@@ -1165,7 +1163,7 @@
       if (panel === pad.panel) return pad;
       pad.panel = panel;
       const keys = element('div', '', panel.body, 'kin-mg-row');
-      const next = button('Patient ▶', keys, () => pressNext(), '다음 열린 환자의 검사로 영상과 판독 대상을 옮깁니다');
+      const next = button('Patient ▶', keys, () => pressNext(), kinText("다음 열린 환자의 검사로 영상과 판독 대상을 옮깁니다"));
       next.dataset.mgKey = 'next-patient';
       element('b', 'Open Patients', panel.body);
       const list = element('ol', '', panel.body, 'kin-mg-patients');
@@ -1180,7 +1178,7 @@
           item.setAttribute('aria-current', String(tab.current)); return item;
         }));
         next.disabled = open.length < 2 || carry.busy || !!tabs()?.moving?.();
-        status.textContent = carry.busy ? '환자를 옮기는 중입니다…' : carry.message || (open.length < 2 ? '열린 다른 환자가 없습니다.' : '');
+        status.textContent = carry.busy ? kinText("환자를 옮기는 중입니다…") : carry.message || (open.length < 2 ? kinText("열린 다른 환자가 없습니다.") : '');
       };
       panel.onClose(() => { if (pad.panel !== panel) return; pad.panel = pad.paint = pad.question = null; carry.message = null; });
       pad.paint();
@@ -1199,11 +1197,11 @@
       if (reason === null) { move('save'); return; }
       const now = open.find(tab => tab.current)?.patient.name || '';
       const question = pad.question; question.hidden = false; question.replaceChildren();
-      element('p', `${now}의 판독 초안이 저장되지 않았습니다 (${reason}).`, question);
-      element('p', 'Discard & Move는 자동 저장된 부분을 포함해 이 검사의 초안 전체를 버리고 저장된 판독문으로 돌아갑니다.', question);
+      element('p', kinText("{0}의 판독 초안이 저장되지 않았습니다 ({1}).", now, reason), question);
+      element('p', kinText("Discard & Move는 자동 저장된 부분을 포함해 이 검사의 초안 전체를 버리고 저장된 판독문으로 돌아갑니다."), question);
       const row = element('div', '', question, 'kin-mg-row');
-      button('Save Draft & Move', row, () => move('save'), '판독 화면에서 초안을 저장하고, 저장이 확인되면 옮깁니다');
-      button('Discard & Move', row, () => move('discard'), '판독 화면에서 이 검사의 초안 전체를 버리고(저장된 판독문으로 돌아감), 버린 것이 확인되면 옮깁니다');
+      button('Save Draft & Move', row, () => move('save'), kinText("판독 화면에서 초안을 저장하고, 저장이 확인되면 옮깁니다"));
+      button('Discard & Move', row, () => move('discard'), kinText("판독 화면에서 이 검사의 초안 전체를 버리고(저장된 판독문으로 돌아감), 버린 것이 확인되면 옮깁니다"));
       button('Cancel', row, () => { question.hidden = true; question.replaceChildren(); pad.panel?.focus(); });
       row.querySelector('button').focus();
     }
@@ -1212,7 +1210,7 @@
       if (pad.question) { pad.question.hidden = true; pad.question.replaceChildren(); }
       carry.busy = true; carry.message = null; pad.paint?.();
       let result;
-      try { result = await tabs().next(intent); } catch (error) { result = { ok: false, message: error?.message || '환자를 옮기지 못했습니다.' }; }
+      try { result = await tabs().next(intent); } catch (error) { result = { ok: false, message: error?.message || kinText("환자를 옮기지 못했습니다.") }; }
       carry.busy = false; carry.message = result?.message || '';
       carry.reportTarget = result?.reportTarget ?? null;
       // This module may have been replaced by the viewer of the patient moved to: that one shows the result.

@@ -1,17 +1,21 @@
 /* Reconstruct saved batch output from private, freshly read CT pixels. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check}){
   const core=window.cornerstone,reference=snapshot.volume,batch=snapshot.batch;
   // A saved MIP Viewer (12/14) or MIP Batch (13/15) Job shares this fresh-pixel loader and hands its frames to viewer-volume-mip-print.js.
   const mip=[12,13,14,15].includes(snapshot.version);
-  if(![4,5,6].includes(snapshot.version)&&!mip||batch&&(typeof window.KinVolumeBatch?.plan!=='function'||typeof window.KinVolumeBatchScout?.camera!=='function'||typeof window.KinVolumeBatchScout?.line!=='function'||typeof window.kinRenderVolumeScout!=='function'))throw Error('단면 묶음 출력 도구를 불러오지 못했습니다.');
-  if(mip&&typeof window.kinRenderVolumeMipPrint!=='function')throw Error('MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.');
-  if(!mip&&(batch?[batch.cell]:snapshot.cells).some(cell=>cell.projection.blend===3)&&typeof window.kinPrepareVolumeAverage!=='function')throw Error('평균 투영 출력 도구를 불러오지 못했습니다.');
-  const fail=()=>{throw Error('저장한 CT 원본의 화소·좌표를 확인할 수 없습니다.');};
+  if(![4,5,6].includes(snapshot.version)&&!mip||batch&&(typeof window.KinVolumeBatch?.plan!=='function'||typeof window.KinVolumeBatchScout?.camera!=='function'||typeof window.KinVolumeBatchScout?.line!=='function'||typeof window.kinRenderVolumeScout!=='function'))throw kinError("단면 묶음 출력 도구를 불러오지 못했습니다.");
+  if(mip&&typeof window.kinRenderVolumeMipPrint!=='function')throw kinError("MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.");
+  if(!mip&&(batch?[batch.cell]:snapshot.cells).some(cell=>cell.projection.blend===3)&&typeof window.kinPrepareVolumeAverage!=='function')throw kinError("평균 투영 출력 도구를 불러오지 못했습니다.");
+  const fail=()=>{throw kinError("저장한 CT 원본의 화소·좌표를 확인할 수 없습니다.");};
   const list=value=>Array.isArray(value)?value.map(Number):String(value).split('\\').map(Number);
   const near=(a,b)=>a.length===b.length&&a.every((n,i)=>Number.isFinite(n)&&Math.abs(n-b[i])<.001);
   const read=async path=>JSON.parse(new TextDecoder().decode(await bytes(path,signal,524288,budget)));
   // The shared read budget is the viewer's free memory, so overrunning it is the same shortage as the check below.
-  const LOW_MEMORY='출력용 CT 메모리가 부족합니다. 다른 검사를 닫고 다시 확인하세요.';
+  const LOW_MEMORY=kinText("출력용 CT 메모리가 부족합니다. 다른 검사를 닫고 다시 확인하세요.");
   const budget={bytes:0,limit:core.cache.getBytesAvailable(),exceeded:LOW_MEMORY},slices=new Array(reference.sops.length);let next=0;
   if(slices.length<2)fail();
   await Promise.all(Array.from({length:Math.min(4,slices.length)},async()=>{
@@ -32,14 +36,14 @@ window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check})
       if(!Number.isSafeInteger(volumeBytes))fail();
       if(core.cache.getBytesAvailable()<volumeBytes*2)throw Error(LOW_MEMORY);
       const raw=await bytes(path+'/frames/0/'+(signed?'image-int16':'image-uint16'),signal,rows*columns*2+512,budget,'image/x-portable-arbitrarymap');
-      if((await read(path+'/attachments/dicom/info')).UncompressedMD5?.toLowerCase()!==digest)throw Error('출력 준비 중 원본이 변경되었습니다.');check();
+      if((await read(path+'/attachments/dicom/info')).UncompressedMD5?.toLowerCase()!==digest)throw kinError("출력 준비 중 원본이 변경되었습니다.");check();
       const header=/^P7\nWIDTH (\d+)\nHEIGHT (\d+)\nDEPTH 1\nMAXVAL 65535\nTUPLTYPE GRAYSCALE\nENDHDR\n/.exec(new TextDecoder().decode(raw.subarray(0,512)));
       if(!header||Number(header[1])!==columns||Number(header[2])!==rows||raw.length!==header[0].length+rows*columns*2)fail();
       slices[index]={tags,digest,raw,offset:header[0].length,signed,rows,columns};
     }
   }));check();
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(slices.map((s,i)=>[reference.sops[i],s.digest]))))),n=>n.toString(16).padStart(2,'0')).join('');
-  if(digest!==reference.sourceDigest)throw Error('저장 당시 전체 원본과 달라 출력하지 않았습니다.');check();
+  if(digest!==reference.sourceDigest)throw kinError("저장 당시 전체 원본과 달라 출력하지 않았습니다.");check();
   const first=slices[0],tags=first.tags,orientation=list(tags.ImageOrientationPatient),origin=list(tags.ImagePositionPatient),pixelSpacing=list(tags.PixelSpacing);
   const step=list(slices[1].tags.ImagePositionPatient).map((n,i)=>n-origin[i]),distance=Math.hypot(...step),slope=Number(tags.RescaleSlope),intercept=Number(tags.RescaleIntercept);
   if(orientation.length!==6||origin.length!==3||pixelSpacing.length!==2||[...orientation,...origin,...pixelSpacing,distance,slope,intercept].some(n=>!Number.isFinite(n))||pixelSpacing.some(n=>n<=0)||distance<.001||slope===0||!tags.FrameOfReferenceUID)fail();
@@ -57,14 +61,14 @@ window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check})
   const id='kin-batch-print-'+crypto.randomUUID(),imageIds=slices.map((_,i)=>id+'-slice-'+i),entries=new Map(),provider=(type,imageId)=>entries.get(imageId)?.[type];
   const dimensions=[first.columns,first.rows,slices.length],spacing=[pixelSpacing[1],pixelSpacing[0],distance],direction=[...orientation,...step.map(n=>n/distance)];
   let engine,volume,element;core.metaData.addProvider(provider,10000);
-  function pending(setup,ms=10000,expired='출력 영상 준비 시간이 초과됐습니다.'){return new Promise((resolve,reject)=>{
-    let clean=()=>{},done=false;const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);signal.removeEventListener('abort',abort);clean();error?reject(error):resolve(value);},abort=()=>finish(Error('출력 준비를 취소했습니다.')),timer=setTimeout(()=>finish(Error(expired)),ms);
+  function pending(setup,ms=10000,expired=kinText("출력 영상 준비 시간이 초과됐습니다.")){return new Promise((resolve,reject)=>{
+    let clean=()=>{},done=false;const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);signal.removeEventListener('abort',abort);clean();error?reject(error):resolve(value);},abort=()=>finish(kinError("출력 준비를 취소했습니다.")),timer=setTimeout(()=>finish(Error(expired)),ms);
     signal.addEventListener('abort',abort,{once:true});if(signal.aborted){abort();return;}try{clean=setup(value=>finish(null,value),error=>finish(error))||clean;if(done)clean();}catch(error){finish(error);}
   });}
   try{
     // Reserve before synchronous insertion. Never let private output evict a
     // diagnostic frame, and never put temporary metadata in the global store.
-    if(core.cache.getBytesAvailable()<pixels.byteLength*2)throw Error('출력용 CT 메모리가 부족합니다. 다른 검사를 닫고 다시 확인하세요.');
+    if(core.cache.getBytesAvailable()<pixels.byteLength*2)throw kinError("출력용 CT 메모리가 부족합니다. 다른 검사를 닫고 다시 확인하세요.");
     for(const [z,imageId] of imageIds.entries()){
       const scalarData=pixels.subarray(z*length,(z+1)*length);let min=Infinity,max=-Infinity;for(const n of scalarData){min=Math.min(min,n);max=Math.max(max,n);}
       entries.set(imageId,{imagePlaneModule:{frameOfReferenceUID:tags.FrameOfReferenceUID,rows:first.rows,columns:first.columns,rowCosines:x,columnCosines:y,imagePositionPatient:origin.map((n,i)=>n+step[i]*z),rowPixelSpacing:spacing[1],columnPixelSpacing:spacing[0]},generalSeriesModule:{modality:'CT'},modalityLutModule:{rescaleSlope:1,rescaleIntercept:0},voiLutModule:{windowCenter:[40],windowWidth:[400]},imagePixelModule:{samplesPerPixel:1,photometricInterpretation:'MONOCHROME2',rows:first.rows,columns:first.columns,bitsAllocated:32,bitsStored:32,highBit:31,pixelRepresentation:1}});
@@ -84,7 +88,7 @@ window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check})
     const plan=batch?window.KinVolumeBatch.plan({camera:base,corners,...batch,width:batch.cell.viewport.width,height:batch.cell.viewport.height}):{columns:snapshot.cells[0].viewport.width,rows:snapshot.cells[0].viewport.height,cameras:snapshot.cells.map(c=>c.camera)};
     const specs=plan.cameras.map((camera,index)=>({cell:batch?batch.cell:snapshot.cells[index],camera,width:batch?plan.columns:snapshot.cells[index].viewport.width,height:batch?plan.rows:snapshot.cells[index].viewport.height}));
     const marks=snapshot.version===6?window.KinVolumeMarks?.normalize(snapshot.marks):null;
-    if(snapshot.version===6&&(!marks||marks.marks.some(m=>!window.KinVolumeMarks.inVolume(m.point,volume))))throw Error('저장 표식의 원본 좌표를 확인할 수 없습니다.');
+    if(snapshot.version===6&&(!marks||marks.marks.some(m=>!window.KinVolumeMarks.inVolume(m.point,volume))))throw kinError("저장 표식의 원본 좌표를 확인할 수 없습니다.");
     element=document.createElement('div');element.dataset.kinBatchPrintRender='1';element.style.cssText='position:fixed;left:-20000px;top:0;width:'+(plan.columns/devicePixelRatio)+'px;height:'+(plan.rows/devicePixelRatio)+'px';document.body.append(element);
     let view;
     const frames=[];let encoded=0;
@@ -107,14 +111,14 @@ window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check})
       // The pinned setter clamps half-thickness to 0.1, but its native MPR
       // default is 0.05. Reset preserves a saved 0.1 mm total slab.
       if(Math.abs(cell.projection.thickness-.1)<1e-8)view.resetSlabThickness();else view.setSlabThickness(cell.projection.thickness/2);
-      if(Math.abs(view.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw Error('저장한 단면 두께를 출력에 재현하지 못했습니다.');
+      if(Math.abs(view.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw kinError("저장한 단면 두께를 출력에 재현하지 못했습니다.");
       }
       const next={...camera};delete next.rotation;view.setCamera(next);
       await pending(resolve=>{const done=()=>resolve();element.addEventListener(core.Enums.Events.IMAGE_RENDERED,done,{once:true});view.render();return ()=>element.removeEventListener(core.Enums.Events.IMAGE_RENDERED,done);},5000);check();
-      const actual=view.getCamera(),canvas=view.getCanvas();if(canvas.width!==width||canvas.height!==height||Math.abs(actual.parallelScale-camera.parallelScale)>1e-5||actual.flipHorizontal!==camera.flipHorizontal||actual.flipVertical!==camera.flipVertical||['focalPoint','position','viewPlaneNormal','viewUp'].some(key=>actual[key].some((n,i)=>Math.abs(n-camera[key][i])>1e-5)))throw Error('출력 단면의 크기·환자 좌표를 재현하지 못했습니다.');
+      const actual=view.getCamera(),canvas=view.getCanvas();if(canvas.width!==width||canvas.height!==height||Math.abs(actual.parallelScale-camera.parallelScale)>1e-5||actual.flipHorizontal!==camera.flipHorizontal||actual.flipVertical!==camera.flipVertical||['focalPoint','position','viewPlaneNormal','viewUp'].some(key=>actual[key].some((n,i)=>Math.abs(n-camera[key][i])>1e-5)))throw kinError("출력 단면의 크기·환자 좌표를 재현하지 못했습니다.");
       const annotations=(marks?.marks||[]).map((mark,index)=>{
         const xy=view.worldToCanvas(mark.point).map(n=>n*devicePixelRatio),offset=window.KinVolumeMarks.signedOffset(mark.point,actual);
-        if(xy.some(n=>!Number.isFinite(n))||!Number.isFinite(offset))throw Error('출력 표식의 평면 위치를 확인할 수 없습니다.');
+        if(xy.some(n=>!Number.isFinite(n))||!Number.isFinite(offset))throw kinError("출력 표식의 평면 위치를 확인할 수 없습니다.");
         return {...mark,number:index+1,xy,offset,visible:marks.visible,onCanvas:xy[0]>=0&&xy[1]>=0&&xy[0]<width&&xy[1]<height};
       });
       let output=canvas;
@@ -125,9 +129,9 @@ window.kinRenderVolumeJobPrint=async function({snapshot,api,bytes,signal,check})
           const label=(offPlane?'~':'')+String(a.number),tx=Math.max(0,Math.min(width-ctx.measureText(label).width-2,x+7)),ty=Math.max(0,Math.min(height-16,y+7));ctx.lineWidth=3;ctx.strokeStyle='#000';ctx.strokeText(label,tx,ty);ctx.fillStyle='#ffdb55';ctx.fillText(label,tx,ty);
         }
       }
-      const blob=await pending((resolve,reject)=>{output.toBlob(value=>value?resolve(value):reject(Error('출력 단면을 만들지 못했습니다.')),'image/png');});check();encoded+=blob.size;if(encoded>32*1024*1024)throw Error('출력 단면 용량 한도를 초과했습니다.');frames.push({blob,camera:actual,cell,width,height,annotations});
+      const blob=await pending((resolve,reject)=>{output.toBlob(value=>value?resolve(value):reject(kinError("출력 단면을 만들지 못했습니다.")),'image/png');});check();encoded+=blob.size;if(encoded>32*1024*1024)throw kinError("출력 단면 용량 한도를 초과했습니다.");frames.push({blob,camera:actual,cell,width,height,annotations});
     }
-    const scout=batch?await window.kinRenderVolumeScout({engine,volume,base,corners,frames,properties:batch.cell.properties,signal,check,pending:(_signal,setup,ms)=>pending(setup,ms)}):null;check();if(encoded+(scout?.blob.size||0)>32*1024*1024)throw Error('출력 단면 용량 한도를 초과했습니다.');
+    const scout=batch?await window.kinRenderVolumeScout({engine,volume,base,corners,frames,properties:batch.cell.properties,signal,check,pending:(_signal,setup,ms)=>pending(setup,ms)}):null;check();if(encoded+(scout?.blob.size||0)>32*1024*1024)throw kinError("출력 단면 용량 한도를 초과했습니다.");
     return {frames,scout,width:plan.columns,height:plan.rows};
   }finally{
     engine?.destroy();element?.remove();if(core.cache.getVolume(id))core.cache.removeVolumeLoadObject(id);

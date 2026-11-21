@@ -39,6 +39,9 @@
  * While this viewer reads images or metadata from the network - until the answer's body has ended, not only its
  * headers - it tells the worker, which starts no new preload fetch meanwhile (reading comes first, Minhoon P0 item 1).
  */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   const WORKER_URL = '/worklist/hpacs-lite/preload-worker.js', WORKER_NAME = 'kin-preload';
@@ -53,9 +56,9 @@
   const DESCRIPTION = new RegExp(`^/dicom-web/(?:studies|series|instances|studies/${UID}/(?:series|instances|series/${UID}/instances)` +
     `|studies/${UID}(?:/series/${UID}(?:/instances/${UID})?)?/metadata)$|^/instances/[0-9a-f-]+/(?:tags|simplified-tags|header|attachments/dicom/info)$`);
   const OPENING = 'X-KIN-View-Opening', NAMED_STUDY = 'X-KIN-Study-UID';
-  const CHANGED = '열 때 확인한 검사 정보가 미리 받을 때와 달라 미리 받은 영상을 버렸습니다.';
-  const DENIED = '열 때 검사 접근이 거절되어 미리 받은 영상을 버렸습니다.';
-  const UNRECORDED = '영상 열람 기록을 저장하지 못해 영상을 다시 표시하지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.';
+  const CHANGED = kinText("열 때 확인한 검사 정보가 미리 받을 때와 달라 미리 받은 영상을 버렸습니다.");
+  const DENIED = kinText("열 때 검사 접근이 거절되어 미리 받은 영상을 버렸습니다.");
+  const UNRECORDED = kinText("영상 열람 기록을 저장하지 못해 영상을 다시 표시하지 않았습니다. 연결을 확인한 뒤 다시 시도하세요.");
   // A status whose answer has no body (fetch spec "null body status"): nothing to wait for after its headers.
   const NULL_BODY = [101, 103, 204, 205, 304];
   // How often a document says it still shows the copies it uses (the worker moves one on within an hour of its expiry).

@@ -4,6 +4,8 @@
  */
 (function () {
   'use strict';
+  // A script test that runs config/ohif.js with a stand-in window has no screen to translate: the words stay as written.
+  if (typeof document === 'undefined' || typeof document.createTreeWalker !== 'function' || typeof MutationObserver !== 'function') return;
   const HANGUL = /[\uAC00-\uD7A3]/; // 가-힣, written as escapes so the shared config/ohif.js reads the same in any page encoding
   const slots = /\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g;
   const LANGS = ['en', 'ko'];

@@ -8032,6 +8032,8 @@ window.KinLanguageTerms = {
  */
 (function () {
   'use strict';
+  // A script test that runs config/ohif.js with a stand-in window has no screen to translate: the words stay as written.
+  if (typeof document === 'undefined' || typeof document.createTreeWalker !== 'function' || typeof MutationObserver !== 'function') return;
   const HANGUL = /[\uAC00-\uD7A3]/; // 가-힣, written as escapes so the shared config/ohif.js reads the same in any page encoding
   const slots = /\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g;
   const LANGS = ['en', 'ko'];
@@ -8695,47 +8697,49 @@ function kinToolRetry(id, message, retry) {
    속성 변경이 생기지 않고, 도구막대가 다시 그려지면(계정 도구막대 적용·writer가 아닌 문서의 도구막대 줄이기 포함) 새 버튼에 다시 붙는다.
    분할 버튼의 목록 항목처럼 글자가 보이는 항목은 보이는 이름을 aria-label로 써서 화면 글자와 읽히는 이름이 어긋나지 않게 한다. */
 const kinViewerToolbarLabels = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const PRIMARY = {
-    MeasurementTools: ['Measurements', '측정 도구'],
-    Zoom: ['Zoom', '확대/축소'],
-    Pan: ['Pan', '이동'],
-    TrackballRotate: ['3D Rotate', '3D 회전(볼륨에서만 동작)'],
-    WindowLevel: ['Window / Level', '창/레벨 조절(드래그)'],
+    MeasurementTools: ['Measurements', kinText("측정 도구")],
+    Zoom: ['Zoom', kinText("확대/축소")],
+    Pan: ['Pan', kinText("이동")],
+    TrackballRotate: ['3D Rotate', kinText("3D 회전(볼륨에서만 동작)")],
+    WindowLevel: ['Window / Level', kinText("창/레벨 조절(드래그)")],
     // The pinned download form passes 'jpg'/'png' to canvas.toDataURL, which only knows MIME types, so every
     // choice writes PNG bytes; a jpg choice changes the file name only.
-    Capture: ['Capture', '선택한 영상 칸의 화면을 PNG 이미지로 다운로드 · File Type을 jpg로 두어도 파일 내용은 PNG입니다 · DICOM 원본·판독문·서버 작업 저장 아님 · 식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.'],
-    Layout: ['Layout', '화면 배치'],
-    Crosshairs: ['Crosshairs', 'MPR 교차선(3D/MPR에서만 동작)'],
-    MoreTools: ['More Tools', '기타 도구'],
+    Capture: ['Capture', kinText("선택한 영상 칸의 화면을 PNG 이미지로 다운로드 · File Type을 jpg로 두어도 파일 내용은 PNG입니다 · DICOM 원본·판독문·서버 작업 저장 아님 · 식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.")],
+    Layout: ['Layout', kinText("화면 배치")],
+    Crosshairs: ['Crosshairs', kinText("MPR 교차선(3D/MPR에서만 동작)")],
+    MoreTools: ['More Tools', kinText("기타 도구")],
   };
   const ITEMS = {
-    Length: ['Length', '길이'],
-    Bidirectional: ['Bidirectional', '장축·단축 길이'],
-    ArrowAnnotate: ['Arrow', '화살표 주석'],
-    EllipticalROI: ['Ellipse ROI', '타원 ROI(HU)'],
-    RectangleROI: ['Rectangle ROI', '사각형 ROI'],
-    CircleROI: ['Circle ROI', '원형 ROI'],
-    PlanarFreehandROI: ['Freehand ROI', '자유곡선 ROI'],
-    SplineROI: ['Spline ROI', '스플라인 ROI'],
-    LivewireContour: ['Livewire Contour', '라이브와이어 윤곽'],
-    Reset: ['Reset', '재설정(현재 영상 칸의 화면 조작을 처음으로)'],
-    'rotate-right': ['Rotate Right', '시계 방향 90° 회전'],
-    flipHorizontal: ['Flip Horizontal', '좌우 반전'],
-    ImageSliceSync: ['Image Slice Sync', '영상 칸 사이 단면 위치 맞춤'],
-    ReferenceLines: ['Reference Lines', '기준선 표시'],
-    ImageOverlayViewer: ['Image Overlay', '영상 오버레이 표시'],
-    StackScroll: ['Stack Scroll', '영상 넘기기(드래그)'],
-    invert: ['Invert', '흑백 반전'],
-    Probe: ['Probe', '한 지점의 값 확인'],
-    Cine: ['Cine', '연속 재생'],
-    Angle: ['Angle', '각도'],
-    CobbAngle: ['Cobb Angle', 'Cobb 각도'],
-    Magnify: ['Magnify', '돋보기'],
-    CalibrationLine: ['Calibration Line', '길이 보정선'],
-    TagBrowser: ['Tag Browser', 'DICOM 태그 보기'],
-    AdvancedMagnify: ['Magnify Probe', '고급 돋보기'],
-    UltrasoundDirectionalTool: ['Ultrasound Directional', '초음파 방향 측정'],
-    WindowLevelRegion: ['Window Level Region', '영역 창/레벨'],
+    Length: ['Length', kinText("길이")],
+    Bidirectional: ['Bidirectional', kinText("장축·단축 길이")],
+    ArrowAnnotate: ['Arrow', kinText("화살표 주석")],
+    EllipticalROI: ['Ellipse ROI', kinText("타원 ROI(HU)")],
+    RectangleROI: ['Rectangle ROI', kinText("사각형 ROI")],
+    CircleROI: ['Circle ROI', kinText("원형 ROI")],
+    PlanarFreehandROI: ['Freehand ROI', kinText("자유곡선 ROI")],
+    SplineROI: ['Spline ROI', kinText("스플라인 ROI")],
+    LivewireContour: ['Livewire Contour', kinText("라이브와이어 윤곽")],
+    Reset: ['Reset', kinText("재설정(현재 영상 칸의 화면 조작을 처음으로)")],
+    'rotate-right': ['Rotate Right', kinText("시계 방향 90° 회전")],
+    flipHorizontal: ['Flip Horizontal', kinText("좌우 반전")],
+    ImageSliceSync: ['Image Slice Sync', kinText("영상 칸 사이 단면 위치 맞춤")],
+    ReferenceLines: ['Reference Lines', kinText("기준선 표시")],
+    ImageOverlayViewer: ['Image Overlay', kinText("영상 오버레이 표시")],
+    StackScroll: ['Stack Scroll', kinText("영상 넘기기(드래그)")],
+    invert: ['Invert', kinText("흑백 반전")],
+    Probe: ['Probe', kinText("한 지점의 값 확인")],
+    Cine: ['Cine', kinText("연속 재생")],
+    Angle: ['Angle', kinText("각도")],
+    CobbAngle: ['Cobb Angle', kinText("Cobb 각도")],
+    Magnify: ['Magnify', kinText("돋보기")],
+    CalibrationLine: ['Calibration Line', kinText("길이 보정선")],
+    TagBrowser: ['Tag Browser', kinText("DICOM 태그 보기")],
+    AdvancedMagnify: ['Magnify Probe', kinText("고급 돋보기")],
+    UltrasoundDirectionalTool: ['Ultrasound Directional', kinText("초음파 방향 측정")],
+    WindowLevelRegion: ['Window Level Region', kinText("영역 창/레벨")],
   };
   // 누르면 켜지고 다른 도구를 고르면 꺼지는 버튼. Capture·Layout·More Tools는 동작·목록이라 켜짐 상태가 없다.
   const TOGGLES = new Set(['MeasurementTools', 'Zoom', 'Pan', 'TrackballRotate', 'WindowLevel', 'Crosshairs']);
@@ -8750,7 +8754,7 @@ const kinViewerToolbarLabels = (() => {
     if (Object.hasOwn(PRIMARY, id)) {
       const [name, description] = PRIMARY[id];
       return split?.[2] === 'secondary'
-        ? { id, name: name + ' Menu', description: description + ' 목록 열기', toggle: false, item: false }
+        ? { id, name: name + ' Menu', description: kinText("{0} 목록 열기", description), toggle: false, item: false }
         : { id, name, description, toggle: TOGGLES.has(id), item: false };
     }
     if (!split && Object.hasOwn(ITEMS, id)) { const [name, description] = ITEMS[id]; return { id, name, description, toggle: false, item: true }; }
@@ -8769,7 +8773,7 @@ const kinViewerToolbarLabels = (() => {
         if (!nativePressed) { put(element, 'aria-pressed', String(active)); put(element, 'data-kin-pressed', ''); }
       }
       put(element, 'aria-label', visible || found.name);
-      put(element, 'title', found.description + (active ? ' · 사용 중' : ''));
+      put(element, 'title', found.description + (active ? kinText(" · 사용 중") : ''));
       // viewer-tech-note.js의 Zoom 진입 보완이 정리할 때 이 이름을 자기 것으로 알고 지우지 않게 표시한다.
       put(element, 'data-kin-tool-label', found.id);
     }
@@ -9261,11 +9265,13 @@ function kinCreateFrameMetadata() {
 // Received SRs retain their source values and read-only SR renderer. A native
 // hydration would turn them into local tools and silently recalculate them.
 function kinCreateSRProvenance() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, stop;
   const sequence = value => Array.isArray(value) ? value : value ? [value] : [];
   const first = value => sequence(value)[0];
   const caption = instance => instance?.Manufacturer === 'KIN' && instance?.SoftwareVersions === 'kin-manual-sr-v1'
-    ? '수동 측정 SR 원문 · 읽기 전용' : '외부 SR 원문 · 읽기 전용';
+    ? kinText("수동 측정 SR 원문 · 읽기 전용") : kinText("외부 SR 원문 · 읽기 전용");
   // What the source calls a measurement group: its Tracking Identifier text (112039) and its Finding (121071). The
   // viewers' own SRs write a tool tag there (Cornerstone3DTools@^0.1.0:Length, KIN manual v1:Length), which names nothing.
   const toolTag = /^(?:Cornerstone3DTools@[^:]*|cornerstoneTools@[^:]*|KIN manual v1):[A-Za-z]+$/;
@@ -9388,7 +9394,7 @@ function kinCreateSRProvenance() {
           }
           signature = '';
           for (const entry of window.cornerstone.getEnabledElements()) entry.viewport.render();
-        }).catch(() => { if (!ended) { panel.hidden = false; panel.replaceChildren(); text(panel, 'summary', 'SR 문서를 다시 열어 주세요'); } });
+        }).catch(() => { if (!ended) { panel.hidden = false; panel.replaceChildren(); text(panel, 'summary', kinText("SR 문서를 다시 열어 주세요")); } });
         return result;
       };
       if (typeof addInstances === 'function') ds.addInstances = replaceInstances;
@@ -9423,16 +9429,16 @@ function kinCreateSRProvenance() {
       return originalCorners.call(this, components.map(item => {
         const ids = grid.viewports.get(item.viewportId)?.displaySetInstanceUIDs || [];
         return item.id === 'viewportStatusComponent' && ids.some(uid => displaySets.getDisplaySetByUID(uid)?.Modality === 'SR')
-          ? { ...item, component: '외부 SR · 원문' } : item;
+          ? { ...item, component: kinText("외부 SR · 원문") } : item;
       }));
     };
     corners.addComponents = sourceCorners;
     restores.push(() => { if (corners.addComponents === sourceCorners) corners.addComponents = originalCorners; });
     const previousAdd = customization.get('onBeforeSRAddMeasurement');
     const addHook = { id: 'onBeforeSRAddMeasurement', value: ({ measurement, StudyInstanceUID, SeriesInstanceUID }) => {
-      if (ended) throw new Error('로그인이 종료되어 SR 표식을 표시하지 않았습니다.');
+      if (ended) throw kinError("로그인이 종료되어 SR 표식을 표시하지 않았습니다.");
       const ds = displaySets.getActiveDisplaySets().find(d => d.Modality === 'SR' && d.measurements?.includes(measurement));
-      if (!ds || !guarded.has(ds)) throw new Error('현재 SR 문서에 속하지 않는 표식입니다.');
+      if (!ds || !guarded.has(ds)) throw kinError("현재 SR 문서에 속하지 않는 표식입니다.");
       const sourceUID = measurement.kinSourceTrackingUID || measurement.TrackingUniqueIdentifier;
       const groups = values(ds?.instance), group = groups.get(sourceUID);
       // Only labels are projected. Original ContentSequence and native graphic
@@ -9442,8 +9448,8 @@ function kinCreateSRProvenance() {
       // Keep the derived measurement identity: the loader records imageId and
       // loaded on this same object for the SR viewport's reference navigation.
       // The native mark draws its first five lines only, so the source's name for the group follows its values.
-      measurement.labels = [{ label: '출처', value: caption(ds.instance) },
-        ...(group?.values || [{ label: '원문', value: groups.incomplete ? '표시 상한 초과: SR 원문을 확인하세요' : '수치는 SR 원문에서 확인하세요' }]),
+      measurement.labels = [{ label: kinText("출처"), value: caption(ds.instance) },
+        ...(group?.values || [{ label: kinText("원문"), value: groups.incomplete ? kinText("표시 상한 초과: SR 원문을 확인하세요") : kinText("수치는 SR 원문에서 확인하세요") }]),
         ...(group?.names || [])];
       // Tracking UIDs may be reused in later source documents. Scope only the
       // derived overlay ID by SOP so another SR cannot overwrite this overlay.
@@ -9454,7 +9460,7 @@ function kinCreateSRProvenance() {
     customization.setModeCustomization('onBeforeSRAddMeasurement', addHook);
     const previousHydrate = customization.get('onBeforeSRHydration');
     const hydrateHook = { id: 'onBeforeSRHydration', value: () => {
-      throw new Error('외부 SR 원문은 읽기 전용입니다. 새 측정은 원영상에서 직접 작성하세요.');
+      throw kinError("외부 SR 원문은 읽기 전용입니다. 새 측정은 원영상에서 직접 작성하세요.");
     } };
     customization.setModeCustomization('onBeforeSRHydration', hydrateHook);
     for (const [name, prior, hook] of [['onBeforeSRAddMeasurement', previousAdd, addHook], ['onBeforeSRHydration', previousHydrate, hydrateHook]]) {
@@ -9475,7 +9481,7 @@ function kinCreateSRProvenance() {
       panel.hidden = false; if (signature === key) return; signature = key; panel.replaceChildren();
       text(panel, 'summary', caption(instance));
       if (ds.instances?.length > 1) {
-        const select = document.createElement('select'); select.setAttribute('aria-label', 'SR 문서 선택');
+        const select = document.createElement('select'); select.setAttribute('aria-label', kinText("SR 문서 선택"));
         select.style.cssText = 'width:100%;background:#101e32;color:#e1ecfc';
         for (const document of ds.instances) {
           const option = window.document.createElement('option'); option.value = document.SOPInstanceUID;
@@ -9484,12 +9490,12 @@ function kinCreateSRProvenance() {
         }
         select.addEventListener('change', () => { if (!ended) ds.kinSelectDocument(select.value); }); panel.append(select);
       }
-      text(panel, 'p', '이 문서의 값과 표식을 그대로 열람합니다. 직접 작성한 측정과 저장 이력을 구분합니다.');
-      for (const [label, value] of [['문서 SOP', instance?.SOPInstanceUID], ['작성 장치', instance?.Manufacturer],
-        ['문서 일시', [instance?.ContentDate, instance?.ContentTime, instance?.SoftwareVersions === 'kin-manual-sr-v1' ? '(UTC)' : ''].filter(Boolean).join(' ')], ['원문 검증 상태', instance?.VerificationFlag]])
-        text(panel, 'p', label + ': ' + (value || '기록 없음'));
+      text(panel, 'p', kinText("이 문서의 값과 표식을 그대로 열람합니다. 직접 작성한 측정과 저장 이력을 구분합니다."));
+      for (const [label, value] of [[kinText("문서 SOP"), instance?.SOPInstanceUID], [kinText("작성 장치"), instance?.Manufacturer],
+        [kinText("문서 일시"), [instance?.ContentDate, instance?.ContentTime, instance?.SoftwareVersions === 'kin-manual-sr-v1' ? '(UTC)' : ''].filter(Boolean).join(' ')], [kinText("원문 검증 상태"), instance?.VerificationFlag]])
+        text(panel, 'p', label + ': ' + (value || kinText("기록 없음")));
       const groups = values(instance);
-      if (groups.incomplete) text(panel, 'p', '표시 상한을 초과했습니다. 수치는 업무 화면의 SR 원문에서 확인하세요.');
+      if (groups.incomplete) text(panel, 'p', kinText("표시 상한을 초과했습니다. 수치는 업무 화면의 SR 원문에서 확인하세요."));
       for (const group of groups.values()) {
         const section = text(panel, 'section', '');
         for (const name of group.names) text(section, 'p', name.label + ': ' + name.value);
@@ -9608,11 +9614,13 @@ function kinViewerActivateStudy(env, study) {
 // MG coordinates stay in the source image plane. Projection fallbacks are image-local,
 // never a claimed patient Frame of Reference; the SOP/frame still identifies the image.
 function kinMgGeometry(tags, frame) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const dbt = '1.2.840.10008.5.1.4.1.1.13.1.3';
   const enhanced = [dbt, '1.2.840.10008.5.1.4.1.1.13.1.4', '1.2.840.10008.5.1.4.1.1.13.1.5'];
   const classic = ['1.2.840.10008.5.1.4.1.1.1.2', '1.2.840.10008.5.1.4.1.1.1.2.1'];
   if (tags?.Modality !== 'MG' || ![...enhanced, ...classic].includes(tags.SOPClassUID)) return null;
-  const fail = () => { throw new Error('MG 원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  const fail = () => { throw kinError("MG 원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
   const numbers = (value, count) => {
     const fields = typeof value === 'string' ? value.split('\\') : Array.isArray(value) ? value : [value];
     if (fields.length !== count || fields.some(n => !(typeof n === 'number' || typeof n === 'string' && n.trim()) || !Number.isFinite(Number(n)))) return fail();
@@ -9668,8 +9676,8 @@ function kinMgGeometry(tags, frame) {
     const a = imagePoint(points[0]), b = imagePoint(points[1]);
     return Math.hypot((b[0] - a[0]) * spacing[1], (b[1] - a[1]) * spacing[0]);
   };
-  const label = { dbt: 'DBT PixelSpacing', pixel: 'PixelSpacing · 원본 기준면',
-    ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', detector: 'ImagerPixelSpacing · 검출기 기준' }[basis];
+  const label = { dbt: 'DBT PixelSpacing', pixel: kinText("PixelSpacing · 원본 기준면"),
+    ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정"), detector: kinText("ImagerPixelSpacing · 검출기 기준") }[basis];
   return { origin, orientation, spacing, normal, imagePoint, length, basis, label,
     frameOfReferenceUid: tags.FrameOfReferenceUID || null, calculator: 'kin-mg-length-v1:' + basis };
 }
@@ -11806,6 +11814,8 @@ function kinCreateMarkerStyle() {
 
 // The recent display layout is retained; transient display-set IDs never leave this session.
 const kinViewerLayoutModel = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const PREFIX = 'kin-viewer-layout-v1:';
   const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)*$/.test(s);
   const exact = (x, keys) => x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).sort().join('|') === [...keys].sort().join('|');
@@ -11844,16 +11854,16 @@ const kinViewerLayoutModel = (() => {
   }
 
   function read(storage, key) {
-    if (!key) throw new Error('계정 정보를 확인할 수 없습니다.');
+    if (!key) throw kinError("계정 정보를 확인할 수 없습니다.");
     const raw = storage.getItem(key);
     if (raw === null) return null;
     const value = typeof raw === 'string' ? normalize(JSON.parse(raw)) : null;
-    if (!value) throw new Error('저장한 배치가 손상되었거나 지원하지 않는 형식입니다.');
+    if (!value) throw kinError("저장한 배치가 손상되었거나 지원하지 않는 형식입니다.");
     return value;
   }
   function write(storage, key, value) {
     const clean = normalize(value);
-    if (!key || !clean) throw new Error('이 배치는 저장할 수 없습니다.');
+    if (!key || !clean) throw kinError("이 배치는 저장할 수 없습니다.");
     storage.setItem(key, JSON.stringify(clean));
   }
   return { PREFIX, uid, scope, owner, normalize, read, write };
@@ -11975,6 +11985,8 @@ const kinViewerSession = (() => {
 /* Viewer metadata belongs to the session that read it. A list answer replaces the entire
    examination (including all its originals and split parts) under one request number. */
 const kinViewerStudyDisplay = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const exams = new Map(), latest = new Map(), held = new Map(), retries = new Map();
   const watchers = new Set(), visibleSources = new Set(), queue = new Set();
   const session = typeof kinViewerSession === 'object' ? kinViewerSession : null;
@@ -11988,8 +12000,8 @@ const kinViewerStudyDisplay = (() => {
   const distinct = values => [...new Set(values.filter(v => typeof v === 'string' && v))];
   const ids = exam => [exam.uid, ...exam.displaySources.map(s => s.studyUid)];
   const visible = () => distinct(visibleSources.size ? [...visibleSources].flatMap(get => [...get()]) : [...latest.keys()]);
-  const failure = cause => new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.', { cause });
-  const stale = () => new Error('검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.');
+  const failure = cause => new Error(kinText("환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요."), { cause });
+  const stale = () => kinError("검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.");
 
   function validExam(exam) {
     const key = exam?.sourcePatientKey;
@@ -12140,6 +12152,8 @@ const kinViewerStudyDisplay = (() => {
 window.kinViewerStudyDisplay = kinViewerStudyDisplay;
 
 function kinCreateViewerLayout() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, stop;
   function mount() {
     stop?.();
@@ -12149,7 +12163,7 @@ function kinCreateViewerLayout() {
     const panel = document.createElement('details'); panel.id = 'kin-viewer-layout'; panel.open = true;
     panel.style.cssText = 'position:fixed;left:8px;bottom:30px;z-index:41;width:360px;max-width:calc(100vw - 16px);max-height:calc(100vh - 48px);overflow:auto;box-sizing:border-box;background:#101e32;color:#e1ecfc;border:1px solid #657c9f;border-radius:8px;padding:8px;font:13px sans-serif';
     const summary = document.createElement('summary'); summary.textContent = 'Recent Layout'; panel.append(summary);
-    const note = document.createElement('p'); note.textContent = '최근 1건만 저장합니다. 영상 위치·확대·주석은 포함하지 않습니다.'; panel.append(note);
+    const note = document.createElement('p'); note.textContent = kinText("최근 1건만 저장합니다. 영상 위치·확대·주석은 포함하지 않습니다."); panel.append(note);
     const status = document.createElement('p'); status.id = 'kin-viewer-layout-status'; status.setAttribute('role', 'status'); panel.append(status);
     const controls = document.createElement('div'); panel.append(controls); document.body.append(panel);
     let ended = false, busy = false, key = null, channel, hpOwner = null, hp = null, hpHost = null;
@@ -12157,7 +12171,7 @@ function kinCreateViewerLayout() {
     const buttons = [];
     const live = () => !ended && location.search === search;
     const refresh = () => buttons.forEach(b => { b.disabled = ended || busy || !key || !studies; });
-    function end() { if (ended) return; ended = true; controller.abort(); hp?.end(); key = null; status.textContent = '세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'; refresh(); }
+    function end() { if (ended) return; ended = true; controller.abort(); hp?.end(); key = null; status.textContent = kinText("세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요."); refresh(); }
     // Session termination is owned by the page transport and gate.
     function sessionEnded(reason) { kinViewerSession.refuse(reason); end(); }
     async function get(path, signal) {
@@ -12171,19 +12185,19 @@ function kinCreateViewerLayout() {
         if (!live()) {
           // Session termination is owned by the page transport and gate.
           if (path === '/api/me' && response.ok) kinViewerSession.sameAccount(await response.json().catch(() => null));
-          throw new Error('화면이 변경되어 배치를 적용하지 않았습니다.');
+          throw kinError("화면이 변경되어 배치를 적용하지 않았습니다.");
         }
         if (window.KinSessionTransport.refusal(response)) throw window.KinSessionTransport.responseError(response);
-        if (!response.ok) throw new Error('서버 연결을 확인한 뒤 다시 시도하세요.');
+        if (!response.ok) throw kinError("서버 연결을 확인한 뒤 다시 시도하세요.");
         return await response.json();
       } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); signal?.removeEventListener('abort', abort); }
     }
     async function authenticate(signal) {
       const me = await get('/api/me', signal), next = model.owner(me);
       // Validate the owner before adopting layout data; a rejected response cannot end the session.
-      if (kinViewerSession.sameAccount(me) !== true) throw new Error('계정 응답이 일치하지 않습니다.');
+      if (kinViewerSession.sameAccount(me) !== true) throw kinError("계정 응답이 일치하지 않습니다.");
       kinViewerSession.note(me);
-      if (!live() || !next) { end(); throw new Error('계정이 변경되어 배치를 적용하지 않았습니다.'); }
+      if (!live() || !next) { end(); throw kinError("계정이 변경되어 배치를 적용하지 않았습니다."); }
       const exam=window.KinViewerExamScope?.snapshot();
       key = next+(exam?'|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]):'');
       hpOwner = { institution: me.institution, subject: me.sub };
@@ -12193,16 +12207,16 @@ function kinCreateViewerLayout() {
     function readOnlyPanel() {
       for (const b of buttons.splice(0)) b.remove();
       hp?.end(); hp = null; hpHost?.remove(); hpHost = null;
-      summary.textContent = 'Viewer Status'; note.textContent = '읽기 전용 화면입니다. 배치 저장·복원과 Hanging Protocol은 제공하지 않습니다. 화면 배치는 뷰어의 기본 레이아웃 도구로 바꿀 수 있습니다.';
+      summary.textContent = 'Viewer Status'; note.textContent = kinText("읽기 전용 화면입니다. 배치 저장·복원과 Hanging Protocol은 제공하지 않습니다. 화면 배치는 뷰어의 기본 레이아웃 도구로 바꿀 수 있습니다.");
     }
     async function mountProtocols() {
       const load = (name, global) => window[global] ? Promise.resolve() : new Promise((resolve, reject) => {
         const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
         const finish = error => { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(); };
-        const abort = () => finish(new Error('Hanging Protocol 연결이 중단되었습니다.'));
+        const abort = () => finish(kinError("Hanging Protocol 연결이 중단되었습니다."));
         const timer = setTimeout(abort, 10000);
-        script.onload = () => finish(window[global] ? null : new Error('Hanging Protocol 모듈을 확인할 수 없습니다.'));
-        script.onerror = () => finish(new Error('Hanging Protocol 화면을 불러오지 못했습니다.'));
+        script.onload = () => finish(window[global] ? null : kinError("Hanging Protocol 모듈을 확인할 수 없습니다."));
+        script.onerror = () => finish(kinError("Hanging Protocol 화면을 불러오지 못했습니다."));
         controller.signal.addEventListener('abort', abort, { once: true }); document.head.append(script);
       });
       await load('hanging-protocol-model.js', 'KinHangingProtocolModel');
@@ -12218,9 +12232,9 @@ function kinCreateViewerLayout() {
           const uids = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
           const exam=await window.KinViewerExamScope?.ensure(true);
           const rows = exam?window.KinExamScope.roleRows(exam,data.studies||[],ds.getActiveDisplaySets()):uids.map(uid => data.studies?.find(row => row.uid === uid));
-          if (rows.some(row => !row)) throw new Error('현재 검사 접근 권한을 확인할 수 없습니다.');
+          if (rows.some(row => !row)) throw kinError("현재 검사 접근 권한을 확인할 수 없습니다.");
           await authenticate(signal);
-          if (signal.aborted) throw new Error('Hanging Protocol 확인이 중단되었습니다.');
+          if (signal.aborted) throw kinError("Hanging Protocol 확인이 중단되었습니다.");
           return { studies: rows, displaySets: kinHangingProtocolDisplaySets(ds.getActiveDisplaySets()) };
         } });
     }
@@ -12244,7 +12258,7 @@ function kinCreateViewerLayout() {
       if (!cell) return null;
       const matches = ds.getActiveDisplaySets().filter(d => d.StudyInstanceUID === cell.study && d.SeriesInstanceUID === cell.series &&
         (!cell.sops || JSON.stringify(reference(d)) === JSON.stringify(cell)));
-      if (matches.length !== 1) throw new Error('저장한 영상 구성을 찾을 수 없습니다. 현재 배치를 유지합니다.');
+      if (matches.length !== 1) throw kinError("저장한 영상 구성을 찾을 수 없습니다. 현재 배치를 유지합니다.");
       return matches[0].displaySetInstanceUID;
     }
     function capture() {
@@ -12252,9 +12266,9 @@ function kinCreateViewerLayout() {
       const cells = views.map(v => {
         const refs = (v.displaySetInstanceUIDs || []).map(id => {
           const d = ds.getDisplaySetByUID(id);
-          if (!d || !studies.includes(d.StudyInstanceUID)) throw new Error('영상 로딩이 끝난 뒤 다시 저장하세요.');
+          if (!d || !studies.includes(d.StudyInstanceUID)) throw kinError("영상 로딩이 끝난 뒤 다시 저장하세요.");
           const ref = reference(d);
-          if (resolve(ref) !== id) throw new Error('표시 영상의 구성을 확인할 수 없습니다.');
+          if (resolve(ref) !== id) throw kinError("표시 영상의 구성을 확인할 수 없습니다.");
           return ref;
         });
         const { viewportId, ...viewportOptions } = v.viewportOptions || {};
@@ -12262,27 +12276,27 @@ function kinCreateViewerLayout() {
           viewportOptions, displaySetOptions: v.displaySetOptions || refs.map(() => ({})) };
       });
       const value = model.normalize({ version: 2, studies, rows, cols, active: views.findIndex(v => v.viewportId === state.activeViewportId), cells });
-      if (!value) throw new Error('현재 화면의 배치를 확인할 수 없습니다.');
+      if (!value) throw kinError("현재 화면의 배치를 확인할 수 없습니다.");
       return value;
     }
     async function run(action) {
       if (kinViewerSession.ended() || busy || !live() || !key || !studies || kinViewerSession.readOnly()) return;
-      busy = true; refresh(); status.textContent = '계정과 검사 접근 확인 중…'; const before = signature();
+      busy = true; refresh(); status.textContent = kinText("계정과 검사 접근 확인 중…"); const before = signature();
       try {
         await authenticate();
         const exam=window.KinViewerExamScope?.snapshot();
         if(exam)await window.KinViewerExamScope.ensure(true);
         const data = await get('/api/studies');
         const rows = exam ? window.KinExamScope.roleRows(exam,data.studies||[]) : studies.map(uid => data.studies?.find(s => s.uid === uid));
-        if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw new Error('현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.');
+        if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw kinError("현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.");
         // A delayed permission response must not overwrite a newer manual layout or selection.
-        if (!live() || before !== signature()) throw new Error('화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.');
-        if (action === 'save') { model.write(localStorage, key, capture()); status.textContent = '최근 배치를 이 브라우저에 저장했습니다.'; }
-        else if (action === 'remove') { localStorage.removeItem(key); status.textContent = '이 계정의 최근 배치를 삭제했습니다. 현재 화면은 유지됩니다.'; }
+        if (!live() || before !== signature()) throw kinError("화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.");
+        if (action === 'save') { model.write(localStorage, key, capture()); status.textContent = kinText("최근 배치를 이 브라우저에 저장했습니다."); }
+        else if (action === 'remove') { localStorage.removeItem(key); status.textContent = kinText("이 계정의 최근 배치를 삭제했습니다. 현재 화면은 유지됩니다."); }
         else {
           const value = model.read(localStorage, key);
-          if (!value) throw new Error('이 계정에서 저장한 최근 배치가 없습니다.');
-          if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw new Error('다른 검사의 배치입니다. 저장한 검사를 먼저 여세요.');
+          if (!value) throw kinError("이 계정에서 저장한 최근 배치가 없습니다.");
+          if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw kinError("다른 검사의 배치입니다. 저장한 검사를 먼저 여세요.");
           const cells = value.version === 2 ? value.cells : value.cells.map((ref, i) => ({
             x: i % value.cols / value.cols, y: Math.floor(i / value.cols) / value.rows, width: 1 / value.cols, height: 1 / value.rows,
             sets: ref ? [ref] : [], viewportOptions: { viewportType: 'stack', toolGroupId: 'default' }, displaySetOptions: [{}] }));
@@ -12291,10 +12305,10 @@ function kinCreateViewerLayout() {
             layoutOptions: cells.map(({ x, y, width, height }) => ({ x, y, width, height })),
             findOrCreateViewport: index => ({ displaySetInstanceUIDs: sets[index], displaySetOptions: cells[index].displaySetOptions,
               viewportOptions: { ...cells[index].viewportOptions, viewportId: ids[index], allowUnmatchedView: true } }) });
-          if (live()) status.textContent = '저장한 시리즈 배치를 적용했습니다. 영상 로딩 상태를 확인하세요.';
+          if (live()) status.textContent = kinText("저장한 시리즈 배치를 적용했습니다. 영상 로딩 상태를 확인하세요.");
         }
       } catch (error) {
-        if (live()) status.textContent = error?.name === 'QuotaExceededError' || error?.name === 'SecurityError' ? '브라우저 저장소를 사용할 수 없습니다. 현재 화면은 유지됩니다.' : error instanceof SyntaxError ? '저장한 배치가 손상되었습니다. 현재 화면은 유지됩니다.' : error?.message || '배치 작업에 실패했습니다.';
+        if (live()) status.textContent = error?.name === 'QuotaExceededError' || error?.name === 'SecurityError' ? kinText("브라우저 저장소를 사용할 수 없습니다. 현재 화면은 유지됩니다.") : error instanceof SyntaxError ? kinText("저장한 배치가 손상되었습니다. 현재 화면은 유지됩니다.") : error?.message || kinText("배치 작업에 실패했습니다.");
       } finally { busy = false; refresh(); }
     }
     for (const [label, action] of [['Save Recent Layout', 'save'], ['Restore Recent Layout', 'restore'], ['Delete Recent Layout', 'remove']]) {
@@ -12318,9 +12332,9 @@ function kinCreateViewerLayout() {
     else if (studies) authenticate().then(async () => {
       if (!live()) return;
       if (kinViewerSession.readOnly()) { readOnlyPanel(); return; }
-      status.textContent = '현재 검사의 배치를 직접 저장하거나 복원하세요.'; await mountProtocols();
-    }).catch(error => { if (live()) status.textContent = error?.message || '계정 정보를 확인할 수 없습니다. 뷰어를 다시 여세요.'; }).finally(refresh);
-    else status.textContent = '현재 검사의 식별 정보를 확인할 수 없습니다.';
+      status.textContent = kinText("현재 검사의 배치를 직접 저장하거나 복원하세요."); await mountProtocols();
+    }).catch(error => { if (live()) status.textContent = error?.message || kinText("계정 정보를 확인할 수 없습니다. 뷰어를 다시 여세요."); }).finally(refresh);
+    else status.textContent = kinText("현재 검사의 식별 정보를 확인할 수 없습니다.");
     stop = () => { unwatch(); unwatchEnd(); end();  channel?.close(); panel.remove(); };
   }
   return { id: 'kin.viewer-layout', preRegistration({ servicesManager }) { services = servicesManager.services; }, onModeEnter: mount, onModeExit() { stop?.(); stop = null; } };
@@ -12328,6 +12342,8 @@ function kinCreateViewerLayout() {
 
 // Position matching is display navigation, not image registration or a measurement result.
 const kinCTSyncModel = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const eps = 1e-3, dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
   const sub = (a, b) => a.map((x, i) => x - b[i]);
   const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
@@ -12340,33 +12356,35 @@ const kinCTSyncModel = (() => {
   }
   function match(source, target) {
     const deny = reason => ({ reason, index: -1 });
-    if (!source?.patient || source.patient !== target?.patient) return deny('같은 환자를 확인할 수 없습니다');
+    if (!source?.patient || source.patient !== target?.patient) return deny(kinText("같은 환자를 확인할 수 없습니다"));
     const a = source.planes?.[source.index], planes = target.planes;
     if (!a?.frameOfReferenceUID || !Array.isArray(planes) || planes.length < 1 ||
-        planes.some(p => !p?.frameOfReferenceUID || p.frameOfReferenceUID !== a.frameOfReferenceUID)) return deny('좌표계가 다르거나 없습니다');
+        planes.some(p => !p?.frameOfReferenceUID || p.frameOfReferenceUID !== a.frameOfReferenceUID)) return deny(kinText("좌표계가 다르거나 없습니다"));
     const n = normal(a), t = normal(planes[0]);
-    if (!n || !t || Math.abs(dot(n, t)) < 1 - 1e-6) return deny('영상 방향 또는 위치가 맞지 않습니다');
+    if (!n || !t || Math.abs(dot(n, t)) < 1 - 1e-6) return deny(kinText("영상 방향 또는 위치가 맞지 않습니다"));
     const origin = planes[0].imagePositionPatient, values = [];
     for (const p of planes) {
       const pn = normal(p);
-      if (!pn || Math.abs(dot(pn, t)) < 1 - 1e-6) return deny('영상 방향 또는 위치가 맞지 않습니다');
+      if (!pn || Math.abs(dot(pn, t)) < 1 - 1e-6) return deny(kinText("영상 방향 또는 위치가 맞지 않습니다"));
       const d = sub(p.imagePositionPatient, origin), z = dot(d, t);
       values.push(z);
     }
     const sorted = [...values].sort((a, b) => a - b), gaps = sorted.slice(1).map((x, i) => x - sorted[i]);
-    if (gaps.some(x => x < eps)) return deny('같은 위치의 영상이 중복되어 있습니다');
+    if (gaps.some(x => x < eps)) return deny(kinText("같은 위치의 영상이 중복되어 있습니다"));
     const z = dot(sub(a.imagePositionPatient, origin), t);
-    if (z < sorted[0] - eps || z > sorted.at(-1) + eps) return deny('대상 영상의 위치 범위를 벗어났습니다');
+    if (z < sorted[0] - eps || z > sorted.at(-1) + eps) return deny(kinText("대상 영상의 위치 범위를 벗어났습니다"));
     // Preserve native nearest-position and stable first-index tie behavior, but refuse large gaps.
     let index = 0;
     for (let i = 1; i < values.length; i++) if (Math.abs(values[i]-z) < Math.abs(values[index]-z) - 1e-9) index = i;
-    if (Math.abs(values[index]-z) > gaps.reduce((min, gap) => Math.min(min, gap), Infinity) / 2 + eps) return deny('대상 영상 위치 사이에 큰 공백이 있습니다');
+    if (Math.abs(values[index]-z) > gaps.reduce((min, gap) => Math.min(min, gap), Infinity) / 2 + eps) return deny(kinText("대상 영상 위치 사이에 큰 공백이 있습니다"));
     return { index, reason: '' };
   }
   return { match };
 })();
 
 function kinCreateCTSync() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, stop;
   function mount() {
     stop?.();
@@ -12378,18 +12396,18 @@ function kinCreateCTSync() {
     // changed. A refused or unanswered access check is not a logout: it keeps its own reason and a Recheck Access button, and
     // nothing moves until a later check confirms access.
     const TEXT = {
-      ended: '세션이 변경되었거나 종료되어 위치 동기를 중지했습니다. 다시 로그인한 뒤 뷰어를 여세요',
-      checking: '검사 접근 정보를 확인하는 중입니다. 확인한 뒤 위치 동기를 적용합니다',
-      confirmed: '검사 접근 정보를 확인했습니다. 위치 동기를 사용할 수 있습니다',
-      failed: '검사 접근 정보를 확인하지 못해 위치 동기를 멈췄습니다. 연결 상태를 확인한 뒤 다시 확인하세요',
-      denied: '이 계정으로 검사 접근 정보를 확인할 수 없어 위치 동기를 멈췄습니다. 권한을 확인한 뒤 다시 확인하세요',
-      changed: '계정의 역할이 바뀌어 위치 동기를 멈췄습니다. 검사 접근 정보를 다시 확인하세요',
+      ended: kinText("세션이 변경되었거나 종료되어 위치 동기를 중지했습니다. 다시 로그인한 뒤 뷰어를 여세요"),
+      checking: kinText("검사 접근 정보를 확인하는 중입니다. 확인한 뒤 위치 동기를 적용합니다"),
+      confirmed: kinText("검사 접근 정보를 확인했습니다. 위치 동기를 사용할 수 있습니다"),
+      failed: kinText("검사 접근 정보를 확인하지 못해 위치 동기를 멈췄습니다. 연결 상태를 확인한 뒤 다시 확인하세요"),
+      denied: kinText("이 계정으로 검사 접근 정보를 확인할 수 없어 위치 동기를 멈췄습니다. 권한을 확인한 뒤 다시 확인하세요"),
+      changed: kinText("계정의 역할이 바뀌어 위치 동기를 멈췄습니다. 검사 접근 정보를 다시 확인하세요"),
     };
     const notice = document.createElement('div'); notice.id = 'kin-ct-sync-status'; notice.setAttribute('role', 'status');
     notice.style.cssText = 'position:fixed;top:110px;left:50%;transform:translateX(-50%);z-index:42;max-width:70vw;padding:6px 10px;background:#101e32;color:#e1ecfc;border-radius:6px;font:13px sans-serif;pointer-events:none';
     // The notice lets the pointer through to the viewport under it; only its own button takes a click.
     const message = document.createElement('span'), recheck = document.createElement('button');
-    recheck.type = 'button'; recheck.id = 'kin-ct-sync-recheck'; recheck.textContent = 'Recheck Access'; recheck.title = '검사 접근 정보를 다시 확인합니다'; recheck.hidden = true;
+    recheck.type = 'button'; recheck.id = 'kin-ct-sync-recheck'; recheck.textContent = 'Recheck Access'; recheck.title = kinText("검사 접근 정보를 다시 확인합니다"); recheck.hidden = true;
     recheck.style.cssText = 'pointer-events:auto;margin-left:8px;min-height:24px;padding:2px 8px;border:1px solid #657c9f;border-radius:4px;background:#1b3252;color:#e1ecfc;font:13px sans-serif;cursor:pointer';
     notice.append(message, recheck); notice.hidden = true; document.body.append(notice);
     const controller = new AbortController(), search = location.search, created = new Set();
@@ -12520,7 +12538,7 @@ function kinCreateCTSync() {
         const sync = original(id, options), fire = sync.fireEvent;
         created.add(sync); let serial = 0;
         const destroy = sync.destroy;
-        sync.destroy = function (...args) { ++serial; created.delete(sync); if (!ended) say('위치 동기 꺼짐'); return destroy.apply(this, args); };
+        sync.destroy = function (...args) { ++serial; created.delete(sync); if (!ended) say(kinText("위치 동기 꺼짐")); return destroy.apply(this, args); };
         sync.fireEvent = async function (sourceInfo, event) {
           // Cells the reader tied by hand (Compare › Manual Sync) neither lead nor follow this position sync, in either
           // direction, while they stay tied; each event asks again, so a cell untied is synchronized again.
@@ -12556,7 +12574,7 @@ function kinCreateCTSync() {
               if (m.index >= 0) core.utilities.spatialRegistrationMetadataProvider.add([targets[i].viewportId, sourceInfo.viewportId], [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
             });
             const denied = matches.find(m => m.index < 0 && !m.manual);
-            if (!matches.length || matches.some(m => !m.manual)) say(denied ? '위치 동기 제한: '+denied.reason : '같은 좌표계의 스택 위치 동기');
+            if (!matches.length || matches.some(m => !m.manual)) say(denied ? kinText("위치 동기 제한: {0}", denied.reason) : kinText("같은 좌표계의 스택 위치 동기"));
             return fire.call(sync, sourceInfo, event);
           } catch (error) {
             // Session termination is owned by the page transport and gate.
@@ -12565,7 +12583,7 @@ function kinCreateCTSync() {
             // number, its synchronizer and the screen it fired on — so a dropped event's late 403 or network error cannot replace the
             // refusal, check or confirmation shown since (and its Recheck Access).
             if (!usable(mine) || sync.isDisabled() || ticket !== serial || !current(sourceInfo, source)) return;
-            say(error?.kind === 'denied' ? '위치 동기를 적용하지 못했습니다. 이 계정의 검사 접근 권한을 확인할 수 없습니다' : '위치 동기를 적용하지 못했습니다. 영상과 연결 상태를 확인하세요');
+            say(error?.kind === 'denied' ? kinText("위치 동기를 적용하지 못했습니다. 이 계정의 검사 접근 권한을 확인할 수 없습니다") : kinText("위치 동기를 적용하지 못했습니다. 영상과 연결 상태를 확인하세요"));
           }
         };
         return sync;
@@ -12622,6 +12640,8 @@ function kinCineNext(index, first, last, mode, direction, loop) {
 }
 
 function kinCreateCine() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, dispose;
   function mount() {
     dispose?.();
@@ -12675,7 +12695,7 @@ function kinCreateCine() {
     const status = document.createElement('span'); status.setAttribute('role', 'status');
     const first = document.createElement('button'); first.textContent = 'First Frame';
     const last = document.createElement('button'); last.textContent = 'Last Frame';
-    const help = document.createElement('span'); help.textContent = '범위는 1부터 시작합니다. Yoyo는 양 끝 프레임을 중복하지 않고 왕복합니다.';
+    const help = document.createElement('span'); help.textContent = kinText("범위는 1부터 시작합니다. Yoyo는 양 끝 프레임을 중복하지 않고 왕복합니다.");
     panel.append('Selected View ', direction, label, ' Range ', rangeStart, ' to ', rangeEnd, applyRange, first, last, status, help); document.body.append(panel);
     for (const control of [direction, rangeStart, rangeEnd, applyRange, first, last]) control.style.cssText = 'background:#263c57;color:white;border:1px solid #6884a6;border-radius:3px;padding:2px 5px';
     rangeStart.style.width = rangeEnd.style.width = '58px';
@@ -12696,13 +12716,13 @@ function kinCreateCine() {
     function volumeFrames(v,target) {
       const {sliceRange,spacingInNormalDirection:step,camera}=core.utilities.getVolumeViewportScrollInfo(v,target.volume.volumeId).sliceRangeInfo;
       const {min,max,current}=sliceRange,last=Math.floor((max-min)/step+1e-6),index=Math.round((current-min)/step);
-      if(![min,max,current,step].every(Number.isFinite)||step<=0||max<=min||!Number.isSafeInteger(last)||last<1||!Number.isSafeInteger(index))throw Error('MPR 재생 범위를 확인할 수 없습니다.');
+      if(![min,max,current,step].every(Number.isFinite)||step<=0||max<=min||!Number.isSafeInteger(last)||last<1||!Number.isSafeInteger(index))throw kinError("MPR 재생 범위를 확인할 수 없습니다.");
       return {min,step,last,index,current,camera};
     }
     function moveVolume(v,target,frames,index) {
       const {camera,min,step,current}=frames,delta=min+index*step-current;
       const next={focalPoint:camera.focalPoint.map((n,i)=>n+camera.viewPlaneNormal[i]*delta),position:camera.position.map((n,i)=>n+camera.viewPlaneNormal[i]*delta)};
-      try{v.setCamera(next);v.render();const actual=v.getCamera();if(Object.keys(next).some(key=>next[key].some((n,i)=>Math.abs(n-actual[key][i])>1e-5)))throw Error('MPR 재생 위치를 확인하지 못했습니다.');}
+      try{v.setCamera(next);v.render();const actual=v.getCamera();if(Object.keys(next).some(key=>next[key].some((n,i)=>Math.abs(n-actual[key][i])>1e-5)))throw kinError("MPR 재생 위치를 확인하지 못했습니다.");}
       catch(error){if(volumeTarget(v)?.key===target.key)try{v.setCamera({focalPoint:camera.focalPoint,position:camera.position});v.render();}catch(_){}throw error;}
     }
     function record(v) {
@@ -12748,25 +12768,25 @@ function kinCreateCine() {
       panel.hidden = !cine.getState().isCineEnabled || (!supported&&v?.type!=='orthographic');
       panel.style.display = panel.hidden ? 'none' : 'flex';
       direction.disabled=loop.disabled=rangeStart.disabled=rangeEnd.disabled=applyRange.disabled=!supported;
-      if (!supported) { first.disabled=last.disabled=true;rangeShown=undefined;status.textContent='완전히 로드된 단일 정규 CT의 MPR 평면을 선택하고 다른 작업을 마친 뒤 재생하세요.';positionControls(v);return; }
+      if (!supported) { first.disabled=last.disabled=true;rangeShown=undefined;status.textContent=kinText("완전히 로드된 단일 정규 CT의 MPR 평면을 선택하고 다른 작업을 마친 뒤 재생하세요.");positionControls(v);return; }
       const r = record(v);
       if (r.signature !== signature(v)) { r.signature = signature(v);const content=contentSignature(v);if(r.content!==content){r.content=content;resetPlayback(r);}else resetRange(r);halt(id); }
       const total=frameCount(v);let bounds=playbackRange(r,total);
-      if(!bounds){resetRange(r);r.message='영상 범위가 변경되어 전체 범위로 초기화했습니다.';bounds=playbackRange(r,total);}
+      if(!bounds){resetRange(r);r.message=kinText("영상 범위가 변경되어 전체 범위로 초기화했습니다.");bounds=playbackRange(r,total);}
       showRange(r,total,bounds);
       direction.value = r.mode; loop.checked = r.loop;
       first.disabled = last.disabled = r.loading || total < 1; applyRange.disabled = r.loading || total < 2;
-      status.textContent = r.message || (r.loading ? '프레임 준비 중' : total<1?'재생할 프레임을 확인할 수 없습니다.':`범위 ${bounds.first+1}~${bounds.last+1}` + (v.type==='orthographic'?' · 원본 CT에서 재구성한 평면을 재생합니다.':''));
+      status.textContent = r.message || (r.loading ? kinText("프레임 준비 중") : total<1?kinText("재생할 프레임을 확인할 수 없습니다."):kinText("범위 {0}~{1}{t2}", bounds.first+1, bounds.last+1, (v.type==='orthographic'?kinText(" · 원본 CT에서 재구성한 평면을 재생합니다."):'')));
       positionControls(v);
     }
     async function session() {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
       try {
         const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-        if (!response.ok) throw Error('로그인 상태를 확인할 수 없습니다');
+        if (!response.ok) throw kinError("로그인 상태를 확인할 수 없습니다");
         const me = await response.json();
         const key = me?.kind === 'member' && me.institution && me.sub ? JSON.stringify([me.institution, me.sub]) : null;
-        if (!key || (owner && key !== owner)) throw Error('계정이 변경되었습니다');
+        if (!key || (owner && key !== owner)) throw kinError("계정이 변경되었습니다");
         owner = key;
       } finally { clearTimeout(timer); }
     }
@@ -12790,10 +12810,10 @@ function kinCreateCine() {
       r.loading = true; r.message = ''; render();
       try {
         if(v.type==='orthographic') {
-          const target=volumeTarget(v,true);if(!target)throw Error('완전히 로드된 정규 CT MPR 평면을 선택하세요.');
-          const fps=Math.abs(Number(options.framesPerSecond||24));if(!Number.isFinite(fps)||fps<1||fps>90)throw Error('MPR 재생 속도는 1~90 fps입니다.');
+          const target=volumeTarget(v,true);if(!target)throw kinError("완전히 로드된 정규 CT MPR 평면을 선택하세요.");
+          const fps=Math.abs(Number(options.framesPerSecond||24));if(!Number.isFinite(fps)||fps<1||fps>90)throw kinError("MPR 재생 속도는 1~90 fps입니다.");
           await session();if(!current())return;
-          let frames=volumeFrames(v,target);const bounds=playbackRange(r,frames.last+1);if(!bounds)throw Error('MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.');
+          let frames=volumeFrames(v,target);const bounds=playbackRange(r,frames.last+1);if(!bounds)throw kinError("MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.");
           if(frames.index<bounds.first||frames.index>bounds.last){moveVolume(v,target,frames,bounds.first);frames=volumeFrames(v,target);}
           nativeStop.call(cine,element,{viewportId:id});clearInterval(r.volumeTimer);r.loading=false;
           // Anchor a physical grid at the first plane. Native cine excludes the
@@ -12804,7 +12824,7 @@ function kinCreateCine() {
               const frames=volumeFrames(v,target);if(frames.index<bounds.first||frames.index>bounds.last){moveVolume(v,target,frames,bounds.first);return;}
               const step=kinCineNext(frames.index,bounds.first,bounds.last,r.mode,r.playDirection,r.loop);
               if(step.stop){resetDirection(r);halt(id);render();return;}r.playDirection=step.direction;moveVolume(v,target,frames,step.next);
-            }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||'MPR 재생을 중단했습니다.';if(r.ticket===ticket)halt(id);render();}}
+            }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||kinText("MPR 재생을 중단했습니다.");if(r.ticket===ticket)halt(id);render();}}
           },1000/fps);r.volumeTimer=timer;render();return;
         }
         const ids = v.getImageIds(), metadata = ids.map(imageId => core.metaData.get('imagePixelModule', imageId));
@@ -12823,7 +12843,7 @@ function kinCreateCine() {
         if (heap && Number.isFinite(heap.jsHeapSizeLimit - heap.usedJSHeapSize))
           available = Math.min(available, heap.jsHeapSizeLimit - heap.usedJSHeapSize);
         if (!kinCineWithinBudget(ids, pixels, available, cached, bytes => core.cache.isCacheable(bytes))) {
-          r.message = '현재 영상 캐시·메모리 여유가 부족합니다. 다른 검사를 정리하거나 뷰어를 다시 연 뒤 재생하세요.';
+          r.message = kinText("현재 영상 캐시·메모리 여유가 부족합니다. 다른 검사를 정리하거나 뷰어를 다시 연 뒤 재생하세요.");
           throw Error(r.message);
         }
         await session(); if (!current()) return;
@@ -12833,7 +12853,7 @@ function kinCreateCine() {
           while (current() && next < ids.length) { const imageId = ids[next++]; await core.imageLoader.loadAndCacheImage(imageId); }
         }));
         if (!current()) return;
-        const bounds=playbackRange(r,ids.length);if(!bounds)throw Error('재생 범위가 바뀌었습니다. 다시 적용하세요.');const currentIndex=()=>v.getTargetImageIdIndex?.()??v.getCurrentImageIdIndex?.();
+        const bounds=playbackRange(r,ids.length);if(!bounds)throw kinError("재생 범위가 바뀌었습니다. 다시 적용하세요.");const currentIndex=()=>v.getTargetImageIdIndex?.()??v.getCurrentImageIdIndex?.();
         if(currentIndex()<bounds.first||currentIndex()>bounds.last){
           clearTimeout(v.debouncedTimeout);
           await core.utilities.jumpToSlice(v.element,{imageIndex:bounds.first,debounceLoading:true});
@@ -12845,7 +12865,7 @@ function kinCreateCine() {
         // This pinned native API retains loop from its first play; update its public cine state on every explicit start.
           window.cornerstoneTools.utilities.cine.getToolState(element).loop = r.loop;render();return;
         }
-        const fps=Math.abs(Number(options.framesPerSecond||10));if(!Number.isFinite(fps)||fps<1||fps>90)throw Error('재생 속도는 1~90 fps입니다.');
+        const fps=Math.abs(Number(options.framesPerSecond||10));if(!Number.isFinite(fps)||fps<1||fps>90)throw kinError("재생 속도는 1~90 fps입니다.");
         nativeStop.call(cine,element,{viewportId:id});
         const timer=setInterval(()=>{
           if(!current()){clearInterval(timer);if(records.get(id)===r&&r.ticket===ticket){halt(id);render();}return;}
@@ -12854,11 +12874,11 @@ function kinCreateCine() {
             const index=currentIndex();if(index<bounds.first||index>bounds.last){core.utilities.scroll(v,{delta:bounds.first-index,debounceLoading:true});return;}
             const step=kinCineNext(index,bounds.first,bounds.last,r.mode,r.playDirection,r.loop);
             if(step.stop){resetDirection(r);halt(id);render();return;}r.playDirection=step.direction;core.utilities.scroll(v,{delta:step.next-index,debounceLoading:true});
-          }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||'재생을 중단했습니다.';if(r.ticket===ticket)halt(id);render();}}
+          }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||kinText("재생을 중단했습니다.");if(r.ticket===ticket)halt(id);render();}}
         },1000/fps);r.volumeTimer=timer;
         render();
       } catch (error) {
-        if (current()) { r.message = v.type==='orthographic' ? (error.message || 'MPR 재생을 준비할 수 없습니다.') : (r.message || '재생을 준비할 수 없습니다. 로그인 상태와 영상을 확인하고 다시 시도하세요.'); halt(id); render(); }
+        if (current()) { r.message = v.type==='orthographic' ? (error.message || kinText("MPR 재생을 준비할 수 없습니다.")) : (r.message || kinText("재생을 준비할 수 없습니다. 로그인 상태와 영상을 확인하고 다시 시도하세요.")); halt(id); render(); }
       } finally {
         if(v.type==='orthographic'&&records.get(id)===r&&r.ticket===ticket&&!current()){halt(id);render();}
       }
@@ -12867,16 +12887,16 @@ function kinCreateCine() {
       const v = viewport(grid.getActiveViewportId()); if (!eligible(v)) return;
       const r = record(v), modeChanged = r.mode !== direction.value; r.mode = direction.value; r.loop = loop.checked;
       if (modeChanged) resetDirection(r);
-      halt(v.id); r.message = '설정을 바꿨습니다. 재생을 눌러 시작하세요.'; render();
+      halt(v.id); r.message = kinText("설정을 바꿨습니다. 재생을 눌러 시작하세요."); render();
     };
     listen(direction, 'change', change); listen(loop, 'change', change);
     listen(applyRange,'click',()=>{
       const v=viewport(grid.getActiveViewportId());if(!eligible(v))return;const r=record(v),total=frameCount(v);
       const parse=value=>/^\d+$/.test(value)?Number(value):NaN,firstValue=parse(rangeStart.value),lastValue=parse(rangeEnd.value);
       if(!Number.isSafeInteger(firstValue)||!Number.isSafeInteger(lastValue)||firstValue<1||firstValue>=lastValue||lastValue>total){
-        r.message=`재생 범위는 1~${total} 안에서 시작이 끝보다 작아야 합니다.`;render();return;
+        r.message=kinText("재생 범위는 1~{n0} 안에서 시작이 끝보다 작아야 합니다.", total);render();return;
       }
-      r.range={first:firstValue-1,last:lastValue-1};r.rangeRevision++;resetDirection(r);halt(v.id);r.message='범위를 적용했습니다. 재생을 눌러 시작하세요.';render();
+      r.range={first:firstValue-1,last:lastValue-1};r.rangeRevision++;resetDirection(r);halt(v.id);r.message=kinText("범위를 적용했습니다. 재생을 눌러 시작하세요.");render();
     });
     listen(document, 'click', e => {
       if (!e.target.closest?.('[data-cy="cine-player-play-pause"]')) return;
@@ -12887,9 +12907,9 @@ function kinCreateCine() {
       const v = viewport(grid.getActiveViewportId()); if (!eligible(v)) return;
       halt(v.id); const r = record(v), ticket = r.ticket = ++sequence, before = signature(v);
       if(v.type==='orthographic') {
-        try{const target=volumeTarget(v,true);if(!target)throw Error('대상 MPR 평면을 다시 확인하세요.');const frames=volumeFrames(v,target),bounds=playbackRange(r,frames.last+1);if(!bounds)throw Error('MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.');moveVolume(v,target,frames,end?bounds.last:bounds.first);r.message='MPR 범위 끝 위치로 이동했습니다.';}catch(error){r.message=error.message;}render();return;
+        try{const target=volumeTarget(v,true);if(!target)throw kinError("대상 MPR 평면을 다시 확인하세요.");const frames=volumeFrames(v,target),bounds=playbackRange(r,frames.last+1);if(!bounds)throw kinError("MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.");moveVolume(v,target,frames,end?bounds.last:bounds.first);r.message=kinText("MPR 범위 끝 위치로 이동했습니다.");}catch(error){r.message=error.message;}render();return;
       }
-      const ids=v.getImageIds(),bounds=playbackRange(r,ids.length);if(!bounds){r.message='재생 범위가 바뀌었습니다. 다시 적용하세요.';render();return;}const index=end?bounds.last:bounds.first,imageId=ids[index];
+      const ids=v.getImageIds(),bounds=playbackRange(r,ids.length);if(!bounds){r.message=kinText("재생 범위가 바뀌었습니다. 다시 적용하세요.");render();return;}const index=end?bounds.last:bounds.first,imageId=ids[index];
       r.loading = true; r.message = ''; render();
       try {
         await core.imageLoader.loadAndCacheImage(imageId);
@@ -12898,7 +12918,7 @@ function kinCreateCine() {
         // image. Pixels are already cached; cancel any older deferred wheel load.
         clearTimeout(v.debouncedTimeout);
         await core.utilities.jumpToSlice(v.element, { imageIndex: index, debounceLoading: true });
-      } catch (_) { if (!ended && r.ticket === ticket) r.message = '프레임을 불러올 수 없습니다'; }
+      } catch (_) { if (!ended && r.ticket === ticket) r.message = kinText("프레임을 불러올 수 없습니다"); }
       finally { if (!ended && r.ticket === ticket) { r.loading = false; render(); } }
     }
     listen(first, 'click', () => jump(false)); listen(last, 'click', () => jump(true));
@@ -12925,6 +12945,8 @@ function kinCreateCine() {
 }
 
 function kinApplyCTPreset(services, commands, presetIndex) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const id = services.viewportGridService.getActiveViewportId();
   const grid = services.viewportGridService.getState().viewports.get(id);
   const viewport = services.cornerstoneViewportService.getCornerstoneViewport(id);
@@ -12935,7 +12957,7 @@ function kinApplyCTPreset(services, commands, presetIndex) {
   const validNumber = value => (typeof value === 'number' || typeof value === 'string' && value.trim() !== '') && Number.isFinite(Number(value));
   if (viewport?.type !== 'stack' || displaySet?.Modality !== 'CT' || displaySet?.SOPClassUID !== '1.2.840.10008.5.1.4.1.1.2' ||
       !preset || !validNumber(preset.window) || Number(preset.window) <= 0 || !validNumber(preset.level)) {
-    services.uiNotificationService.show({ title: 'CT 표시 프리셋', message: '일반 CT 영상을 선택하고 프리셋 설정을 확인하세요.', type: 'info' });
+    services.uiNotificationService.show({ title: kinText("CT 표시 프리셋"), message: kinText("일반 CT 영상을 선택하고 프리셋 설정을 확인하세요."), type: 'info' });
     return false;
   }
   commands.runCommand('setViewportWindowLevel', { viewportId: id, window: Number(preset.window), level: Number(preset.level) }, 'CORNERSTONE');
@@ -12943,6 +12965,8 @@ function kinApplyCTPreset(services, commands, presetIndex) {
 }
 
 function kinCreateDisplayScope() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -12959,10 +12983,10 @@ function kinCreateDisplayScope() {
     if (window.KinViewerDisplayScope) return Promise.resolve(window.KinViewerDisplayScope);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-display-scope.js';
-      const timer = setTimeout(() => finish(new Error('표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerDisplayScope); }
-      script.onload = () => finish(window.KinViewerDisplayScope ? null : new Error('표시 범위 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.'));
+      script.onload = () => finish(window.KinViewerDisplayScope ? null : kinError("표시 범위 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -12973,7 +12997,7 @@ function kinCreateDisplayScope() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('표시 범위 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("표시 범위 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = error.message; } });
   }, onModeExit() { epoch++; current?.stop(); current = null; } };
@@ -12983,6 +13007,8 @@ function kinCreateDisplayScope() {
 // mounted into the same panel with its own id, so the Recent Layout and Hanging
 // Protocol sections keep their markup and their own tests.
 function kinCreateCellMerge() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel, restoreOneUp;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -13060,10 +13086,10 @@ function kinCreateCellMerge() {
     if (window.KinViewerCellMerge) return Promise.resolve(window.KinViewerCellMerge);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-cell-merge.js';
-      const timer = setTimeout(() => finish(new Error('칸 병합 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("칸 병합 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerCellMerge); }
-      script.onload = () => finish(window.KinViewerCellMerge ? null : new Error('칸 병합 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('칸 병합 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.'));
+      script.onload = () => finish(window.KinViewerCellMerge ? null : kinError("칸 병합 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("칸 병합 도구를 불러오지 못했습니다. 뷰어를 다시 여세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -13075,13 +13101,15 @@ function kinCreateCellMerge() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('칸 병합 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("칸 병합 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = error.message; } });
   }, onModeExit() { epoch++; current?.stop(); current = null; restoreOneUp?.(); restoreOneUp = null; } };
 }
 
 function kinCreateImagesOnly() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -13098,10 +13126,10 @@ function kinCreateImagesOnly() {
     if (window.KinViewerImagesOnly) return Promise.resolve(window.KinViewerImagesOnly);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-images-only.js';
-      const timer = setTimeout(() => finish(new Error('Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerImagesOnly); }
-      script.onload = () => finish(window.KinViewerImagesOnly ? null : new Error('Images Only 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.'));
+      script.onload = () => finish(window.KinViewerImagesOnly ? null : kinError("Images Only 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("Images Only 도구를 불러오지 못했습니다. 다시 시도하세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -13112,7 +13140,7 @@ function kinCreateImagesOnly() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('Images Only 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("Images Only 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { kinToolRetry('kin-images-retry', error.message, () => extension.onModeEnter({ servicesManager })); } });
   }, onModeExit() { kinToolRetry('kin-images-retry'); epoch++; current?.stop(); current = null; } };
@@ -13120,6 +13148,8 @@ function kinCreateImagesOnly() {
 }
 
 function kinCreateImageText() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -13136,10 +13166,10 @@ function kinCreateImageText() {
     if (window.KinViewerImageText) return Promise.resolve(window.KinViewerImageText);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-image-text.js';
-      const timer = setTimeout(() => finish(new Error('Image Text 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("Image Text 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerImageText); }
-      script.onload = () => finish(window.KinViewerImageText ? null : new Error('Image Text 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('Image Text 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.'));
+      script.onload = () => finish(window.KinViewerImageText ? null : kinError("Image Text 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("Image Text 도구를 불러오지 못했습니다. 뷰어를 다시 여세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -13150,7 +13180,7 @@ function kinCreateImageText() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('Image Text 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("Image Text 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = error.message; } });
   }, onModeExit() { epoch++; current?.stop(); current = null; } };
@@ -13184,6 +13214,8 @@ function kinCreateCTPresets() {
 }
 
 function kinCreateViewerJobs() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, active = false;
   function connect(ticket = epoch) {
     ready?.then(extension => { if (active && ticket === epoch && !current && kinViewerSession.writer()) { current = extension; current.mount(); } }).catch(error => { if (active && ticket === epoch) { const p = document.querySelector('#kin-viewer-layout-status'); if (p) p.textContent = error.message; } });
@@ -13195,7 +13227,7 @@ function kinCreateViewerJobs() {
     const load = name => new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = resolve;
-      script.onerror = () => reject(new Error('비교 작업 화면을 불러오지 못했습니다.')); document.head.append(script);
+      script.onerror = () => reject(kinError("비교 작업 화면을 불러오지 못했습니다.")); document.head.append(script);
     });
     ready = load('viewer-volume-job.js').catch(() => {}).then(() => load('viewer-stack-restore.js')).then(() => load('viewer-jobs.js'))
       .then(() => window.kinViewerJobs(servicesManager.services, kinViewerLayoutModel, kinViewerSession.writeModule,
@@ -13212,6 +13244,8 @@ function kinCreateViewerJobs() {
 
 // Findings live inside the Measurements panel; the dock keeps its two panels unchanged.
 function kinCreateViewerFindings() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, active = false;
   function connect(ticket = epoch) {
     ready?.then(extension => { if (active && ticket === epoch && !current && kinViewerSession.writer()) { current = extension; current.mount(); } }).catch(error => {
@@ -13226,10 +13260,10 @@ function kinCreateViewerFindings() {
     const load = name => new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = resolve;
-      script.onerror = () => reject(new Error('소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.')); document.head.append(script);
+      script.onerror = () => reject(kinError("소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.")); document.head.append(script);
     });
     ready = load('finding-link-model.js').then(() => load('viewer-findings.js')).then(() => {
-      if (typeof window.kinViewerFindings !== 'function' || !window.kinFindingLinkModel) throw new Error('소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.');
+      if (typeof window.kinViewerFindings !== 'function' || !window.kinFindingLinkModel) throw kinError("소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.");
       // The section builds its store itself: every store it creates here is given the document's session (its /me and its end).
       const model = window.kinFindingLinkModel, session = kinViewerSession.writeModule;
       const connected = Object.create(model, { createStore: { value: deps => model.createStore({ ...deps, session }) } });
@@ -13248,6 +13282,8 @@ function kinCreateViewerFindings() {
 }
 
 function kinCreateViewerTechNote() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, prepare, epoch=0, active=false, state='stopped';
   let identity, identityReady, prepareIdentity, identityServices;
   function stopIdentity(){identity?.dispose();identity=null;}
@@ -13264,7 +13300,7 @@ function kinCreateViewerTechNote() {
     }).catch(()=>{
       if(!active||ticket!==epoch)return;
       const status=document.querySelector('#kin-viewer-layout-status');
-      if(status)status.textContent='환자 식별 표시를 연결하지 못했습니다. 영상 정보 표시에서 환자와 검사를 확인하세요.';
+      if(status)status.textContent=kinText("환자 식별 표시를 연결하지 못했습니다. 영상 정보 표시에서 환자와 검사를 확인하세요.");
     });
   }
   // The bridge follows the verified role; document disposal belongs to the page boundary.
@@ -13276,18 +13312,18 @@ function kinCreateViewerTechNote() {
     prepare().then(extension=>{
       if(!active||ticket!==epoch)return;
       current=extension;
-      if(current.mount()!==true)throw new Error('Tech 메모 연결 대상을 확인하지 못했습니다.');
+      if(current.mount()!==true)throw kinError("Tech 메모 연결 대상을 확인하지 못했습니다.");
       state='ready';
     }).catch(e=>{
       if(!active||ticket!==epoch)return;
       state='failed';
-      kinToolRetry('kin-note-retry', 'Tech 메모 화면을 연결하지 못했습니다.', connect);
+      kinToolRetry('kin-note-retry', kinText("Tech 메모 화면을 연결하지 못했습니다."), connect);
     });
   }
   return {id:'kin.viewer-tech-note',preRegistration({servicesManager}) {
     const load=name=>new Promise((resolve,reject)=>{
       const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
-      const fail=()=>{clearTimeout(timer);script.onload=script.onerror=null;script.remove();reject(new Error('Tech 메모 화면을 불러오지 못했습니다. 메모 연결을 다시 시도하세요.'));};
+      const fail=()=>{clearTimeout(timer);script.onload=script.onerror=null;script.remove();reject(kinError("Tech 메모 화면을 불러오지 못했습니다. 메모 연결을 다시 시도하세요."));};
       const timer=setTimeout(fail,20000);
       script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=fail;document.head.append(script);
     });
@@ -13334,14 +13370,16 @@ function kinCreateViewerTechNote() {
 }
 
 function kinCreateFrameCoverage() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, services, epoch = 0;
   function prepare() {
     if (!ready) ready = (window.KinFrameCoverage ? Promise.resolve() : new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-frame-coverage.js';
       const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(); };
-      const timer = setTimeout(() => finish(Error('Frame Coverage 연결 시간이 지났습니다.')), 20000);
-      script.onload = () => finish(window.KinFrameCoverage?.mount ? null : Error('Frame Coverage 도구를 확인할 수 없습니다.'));
-      script.onerror = () => finish(Error('Frame Coverage를 불러오지 못했습니다.')); document.head.append(script);
+      const timer = setTimeout(() => finish(kinError("Frame Coverage 연결 시간이 지났습니다.")), 20000);
+      script.onload = () => finish(window.KinFrameCoverage?.mount ? null : kinError("Frame Coverage 도구를 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("Frame Coverage를 불러오지 못했습니다.")); document.head.append(script);
     })).catch(error => { ready = null; throw error; });
     return ready;
   }
@@ -13349,7 +13387,7 @@ function kinCreateFrameCoverage() {
     onModeEnter() {
       const ticket = ++epoch; kinToolRetry('kin-coverage-retry'); current?.stop(); current = null;
       window.kinViewerFrameCoverageState = () => ({ warn: true, phase: 'unverified' });
-      window.kinViewerFrameCoverageConfirm = ask => (ask || window.confirm)('원본 프레임 표시 확인을 연결하지 못했습니다. 이 영상을 떠날까요?');
+      window.kinViewerFrameCoverageConfirm = ask => (ask || window.confirm)(kinText("원본 프레임 표시 확인을 연결하지 못했습니다. 이 영상을 떠날까요?"));
       prepare().then(() => { if (ticket === epoch) current = window.KinFrameCoverage.mount(services); })
         .catch(error => { if (ticket === epoch) kinToolRetry('kin-coverage-retry', error.message, () => extension.onModeEnter()); });
     }, onModeExit() { epoch++; kinToolRetry('kin-coverage-retry'); current?.stop(); current = null; } };
@@ -13363,6 +13401,8 @@ function kinCreateFrameCoverage() {
    URL 매개변수·localStorage·전역 토글 같은 런타임 우회 경로는 두지 않는다. OFF면
    preRegistration에서 스크립트를 주입하지 않으므로 모듈 전역도 패널도 생기지 않는다. */
 function kinCreateThreeDCursor() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, ready = null, current = null, epoch = 0, ended = false, listening = false, channel = null;
   let rows = [], owner = null, mark = null, listeners = [], mounts = 0, renders = 0, invalidations = 0;
   /* 종료는 이 호스트가 소유한다. retiring은 아직 끝나지 않은 disable→stop이고, blocked는 그
@@ -13377,14 +13417,14 @@ function kinCreateThreeDCursor() {
   const load = (name, global) => window[global] ? Promise.resolve() : new Promise((resolve, reject) => {
     const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
     const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; error ? reject(error) : resolve(); };
-    const timer = setTimeout(() => finish(new Error('3D Cursor 연결이 지연되어 중단했습니다.')), 20000);
-    script.onload = () => finish(window[global] ? null : new Error('3D Cursor 모듈을 확인할 수 없습니다.'));
-    script.onerror = () => finish(new Error('3D Cursor 모듈을 불러오지 못했습니다.'));
+    const timer = setTimeout(() => finish(kinError("3D Cursor 연결이 지연되어 중단했습니다.")), 20000);
+    script.onload = () => finish(window[global] ? null : kinError("3D Cursor 모듈을 확인할 수 없습니다."));
+    script.onerror = () => finish(kinError("3D Cursor 모듈을 불러오지 못했습니다."));
     document.head.append(script);
   });
   async function get(path) {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
-    if (!response.ok) throw new Error('검사 접근 정보를 확인할 수 없습니다.');
+    if (!response.ok) throw kinError("검사 접근 정보를 확인할 수 없습니다.");
     return await response.json();
   }
   const ownerOf = me => me?.kind === 'member' && me.institution && me.sub ? JSON.stringify([me.institution, me.sub]) : null;
@@ -13553,13 +13593,15 @@ function kinCreateThreeDCursor() {
           { panes, meta, context, host: document.querySelector('#kin-viewer-layout') });
         mounts++;
         bind();
-      })).catch(() => { if (ticket === epoch) say('3D Cursor를 연결하지 못했습니다. 영상 작업을 저장한 뒤 뷰어를 다시 여세요.'); });
+      })).catch(() => { if (ticket === epoch) say(kinText("3D Cursor를 연결하지 못했습니다. 영상 작업을 저장한 뒤 뷰어를 다시 여세요.")); });
     },
     onModeExit() { retire(); },
   };
 }
 
 function kinDicomPdfViewportGuard(extensionManager, options) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   options = options || {};
   const entryId = '@ohif/extension-dicom-pdf.viewportModule.dicom-pdf';
   const handlerId = '@ohif/extension-dicom-pdf.sopClassHandlerModule.dicom-pdf';
@@ -13592,12 +13634,12 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
     const current = sourceOf({ displaySets: [source.value] });
     return !!current && current.key === source.key && current.pdfUrl === source.pdfUrl;
   }
-  async function json(result) { try { return await result.json(); } catch (_) { throw new Error('원본 PDF 확인 응답이 올바르지 않습니다.'); } }
+  async function json(result) { try { return await result.json(); } catch (_) { throw kinError("원본 PDF 확인 응답이 올바르지 않습니다."); } }
   function requireReply(reply, message) {
     if (reply?.ok) return reply;
     const error = window.KinSessionTransport.responseError(reply,
-      reply?.status === 404 ? '원본 PDF를 찾을 수 없습니다.' : message,
-      '원본 PDF 접근이 거절되었습니다. 검사 접근 권한을 확인하세요.');
+      reply?.status === 404 ? kinText("원본 PDF를 찾을 수 없습니다.") : message,
+      kinText("원본 PDF 접근이 거절되었습니다. 검사 접근 권한을 확인하세요."));
     throw error;
   }
   function ownerOf(value) {
@@ -13606,32 +13648,32 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
   }
   function sameOwner(a, b) { return !!a && !!b && a.institution === b.institution && a.sub === b.sub; }
   function assertLive(source, ticket, controller) {
-    if (!active || ticket !== epoch || controller.signal.aborted || !matches(source)) throw new Error('선택한 원본 문서가 변경되었습니다.');
+    if (!active || ticket !== epoch || controller.signal.aborted || !matches(source)) throw kinError("선택한 원본 문서가 변경되었습니다.");
   }
   function waitForActivation(ticket, controller) {
     if (active && ticket === epoch) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const waiter = { ticket, resolve, reject }; activationWaiters.add(waiter);
-      controller.signal.addEventListener('abort', () => { activationWaiters.delete(waiter); reject(new Error('원본 PDF 준비가 중단되었습니다.')); }, { once: true });
+      controller.signal.addEventListener('abort', () => { activationWaiters.delete(waiter); reject(kinError("원본 PDF 준비가 중단되었습니다.")); }, { once: true });
     });
   }
   async function resolveAttempt(source, ticket, controller) {
       const raw = await source.pdfUrl; assertLive(source, ticket, controller);
-      if (typeof raw !== 'string') throw new Error('원본 PDF 경로를 확인할 수 없습니다.');
+      if (typeof raw !== 'string') throw kinError("원본 PDF 경로를 확인할 수 없습니다.");
       const root = globalThis.location, parsed = new URL(raw, root.href);
       const rendered = '/dicom-web/studies/' + source.value.StudyInstanceUID + '/series/' + source.value.SeriesInstanceUID + '/instances/' + source.value.SOPInstanceUID + '/rendered';
-      if (parsed.origin !== root.origin || parsed.pathname !== rendered || parsed.search || parsed.hash || parsed.username || parsed.password) throw new Error('원본 PDF 경로를 확인할 수 없습니다.');
+      if (parsed.origin !== root.origin || parsed.pathname !== rendered || parsed.search || parsed.hash || parsed.username || parsed.password) throw kinError("원본 PDF 경로를 확인할 수 없습니다.");
       const init = (method = 'GET', body) => ({ method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      const firstReply = requireReply(await fetch('/api/me', init()), '로그인 세션을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      const firstReply = requireReply(await fetch('/api/me', init()), kinText("로그인 세션을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const first = ownerOf(await json(firstReply)); assertLive(source, ticket, controller);
-      if (!first) throw new Error('로그인 세션을 확인할 수 없습니다.');
-      const lookupReply = requireReply(await fetch('/api/dicom/lookup', init('POST', { studyUid: source.value.StudyInstanceUID, sopUid: source.value.SOPInstanceUID })), '원본 PDF 식별을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      if (!first) throw kinError("로그인 세션을 확인할 수 없습니다.");
+      const lookupReply = requireReply(await fetch('/api/dicom/lookup', init('POST', { studyUid: source.value.StudyInstanceUID, sopUid: source.value.SOPInstanceUID })), kinText("원본 PDF 식별을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const lookup = await json(lookupReply); assertLive(source, ticket, controller);
-      if (!lookup || Object.keys(lookup).length !== 1 || typeof lookup.id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(lookup.id)) throw new Error('원본 PDF 식별을 확인할 수 없습니다.');
-      const lastReply = requireReply(await fetch('/api/me', init()), '로그인 세션을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      if (!lookup || Object.keys(lookup).length !== 1 || typeof lookup.id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(lookup.id)) throw kinError("원본 PDF 식별을 확인할 수 없습니다.");
+      const lastReply = requireReply(await fetch('/api/me', init()), kinText("로그인 세션을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const last = ownerOf(await json(lastReply)); assertLive(source, ticket, controller);
-      if (!sameOwner(first, last)) throw new Error('계정이 변경되어 원본 PDF를 표시하지 않았습니다.');
+      if (!sameOwner(first, last)) throw kinError("계정이 변경되어 원본 PDF를 표시하지 않았습니다.");
       const url = await window.KinViewerResource.read(root.origin + '/instances/' + lookup.id + '/pdf', { signal: controller.signal, type: 'application/pdf' });
       try { assertLive(source, ticket, controller); } catch (error) { window.KinViewerResource.release(url); throw error; }
       urls.add(url); return url;
@@ -13639,7 +13681,7 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
   async function resolve(source, ticket, controller) {
     await waitForActivation(ticket, controller); assertLive(source, ticket, controller);
     let timer;
-    const deadline = new Promise((_, reject) => { timer = setTimeout(() => { const error = new Error('원본 PDF 확인 시간이 지났습니다. 다시 시도하세요.'); error.retryable = true; reject(error); controller.abort(); }, timeoutMs); });
+    const deadline = new Promise((_, reject) => { timer = setTimeout(() => { const error = kinError("원본 PDF 확인 시간이 지났습니다. 다시 시도하세요."); error.retryable = true; reject(error); controller.abort(); }, timeoutMs); });
     try { return await Promise.race([resolveAttempt(source, ticket, controller), deadline]); }
     catch (error) { if (error?.name === 'TypeError') error.retryable = true; throw error; }
     finally { clearTimeout(timer); pending.delete(controller); }
@@ -13657,7 +13699,7 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
     let record = cache.get(source.value);
     if (record?.key === source.key && record.original === source.pdfUrl && (!record.url || window.KinViewerResource.has(record.url))) return record;
     if (record?.url) { window.KinViewerResource.release(record.url); urls.delete(record.url); }
-    if (record && !record.settled) { record.controller?.abort(); record.settled = true; records.delete(record); record.reject(new Error('선택한 원본 문서가 변경되었습니다.')); }
+    if (record && !record.settled) { record.controller?.abort(); record.settled = true; records.delete(record); record.reject(kinError("선택한 원본 문서가 변경되었습니다.")); }
     let fulfill, reject; const promise = new Promise((resolve, fail) => { fulfill = resolve; reject = fail; }); promise.catch(() => {});
     record = { key: source.key, original: source.pdfUrl, source, ticket: epoch, promise, resolve: fulfill, reject, failed: false, settled: false, controller: null };
     cache.set(source.value, record); records.add(record); start(record); return record;
@@ -13682,19 +13724,21 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
 
   function listen() { if (listening) return; listening = true;  try { sessionChannel = kinViewerOnEnd(() => sessionEnded()); } catch (_) {} }
   function unlisten() { if (!listening) return; listening = false;  sessionChannel?.close(); sessionChannel = null; }
-  function activate() { active = true; listen(); for (const waiter of [...activationWaiters]) { if (waiter.ticket === epoch) waiter.resolve(); else waiter.reject(new Error('원본 PDF 준비가 중단되었습니다.')); activationWaiters.delete(waiter); } }
+  function activate() { active = true; listen(); for (const waiter of [...activationWaiters]) { if (waiter.ticket === epoch) waiter.resolve(); else waiter.reject(kinError("원본 PDF 준비가 중단되었습니다.")); activationWaiters.delete(waiter); } }
   function retry(value, pdfUrl) { for (const record of records) if (record.failed && !record.settled && record.ticket === epoch && matches(record.source) && (!value || record.source.value === value && record.original === pdfUrl)) start(record); }
   function deactivate() {
     active = false; epoch++; unlisten(); cache = new WeakMap(); for (const item of pending) item.abort(); pending.clear();
     for (const url of urls) window.KinViewerResource.release(url); urls.clear();
-    for (const waiter of activationWaiters) waiter.reject(new Error('원본 PDF 준비가 중단되었습니다.')); activationWaiters.clear();
-    for (const record of records) if (!record.settled) { record.settled = true; record.reject(new Error('원본 PDF 준비가 중단되었습니다.')); } records.clear();
+    for (const waiter of activationWaiters) waiter.reject(kinError("원본 PDF 준비가 중단되었습니다.")); activationWaiters.clear();
+    for (const record of records) if (!record.settled) { record.settled = true; record.reject(kinError("원본 PDF 준비가 중단되었습니다.")); } records.clear();
   }
   function dispose() { deactivate(); if (patch && patch.entry.component === patch.wrapper) patch.entry.component = patch.original; patch = null; }
   return { install, ownsWrapper, activate, deactivate, retry, dispose };
 }
 
 function kinCreateDicomPdf() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, ready, current, viewportGuard, nativeErrors = new WeakMap(), epoch = 0;
   function retire() { epoch++; nativeErrors = new WeakMap(); current?.stop(); current = null; }
   function prepare() {
@@ -13702,9 +13746,9 @@ function kinCreateDicomPdf() {
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-dicom-pdf.js';
       const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(window.KinDicomPdf); };
-      const timer = setTimeout(() => finish(new Error('원본 PDF 도구 연결 시간이 지났습니다. 다시 시도하세요.')), 10000);
-      script.onload = () => finish(window.KinDicomPdf?.create ? null : new Error('원본 PDF 도구를 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('원본 PDF 도구를 불러오지 못했습니다. 다시 시도하세요.'));
+      const timer = setTimeout(() => finish(kinError("원본 PDF 도구 연결 시간이 지났습니다. 다시 시도하세요.")), 10000);
+      script.onload = () => finish(window.KinDicomPdf?.create ? null : kinError("원본 PDF 도구를 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("원본 PDF 도구를 불러오지 못했습니다. 다시 시도하세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -13714,11 +13758,11 @@ function kinCreateDicomPdf() {
     if (extensionManager) { viewportGuard = kinDicomPdfViewportGuard(extensionManager, { onSessionEnd: retire,
       onFailure: (error, value, pdfUrl) => { nativeErrors.set(value, { pdfUrl, error }); current?.nativeFailure?.(error, value, pdfUrl); },
       onSuccess: (value, pdfUrl) => { if (nativeErrors.has(value)) nativeErrors.delete(value); current?.nativeReady?.(value, pdfUrl); }
-    }); if (!viewportGuard.install()) throw new Error('원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요.'); }
+    }); if (!viewportGuard.install()) throw kinError("원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요."); }
   },
     onModeEnter() {
       kinToolRetry('kin-pdf-retry');
-      if (viewportGuard && !viewportGuard.ownsWrapper() && !viewportGuard.install()) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = '원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요.'; return; }
+      if (viewportGuard && !viewportGuard.ownsWrapper() && !viewportGuard.install()) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = kinText("원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요."); return; }
       viewportGuard?.activate();
       const ticket = ++epoch; current?.stop(); current = null;
       prepare().then(module => { if (ticket === epoch) { current = module.create(services, {
@@ -13758,6 +13802,8 @@ function kinCreateDicomPdf() {
    - 현재 검사의 목록이 접근 거절이면 환자 탭의 권한 없음 화면으로 넘긴다(KinViewerPatientTabs.imagesRefused).
    - 모양이 예상과 다르면 씌우지 않고 기본 동작을 둔 채 그 사실만 표시한다. */
 function kinCreateSeriesMetadataRecovery() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const retryDelay = 1000, own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   let services = null, extensions = null, ticket = null, phase = 'stopped';
   // Document lifetime: studies whose image read failed here (OHIF reuses that failure for the document's life).
@@ -13818,11 +13864,10 @@ function kinCreateSeriesMetadataRecovery() {
     notices.clear();
   }
   function describe(failure) {
-    const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : '요청 오류';
-    if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return failure.position + '번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.';
-    if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return failure.position + '번째 검사의 영상 정보에 접근할 수 없습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다.';
-    return failure.position + '번째 검사의 영상 정보를 ' + (failure.retried ? '한 번 다시 요청했지만 ' : '') +
-      '불러오지 못했습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.';
+    const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : kinText("요청 오류");
+    if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return kinText("{0}번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.", failure.position);
+    if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return kinText("{0}번째 검사의 영상 정보에 접근할 수 없습니다({1}). 이 검사 영상은 표시하지 않았습니다.", failure.position, code);
+    return kinText("{0}번째 검사의 영상 정보를 {t1}불러오지 못했습니다({2}). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.", failure.position, (failure.retried ? kinText("한 번 다시 요청했지만 ") : ''), code);
   }
   function render(current) {
     const text = [...new Set([...current.failures.values()].sort((a, b) => a.position - b.position).map(describe))].join(' ');
@@ -13838,7 +13883,7 @@ function kinCreateSeriesMetadataRecovery() {
   }
   function install() {
     const search = location.search, studies = studiesOf(search);
-    const refuse = () => { phase = 'refused'; say('영상 정보 재요청 기능을 연결하지 못했습니다. 기본 동작으로 계속 표시하며, 영상 칸이 비어 있으면 뷰어를 다시 여세요.'); };
+    const refuse = () => { phase = 'refused'; say(kinText("영상 정보 재요청 기능을 연결하지 못했습니다. 기본 동작으로 계속 표시하며, 영상 칸이 비어 있으면 뷰어를 다시 여세요.")); };
     let client = null, config = null;
     try {
       const source = extensions?.getActiveDataSource?.()?.[0];
@@ -14033,6 +14078,8 @@ function kinCreateSof3Decode({ workerUrl = '/worklist/hpacs-lite/sof3-decode-wor
 // A failed pixel request is otherwise only a console error in the pinned viewer. Keep its explanation on the
 // affected frame until that image loads or the viewport changes; a failed prefetch must not cover a displayed image.
 function kinCreateImageLoadStatus() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   // The SOF3 decoder lives for the page: once it could not load, later mode entries keep the pinned path.
   let services, extensions, stop, handleGlobal, sof3, registered = false;
   const globalFailure = event => handleGlobal?.(event);
@@ -14047,28 +14094,27 @@ function kinCreateImageLoadStatus() {
         'IMAGE_DELIVERY_RECORD_UNAVAILABLE', 'AUTH_SESSION_ENDED', 'AUTH_SESSION_MISMATCH'].includes(body?.code) &&
           typeof body.message === 'string') return body.message + http;
     } catch (_) { /* A non-JSON image-server error still has a visible explanation. */ }
-    if (status === 401) return '로그인 세션을 확인할 수 없습니다. 업무 화면에서 다시 로그인한 뒤 검사를 여세요.' + http;
-    if (status === 403) return '이 검사 영상의 접근 권한이 없습니다. 기관과 검사 접근 권한을 확인하세요.' + http;
-    if (status === 404) return '요청한 원본 영상 또는 프레임이 없습니다. 검사 목록을 새로 고친 뒤 다시 여세요.' + http;
-    if (status === 409) return '검사 원본이나 환자 연결이 변경되었습니다. 검사 목록에서 다시 여세요.' + http;
-    if (status === 400 || status === 416) return '요청한 프레임 번호나 영상 범위가 올바르지 않습니다. 검사를 다시 열고 계속되면 관리자에게 문의하세요.' + http;
-    if (status === 429 || status >= 500) return '영상 서버가 요청을 완료하지 못했습니다. 잠시 후 검사를 다시 열어 주세요.' + http;
+    if (status === 401) return kinText("로그인 세션을 확인할 수 없습니다. 업무 화면에서 다시 로그인한 뒤 검사를 여세요.{0}", http);
+    if (status === 403) return kinText("이 검사 영상의 접근 권한이 없습니다. 기관과 검사 접근 권한을 확인하세요.{0}", http);
+    if (status === 404) return kinText("요청한 원본 영상 또는 프레임이 없습니다. 검사 목록을 새로 고친 뒤 다시 여세요.{0}", http);
+    if (status === 409) return kinText("검사 원본이나 환자 연결이 변경되었습니다. 검사 목록에서 다시 여세요.{0}", http);
+    if (status === 400 || status === 416) return kinText("요청한 프레임 번호나 영상 범위가 올바르지 않습니다. 검사를 다시 열고 계속되면 관리자에게 문의하세요.{0}", http);
+    if (status === 429 || status >= 500) return kinText("영상 서버가 요청을 완료하지 못했습니다. 잠시 후 검사를 다시 열어 주세요.{0}", http);
     const message = String(error?.message ?? error ?? '');
     if (message === 'CACHE_SIZE_EXCEEDED' || /Array buffer allocation failed|Invalid typed array length|out of memory/i.test(message))
-      return '영상 표시 메모리가 부족합니다. 사용하지 않는 영상 창을 닫고 검사를 다시 여세요.';
+      return kinText("영상 표시 메모리가 부족합니다. 사용하지 않는 영상 창을 닫고 검사를 다시 여세요.");
     if (error?.name === 'EvalError' || /WebAssembly|\bwasm\b|content security policy|unsafe-eval/i.test(message))
-      return '압축 영상 프레임을 해독하지 못했습니다. 뷰어 보안 정책과 WebAssembly 디코더 설정을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임을 해독하지 못했습니다. 뷰어 보안 정책과 WebAssembly 디코더 설정을 관리자에게 확인해 주세요.");
     if (error?.code === 'IMAGE_DECODE_EMPTY' || /empty decoded image frame/i.test(message))
-      return '압축 영상 프레임의 해독 결과가 비어 있거나 불완전합니다. 원본 파일 손상과 압축 형식을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임의 해독 결과가 비어 있거나 불완전합니다. 원본 파일 손상과 압축 형식을 관리자에게 확인해 주세요.");
     if (/transfer syntax|decode|decoder|codestream/i.test(message))
-      return '압축 영상 프레임을 해독하지 못했습니다. 원본의 압축 형식과 파일 손상을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임을 해독하지 못했습니다. 원본의 압축 형식과 파일 손상을 관리자에게 확인해 주세요.");
     if (error?.name === 'TimeoutError' || /timeout|timed out/i.test(message))
-      return '영상 서버 응답 시간이 초과되었습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.';
-    if (error?.name === 'AbortError') return '영상 요청이 취소되었습니다. 이 프레임이 필요하면 검사를 다시 여세요.';
+      return kinText("영상 서버 응답 시간이 초과되었습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.");
+    if (error?.name === 'AbortError') return kinText("영상 요청이 취소되었습니다. 이 프레임이 필요하면 검사를 다시 여세요.");
     if (status === 0 || /Failed to fetch|NetworkError|Load failed|no image frame|multipart|truncat|short read|terminated/i.test(message))
-      return '영상 전송이 끊겼거나 프레임이 완전하지 않습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.';
-    return '영상 데이터를 불러오지 못했습니다' + http +
-      '. 뷰어를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+      return kinText("영상 전송이 끊겼거나 프레임이 완전하지 않습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.");
+    return kinText("영상 데이터를 불러오지 못했습니다{0}. 뷰어를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", http);
   }
   function mount() {
     stop?.();
@@ -14153,12 +14199,12 @@ function kinCreateImageLoadStatus() {
     const overlayModalities = ['SEG', 'RTSTRUCT'], overlayFailures = new Map(), overlayLoads = new Map();
     const overlayFailure = (modality, error) => {
       const message = String(error?.message ?? error ?? '');
-      const head = '이 ' + modality + '를 표시하지 못했습니다. ';
+      const head = kinText("이 {0}를 표시하지 못했습니다. ", modality);
       if (error?.name === 'EvalError' || /content security policy|unsafe-eval/i.test(message))
-        return head + '이 뷰어는 아직 ' + modality + ' 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.';
+        return kinText("{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", head, modality);
       const status = error?.status;
       const http = Number.isInteger(status) && status > 0 ? ' (HTTP ' + status + ')' : '';
-      return head + modality + ' 파일을 읽지 못했습니다' + http + '. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+      return kinText("{0}{1} 파일을 읽지 못했습니다{2}. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", head, modality, http);
     };
     const shownOverlays = () => {
       const shown = new Set();
@@ -14214,7 +14260,7 @@ function kinCreateImageLoadStatus() {
       const failed = set => set?.Modality === modality && overlayFailures.get(set.displaySetInstanceUID);
       // One notice per cell: a segmentation without its source says that, whatever its read did.
       const notice = props => !active ? null : props?.displaySets?.some(sourceless)
-        ? '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'
+        ? kinText("현재 검사에서 이 {0}의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.", modality)
         : props?.displaySets?.map(failed).find(Boolean) || null;
       const guarded = props => {
         const text = notice(props);
@@ -14451,14 +14497,16 @@ function kinCreateImageLoadStatus() {
 }
 
 function kinCreateContextLoss() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, services, epoch = 0;
   function prepare() {
     if (!ready) ready = (window.KinViewerContextLoss ? Promise.resolve() : new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-context-loss.js';
       const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(); };
-      const timer = setTimeout(() => finish(Error('영상 복구 도구 연결 시간이 지났습니다.')), 20000);
-      script.onload = () => finish(window.KinViewerContextLoss?.create ? null : Error('영상 복구 도구를 확인할 수 없습니다.'));
-      script.onerror = () => finish(Error('영상 복구 도구를 불러오지 못했습니다.')); document.head.append(script);
+      const timer = setTimeout(() => finish(kinError("영상 복구 도구 연결 시간이 지났습니다.")), 20000);
+      script.onload = () => finish(window.KinViewerContextLoss?.create ? null : kinError("영상 복구 도구를 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("영상 복구 도구를 불러오지 못했습니다.")); document.head.append(script);
     })).catch(error => { ready = null; throw error; });
     return ready;
   }
@@ -14515,6 +14563,8 @@ async function kinFetchBulk(uri) {
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let protocolId = 'kin.mammography';
   let services, extensions, stop, institution;
   let preference = { layout: 'compare', kind: null };
@@ -14685,7 +14735,7 @@ function kinCreateMammographyHanging() {
         if (element && spec.issues.includes('voi-lut-table-invalid')) {
           const notice = document.createElement('div'); notice.className = 'kin-mg-voi-notice';
           notice.setAttribute('role', 'status');
-          notice.textContent = '저장된 VOI LUT를 읽을 수 없습니다. 영상 밝기와 대비를 확인해 주세요.';
+          notice.textContent = kinText("저장된 VOI LUT를 읽을 수 없습니다. 영상 밝기와 대비를 확인해 주세요.");
           notice.style.cssText = 'position:absolute;top:40px;left:8px;z-index:5;color:#fff;background:#713f12;padding:4px 8px;pointer-events:none';
           element.append(notice);
         }
@@ -14807,15 +14857,15 @@ function kinCreateMammographyHanging() {
         if (!matched && !unverified) return;
         const at = owner ? owner.repeat.findIndex(r => r.uid === showing) : -1;
         const next = owner ? owner.repeat[(at + 1) % owner.repeat.length] : null;
-        const slotText = owner ? owner.name + ' · ' + owner.repeat.length + '장 중 ' + (at + 1) + '장 · 재촬영' : cell.label;
+        const slotText = owner ? kinText("{0} · {n1}장 중 {2}장 · 재촬영", owner.name, owner.repeat.length, (at + 1)) : cell.label;
         const text = (matched ? slotText : '') + (unverified ? (matched ? ' · ' : '') + 'Orientation Unverified' : '');
         if (label?.dataset.text !== text + (next?.uid || '')) {
           if (!label) { label = document.createElement('div'); label.className = 'kin-mg-slot'; host.append(label); }
           label.style.cssText = 'position:absolute;bottom:24px;left:8px;z-index:5;pointer-events:none;color:#fff;background:#101e32;padding:3px 6px;font:12px sans-serif';
           label.textContent = text;
           label.dataset.text = text + (next?.uid || '');
-          label.title = [unverified ? '영상 방향을 확인할 수 없어 저장된 방향으로 표시합니다.' : '',
-            owner ? '같은 좌우·촬영 방향·영상 종류의 영상이 여러 장입니다. 가장 최근 촬영을 먼저 표시합니다.' : ''].filter(Boolean).join(' ');
+          label.title = [unverified ? kinText("영상 방향을 확인할 수 없어 저장된 방향으로 표시합니다.") : '',
+            owner ? kinText("같은 좌우·촬영 방향·영상 종류의 영상이 여러 장입니다. 가장 최근 촬영을 먼저 표시합니다.") : ''].filter(Boolean).join(' ');
           if (owner) label.append(switchButton(v.viewportId, owner.key, next));
         }
         shown.add(label);
@@ -14832,7 +14882,7 @@ function kinCreateMammographyHanging() {
     function switchButton(viewportId, key, next) {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = 'Switch';
-      button.title = '같은 위치의 다른 영상으로 바꿉니다.';
+      button.title = kinText("같은 위치의 다른 영상으로 바꿉니다.");
       button.style.cssText = 'margin-left:6px;pointer-events:auto;cursor:pointer;color:#fff;background:#101e32;border:1px solid #657c9f;padding:0 4px;font:12px sans-serif';
       // The label sits inside the viewport element; a press here must not start an image tool.
       for (const type of ['pointerdown', 'mousedown']) button.addEventListener(type, event => event.stopPropagation());
@@ -14901,7 +14951,7 @@ function kinCreateMammographyHanging() {
           const selected = choices ? choices[chosen] : slot?.status === 'ready' ? displaySetOf(slot.object) : null;
           selectors[key] = { seriesMatchingRules: [{ attribute: 'displaySetInstanceUID', required: true,
             constraint: { equals: { value: selected?.displaySetInstanceUID || '' } } }] };
-          const state = choices ? ' · ' + choices.length + '장 중 ' + (chosen + 1) + '장 · 재촬영' : selected ? '' :
+          const state = choices ? kinText(" · {n0}장 중 {1}장 · 재촬영", choices.length, (chosen + 1)) : selected ? '' :
             slot?.status === 'ambiguous' ? ' · Select Image' : slot?.status === 'missing' ? ' · Missing' : ' · Unverified';
           const name = (spec.role === 'current' ? 'Current' : 'Prior') + ' · ' + spec.side + ' ' + spec.view + ' · ' + labels[kind];
           return { key, name, selected: selected?.displaySetInstanceUID, label: name + state,
@@ -14939,7 +14989,7 @@ function kinCreateMammographyHanging() {
         panel.append(select);
       }
       missing = document.createElement('div'); missing.setAttribute('role', 'status');
-      missing.title = '같은 좌우·촬영 방향·영상 종류가 확인된 영상만 자동 배치합니다. 빈 칸은 다른 영상으로 대체하지 않습니다.';
+      missing.title = kinText("같은 좌우·촬영 방향·영상 종류가 확인된 영상만 자동 배치합니다. 빈 칸은 다른 영상으로 대체하지 않습니다.");
       panel.append(missing);
       document.querySelector('#kin-viewer-layout')?.append(panel);
     }
@@ -14998,7 +15048,7 @@ function kinCreateMammographyHanging() {
     services = servicesManager.services; extensions = extensionManager;
     await new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/mammography-model.js';
-      script.onload = resolve; script.onerror = () => reject(Error('유방영상 분류를 불러오지 못했습니다.')); document.head.append(script);
+      script.onload = resolve; script.onerror = () => reject(kinError("유방영상 분류를 불러오지 못했습니다.")); document.head.append(script);
     });
     const response = await fetch('/api/me', { credentials: 'same-origin' });
     const me = response.ok ? await response.json() : null;
@@ -15430,6 +15480,8 @@ function kinCreateStudyPrefetch() {
 // institution, so resolve them through the same source patient key as Related.
 // Each resulting UID still uses the ordinary scoped DICOMweb query.
 function kinCreateStudySearch() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let extensions, stop;
   function mount() {
     stop?.();
@@ -15440,13 +15492,13 @@ function kinCreateStudySearch() {
     const controller = new AbortController();
     const session = kinViewerOnEnd(() => { ended = true; controller.abort(); });
     const live = () => !ended && location.search === search;
-    const current = () => { if (!live()) throw new Error('검사 조회가 종료되었습니다.'); };
+    const current = () => { if (!live()) throw kinError("검사 조회가 종료되었습니다."); };
     // OHIF repeats the patient lookup for each opened study. Share the list only
     // within this mode/session; each UID query still checks current access.
     let listing;
     const readList = () => listing ||= (async () => {
       const response = await fetch('/api/studies', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-      if (!response.ok) throw new Error('이전 검사 목록을 확인하지 못했습니다 (HTTP ' + response.status + ').');
+      if (!response.ok) throw kinError("이전 검사 목록을 확인하지 못했습니다 (HTTP {0}).", response.status);
       return response.json();
     })().catch(error => { listing = null; throw error; });
     // /api/studies is the radiology list; a clinician-only session is refused it (api/src/clinician-policy.ts) and keeps the
@@ -15461,15 +15513,15 @@ function kinCreateStudySearch() {
       const verdict = await role();
       current();
       if (verdict === 'read-only') return original.call(this, params);
-      if (verdict !== 'writer') throw new Error('계정을 확인하지 못해 이전 검사를 찾지 않았습니다.');
+      if (verdict !== 'writer') throw kinError("계정을 확인하지 못해 이전 검사를 찾지 않았습니다.");
       const list = await readList();
       current();
       const keys = new Set(list.studies.filter(row => opened.includes(row.uid) && row.id === params.patientId && row.sourcePatientKey)
         .map(row => row.sourcePatientKey));
       // The stock MRN request does not identify which opened study asked it.
       // Keep its current-study fallback when two institutions reuse that MRN.
-      if (keys.size > 1) throw new Error('기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.');
-      if (keys.size === 0) throw new Error('열린 검사의 환자 식별을 확인하지 못했습니다.');
+      if (keys.size > 1) throw kinError("기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.");
+      if (keys.size === 0) throw kinError("열린 검사의 환자 식별을 확인하지 못했습니다.");
       const rows = list.studies.filter(row => row.id === params.patientId && keys.has(row.sourcePatientKey));
       // A listed exam is searched by the original studies its scope holds: a merged exam's other originals have no row
       // of their own but are part of the opened exam, and each keeps its own entry, UID and count in the panel.

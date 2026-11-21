@@ -3,11 +3,15 @@
  * Each restore owns fresh viewport and presentation IDs, native data readiness and
  * the render of the saved display. Neither actor existence nor elapsed quiet time
  * is a completion boundary. The same owner is used when restoring the old screen. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinCreateStackRestore = function ({ services, dataSource }) {
   const grid = services.viewportGridService, cs = services.cornerstoneViewportService;
   const native = window.cornerstone, events = native.Enums.Events;
-  const changed = () => Object.assign(new Error('화면이 변경되어 복원을 중단했습니다.'), { kinRestoreOwnershipLost: true });
-  const mismatch = () => new Error('저장한 영상 표시를 확인하지 못했습니다.');
+  const changed = () => Object.assign(kinError("화면이 변경되어 복원을 중단했습니다."), { kinRestoreOwnershipLost: true });
+  const mismatch = () => kinError("저장한 영상 표시를 확인하지 못했습니다.");
   const same = (a, b) => Array.isArray(b) ? Array.isArray(a) && a.length === b.length && b.every((n, i) => same(a[i], n))
     : typeof b === 'number' ? Number.isFinite(a) && Math.abs(a - b) < 1e-6 : a === b;
   const imageMatches = (id, cell) => {
@@ -17,12 +21,12 @@ window.kinCreateStackRestore = function ({ services, dataSource }) {
   async function prepare(cells, sets, current, signal) {
     if (!current() || signal.aborted) throw changed();
     const cache = services.cornerstoneCacheService, source = dataSource?.();
-    if (!cache?.createViewportData || !source) throw new Error('원본 영상 초기화 도구를 확인하지 못했습니다.');
+    if (!cache?.createViewportData || !source) throw kinError("원본 영상 초기화 도구를 확인하지 못했습니다.");
     let timer, cancel;
     const stopped = new Promise((_, reject) => {
       cancel = () => reject(changed());
       signal.addEventListener('abort', cancel, { once: true });
-      timer = setTimeout(() => reject(new Error('원본 영상 로딩에 실패했습니다.')), 15000);
+      timer = setTimeout(() => reject(kinError("원본 영상 로딩에 실패했습니다.")), 15000);
     });
     try {
       return await Promise.race([stopped, Promise.all(cells.map(async (cell, i) => {
@@ -36,7 +40,7 @@ window.kinCreateStackRestore = function ({ services, dataSource }) {
         const ids = data?.viewportType === 'stack' && data.data?.length === 1 && data.data[0].imageIds;
         if (!Array.isArray(ids) || !ids.length) throw mismatch();
         const matches = ids.map((id, n) => imageMatches(id, cell) ? n : -1).filter(n => n >= 0);
-        if (matches.length !== 1) throw new Error('저장한 원본 시리즈와 프레임을 찾을 수 없습니다.');
+        if (matches.length !== 1) throw kinError("저장한 원본 시리즈와 프레임을 찾을 수 없습니다.");
         return { cell, set: sets[i], imageIds: [...ids], index: matches[0] };
       }))]);
     } finally { clearTimeout(timer); signal.removeEventListener('abort', cancel); }
@@ -50,7 +54,7 @@ window.kinCreateStackRestore = function ({ services, dataSource }) {
     completed.catch(() => {});
     const listen = (target, event, fn) => { target.addEventListener(event, fn); cleanup.push(() => target.removeEventListener(event, fn)); };
     const subscribe = (service, event, fn) => {
-      if (!event || !service?.subscribe) throw new Error('영상 초기화 알림을 확인하지 못했습니다.');
+      if (!event || !service?.subscribe) throw kinError("영상 초기화 알림을 확인하지 못했습니다.");
       const subscription = service.subscribe(event, fn); cleanup.push(() => subscription.unsubscribe());
     };
     const dispose = () => { active = false; clearTimeout(timer); cleanup.splice(0).forEach(off => off()); };
@@ -65,7 +69,7 @@ window.kinCreateStackRestore = function ({ services, dataSource }) {
       if (visibleSince !== null) remaining -= now - visibleSince;
       visibleSince = document.visibilityState === 'visible' ? now : null;
       if (visibleSince !== null) {
-        if (remaining <= 0) fail(new Error('원본 영상 초기화 또는 최종 표시를 확인하지 못했습니다.'));
+        if (remaining <= 0) fail(kinError("원본 영상 초기화 또는 최종 표시를 확인하지 못했습니다."));
         else timer = setTimeout(deadline, remaining);
       }
     };

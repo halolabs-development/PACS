@@ -4,6 +4,10 @@
  * anything of them is kept, its 401 (or a 403 on /me) ends the document's login, and the document's end —
  * whichever panel or broadcast saw it — ends this panel in place, with its status saying why. Without one
  * (unit harnesses) the panel keeps its own account checks only. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinViewerJobs = function (services, model, session = null, dataSource = null) {
   let stop = () => {};
   function mount() {
@@ -19,22 +23,22 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     // this panel's own shape and is lent to it rather than reimplemented there.
     const volumeJobs = window.kinCreateVolumeJob?.({grid,cs,ds,studies,
       stack:{cell:(g,measure)=>stackCell(g,measure),resolve:cell=>resolve(cell),prepare:(cells,ids,current)=>prepareStacks(cells,ids,current)}});
-    const volumeTools = () => { if(!volumeJobs)throw new Error('MPR 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요.');return volumeJobs; };
+    const volumeTools = () => { if(!volumeJobs)throw Object.assign(kinError("MPR 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요."), { kinToolMissing: true });return volumeJobs; };
     const parent = document.querySelector('#kin-viewer-layout'); if (!parent) return;
     parent.style.maxHeight = '40vh'; parent.style.overflow = 'auto';
     parent.querySelector('summary').textContent = 'Comparison & Layout';
     const panel = document.createElement('details'); panel.id = 'kin-viewer-jobs'; panel.open = true;
     const text = (tag, value, host = panel) => { const e = document.createElement(tag); e.textContent = value; host.append(e); return e; };
     text('summary', 'Saved Comparison Jobs');
-    text('p', '현재 뷰어의 영상 위치·표시·배치를 판독 대상 검사의 서버 작업으로 저장합니다. DICOM 원본·판독문 저장이나 화면 이미지 다운로드가 아닙니다. 미저장 표식은 먼저 저장하세요.');
+    text('p', kinText("현재 뷰어의 영상 위치·표시·배치를 판독 대상 검사의 서버 작업으로 저장합니다. DICOM 원본·판독문 저장이나 화면 이미지 다운로드가 아닙니다. 미저장 표식은 먼저 저장하세요."));
     const help = document.createElement('details'); panel.append(help); text('summary', 'Annotation Help', help);
-    text('p', '주석 함께 저장은 선택 프레임의 서버 저장 주석 이력을 고정합니다. 복원은 최신 주석, 출력은 고정한 주석을 사용하며 실제 크기 출력은 아닙니다.', help);
+    text('p', kinText("주석 함께 저장은 선택 프레임의 서버 저장 주석 이력을 고정합니다. 복원은 최신 주석, 출력은 고정한 주석을 사용하며 실제 크기 출력은 아닙니다."), help);
     const field = (label, tag, max) => { const l = text('label', label), e = document.createElement(tag); e.maxLength = max; e.setAttribute('aria-label', label); e.style.cssText = 'display:block;width:100%;color:#111;background:#fff'; l.append(e); return e; };
     const title = field('Job Title', 'input', 120), description = field('Description', 'textarea', 2000);
     const filters = text('div', ''), mine = text('select', '', filters); mine.setAttribute('aria-label', 'Job Author'); mine.style.cssText = 'color:#111;background:#fff';
     for (const [value, label] of [['true', 'My Jobs'], ['false', 'All Jobs']]) { const o = text('option', label, mine); o.value = value; }
     const hiddenLabel = text('label', ' Include Hidden', filters), hidden = document.createElement('input'); hidden.type = 'checkbox'; hidden.setAttribute('aria-label', 'Include Hidden Jobs'); hiddenLabel.prepend(hidden);
-    const controls = text('div', ''), status = text('p', '계정 확인 중…'), list = text('div', ''); status.id = 'kin-viewer-jobs-status'; status.setAttribute('role', 'status');
+    const controls = text('div', ''), status = text('p', kinText("계정 확인 중…")), list = text('div', ''); status.id = 'kin-viewer-jobs-status'; status.setAttribute('role', 'status');
     parent.insertBefore(panel, parent.children[1]);
     let ended = false, busy = false, me = null, serial = 0, editSerial = 0, pending = null, editRow = null, applying = false, channel, lastAuth = 0, checking = false;
     const workspaceState = () => ({ busy: !ended && (busy || applying), dirty: !ended && !!(pending || editRow || title.value || description.value || window.kinMprMarks?.dirty?.() || window.kinMprCurved?.dirty?.() || window.kinMprPath?.dirty?.() || window.kinVolumeMipJob?.dirty?.()) });
@@ -70,21 +74,21 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         // version 9 merged layout are refused here, before any export, rather than falling
         // through to a renderer that would print a page the saved screen never was.
         const shape = row?.snapshotVersion ?? snapshot?.version;
-        if (shape === 7) throw new Error('MPR 평면 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
-        if (shape === 8) throw new Error('MPR 평면과 일반 영상이 섞인 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
-        if (shape === 9) throw new Error('칸을 병합한 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
+        if (shape === 7) throw kinError("MPR 평면 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
+        if (shape === 8) throw kinError("MPR 평면과 일반 영상이 섞인 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
+        if (shape === 9) throw kinError("칸을 병합한 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
         // A layout split per monitor by a Hanging Protocol (version 16) is saved and restored only, like a merged one.
-        if (shape === 16) throw new Error('모니터별로 나눈 칸 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
+        if (shape === 16) throw kinError("모니터별로 나눈 칸 배치 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
         // A curved MPR is a derived display on an arc-length axis; it has no print page yet.
-        if (shape === 10) throw new Error('Curved MPR 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
+        if (shape === 10) throw kinError("Curved MPR 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
         // A 3D path and its unfolded display are derived displays too; saving and restoring only.
-        if (shape === 11) throw new Error('3D Path 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.');
+        if (shape === 11) throw kinError("3D Path 작업은 아직 출력할 수 없습니다. 저장과 복원만 지원합니다.");
         // A saved MIP Viewer or MIP Batch Job prints from its saved conditions (viewer-volume-mip-print.js). Print Current View
         // keeps refusing the MIP screen: it is shown behind the MIP Viewer's own modal dialog. The MIP Viewer's Print Current MIP
         // prints the conditions of its confirmed display the same way (recomputed from the original CT, never its preview).
-        if (fromMip && ![12, 13, 14, 15].includes(shape)) throw new Error('MIP Viewer의 Final 표시를 확인한 뒤 다시 출력하세요.');
-        if (!row && !fromMip && (shape === 12 || shape === 14)) throw new Error('MIP Viewer 작업은 아직 출력할 수 없습니다. 현재 화면 출력은 지원하지 않으며, 저장한 작업은 Print Saved Images로 출력합니다.');
-        if (!row && !fromMip && (shape === 13 || shape === 15)) throw new Error('MIP Batch 작업은 아직 출력할 수 없습니다. 현재 화면 출력은 지원하지 않으며, 저장한 작업은 Print Saved Images로 출력합니다.');
+        if (fromMip && ![12, 13, 14, 15].includes(shape)) throw kinError("MIP Viewer의 Final 표시를 확인한 뒤 다시 출력하세요.");
+        if (!row && !fromMip && (shape === 12 || shape === 14)) throw kinError("MIP Viewer 작업은 아직 출력할 수 없습니다. 현재 화면 출력은 지원하지 않으며, 저장한 작업은 Print Saved Images로 출력합니다.");
+        if (!row && !fromMip && (shape === 13 || shape === 15)) throw kinError("MIP Batch 작업은 아직 출력할 수 없습니다. 현재 화면 출력은 지원하지 않으며, 저장한 작업은 Print Saved Images로 출력합니다.");
         const unchanged = () => live() && JSON.stringify(currentSnapshot(true)) === JSON.stringify(snapshot);
         // Each asset is ready by its own predicate. The MIP models are frozen objects rather than functions, and a module already present
         // (the model of an open or closed MIP Viewer included) is never requested, and so never replaced, again.
@@ -106,11 +110,11 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           // A print-only asset failure must leave saving/restoring available.
           if (!printLoading) printLoading = Promise.all(assets.map(([file,ready])=>new Promise((resolve, reject) => {
             const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/'+file;
-            const cancel = () => finish(new Error('출력 화면 확인이 취소되었습니다.'));
-            const timer = setTimeout(() => finish(new Error('출력 화면을 불러오지 못했습니다. 다시 누르세요.')), 30000);
+            const cancel = () => finish(kinError("출력 화면 확인이 취소되었습니다."));
+            const timer = setTimeout(() => finish(kinError("출력 화면을 불러오지 못했습니다. 다시 누르세요.")), 30000);
             function finish(error) { clearTimeout(timer); abort.signal.removeEventListener('abort', cancel); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(); }
-            script.onload = () => finish(ready() ? null : new Error('출력 화면을 불러오지 못했습니다. 다시 누르세요.'));
-            script.onerror = () => finish(new Error('출력 화면을 불러오지 못했습니다. 다시 누르세요.'));
+            script.onload = () => finish(ready() ? null : kinError("출력 화면을 불러오지 못했습니다. 다시 누르세요."));
+            script.onerror = () => finish(kinError("출력 화면을 불러오지 못했습니다. 다시 누르세요."));
             abort.signal.addEventListener('abort', cancel, { once: true }); document.head.append(script);
           })));
           await printLoading;
@@ -119,7 +123,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         printer ||= window.kinViewerJobPrint({ api, authenticate, live,
           editor: window.kinViewerEditorLink({ studies:exam?[reportUid]:studies, ...(exam?{examScope:exam.current}:{}), owner: () => me ? [me.institution, me.sub] : null, live }) });
         if (row) printer.open(reportUid, row.id,row.snapshotVersion);
-        else { if (!unchanged()) throw new Error('현재 영상이 바뀌었습니다. 다시 출력하세요.'); printer.openCurrent(reportUid, snapshot, unchanged); }
+        else { if (!unchanged()) throw kinError("현재 영상이 바뀌었습니다. 다시 출력하세요."); printer.openCurrent(reportUid, snapshot, unchanged); }
       } catch (e) { failure = e.message; if (live()) status.textContent = e.message; }
       finally { printLoading = null; openingPrint = false; }
       return failure;
@@ -129,7 +133,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       const b = text('button', label, host); b.type = 'button'; b.dataset.write = String(write); b.style.cssText = 'margin:3px;padding:4px;border:1px solid #657c9f;border-radius:4px';
       b.onclick = action; buttons.add(b); return b;
     }
-    function end() { ended = true; serial++; printer?.close(); abort.abort(); me = null; pending = editRow = null; title.value = description.value = ''; list.replaceChildren(); status.textContent = '세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'; refresh(); }
+    function end() { ended = true; serial++; printer?.close(); abort.abort(); me = null; pending = editRow = null; title.value = description.value = ''; list.replaceChildren(); status.textContent = kinText("세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요."); refresh(); }
     async function api(url, options = {}) {
       // A plain 403 refuses this resource. Session termination belongs to the page transport's authenticated end signals.
       const { idempotent = false, ...request } = options;
@@ -148,19 +152,19 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         headers: { ...(me ? { 'X-KIN-Subject': me.sub } : {}), ...(request.body ? { 'Content-Type': 'application/json' } : {}) } });
       try {
         // Nothing more leaves a document whose login has ended, whichever step of a read or write was next.
-        if (session?.ended()) throw new Error('세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요.');
+        if (session?.ended()) throw kinError("세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요.");
         let r;
         try { r = await send(); } catch (error) { if (!read || controller.signal.aborted || error?.name !== 'TypeError' || !live()) throw error; r = await send(); }
         // Session termination is owned by the page transport and gate.
         const drop = async value => {
           if (url === '/me' && r.ok) session?.sameAccount(value === undefined ? await r.json().catch(() => null) : value);
-          return new Error('화면이 변경되었습니다.');
+          return kinError("화면이 변경되었습니다.");
         };
         if (!live()) throw await drop();
         if (window.KinSessionTransport.refusal(r)) throw window.KinSessionTransport.responseError(r);
         const value = await r.json().catch(() => null);
         if (!live()) throw await drop(value);
-        if (!r.ok || !value) { const e = new Error(typeof value?.message === 'string' ? value.message : '서버 연결을 확인한 뒤 다시 시도하세요.'); e.status = r.status; throw e; }
+        if (!r.ok || !value) { const e = new Error(typeof value?.message === 'string' ? value.message : kinText("서버 연결을 확인한 뒤 다시 시도하세요.")); e.status = r.status; throw e; }
         return value;
       } finally { clearTimeout(timer); abort.signal.removeEventListener('abort', cancel); options.signal?.removeEventListener('abort', cancel); }
     }
@@ -168,15 +172,15 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       const next = await api('/me', { signal });
       // The document's account first: another account (or a refused answer) has ended the document's login and this panel with it,
       // a clinician-only answer has taken the panel down; neither is kept as this panel's account.
-      if (session && !session.answer(next)) { end(); throw new Error('계정이 변경되었습니다.'); }
-      if (next.kind !== 'member' || !next.sub || !next.institution || me && (next.sub !== me.sub || next.institution !== me.institution)) { end(); throw new Error('계정이 변경되었습니다.'); }
+      if (session && !session.answer(next)) { end(); throw kinError("계정이 변경되었습니다."); }
+      if (next.kind !== 'member' || !next.sub || !next.institution || me && (next.sub !== me.sub || next.institution !== me.institution)) { end(); throw kinError("계정이 변경되었습니다."); }
       me = next; lastAuth = Date.now();
     }
     function resolve(cell) {
       if (!cell) return null;
       const matches = ds.getActiveDisplaySets().filter(d => d.StudyInstanceUID === cell.study && d.SeriesInstanceUID === cell.series);
       if (matches.length !== 1 || !matches[0].images?.length || !matches[0].images.every(i => i.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2') ||
-          !matches[0].images.some(i => i.SOPInstanceUID === cell.sop)) throw new Error('저장한 원본 시리즈와 프레임을 찾을 수 없습니다.');
+          !matches[0].images.some(i => i.SOPInstanceUID === cell.sop)) throw kinError("저장한 원본 시리즈와 프레임을 찾을 수 없습니다.");
       return matches[0].displaySetInstanceUID;
     }
     // One ordinary frame cell, captured from the live viewport. This is the only definition
@@ -186,15 +190,15 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     function stackCell(g, measure) {
       const sets = g.displaySetInstanceUIDs || [];
       const v = cs.getCornerstoneViewport(g.viewportId), id = v?.getCurrentImageId?.(), image = id && window.cornerstone.metaData.get('instance', id);
-      if (sets.length !== 1 || v?.type !== 'stack' || !v.getDefaultActor?.()?.actor || !image || !studies.includes(image.StudyInstanceUID)) throw new Error('원본 영상 로딩을 마친 뒤 저장하세요.');
+      if (sets.length !== 1 || v?.type !== 'stack' || !v.getDefaultActor?.()?.actor || !image || !studies.includes(image.StudyInstanceUID)) throw kinError("원본 영상 로딩을 마친 뒤 저장하세요.");
       const camera = v.getCamera(), properties = v.getProperties(), canvas = v.getCanvas();
       measure(canvas);
-      if (properties.colormap?.name && properties.colormap.name !== 'Grayscale') throw new Error('현재는 회색조 표시 상태를 저장합니다.');
+      if (properties.colormap?.name && properties.colormap.name !== 'Grayscale') throw kinError("현재는 회색조 표시 상태를 저장합니다.");
       const cell = { study: image.StudyInstanceUID, series: image.SeriesInstanceUID, sop: image.SOPInstanceUID, frame: 1,
         viewport: { width: canvas.width, height: canvas.height },
         camera: Object.fromEntries(['focalPoint', 'position', 'viewUp', 'viewPlaneNormal', 'parallelScale', 'rotation', 'flipHorizontal', 'flipVertical'].map(k => [k, camera[k]])),
         properties: { voiRange: properties.voiRange, VOILUTFunction: properties.VOILUTFunction || 'LINEAR', invert: !!properties.invert, interpolationType: properties.interpolationType ?? 1 } };
-      if (resolve(cell) !== sets[0]) throw new Error('선택한 영상과 시리즈가 일치하지 않습니다.');
+      if (resolve(cell) !== sets[0]) throw kinError("선택한 영상과 시리즈가 일치하지 않습니다.");
       return cell;
     }
     function capture(checkOutputSize = false, readOnly = false, currentOutput = false) {
@@ -206,19 +210,19 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         Math.abs(g.x-(i%cols)/cols)<=1e-6 && Math.abs(g.y-Math.floor(i/cols)/rows)<=1e-6 &&
         Math.abs(g.width-1/cols)<=1e-6 && Math.abs(g.height-1/rows)<=1e-6);
       if(layoutType==='grid'&&(!uniform||views.some(g=>cs.getCornerstoneViewport(g.viewportId)?.type==='orthographic')))return withExam(volumeTools().capture(readOnly,!currentOutput));
-      if (layoutType !== 'grid' || ![1, 2].includes(rows) || ![1, 2].includes(cols)) throw new Error('현재 일반 CT 1·2·4화면 배치에서 저장할 수 있습니다.');
+      if (layoutType !== 'grid' || ![1, 2].includes(rows) || ![1, 2].includes(cols)) throw kinError("현재 일반 CT 1·2·4화면 배치에서 저장할 수 있습니다.");
       let totalPixels = 0;
       const cells = views.map(g => {
         const sets = g.displaySetInstanceUIDs || []; if (!sets.length) return null;
         return stackCell(g, canvas => {
           if (!checkOutputSize) return;
           const width = canvas?.width, height = canvas?.height; totalPixels += width * height;
-          if (![width, height].every(n => Number.isInteger(n) && n >= 1)) throw new Error('영상 화면 크기가 준비되지 않았습니다. 로딩을 마친 뒤 저장하세요.');
+          if (![width, height].every(n => Number.isInteger(n) && n >= 1)) throw kinError("영상 화면 크기가 준비되지 않았습니다. 로딩을 마친 뒤 저장하세요.");
           if (width > 8192 || height > 8192 || width * height > 16777216 || totalPixels > 33554432)
-            throw new Error('저장할 화면이 너무 큽니다. 브라우저 창 크기나 배율을 줄인 뒤 다시 저장하세요.');
+            throw kinError("저장할 화면이 너무 큽니다. 브라우저 창 크기나 배율을 줄인 뒤 다시 저장하세요.");
         });
       });
-      if (cells.every(c => !c)) throw new Error('저장할 영상이 없습니다.');
+      if (cells.every(c => !c)) throw kinError("저장할 영상이 없습니다.");
       return JSON.parse(JSON.stringify(withExam({ version: 2, studies, rows, cols, active: views.findIndex(v => v.viewportId === state.activeViewportId), cells })));
     }
     const signature = (readOnly = false) => { try { return JSON.stringify(capture(false, readOnly)); } catch (_) { return JSON.stringify(ordered().map(g => [g.viewportId, g.displaySetInstanceUIDs])); } };
@@ -236,7 +240,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     function show(rows) {
       list.replaceChildren();
       if (!rows.some(row => row.id === selectedJob)) selectedJob = null;
-      if (!rows.length) { text('p', '저장한 비교 작업이 없습니다.', list); return; }
+      if (!rows.length) { text('p', kinText("저장한 비교 작업이 없습니다."), list); return; }
       for (const row of rows) {
         const item = text('div', '', list); item.style.cssText = 'border-top:1px solid #657c9f;padding:8px 0';
         item.dataset.kinJobId = row.id; item.tabIndex = 0;
@@ -248,32 +252,32 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         // An allowlist of printable versions: a later version stays without Print until it has an output page of its own.
         if (!row.hidden && [1,2,3,4,5,6,12,13,14,15].includes(row.snapshotVersion)) button(item, 'Print Saved Images', () => openPrint(row));
         // A merged layout may hold no reconstructed cell at all, so it is not labelled as one.
-        if(row.snapshotVersion===9)text('p','Merged Cell Layout · 출력 미지원',item);
-        else if(row.snapshotVersion===16)text('p','Monitor Split Layout · 출력 미지원',item);
-        else if(row.snapshotVersion===12||row.snapshotVersion===14)text('p','MIP Viewer · 저장 조건 재구성 출력 · 표시 전용 투영 작업',item);
-        else if(row.snapshotVersion===13||row.snapshotVersion===15)text('p','MIP Batch · 회전 투영 재구성 출력 · 표시 조건 작업',item);
-        else if(row.snapshotVersion===10)text('p','Curved MPR · 출력 미지원 · 곡선을 따라 펼친 재구성 표시 작업',item);
-        else if(row.snapshotVersion===11)text('p','3D Path · 출력 미지원 · 경로 평면과 경로를 따라 펼친 재구성 표시 작업',item);
-        else if([4,5,6,7,8].includes(row.snapshotVersion))text('p',(row.snapshotVersion===8?'MPR Mixed Layout · 출력 미지원':row.snapshotVersion===7?'MPR Plane Layout · 출력 미지원':row.snapshotVersion===6?'MPR 3D Annotations':row.snapshotVersion===5?'MPR Batch':'MPR')+' · 재구성 표시 작업',item);
+        if(row.snapshotVersion===9)text('p',kinText("Merged Cell Layout · 출력 미지원"),item);
+        else if(row.snapshotVersion===16)text('p',kinText("Monitor Split Layout · 출력 미지원"),item);
+        else if(row.snapshotVersion===12||row.snapshotVersion===14)text('p',kinText("MIP Viewer · 저장 조건 재구성 출력 · 표시 전용 투영 작업"),item);
+        else if(row.snapshotVersion===13||row.snapshotVersion===15)text('p',kinText("MIP Batch · 회전 투영 재구성 출력 · 표시 조건 작업"),item);
+        else if(row.snapshotVersion===10)text('p',kinText("Curved MPR · 출력 미지원 · 곡선을 따라 펼친 재구성 표시 작업"),item);
+        else if(row.snapshotVersion===11)text('p',kinText("3D Path · 출력 미지원 · 경로 평면과 경로를 따라 펼친 재구성 표시 작업"),item);
+        else if([4,5,6,7,8].includes(row.snapshotVersion))text('p',kinText("{t0} · 재구성 표시 작업", (row.snapshotVersion===8?kinText("MPR Mixed Layout · 출력 미지원"):row.snapshotVersion===7?kinText("MPR Plane Layout · 출력 미지원"):row.snapshotVersion===6?'MPR 3D Annotations':row.snapshotVersion===5?'MPR Batch':'MPR')),item);
         if (row.authorSub === me?.sub) {
-          button(item, 'Edit Details', () => { title.value = row.title; description.value = row.description; editSerial++; editRow = row; pending = null; status.textContent = '편집 후 변경 저장을 누르세요.'; }, true);
-          button(item, row.hidden ? 'Unhide Job' : 'Hide Job', () => { const reason = window.prompt('숨김 또는 해제 사유 (선택)'); if (reason !== null) run('hide', row, reason); }, true);
+          button(item, 'Edit Details', () => { title.value = row.title; description.value = row.description; editSerial++; editRow = row; pending = null; status.textContent = kinText("편집 후 변경 저장을 누르세요."); }, true);
+          button(item, row.hidden ? 'Unhide Job' : 'Hide Job', () => { const reason = window.prompt(kinText("숨김 또는 해제 사유 (선택)")); if (reason !== null) run('hide', row, reason); }, true);
         }
       }
       markSelected();
     }
     async function load() { const result = await api(path + '?mine=' + mine.value + '&includeHidden=' + hidden.checked); if (live()) show(result.jobs); }
     async function prepareStacks(cells, ids, current) {
-      if (!window.kinCreateStackRestore) throw new Error('원본 영상 초기화 도구를 불러오지 못했습니다.');
+      if (!window.kinCreateStackRestore) throw Object.assign(kinError("원본 영상 초기화 도구를 불러오지 못했습니다."), { kinToolMissing: true });
       const adapter = window.kinCreateStackRestore({ services, dataSource });
       const plans = await adapter.prepare(cells, cells.map(resolve), current, abort.signal);
-      if (!current()) throw new Error('화면이 변경되었습니다.');
+      if (!current()) throw kinError("화면이 변경되었습니다.");
       return adapter.begin(plans, ids, current, abort.signal);
     }
     async function apply(value, ticket, changingLayout) {
       const current = () => live() && serial === ticket;
       if ([4,5,6,7,8,9,10,11,12,13,14,15,16].includes(value.version)) return volumeTools().apply(value,current,changingLayout);
-      if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw new Error('저장한 현재·비교 검사를 같은 순서로 먼저 여세요.');
+      if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw kinError("저장한 현재·비교 검사를 같은 순서로 먼저 여세요.");
       const sets = value.cells.map(resolve), ids = value.cells.map(() => 'kin-job-' + crypto.randomUUID());
       const owner = await prepareStacks(value.cells, ids, current);
       try {
@@ -282,10 +286,10 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           findOrCreateViewport: index => ({ displaySetInstanceUIDs: sets[index] ? [sets[index]] : [], displaySetOptions: [{}],
             viewportOptions: owner.options(index) }) });
         await owner.complete();
-        if (!current()) throw new Error('화면이 변경되었습니다.');
+        if (!current()) throw kinError("화면이 변경되었습니다.");
         grid.setActiveViewportId(ids[value.active]);
         owner.verify();
-        if (grid.getState().activeViewportId !== ids[value.active]) throw new Error('저장한 영상 위치를 확인하지 못했습니다.');
+        if (grid.getState().activeViewportId !== ids[value.active]) throw kinError("저장한 영상 위치를 확인하지 못했습니다.");
         return ids;
       } finally { owner.dispose(); }
     }
@@ -297,17 +301,17 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     const outcome = (state, reason, message) => Object.assign(new Error(message), { kinRestore: { state, reason } });
     const refusal = (reason, message) => outcome('refused', reason, message);
     const LOCATION_TEXT = {
-      'job-unavailable': '연결한 저장 작업을 볼 수 없거나 더 이상 없어 복원하지 않았습니다. 영상은 바꾸지 않았습니다.',
-      'job-hidden': '연결한 저장 작업이 숨겨져 있어 복원하지 않았습니다. 영상은 바꾸지 않았습니다.',
-      'source-changed': '연결 당시와 저장 작업의 영상 상태나 3D 표식이 달라 복원하지 않았습니다. 영상은 바꾸지 않았습니다.',
-      'job-studies': '이 화면의 검사 조합이 저장 작업과 달라 복원하지 않았습니다. 영상은 바꾸지 않았습니다.',
-      timeout: '제한 시간 안에 저장 작업을 확인하지 못해 복원하지 않았습니다. 영상은 바꾸지 않았습니다.',
-      owner: '다른 계정의 영상 화면이라 복원하지 않았습니다.',
-      busy: '영상 작업 처리가 끝난 뒤 다시 누르세요. 영상은 바꾸지 않았습니다.',
-      ended: '로그인이나 화면이 바뀌어 복원하지 않았습니다.',
-      'tool-missing': '저장 작업 복원 도구가 준비되지 않았습니다. 뷰어를 다시 여세요.',
-      waiting: '영상 로딩을 기다리는 동안 복원하지 않았습니다. 목록의 이 소견 위치로 다시 시도하세요.',
-      continuing: '저장 작업의 검사 조합으로 새 화면을 엽니다. 결과는 새 화면의 이 소견에 표시됩니다.',
+      'job-unavailable': kinText("연결한 저장 작업을 볼 수 없거나 더 이상 없어 복원하지 않았습니다. 영상은 바꾸지 않았습니다."),
+      'job-hidden': kinText("연결한 저장 작업이 숨겨져 있어 복원하지 않았습니다. 영상은 바꾸지 않았습니다."),
+      'source-changed': kinText("연결 당시와 저장 작업의 영상 상태나 3D 표식이 달라 복원하지 않았습니다. 영상은 바꾸지 않았습니다."),
+      'job-studies': kinText("이 화면의 검사 조합이 저장 작업과 달라 복원하지 않았습니다. 영상은 바꾸지 않았습니다."),
+      timeout: kinText("제한 시간 안에 저장 작업을 확인하지 못해 복원하지 않았습니다. 영상은 바꾸지 않았습니다."),
+      owner: kinText("다른 계정의 영상 화면이라 복원하지 않았습니다."),
+      busy: kinText("영상 작업 처리가 끝난 뒤 다시 누르세요. 영상은 바꾸지 않았습니다."),
+      ended: kinText("로그인이나 화면이 바뀌어 복원하지 않았습니다."),
+      'tool-missing': kinText("저장 작업 복원 도구가 준비되지 않았습니다. 뷰어를 다시 여세요."),
+      waiting: kinText("영상 로딩을 기다리는 동안 복원하지 않았습니다. 목록의 이 소견 위치로 다시 시도하세요."),
+      continuing: kinText("저장 작업의 검사 조합으로 새 화면을 엽니다. 결과는 새 화면의 이 소견에 표시됩니다."),
     };
     const VOLUME_VERSIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
     let lastJob = null, restoring = null;
@@ -325,14 +329,14 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       // from was never part of that snapshot, so the message says so instead of implying
       // that Restore Grid - which has no record of this screen - could undo it.
       return version === 16
-        ? '모니터별로 나눈 칸 배치를 복원했습니다. 영상 창의 위치와 줄 배치는 Hanging Protocol을 다시 적용할 때 정해집니다.'
+        ? kinText("모니터별로 나눈 칸 배치를 복원했습니다. 영상 창의 위치와 줄 배치는 Hanging Protocol을 다시 적용할 때 정해집니다.")
         : version === 9
-        ? '병합한 칸 배치를 복원했습니다. 병합 전 격자는 저장된 적이 없어 되돌릴 수 없으며, 다른 배치를 적용하거나 다른 저장 작업을 복원하세요.'
-        : version === 10 ? 'Curved MPR 작업을 복원했습니다. 곡선을 따라 펼친 재구성 표시이며 원본 영상이 아니고 직선 거리·측정 의미가 없습니다.'
-        : version === 11 ? '3D Path 작업을 복원했습니다. 경로 수직·평행 평면과 펼친 표시는 재구성이며 원본 영상이 아니고 직선 거리·측정 의미가 없습니다.'
-        : version === 12 || version === 14 ? 'MIP 작업을 복원했습니다. 표시 전용 투영이며 원본 영상과 W/L은 바뀌지 않았습니다.'
-        : version === 13 || version === 15 ? 'MIP Batch 작업을 복원했습니다. 회전 투영 미리보기는 표시 전용이며 원본 영상과 W/L은 바뀌지 않았습니다.'
-        : [4,5,6,7,8].includes(version) ? 'MPR 작업을 복원했습니다. 재구성 표시이며 원본 프레임 표식과 별개입니다.' : '비교 작업을 복원했습니다. 표식은 별도 저장한 최신 이력입니다.';
+        ? kinText("병합한 칸 배치를 복원했습니다. 병합 전 격자는 저장된 적이 없어 되돌릴 수 없으며, 다른 배치를 적용하거나 다른 저장 작업을 복원하세요.")
+        : version === 10 ? kinText("Curved MPR 작업을 복원했습니다. 곡선을 따라 펼친 재구성 표시이며 원본 영상이 아니고 직선 거리·측정 의미가 없습니다.")
+        : version === 11 ? kinText("3D Path 작업을 복원했습니다. 경로 수직·평행 평면과 펼친 표시는 재구성이며 원본 영상이 아니고 직선 거리·측정 의미가 없습니다.")
+        : version === 12 || version === 14 ? kinText("MIP 작업을 복원했습니다. 표시 전용 투영이며 원본 영상과 W/L은 바뀌지 않았습니다.")
+        : version === 13 || version === 15 ? kinText("MIP Batch 작업을 복원했습니다. 회전 투영 미리보기는 표시 전용이며 원본 영상과 W/L은 바뀌지 않았습니다.")
+        : [4,5,6,7,8].includes(version) ? kinText("MPR 작업을 복원했습니다. 재구성 표시이며 원본 프레임 표식과 별개입니다.") : kinText("비교 작업을 복원했습니다. 표식은 별도 저장한 최신 이력입니다.");
     }
     /* A restore the address chose (the kinJob page, or a finding's saved location continued into this page) is not the
        reader's change of view. From just before it first changes the screen until it has settled (applied or rolled back;
@@ -359,9 +363,9 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     }
     async function restoreJob(row, ctx) {
       const { ticket, before, initialRestore } = ctx, located = ctx.location;
-      if (window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) throw refusal('unsaved', '미저장 표식을 먼저 저장하거나 편집을 마친 뒤 복원하세요.');
-      if (window.kinMprCurved?.dirty?.()) throw refusal('unsaved', '미저장 곡면 MPR 곡선이 있어 복원하지 않았습니다. 곡선을 저장하거나 Clear Curve로 지운 뒤 복원하세요.');
-      if (window.kinMprPath?.dirty?.()) throw refusal('unsaved', '미저장 3D Path가 있어 복원하지 않았습니다. 경로를 저장하거나 Clear Path로 지운 뒤 복원하세요.');
+      if (window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) throw refusal('unsaved', kinText("미저장 표식을 먼저 저장하거나 편집을 마친 뒤 복원하세요."));
+      if (window.kinMprCurved?.dirty?.()) throw refusal('unsaved', kinText("미저장 곡면 MPR 곡선이 있어 복원하지 않았습니다. 곡선을 저장하거나 Clear Curve로 지운 뒤 복원하세요."));
+      if (window.kinMprPath?.dirty?.()) throw refusal('unsaved', kinText("미저장 3D Path가 있어 복원하지 않았습니다. 경로를 저장하거나 Clear Path로 지운 뒤 복원하세요."));
       let listed = null;
       if (located) {
         // The live pre-read of this anchor's Jobs (a 403 here is the anchor's and ends the panel): hidden and absent Jobs are
@@ -378,10 +382,10 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       // On a fresh kinJob document, native hanging-protocol initialization
       // can change the grid while the saved job is fetched. User interaction
       // still advances serial; only that initial automatic layout is allowed.
-      if (!live() || ticket !== serial || !initialRestore && before !== signature()) throw refusal(live() ? 'busy' : 'ended', '영상 조작이 변경되어 복원하지 않았습니다. 다시 시도하세요.');
-      if (window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) throw refusal('unsaved', '미저장 표식이 있어 복원하지 않았습니다.');
-      if (window.kinMprCurved?.dirty?.()) throw refusal('unsaved', '미저장 곡면 MPR 곡선이 있어 복원하지 않았습니다. 곡선을 저장하거나 Clear Curve로 지운 뒤 복원하세요.');
-      if (window.kinMprPath?.dirty?.()) throw refusal('unsaved', '미저장 3D Path가 있어 복원하지 않았습니다. 경로를 저장하거나 Clear Path로 지운 뒤 복원하세요.');
+      if (!live() || ticket !== serial || !initialRestore && before !== signature()) throw refusal(live() ? 'busy' : 'ended', kinText("영상 조작이 변경되어 복원하지 않았습니다. 다시 시도하세요."));
+      if (window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) throw refusal('unsaved', kinText("미저장 표식이 있어 복원하지 않았습니다."));
+      if (window.kinMprCurved?.dirty?.()) throw refusal('unsaved', kinText("미저장 곡면 MPR 곡선이 있어 복원하지 않았습니다. 곡선을 저장하거나 Clear Curve로 지운 뒤 복원하세요."));
+      if (window.kinMprPath?.dirty?.()) throw refusal('unsaved', kinText("미저장 3D Path가 있어 복원하지 않았습니다. 경로를 저장하거나 Clear Path로 지운 뒤 복원하세요."));
       // Restore Grid exists only in the cell merge module's memory, keyed by viewports a
       // restored Job never reuses. A restore that failed after its layout landed would roll
       // back onto fresh viewports and silently discard that record with the cells it hid, so
@@ -390,9 +394,9 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       const mergeState = window.kinCellMergeWorkspaceState;
       if (typeof mergeState === 'function') {
         let held = null; try { held = mergeState(); } catch (_) { held = null; }
-        if (!held || typeof held !== 'object') throw refusal('layout-merged', '칸 병합 상태를 확인할 수 없어 복원하지 않았습니다. 뷰어를 다시 연 뒤 복원하세요.');
-        if (held.busy) throw refusal('busy', '칸 배치 요청이 끝난 뒤 다시 복원하세요.');
-        if (held.merged) throw refusal('layout-merged', '병합한 칸이 있어 복원하지 않았습니다. 복원에 실패하면 병합 전 격자로 돌아갈 수 없게 되므로 Restore Grid로 격자를 되돌린 뒤 복원하세요.');
+        if (!held || typeof held !== 'object') throw refusal('layout-merged', kinText("칸 병합 상태를 확인할 수 없어 복원하지 않았습니다. 뷰어를 다시 연 뒤 복원하세요."));
+        if (held.busy) throw refusal('busy', kinText("칸 배치 요청이 끝난 뒤 다시 복원하세요."));
+        if (held.merged) throw refusal('layout-merged', kinText("병합한 칸이 있어 복원하지 않았습니다. 복원에 실패하면 병합 전 격자로 돌아갈 수 없게 되므로 Restore Grid로 격자를 되돌린 뒤 복원하세요."));
       }
       if (located) {
         // §2.4: the Job read now must be the one the finding copied: its version and ordered studies, and for a 3D point the
@@ -414,20 +418,20 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       });
       if (!sameExam || JSON.stringify(job.snapshot.studies) !== JSON.stringify(studies)) {
         if (located && located.request.mode !== 'continue') throw refusal('job-studies', LOCATION_TEXT['job-studies']);
-        if (title.value || description.value) throw refusal('unsaved', '작성 중인 작업 제목·설명을 저장하거나 비운 뒤 비교 검사를 여세요.');
+        if (title.value || description.value) throw refusal('unsaved', kinText("작성 중인 작업 제목·설명을 저장하거나 비운 뒤 비교 검사를 여세요."));
         // Opening the saved comparison replaces this document; finding drafts (held ones included)
         // would be lost. A same-document restore stays allowed: a study switch holds them.
         let findings = null; try { findings = typeof window.kinViewerFindingsState === 'function' ? window.kinViewerFindingsState() : null; } catch (_) { findings = { dirty: true }; }
-        if (findings?.dirty || findings?.busy) { ctx.refused = 'findings-unsaved'; throw new Error('저장하지 않은 소견 작성 내용이 있어 비교 검사를 열지 않았습니다. 소견을 저장하거나 버린 뒤 복원하세요.'); }
+        if (findings?.dirty || findings?.busy) { ctx.refused = 'findings-unsaved'; throw kinError("저장하지 않은 소견 작성 내용이 있어 비교 검사를 열지 않았습니다. 소견을 저장하거나 버린 뒤 복원하세요."); }
         // The server rechecks both studies on the new page before applying;
         // this same-origin navigation never changes the worklist report target.
         if(job.snapshot.exam && !window.KinExamScope)await new Promise((resolve,reject)=>{
           const asset=document.createElement('script');asset.src='/worklist/hpacs-lite/exam-scope.js';
           const finish=error=>{clearTimeout(timer);asset.remove();error?reject(error):resolve();};
-          const timer=setTimeout(()=>finish(Error('검사 범위 연결 시간이 초과되었습니다.')),10000);
-          asset.onload=()=>finish();asset.onerror=()=>finish(Error('검사 범위를 불러오지 못했습니다.'));document.head.append(asset);
+          const timer=setTimeout(()=>finish(kinError("검사 범위 연결 시간이 초과되었습니다.")),10000);
+          asset.onload=()=>finish();asset.onerror=()=>finish(kinError("검사 범위를 불러오지 못했습니다."));document.head.append(asset);
         });
-        if(!live()||ticket!==serial)throw refusal('ended','화면이 변경되어 복원하지 않았습니다.');
+        if(!live()||ticket!==serial)throw refusal('ended',kinText("화면이 변경되어 복원하지 않았습니다."));
         const next = new URL(job.snapshot.exam ? window.KinExamScope.snapshotUrl(job.snapshot) : '/ohif/viewer', location.origin);
         next.searchParams.set('StudyInstanceUIDs', job.snapshot.studies.join(','));
         if (located) {
@@ -439,7 +443,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
             next.searchParams.set(key, value);
           status.textContent = LOCATION_TEXT.continuing;
         } else {
-          status.textContent = '저장한 비교 검사를 함께 여는 중…';
+          status.textContent = kinText("저장한 비교 검사를 함께 여는 중…");
           next.searchParams.set('kinJob', job.id);
         }
         location.assign(next.href);
@@ -450,25 +454,25 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       // saved Job's problem, so it must not be reported with the Save guidance.
       // A missing MPR asset is not a shape problem, so that reason is kept as it is.
       let previous; try { previous = capture(); }
-      catch (e) { throw refusal(volumeJobs ? 'busy' : 'tool-missing', volumeJobs ? '현재 화면을 저장 형식으로 읽을 수 없어 복원하지 않았습니다. 복원할 수 있는 배치를 먼저 여세요.' : e.message); }
+      catch (e) { throw refusal(volumeJobs ? 'busy' : 'tool-missing', volumeJobs ? kinText("현재 화면을 저장 형식으로 읽을 수 없어 복원하지 않았습니다. 복원할 수 있는 배치를 먼저 여세요.") : e.message); }
       try { if (VOLUME_VERSIONS.includes(job.snapshot.version)) volumeTools().resolve(job.snapshot); else job.snapshot.cells.forEach(resolve); }
-      catch (e) { throw refusal(/도구/.test(e.message) ? 'tool-missing' : 'job-studies', e.message); }
+      catch (e) { throw refusal(e.kinToolMissing || /도구/.test(e.message) ? 'tool-missing' : 'job-studies', e.message); }
       located?.ensure();
       // Every check is passed: the screen is this restore's from here until it has settled (holdOpening, above).
       holdOpening(ctx);
       applying = true;
       try { await apply(job.snapshot, ticket, () => { ctx.mutating = true; }); }
       catch (e) {
-        const message = /[가-힣]/.test(e.message) ? e.message : '영상 상태를 적용하지 못했습니다. 이전 화면을 확인하세요.';
+        const message = e.kinWords || /[가-힣]/.test(e.message) ? e.message : kinText("영상 상태를 적용하지 못했습니다. 이전 화면을 확인하세요.");
         // Preparing native image ordering has not replaced the doctor's screen.
         if (!ctx.mutating) throw refusal('apply-failed', message);
         if (e.kinRestoreOwnershipLost || !(live() && serial === ticket)) throw outcome('screen-unknown', 'apply-failed', message);
-        try { await apply(previous, ticket); } catch (_) { throw outcome('screen-unknown', 'apply-failed', '복원과 이전 화면 복구에 실패했습니다. 검사를 다시 여세요.'); }
+        try { await apply(previous, ticket); } catch (_) { throw outcome('screen-unknown', 'apply-failed', kinText("복원과 이전 화면 복구에 실패했습니다. 검사를 다시 여세요.")); }
         throw outcome('rolled-back', 'apply-failed', message);
       }
       // A finding's location keeps the screen for its point move: restoreLocation lets go.
       finally { if (!located) { applying = false; releaseOpening(ctx); } }
-      if (!live() || serial !== ticket) throw outcome('screen-unknown', 'apply-failed', '화면이 변경되어 복원 결과를 확인하지 못했습니다.');
+      if (!live() || serial !== ticket) throw outcome('screen-unknown', 'apply-failed', kinText("화면이 변경되어 복원 결과를 확인하지 못했습니다."));
       const marks = job.snapshot.version === 6 ? window.KinVolumeMarks?.normalize?.(job.snapshot.marks) ?? null : null;
       lastJob = { jobId: job.id, revision: job.revision, snapshotVersion: job.snapshot.version, marks };
       return { state: 'restored', message: restoredText(job.snapshot.version), revision: job.revision, snapshotVersion: job.snapshot.version };
@@ -537,7 +541,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         ensure: () => { if (controller.signal.aborted || Date.now() > deadline - APPLY_MS) throw refusal('timeout', LOCATION_TEXT.timeout); } } };
       const pass = Object.freeze({ live: () => live() && serial === ticket && applying && restoring === pass });
       let result;
-      status.textContent = '저장 작업 복원 중…';
+      status.textContent = kinText("저장 작업 복원 중…");
       try {
         await authenticate(controller.signal);
         if (me.sub !== request.subject) throw refusal('owner', LOCATION_TEXT.owner);
@@ -555,15 +559,15 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           else {
             result.point = 'failed';
             result.reason = moved?.reason === 'mismatch' ? 'point-mismatch' : moved?.reason === 'tool-missing' ? 'tool-missing' : 'point-failed';
-            result.pointMessage = moved?.rolledBack === false ? '저장 화면은 복원했지만 3D 표식 위치로 이동하지 못했고 이동 전 평면으로도 되돌리지 못했습니다. 현재 영상을 확인하세요.'
-              : '저장 화면은 복원했지만 3D 표식 위치로는 이동하지 않았습니다.' + (moved?.reason === 'mismatch' ? ' 연결 당시의 표식·볼륨과 다릅니다.' : '');
+            result.pointMessage = moved?.rolledBack === false ? kinText("저장 화면은 복원했지만 3D 표식 위치로 이동하지 못했고 이동 전 평면으로도 되돌리지 못했습니다. 현재 영상을 확인하세요.")
+              : kinText("저장 화면은 복원했지만 3D 표식 위치로는 이동하지 않았습니다.{t0}", (moved?.reason === 'mismatch' ? kinText(" 연결 당시의 표식·볼륨과 다릅니다.") : ''));
           }
         }
       } catch (e) {
         const known = e?.kinRestore;
         if (known) result = { state: known.state, reason: known.reason, message: e.message };
         else if (ctx.refused && !ctx.mutating) result = { state: 'refused', reason: ctx.refused, message: e.message };
-        else if (ctx.mutating) result = { state: 'screen-unknown', reason: 'apply-failed', message: '복원 결과를 확인하지 못했습니다. 현재 영상을 확인하세요.' };
+        else if (ctx.mutating) result = { state: 'screen-unknown', reason: 'apply-failed', message: kinText("복원 결과를 확인하지 못했습니다. 현재 영상을 확인하세요.") };
         else if (!live()) result = { state: 'refused', reason: 'ended', message: LOCATION_TEXT.ended };
         else if (e?.name === 'AbortError' || controller.signal.aborted) result = { state: 'refused', reason: 'timeout', message: LOCATION_TEXT.timeout };
         else if (window.KinSessionTransport.refusal(e) === 'denied' || e?.status === 404) {
@@ -596,35 +600,35 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
     // the MIP Viewer's title and description, reporting what actually happened to the request instead of only status text.
     async function run(action, row, reason, initialRestore = false, fields = null, outcome = null) {
       if (window.KinViewerSessionBoundary && !window.KinViewerSessionBoundary.active()) return;
-      if (!live() || busy || !me) { if (outcome) outcome.message = busy ? '영상 작업 처리가 끝난 뒤 다시 저장하세요.' : '계정이나 화면을 확인할 수 없어 저장하지 않았습니다.'; return; }
-      busy = true; refresh(); const ticket = ++serial, edit = editSerial, before = signature(action === 'saveMip'); status.textContent = '비교 작업 확인 중…';
+      if (!live() || busy || !me) { if (outcome) outcome.message = busy ? kinText("영상 작업 처리가 끝난 뒤 다시 저장하세요.") : kinText("계정이나 화면을 확인할 수 없어 저장하지 않았습니다."); return; }
+      busy = true; refresh(); const ticket = ++serial, edit = editSerial, before = signature(action === 'saveMip'); status.textContent = kinText("비교 작업 확인 중…");
       // `committed` names a write whose receipt was confirmed: a later failure (the list reload) cannot make it unknown again.
       let dispatched = false, committed = null;
       try {
         await authenticate();
-        if (action === 'list') { await load(); status.textContent = '현재 판독 대상의 저장 작업 목록입니다.'; return; }
+        if (action === 'list') { await load(); status.textContent = kinText("현재 판독 대상의 저장 작업 목록입니다."); return; }
         if (action === 'restore') {
           const restored = await restoreJob(row, { ticket, before, initialRestore, location: null });
           if (live() && serial === ticket && restored.state === 'restored') status.textContent = restored.message;
         } else {
-          if (!writable()) throw new Error('판독의 계정에서 저장할 수 있습니다.');
-          if (action !== 'retry' && action !== 'retryMip' && pending) throw new Error('이전 요청의 결과를 먼저 같은 요청 재시도로 확인하세요.');
+          if (!writable()) throw kinError("판독의 계정에서 저장할 수 있습니다.");
+          if (action !== 'retry' && action !== 'retryMip' && pending) throw kinError("이전 요청의 결과를 먼저 같은 요청 재시도로 확인하세요.");
           if (action === 'save' || action === 'saveAnnotations' || action === 'saveMip') {
             // Native frame marks have separate persistence; MPR points are captured in this Job.
-            if (window.kinViewerHistoryHasUnsaved?.()) throw new Error('미저장 표식을 먼저 저장하거나 편집을 마친 뒤 작업을 저장하세요.');
+            if (window.kinViewerHistoryHasUnsaved?.()) throw kinError("미저장 표식을 먼저 저장하거나 편집을 마친 뒤 작업을 저장하세요.");
             // Save MIP Job is pressed inside the MIP Viewer's own modal dialog, and the standalone viewer refuses every MPR tool a
             // permitted target while a dialog is open. Like the print dialog's unchanged check, that save only reads the screen
             // behind it: each tool still refuses unfinished input, and the MIP Viewer has already checked its source, owner, role,
             // busy state and Final display. Every other save captures as before.
             const readOnly = action === 'saveMip';
-            if (before !== signature(readOnly)) throw new Error('영상 조작이 변경되었습니다. 다시 저장하세요.');
+            if (before !== signature(readOnly)) throw kinError("영상 조작이 변경되었습니다. 다시 저장하세요.");
             const snapshot = capture(true, readOnly); if (action === 'saveAnnotations') {
-              if([4,5,6,7,8,9,10,11,12,13,14,15,16].includes(snapshot.version))throw new Error('MPR 작업은 원본 표식 저장과 별개입니다. Save New Job으로 표시 상태를 저장하세요.');
+              if([4,5,6,7,8,9,10,11,12,13,14,15,16].includes(snapshot.version))throw kinError("MPR 작업은 원본 표식 저장과 별개입니다. Save New Job으로 표시 상태를 저장하세요.");
               snapshot.version = 3;
             }
             // Save MIP Job sends only a MIP Job (version 13 when a MIP Batch preview is shown with it); on a screen that is not the
             // three-plane layout the capture is another shape.
-            if (action === 'saveMip' && ![12,13,14,15].includes(snapshot.version)) throw new Error('MIP 작업은 3평면 1×3·3×1 MPR 배치에서 저장할 수 있습니다.');
+            if (action === 'saveMip' && ![12,13,14,15].includes(snapshot.version)) throw kinError("MIP 작업은 3평면 1×3·3×1 MPR 배치에서 저장할 수 있습니다.");
             const mipFields = action === 'saveMip';
             pending = { body: JSON.stringify({ id: crypto.randomUUID(), title: mipFields ? String(fields?.title ?? '').trim() : title.value, description: mipFields ? String(fields?.description ?? '') : description.value, snapshot }), url: path };
           } else if (action === 'retryMip') {
@@ -635,27 +639,27 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
             try { shown = window.kinVolumeMipJob?.capture?.(true) ?? null; shownBatch = shown ? window.kinVolumeMipJob?.batch?.(true) ?? null : null; } catch (_) { shown = null; }
             const keptPair = kept?.snapshot ? { version: kept.snapshot.version, mip: kept.snapshot.mip, mipBatch: kept.snapshot.mipBatch } : null;
             if (!shown || !window.KinVolumeMipJob?.retryable?.(keptPair, shown, shownBatch))
-              throw new Error('재시도할 MIP 저장 요청이 현재 표시와 같지 않습니다. MIP Viewer를 닫고 Retry Request로 이전 요청을 확인하세요.');
+              throw kinError("재시도할 MIP 저장 요청이 현재 표시와 같지 않습니다. MIP Viewer를 닫고 Retry Request로 이전 요청을 확인하세요.");
           } else if (action === 'edit') {
-            if (!editRow) throw new Error('수정할 작업의 제목·설명 수정 버튼을 누르세요.'); row = editRow;
+            if (!editRow) throw kinError("수정할 작업의 제목·설명 수정 버튼을 누르세요."); row = editRow;
             pending = { body: JSON.stringify({ expectedRevision: row.revision, title: title.value, description: description.value, hidden: row.hidden, reason: '' }), url: path + '/' + row.id + '/revisions' };
           } else if (action === 'hide') {
             pending = { body: JSON.stringify({ expectedRevision: row.revision, title: row.title, description: row.description, hidden: !row.hidden, reason }), url: path + '/' + row.id + '/revisions' };
           }
-          if (!pending) throw new Error('재시도할 요청이 없습니다.');
+          if (!pending) throw kinError("재시도할 요청이 없습니다.");
           const sent=JSON.parse(pending.body);dispatched=true;const receipt=await api(pending.url, { method: 'POST', body: pending.body });
           const savedId = sent.id || pending.url.split('/').at(-2);
           // A successful HTTP status without this request's receipt leaves the
           // outcome unknown. Keep the same request and all local work for retry.
           if (receipt?.id !== savedId || receipt?.studyUid !== reportUid || !Number.isInteger(receipt?.revision) ||
               (sent.snapshot ? receipt.snapshotVersion !== sent.snapshot.version || receipt.revision < 1 : receipt.revision !== sent.expectedRevision + 1))
-            throw new Error('저장 응답을 확인하지 못했습니다. 같은 요청을 재시도하세요.');
+            throw kinError("저장 응답을 확인하지 못했습니다. 같은 요청을 재시도하세요.");
           // A MIP Job is Saved only for this very body: the committed summary names the sent id and its version, 12 or 13. That is
           // decided here, before the list refresh, so a refresh failure cannot turn a committed save into an error.
           const committedMip = [12, 13, 14, 15].includes(sent.snapshot?.version) && receipt?.id === sent.id && receipt?.snapshotVersion === sent.snapshot.version;
           const mipAction = action === 'saveMip' || action === 'retryMip';
-          committed = mipAction && committedMip ? 'MIP 작업을 저장했습니다.' : '비교 작업을 저장했습니다.';
-          if (outcome) { outcome.state = committedMip ? 'saved' : 'not-saved'; outcome.sent = true; outcome.message = committedMip ? 'MIP 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.' : 'MIP 작업 저장 응답을 확인할 수 없습니다. 작업 목록을 확인하세요.'; }
+          committed = mipAction && committedMip ? kinText("MIP 작업을 저장했습니다.") : kinText("비교 작업을 저장했습니다.");
+          if (outcome) { outcome.state = committedMip ? 'saved' : 'not-saved'; outcome.sent = true; outcome.message = committedMip ? kinText("MIP 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.") : kinText("MIP 작업 저장 응답을 확인할 수 없습니다. 작업 목록을 확인하세요."); }
           if(sent.snapshot?.volume)window.kinMprMarks?.saved(sent.snapshot.marks||{version:1,visible:true,sync:true,marks:[]},sent.snapshot.volume);
           if(sent.snapshot?.volume)window.kinMprCurved?.saved(sent.snapshot.curved||null,sent.snapshot.volume);
           if(sent.snapshot?.volume)window.kinMprPath?.saved(sent.snapshot.path||null,sent.snapshot.volume);
@@ -667,21 +671,21 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
           pending = editRow = null;
           // The MIP Viewer's request never clears the panel's own Job Title or Description.
           if (editSerial === edit && !['hide', 'retry', 'saveMip', 'retryMip'].includes(action)) { title.value = ''; description.value = ''; }
-          await load(); status.textContent = mipAction && committedMip ? 'MIP 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.' : '비교 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.' + (action === 'saveAnnotations' ? ' 저장된 주석 이력도 함께 고정했습니다.' : '');
+          await load(); status.textContent = mipAction && committedMip ? kinText("MIP 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.") : kinText("비교 작업을 저장했습니다. 판독문과 원본 영상은 그대로입니다.{t0}", (action === 'saveAnnotations' ? kinText(" 저장된 주석 이력도 함께 고정했습니다.") : ''));
         }
       } catch (e) {
         // A confirmed write has no request left to retry; "unknown, retry, inputs kept" would invite a second Job for one
         // that exists.
-        if (live() && committed) status.textContent = committed + ' 작업 목록을 새로 고치지 못했습니다. Refresh Jobs로 목록을 확인하세요.';
+        if (live() && committed) status.textContent = kinText("{0} 작업 목록을 새로 고치지 못했습니다. Refresh Jobs로 목록을 확인하세요.", committed);
         else if (live()) { if (e.status >= 400 && e.status < 500) pending = null;
-          status.textContent = (e.name === 'AbortError' ? '응답을 확인하지 못했습니다. 같은 요청을 재시도하세요.' : e.message) + ' 입력은 유지됩니다.'; }
+          status.textContent = kinText("{0} 입력은 유지됩니다.", (e.name === 'AbortError' ? kinText("응답을 확인하지 못했습니다. 같은 요청을 재시도하세요.") : e.message)); }
         // A committed MIP save stays Saved when only the list refresh failed; a sent request whose body is still kept has
         // an unknown receipt (abort, timeout, 5xx); anything else was not saved.
         if (outcome) {
-          if (outcome.state === 'saved') outcome.message = 'MIP 작업을 저장했습니다. 작업 목록을 새로 고치지 못했습니다. Refresh Jobs로 목록을 확인하세요.';
+          if (outcome.state === 'saved') outcome.message = kinText("MIP 작업을 저장했습니다. 작업 목록을 새로 고치지 못했습니다. Refresh Jobs로 목록을 확인하세요.");
           else {
             outcome.state = dispatched && pending ? 'unconfirmed' : 'not-saved'; outcome.sent = dispatched;
-            outcome.message = outcome.state === 'unconfirmed' ? '저장 응답을 확인하지 못했습니다. Retry MIP Save로 같은 요청을 다시 보내세요.' : e.message;
+            outcome.message = outcome.state === 'unconfirmed' ? kinText("저장 응답을 확인하지 못했습니다. Retry MIP Save로 같은 요청을 다시 보내세요.") : e.message;
           }
         }
       } finally { busy = false; applying = false; refresh(); }
@@ -700,8 +704,8 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       busy: () => !live() || busy || applying,
       // A version 12 body has no mipBatch key, so mipBatch is undefined there; the MIP Job model compares it as no preview.
       pending: () => { if (!pending) return null; try { const b = JSON.parse(pending.body); return { version: b?.snapshot?.version, mip: b?.snapshot?.mip, mipBatch: b?.snapshot?.mipBatch }; } catch (_) { return { version: undefined }; } },
-      save: async fields => { const outcome = { state: 'not-saved', message: '', sent: false }; await run('saveMip', null, undefined, false, fields, outcome); return { ...outcome, message: outcome.message || 'MIP 작업을 저장하지 않았습니다.' }; },
-      retry: async () => { const outcome = { state: 'not-saved', message: '', sent: false }; await run('retryMip', null, undefined, false, null, outcome); return { ...outcome, message: outcome.message || 'MIP 작업을 저장하지 않았습니다.' }; },
+      save: async fields => { const outcome = { state: 'not-saved', message: '', sent: false }; await run('saveMip', null, undefined, false, fields, outcome); return { ...outcome, message: outcome.message || kinText("MIP 작업을 저장하지 않았습니다.") }; },
+      retry: async () => { const outcome = { state: 'not-saved', message: '', sent: false }; await run('retryMip', null, undefined, false, null, outcome); return { ...outcome, message: outcome.message || kinText("MIP 작업을 저장하지 않았습니다.") }; },
       // The MIP Viewer's Print Current MIP: the panel's own current-output path, with the display read only. It saves nothing.
       print: () => openPrint(null, true),
     });
@@ -727,7 +731,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
       await authenticate(); await run('list');
       const requested = new URLSearchParams(search).get('kinJob');
       if (!requested || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(requested)) return;
-      const ticket = serial; status.textContent = '저장한 비교 영상 로딩 중…';
+      const ticket = serial; status.textContent = kinText("저장한 비교 영상 로딩 중…");
       for (let n = 0; n < 200; n++) {
         if (!live() || ticket !== serial) return;
         const loaded = new Set(ds.getActiveDisplaySets().map(d => d.StudyInstanceUID));
@@ -736,7 +740,7 @@ window.kinViewerJobs = function (services, model, session = null, dataSource = n
         }
         await new Promise(resolve => setTimeout(resolve, 100));
       }
-      status.textContent = '비교 영상 로딩을 완료하지 못했습니다. 목록의 이 작업 복원으로 다시 시도하세요.';
+      status.textContent = kinText("비교 영상 로딩을 완료하지 못했습니다. 목록의 이 작업 복원으로 다시 시도하세요.");
     }
     initialize().catch(e => { if (live()) status.textContent = e.message; }).finally(refresh);
     // This panel's screen is over: a restore of it that is still held lets go when it settles, without touching the next screen.

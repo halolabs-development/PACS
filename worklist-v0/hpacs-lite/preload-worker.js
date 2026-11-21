@@ -1,5 +1,8 @@
 /* D1890: only ciphertext survives the worker. A viewer still needs its live check and durable user-view root. */
 'use strict';
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 importScripts('preload-store.js', 'preload-disk.js', 'session-transport.js');
 const Model = self.KinPreloadStore, Disk = self.KinPreloadDisk, disk = Disk.create(), Transport = self.KinSessionTransport;
 const FRAME_ACCEPT = ['application/octet-stream', 'image/jpeg', 'image/jls', 'image/jp2', 'image/dicom-rle']
@@ -7,21 +10,21 @@ const FRAME_ACCEPT = ['application/octet-stream', 'image/jpeg', 'image/jls', 'im
 // A viewer that keeps showing a copy says so (viewer-preload.js); within this much of its expiry the use moves it on.
 const RENEW_BEFORE = 60 * 60 * 1000;
 const MESSAGES = Object.freeze({
-  unavailable: '이 브라우저의 보관 저장소를 사용할 수 없습니다. 다시 시도하세요.',
-  unset: '이 기관에서 미리 받기에 쓸 저장 용량을 아직 정하지 않아 미리 받기를 할 수 없습니다. 관리자에게 문의하세요.',
-  key: '이 계정으로는 미리 받기를 쓸 수 없습니다',
-  cleared: '미리 받은 영상을 비웠습니다.',
-  dequeued: '받기 전에 대기열에서 뺐습니다. 다시 받으려면 Retry를 누르세요.',
-  denied: '검사 접근이 거절되었습니다. 접근 권한을 확인하세요.',
-  missing: '영상을 찾을 수 없습니다.',
-  busy: '서버가 바쁘거나 응답하지 않았습니다. 다시 시도하세요.',
-  network: '서버에 연결하지 못했습니다. 다시 시도하세요.',
-  changed: '미리 받는 동안 검사 내용이 바뀌었습니다. 다시 시도하세요.',
-  empty: '이 검사에는 미리 받을 영상이 없습니다.',
-  size: '검사가 미리 받기 저장 용량보다 커서 받을 수 없습니다. 판독 때 바로 엽니다.',
-  malformed: '서버 응답을 해석하지 못했습니다. 다시 시도하세요.',
-  corrupt: '보관한 영상이 손상되어 지웠습니다. 다시 받으려면 Retry를 누르세요.',
-  space: '저장 공간이 비기를 기다립니다.',
+  unavailable: kinText("이 브라우저의 보관 저장소를 사용할 수 없습니다. 다시 시도하세요."),
+  unset: kinText("이 기관에서 미리 받기에 쓸 저장 용량을 아직 정하지 않아 미리 받기를 할 수 없습니다. 관리자에게 문의하세요."),
+  key: kinText("이 계정으로는 미리 받기를 쓸 수 없습니다"),
+  cleared: kinText("미리 받은 영상을 비웠습니다."),
+  dequeued: kinText("받기 전에 대기열에서 뺐습니다. 다시 받으려면 Retry를 누르세요."),
+  denied: kinText("검사 접근이 거절되었습니다. 접근 권한을 확인하세요."),
+  missing: kinText("영상을 찾을 수 없습니다."),
+  busy: kinText("서버가 바쁘거나 응답하지 않았습니다. 다시 시도하세요."),
+  network: kinText("서버에 연결하지 못했습니다. 다시 시도하세요."),
+  changed: kinText("미리 받는 동안 검사 내용이 바뀌었습니다. 다시 시도하세요."),
+  empty: kinText("이 검사에는 미리 받을 영상이 없습니다."),
+  size: kinText("검사가 미리 받기 저장 용량보다 커서 받을 수 없습니다. 판독 때 바로 엽니다."),
+  malformed: kinText("서버 응답을 해석하지 못했습니다. 다시 시도하세요."),
+  corrupt: kinText("보관한 영상이 손상되어 지웠습니다. 다시 받으려면 Retry를 누르세요."),
+  space: kinText("저장 공간이 비기를 기다립니다."),
 });
 const ports = new Map(), manifests = new Map();
 let session = null, epoch = 0, key = null, keyId = null, settings = null, unavailable = null;
@@ -145,7 +148,7 @@ async function room(extra, uid) {
   }
   for (const victim of store.evictable(uid)) {
     if (mine !== epoch) return false;
-    await erase(victim.uid, '저장 공간을 비우려고 이미 본 검사를 지웠습니다. 다시 받으려면 Retry를 누르세요.');
+    await erase(victim.uid, kinText("저장 공간을 비우려고 이미 본 검사를 지웠습니다. 다시 받으려면 Retry를 누르세요."));
     if (await fits()) return true;
   }
   return false;

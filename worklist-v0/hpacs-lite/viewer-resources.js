@@ -1,6 +1,9 @@
 /* U5S-REQ-08/12: browser loads cannot carry the session header. Resolve protected bytes
  * through the page transport before giving a native element any URL. The document owns
  * every resulting blob, including decoder/print blobs made by the pinned viewer. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   function create(win, boundary, protectedUrl) {
@@ -24,9 +27,9 @@
       const type = response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
       if (!response.ok || options.type && (response.status !== 200 || type !== options.type)) {
         await response.body?.cancel();
-        const error = win.KinSessionTransport.responseError(response, response.status === 404 ? '원본 자료를 찾을 수 없습니다.' :
-          response.ok && options.type === 'application/pdf' && type !== options.type ? '원본 자료가 PDF 형식이 아닙니다.' :
-          '원본 자료 응답을 확인할 수 없습니다.', '원본 자료 접근이 거절되었습니다. 검사 접근 권한을 확인하세요.');
+        const error = win.KinSessionTransport.responseError(response, response.status === 404 ? kinText("원본 자료를 찾을 수 없습니다.") :
+          response.ok && options.type === 'application/pdf' && type !== options.type ? kinText("원본 자료가 PDF 형식이 아닙니다.") :
+          kinText("원본 자료 응답을 확인할 수 없습니다."), kinText("원본 자료 접근이 거절되었습니다. 검사 접근 권한을 확인하세요."));
         throw error;
       }
       const blob = await boundary.wait(response.blob());

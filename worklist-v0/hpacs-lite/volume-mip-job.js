@@ -1,6 +1,10 @@
 /* MIP Viewer Job model (kin-mip-1): the confirmed MIP Viewer display as a Job block, its save gate and saved state, and the
    restore request. The block names the accepted A11/A11-VOI-1 projection semantics; a runtime volume id, the affine, undo
    history, Original or a pending request never enter it. api/src/viewer-volume-mip.ts applies the same schema rule. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root){
   const SCHEMA=1,ALGORITHM='kin-mip-1',DIRECTION_ALGORITHM='kin-mip-2',COORDINATES='LPS_mm',LIMIT=1e6,EDGE=1e-6;
   const MODES=['MIP','MinIP','Raysum'],ORIENTATIONS=['Axial','Coronal','Sagittal'];
@@ -27,22 +31,22 @@
   // The VOI Slab tool's preset normals (volume-voi.js orientationNormals), in its list order.
   const PRESETS=[['Axial',[0,0,1]],['Coronal',[0,1,0]],['Sagittal',[1,0,0]]];
   const messages=Object.freeze({
-    reproduce:'이 MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.',
-    shape:'저장한 MIP 작업의 형식을 확인할 수 없어 복원하지 않았습니다.',
-    frame:'저장한 MIP 작업의 좌표계(Frame of Reference)가 현재 원본과 달라 복원하지 않았습니다.',
-    value:'MIP Viewer 표시의 원본 좌표나 값을 확인할 수 없어 저장하지 않았습니다.',
-    writable:'판독의 계정에서 MIP 작업을 저장할 수 있습니다.',
-    busy:'영상 작업 처리가 끝난 뒤 MIP 작업을 저장하세요.',
-    rendering:'최종 표시를 확인한 뒤 MIP 작업을 저장하세요.',
-    original:'Original 보기를 끈 뒤 저장하세요.',
-    outside:'VOI Slab이 CT 볼륨과 겹치지 않아 MIP 작업을 저장하지 않았습니다.',
-    useRetry:'이전 MIP 저장 요청의 결과를 먼저 Retry MIP Save로 확인하세요.',
-    useRequest:'이전 요청의 결과가 남아 있습니다. MIP Viewer를 닫고 Retry Request로 먼저 확인하세요.',
-    retryOther:'재시도할 MIP 저장 요청이 현재 표시와 같지 않습니다. MIP Viewer를 닫고 Retry Request로 이전 요청을 확인하세요.',
-    title:'MIP Job Title을 입력하세요.',
-    generating:'MIP Batch 생성을 마친 뒤 MIP 작업을 저장하세요.',
+    reproduce:kinText("이 MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다."),
+    shape:kinText("저장한 MIP 작업의 형식을 확인할 수 없어 복원하지 않았습니다."),
+    frame:kinText("저장한 MIP 작업의 좌표계(Frame of Reference)가 현재 원본과 달라 복원하지 않았습니다."),
+    value:kinText("MIP Viewer 표시의 원본 좌표나 값을 확인할 수 없어 저장하지 않았습니다."),
+    writable:kinText("판독의 계정에서 MIP 작업을 저장할 수 있습니다."),
+    busy:kinText("영상 작업 처리가 끝난 뒤 MIP 작업을 저장하세요."),
+    rendering:kinText("최종 표시를 확인한 뒤 MIP 작업을 저장하세요."),
+    original:kinText("Original 보기를 끈 뒤 저장하세요."),
+    outside:kinText("VOI Slab이 CT 볼륨과 겹치지 않아 MIP 작업을 저장하지 않았습니다."),
+    useRetry:kinText("이전 MIP 저장 요청의 결과를 먼저 Retry MIP Save로 확인하세요."),
+    useRequest:kinText("이전 요청의 결과가 남아 있습니다. MIP Viewer를 닫고 Retry Request로 먼저 확인하세요."),
+    retryOther:kinText("재시도할 MIP 저장 요청이 현재 표시와 같지 않습니다. MIP Viewer를 닫고 Retry Request로 이전 요청을 확인하세요."),
+    title:kinText("MIP Job Title을 입력하세요."),
+    generating:kinText("MIP Batch 생성을 마친 뒤 MIP 작업을 저장하세요."),
   });
-  const viewerModel=()=>{const model=root.KinVolumeMip;if(!model)throw Error('MIP Viewer 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');return model;};
+  const viewerModel=()=>{const model=root.KinVolumeMip;if(!model)throw kinError("MIP Viewer 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");return model;};
   const exact=(v,want)=>!!v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===want.length&&Object.keys(v).every(k=>want.includes(k));
   const finite=n=>typeof n==='number'&&Number.isFinite(n);
   const triple=v=>Array.isArray(v)&&v.length===3&&v.every(n=>finite(n)&&Math.abs(n)<=LIMIT);

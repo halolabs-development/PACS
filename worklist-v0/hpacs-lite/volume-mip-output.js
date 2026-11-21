@@ -2,34 +2,37 @@
    Every page frame is rebuilt from freshly read CT pixels under an exact analytic camera; nothing here renders or reads pixels.
    The camera distance D = projectionThickness, the 512 px square raster, the captions and the bounds are this product's output
    choices (A11-OUTPUT-1 U3), not manual statements. Other MIP globals are resolved at call time: print assets load in parallel. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function(root){
   const SIZE=512,OUTER_MS=120000,FRAME_MS=15000,PRE_RENDER_MS=5000,BLOB_BYTES=32*1024*1024,CAMERA_EDGE=1e-6,DEPTH_EDGE=1e-6;
   const messages=Object.freeze({
-    reproduce:'MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 출력하지 않았습니다.',
-    shape:'저장한 MIP 작업의 형식을 확인할 수 없어 출력하지 않았습니다.',
-    frame:'저장한 MIP 작업의 좌표계(Frame of Reference)가 출력 원본과 달라 출력하지 않았습니다.',
-    outside:'저장한 VOI Slab이 출력 CT 볼륨과 겹치지 않아 출력하지 않았습니다.',
-    tool:'MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.',
-    batchTool:'MIP Batch 출력 도구를 불러오지 못해 출력하지 않았습니다.',
-    average:'Raysum 평균 계산 모듈을 확인할 수 없어 출력하지 않았습니다.',
-    capability:'고정 뷰어에서 MIP 출력 기능을 확인하지 못했습니다.',
-    camera:'MIP 출력 투영 카메라를 확인할 수 없어 출력하지 않았습니다.',
-    distance:'MIP 출력 카메라가 CT 볼륨 투영 범위 안에 있어 출력하지 않았습니다.',
-    frameCamera:'MIP 출력 프레임의 투영 카메라를 확인하지 못했습니다.',
-    clip:'MIP 출력 투영 깊이 범위를 확인하지 못했습니다.',
-    display:'MIP 출력 표시 속성을 확인하지 못했습니다.',
-    preRender:'MIP 출력 준비 렌더를 확인하지 못했습니다.',
-    frameTimeout:'MIP 출력 프레임의 최종 렌더를 확인하지 못했습니다.',
-    plane:'MIP 출력의 VOI Slab 평면을 적용하지 못했습니다.',
-    gpu:'MIP 출력 셰이더를 GPU에서 확인하지 못했습니다.',
-    contextLost:'MIP 출력 GPU 문맥이 사라져 출력하지 않았습니다.',
-    slabShader:'MIP 출력 투영 범위 셰이더를 GPU에서 확인하지 못했습니다.',
-    voiShader:'MIP 출력 VOI Slab 자르기 셰이더를 GPU에서 확인하지 못했습니다.',
-    averageShader:'MIP 출력 Raysum 평균 셰이더를 확인하지 못했습니다.',
-    size:'MIP 출력 영상 크기를 확인하지 못했습니다.',
-    image:'MIP 출력 영상을 만들지 못했습니다.',
-    memory:'MIP 출력 영상 용량 한도(32 MiB)를 초과했습니다.',
-    timeout:'MIP 출력 준비 시간이 지났습니다. 다시 확인하세요.',
+    reproduce:kinText("MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 출력하지 않았습니다."),
+    shape:kinText("저장한 MIP 작업의 형식을 확인할 수 없어 출력하지 않았습니다."),
+    frame:kinText("저장한 MIP 작업의 좌표계(Frame of Reference)가 출력 원본과 달라 출력하지 않았습니다."),
+    outside:kinText("저장한 VOI Slab이 출력 CT 볼륨과 겹치지 않아 출력하지 않았습니다."),
+    tool:kinText("MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요."),
+    batchTool:kinText("MIP Batch 출력 도구를 불러오지 못해 출력하지 않았습니다."),
+    average:kinText("Raysum 평균 계산 모듈을 확인할 수 없어 출력하지 않았습니다."),
+    capability:kinText("고정 뷰어에서 MIP 출력 기능을 확인하지 못했습니다."),
+    camera:kinText("MIP 출력 투영 카메라를 확인할 수 없어 출력하지 않았습니다."),
+    distance:kinText("MIP 출력 카메라가 CT 볼륨 투영 범위 안에 있어 출력하지 않았습니다."),
+    frameCamera:kinText("MIP 출력 프레임의 투영 카메라를 확인하지 못했습니다."),
+    clip:kinText("MIP 출력 투영 깊이 범위를 확인하지 못했습니다."),
+    display:kinText("MIP 출력 표시 속성을 확인하지 못했습니다."),
+    preRender:kinText("MIP 출력 준비 렌더를 확인하지 못했습니다."),
+    frameTimeout:kinText("MIP 출력 프레임의 최종 렌더를 확인하지 못했습니다."),
+    plane:kinText("MIP 출력의 VOI Slab 평면을 적용하지 못했습니다."),
+    gpu:kinText("MIP 출력 셰이더를 GPU에서 확인하지 못했습니다."),
+    contextLost:kinText("MIP 출력 GPU 문맥이 사라져 출력하지 않았습니다."),
+    slabShader:kinText("MIP 출력 투영 범위 셰이더를 GPU에서 확인하지 못했습니다."),
+    voiShader:kinText("MIP 출력 VOI Slab 자르기 셰이더를 GPU에서 확인하지 못했습니다."),
+    averageShader:kinText("MIP 출력 Raysum 평균 셰이더를 확인하지 못했습니다."),
+    size:kinText("MIP 출력 영상 크기를 확인하지 못했습니다."),
+    image:kinText("MIP 출력 영상을 만들지 못했습니다."),
+    memory:kinText("MIP 출력 영상 용량 한도(32 MiB)를 초과했습니다."),
+    timeout:kinText("MIP 출력 준비 시간이 지났습니다. 다시 확인하세요."),
   });
   const finite=n=>typeof n==='number'&&Number.isFinite(n);
   const vector=v=>{try{const a=Array.from(v||[]);return a.length===3&&a.every(finite)?a:null;}catch(_){return null;}};

@@ -1,5 +1,7 @@
 
 function kinCreateViewerJobs() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, active = false;
   function connect(ticket = epoch) {
     ready?.then(extension => { if (active && ticket === epoch && !current && kinViewerSession.writer()) { current = extension; current.mount(); } }).catch(error => { if (active && ticket === epoch) { const p = document.querySelector('#kin-viewer-layout-status'); if (p) p.textContent = error.message; } });
@@ -11,7 +13,7 @@ function kinCreateViewerJobs() {
     const load = name => new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = resolve;
-      script.onerror = () => reject(new Error('비교 작업 화면을 불러오지 못했습니다.')); document.head.append(script);
+      script.onerror = () => reject(kinError("비교 작업 화면을 불러오지 못했습니다.")); document.head.append(script);
     });
     ready = load('viewer-volume-job.js').catch(() => {}).then(() => load('viewer-stack-restore.js')).then(() => load('viewer-jobs.js'))
       .then(() => window.kinViewerJobs(servicesManager.services, kinViewerLayoutModel, kinViewerSession.writeModule,

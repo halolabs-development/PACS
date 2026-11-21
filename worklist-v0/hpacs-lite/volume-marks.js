@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.KinVolumeMarks=api;})(globalThis,()=>{
   const vector=v=>Array.isArray(v)&&v.length===3&&v.every(n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<=1e6);
   function normalize(value){
@@ -15,8 +19,8 @@
     return vector(index)&&index.every((n,i)=>n>=-.5-1e-5&&n<=volume.dimensions[i]-.5+1e-5);
   }
   function signedOffset(point,camera){
-    if(!vector(point)||!vector(camera?.focalPoint)||!vector(camera?.viewPlaneNormal))throw Error('표식의 환자 좌표를 확인할 수 없습니다.');
-    const norm=Math.hypot(...camera.viewPlaneNormal);if(norm<1e-8)throw Error('평면 방향을 확인할 수 없습니다.');
+    if(!vector(point)||!vector(camera?.focalPoint)||!vector(camera?.viewPlaneNormal))throw kinError("표식의 환자 좌표를 확인할 수 없습니다.");
+    const norm=Math.hypot(...camera.viewPlaneNormal);if(norm<1e-8)throw kinError("평면 방향을 확인할 수 없습니다.");
     return point.reduce((n,x,i)=>n+(x-camera.focalPoint[i])*camera.viewPlaneNormal[i]/norm,0);
   }
   function centered(point,camera){

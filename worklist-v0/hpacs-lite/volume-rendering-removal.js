@@ -10,6 +10,10 @@
  * outside air, enclosed air such as lungs not counting as outside - is removed with one cell of air around it (table top,
  * sheets, cables). The body, arms, thick pads and anything touching the body stay; other air is not touched.
  * Removed voxels get a value just under the source minimum; the viewer makes that value transparent. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root,factory){
   const api=factory();
   if(typeof module==='object'&&module.exports)module.exports=api;
@@ -21,19 +25,19 @@
 
   function finitePositive(n){return typeof n==='number'&&Number.isFinite(n)&&n>0;}
   function plan(dimensions,spacing,maxCells=LIMITS.maxCells){
-    if(!Array.isArray(dimensions)&&!ArrayBuffer.isView(dimensions)||dimensions.length!==3||!Array.from(dimensions).every(n=>Number.isInteger(n)&&n>0))throw Error('VR 원본 크기를 확인할 수 없습니다.');
-    if(!Array.isArray(spacing)&&!ArrayBuffer.isView(spacing)||spacing.length!==3||!Array.from(spacing).every(finitePositive))throw Error('VR 원본 복셀 간격을 확인할 수 없습니다.');
-    if(!Number.isInteger(maxCells)||maxCells<1)throw Error('VR 지우기 격자 한도를 확인할 수 없습니다.');
+    if(!Array.isArray(dimensions)&&!ArrayBuffer.isView(dimensions)||dimensions.length!==3||!Array.from(dimensions).every(n=>Number.isInteger(n)&&n>0))throw kinError("VR 원본 크기를 확인할 수 없습니다.");
+    if(!Array.isArray(spacing)&&!ArrayBuffer.isView(spacing)||spacing.length!==3||!Array.from(spacing).every(finitePositive))throw kinError("VR 원본 복셀 간격을 확인할 수 없습니다.");
+    if(!Number.isInteger(maxCells)||maxCells<1)throw kinError("VR 지우기 격자 한도를 확인할 수 없습니다.");
     const dims=Array.from(dimensions),space=Array.from(spacing);let factor=1,cells;
     for(;;){cells=dims.map(n=>Math.ceil(n/factor));if(cells[0]*cells[1]*cells[2]<=maxCells)break;factor++;}
     return Object.freeze({dims:Object.freeze(dims),spacing:Object.freeze(space),factor,cells:Object.freeze(cells),count:cells[0]*cells[1]*cells[2],voxels:dims[0]*dims[1]*dims[2],cellMl:space[0]*space[1]*space[2]*factor**3/1000});
   }
   function checkSource(src,p){
-    if(!p||!ArrayBuffer.isView(src)||src.length!==p.voxels)throw Error('VR 원본 화소 수가 볼륨 크기와 다릅니다.');
+    if(!p||!ArrayBuffer.isView(src)||src.length!==p.voxels)throw kinError("VR 원본 화소 수가 볼륨 크기와 다릅니다.");
   }
   function validateThreshold(value){
     const n=typeof value==='string'&&value.trim()!==''?Number(value):value;
-    if(typeof n!=='number'||!Number.isFinite(n)||n<LIMITS.boneMin||n>LIMITS.boneMax)throw Error('Bone Threshold를 '+LIMITS.boneMin+'~'+LIMITS.boneMax+' HU 범위로 입력하세요.');
+    if(typeof n!=='number'||!Number.isFinite(n)||n<LIMITS.boneMin||n>LIMITS.boneMax)throw kinError("Bone Threshold를 {0}~{1} HU 범위로 입력하세요.", LIMITS.boneMin, LIMITS.boneMax);
     return n;
   }
   // Highest HU of each cell, and the lowest value of the whole source (removed voxels go below it).
@@ -48,7 +52,7 @@
       }
       yield z/nz;
     }
-    if(!Number.isFinite(min)||!Number.isFinite(max))throw Error('VR 원본 화소 값을 확인할 수 없습니다.');
+    if(!Number.isFinite(min)||!Number.isFinite(max))throw kinError("VR 원본 화소 값을 확인할 수 없습니다.");
     return {values,dense,min,max};
   }
   // Source voxels in a cell (cells on the far edges hold fewer).
@@ -181,7 +185,7 @@
   // Writes the source into out with removed voxels set below every source value.
   function* paint(src,out,p,parts,floor){
     checkSource(src,p);
-    if(!ArrayBuffer.isView(out)||out.length!==p.voxels)throw Error('VR 지우기 결과 배열 크기를 확인할 수 없습니다.');
+    if(!ArrayBuffer.isView(out)||out.length!==p.voxels)throw kinError("VR 지우기 결과 배열 크기를 확인할 수 없습니다.");
     const [nx,ny,nz]=p.dims,[cx,cy]=p.cells,f=p.factor,bone=parts.bone?.cells||null,rim=parts.bone?.rimHu,table=parts.table?.cells||null;let removed=0;
     for(let z=0;z<nz;z++){
       const cz=(z/f)|0;
@@ -197,7 +201,7 @@
     return removed;
   }
   // Below every source value and one more step below that, so the viewer can put a fully transparent ramp under the data.
-  function floorFor(min){if(!Number.isFinite(min))throw Error('VR 원본 최솟값을 확인할 수 없습니다.');return Math.floor(min)-2;}
+  function floorFor(min){if(!Number.isFinite(min))throw kinError("VR 원본 최솟값을 확인할 수 없습니다.");return Math.floor(min)-2;}
   // Runs a generator to its end without yielding to anything (tests, small volumes).
   function run(generator){for(;;){const next=generator.next();if(next.done)return next.value;}}
   return Object.freeze({LIMITS,plan,validateThreshold,pool,boneCells,tableCells,paint,floorFor,run});

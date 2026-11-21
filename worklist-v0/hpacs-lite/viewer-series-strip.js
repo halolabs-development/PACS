@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.KinViewerSeriesStrip = (() => {
   const value = (item, tag) => item[tag]?.Value?.[0];
   const classic = new Set(['1.2.840.10008.5.1.4.1.1.1', '1.2.840.10008.5.1.4.1.1.1.1',
@@ -27,7 +31,7 @@ window.KinViewerSeriesStrip = (() => {
       const response = await fetch(path, { credentials: 'same-origin', signal, ...options,
         headers: { 'X-KIN-CSRF': '1', ...options?.headers } });
       if (window.KinSessionTransport?.refusal(response)) throw window.KinSessionTransport.responseError(response);
-      if (!response.ok) throw new Error('시리즈 정보를 불러오지 못했습니다.');
+      if (!response.ok) throw kinError("시리즈 정보를 불러오지 못했습니다.");
       return response;
     }
     function message(text) { const label = document.createElement('span'); label.className = 'kin-series-status'; label.setAttribute('role', 'status'); label.textContent = text; list.replaceChildren(label); }
@@ -38,7 +42,7 @@ window.KinViewerSeriesStrip = (() => {
     };
     function patientReady(snapshot) {
       if (samePatient(snapshot)) return true;
-      services.uiNotificationService?.show({ title: 'Series', message: '환자 전환이 끝난 뒤 시리즈를 다시 선택하세요.', type: 'info' });
+      services.uiNotificationService?.show({ title: 'Series', message: kinText("환자 전환이 끝난 뒤 시리즈를 다시 선택하세요."), type: 'info' });
       return false;
     }
     function panes() {
@@ -65,7 +69,7 @@ window.KinViewerSeriesStrip = (() => {
       notice.className = 'kin-series-load'; notice.dataset.kinUxOwned = ''; notice.setAttribute('role', 'status');
       notice.replaceChildren();
       const label = document.createElement('span');
-      label.textContent = error ? '영상을 불러오지 못했습니다. 연결을 확인한 뒤 Retry로 다시 시도하세요.' : '영상을 불러오는 중…';
+      label.textContent = error ? kinText("영상을 불러오지 못했습니다. 연결을 확인한 뒤 Retry로 다시 시도하세요.") : kinText("영상을 불러오는 중…");
       notice.append(label);
       if (error) {
         const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
@@ -90,7 +94,7 @@ window.KinViewerSeriesStrip = (() => {
       // Reuse the same busy/unsaved boundaries as HP and saved-work restore.
       const states = [window.kinViewerHistoryWorkspaceState?.(), window.kinViewerJobWorkspaceState?.()];
       if (states.some(state => state?.dirty || state?.busy) || window.kinViewerHistoryHasUnsaved?.() || window.kinMprMarks?.dirty?.()) {
-        services.uiNotificationService?.show({ title: 'Series', message: '미저장 작업을 저장하거나 편집을 마친 뒤 시리즈를 여세요.', type: 'info' }); return false;
+        services.uiNotificationService?.show({ title: 'Series', message: kinText("미저장 작업을 저장하거나 편집을 마친 뒤 시리즈를 여세요."), type: 'info' }); return false;
       }
       return true;
     }
@@ -98,11 +102,11 @@ window.KinViewerSeriesStrip = (() => {
       if (ended || !patientReady(snapshot) || !grid.getState().viewports.has(id) || !canReplace()) return;
       const viewport = services.cornerstoneViewportService.getCornerstoneViewport(id);
       if (viewport && viewport.type !== 'stack') {
-        services.uiNotificationService?.show({ title: 'Series', message: '2D 영상 칸에 시리즈를 놓으세요.', type: 'info' }); return;
+        services.uiNotificationService?.show({ title: 'Series', message: kinText("2D 영상 칸에 시리즈를 놓으세요."), type: 'info' }); return;
       }
       const matches = sets.getActiveDisplaySets().filter(set => set.StudyInstanceUID === expectedStudy && set.SeriesInstanceUID === series);
       if (matches.length !== 1) {
-        services.uiNotificationService?.show({ title: 'Series', message: '분할된 시리즈 또는 아직 준비되지 않은 영상입니다. Studies에서 영상을 선택하세요.', type: 'info' }); return;
+        services.uiNotificationService?.show({ title: 'Series', message: kinText("분할된 시리즈 또는 아직 준비되지 않은 영상입니다. Studies에서 영상을 선택하세요."), type: 'info' }); return;
       }
       const set = matches[0].displaySetInstanceUID;
       clearLoad(id);
@@ -198,10 +202,10 @@ window.KinViewerSeriesStrip = (() => {
     async function load(study, series = null) {
       clear(); uid = study; stripPatient = patient();
       const target = exam(study, series); examKey = target.key; members = target.sources.map(source => source.studyUid);
-      if (!study) { message('현재 셀의 영상이 준비되면 시리즈를 표시합니다.'); return; }
+      if (!study) { message(kinText("현재 셀의 영상이 준비되면 시리즈를 표시합니다.")); return; }
       controller = new AbortController(); const signal = controller.signal, ticket = sequence, key = examKey;
       const live = () => !ended && !signal.aborted && ticket === sequence && examKey === key;
-      message('시리즈를 불러오는 중…');
+      message(kinText("시리즈를 불러오는 중…"));
       try {
         const groups = new Map();
         for (const source of target.sources) {
@@ -228,7 +232,7 @@ window.KinViewerSeriesStrip = (() => {
           const previewStatus = document.createElement('span'); previewStatus.className = 'kin-series-preview-status'; previewStatus.textContent = 'Loading';
           const label = document.createElement('span'); label.className = 'kin-series-count'; label.textContent = number + '/' + (count ?? 'Unknown');
           const description = document.createElement('span'); description.className = 'kin-series-title'; description.textContent = title;
-          card.title = title + ' — SeriesNumber / 원본 DICOM 전체 프레임 수(다중 프레임 포함). 알 수 없는 수는 Unknown입니다.';
+          card.title = kinText("{0} — SeriesNumber / 원본 DICOM 전체 프레임 수(다중 프레임 포함). 알 수 없는 수는 Unknown입니다.", title);
           card.setAttribute('aria-label', label.textContent + ' ' + title + '. ' + card.title);
           preview.append(image, previewStatus); card.append(preview, label, description);
           card.onclick = () => assign(series, study, grid.getActiveViewportId(), stripPatient);
@@ -246,7 +250,7 @@ window.KinViewerSeriesStrip = (() => {
           };
           cards.set(cardKey, card); list.append(card);
         }
-        if (!groups.size) message('시리즈가 없습니다.');
+        if (!groups.size) message(kinText("시리즈가 없습니다."));
         refresh();
         // Use the existing preview API. A failed preview never removes its
         // series number/title or prevents keyboard assignment of loaded data.
@@ -261,13 +265,13 @@ window.KinViewerSeriesStrip = (() => {
             const blob = await preview.blob(); if (!live()) return;
             const url = URL.createObjectURL(blob); urls.add(url);
             image.onload = () => { if (live()) image.nextElementSibling.hidden = true; };
-            image.onerror = () => { if (live()) { image.hidden = true; image.nextElementSibling.textContent = 'Preview unavailable'; image.parentElement.title += ' 썸네일 표시 실패.'; } };
+            image.onerror = () => { if (live()) { image.hidden = true; image.nextElementSibling.textContent = 'Preview unavailable'; image.parentElement.title += kinText(" 썸네일 표시 실패."); } };
             image.src = url; image.hidden = false;
-          } catch (_) { if (!live()) return; cards.get(cardKey).querySelector('.kin-series-preview-status').textContent = 'Preview unavailable'; cards.get(cardKey).title += ' 썸네일 표시 실패.'; }
+          } catch (_) { if (!live()) return; cards.get(cardKey).querySelector('.kin-series-preview-status').textContent = 'Preview unavailable'; cards.get(cardKey).title += kinText(" 썸네일 표시 실패."); }
         }
       } catch (error) {
         if (!live()) return;
-        message(error.message || '시리즈 정보를 불러오지 못했습니다.');
+        message(error.message || kinText("시리즈 정보를 불러오지 못했습니다."));
         const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.onclick = () => load(study, series); list.append(retry);
       }
     }

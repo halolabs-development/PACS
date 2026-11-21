@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   // Manual curved/freehand MPR on one plane of the three-plane target. The person places every
   // point; nothing here looks at image content to find a path. Results are derived displays.
@@ -7,10 +11,7 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   const elsewhere=()=>{try{return !!window.kinViewerJobWorkspaceState?.().busy||!!window.kinVolumeBatchState?.busy?.()||!!window.kinMprRenderingState?.busy?.();}catch(_){return true;}};
   const allowed=()=>{try{return live()&&permitted()&&!elsewhere();}catch(_){return false;}};
   const panel=document.createElement('section');panel.id='kin-mpr-curved';panel.style.cssText='border-top:1px solid #657c9f;padding:8px 0';host.append(panel);
-  panel.innerHTML='<strong>Curved MPR</strong><p>한 MPR 평면 위에 사람이 직접 찍거나 그린 곡선을 따라 원본 CT 값(HU)을 펼쳐 보여 주는 재구성 표시입니다. 영상 내용으로 경로를 자동으로 찾지 않습니다. 결과는 원본 영상이 아니며, 가로축은 곡선을 따라 잰 길이라서 화면 위 직선 거리나 측정 의미가 없습니다. Save New Job으로 곡선과 계산·표시 조건을 저장합니다.</p>'+
-    '<label>Curve Type <select aria-label="Curve Type"><option value="curved">Curved</option><option value="freehand">Freehand</option></select></label> <label>Half Height (mm) <input type="number" aria-label="Curved MPR Half Height" min="1" max="150" step="1" value="20" style="width:70px"></label> '+
-    '<button type="button" data-action="draw">Draw Curve</button> <button type="button" data-action="finish">Finish Drawing</button> <button type="button" data-action="delete">Delete Point</button> <button type="button" data-action="clear">Clear Curve</button> <button type="button" data-action="go">Go to Curve Plane</button>'+
-    '<p data-kin-curved-state>No Curve</p><div class="result" hidden><p class="badge" style="color:#5fd0ff;font-weight:bold">CURVED MPR · Derived display · Not a source image</p><canvas aria-label="Curved MPR result" style="display:block;width:100%;height:auto;max-height:min(360px,calc(var(--kin-dock-height,420px) - 60px));object-fit:contain;image-rendering:pixelated;background:#000"></canvas><p class="caption"></p><p class="note">가로축은 곡선을 따라 잰 길이, 세로축은 그리기 평면의 수직 방향입니다. 화면 위 직선 거리·측정 의미가 없고 원본 영상이 아닙니다. 짙은 파란 표본은 볼륨 밖입니다. 측정·표식·출력은 지원하지 않습니다.</p></div><div class="drafts"></div><p role="status"></p>';
+  panel.innerHTML=kinHtml("<strong>Curved MPR</strong><p>한 MPR 평면 위에 사람이 직접 찍거나 그린 곡선을 따라 원본 CT 값(HU)을 펼쳐 보여 주는 재구성 표시입니다. 영상 내용으로 경로를 자동으로 찾지 않습니다. 결과는 원본 영상이 아니며, 가로축은 곡선을 따라 잰 길이라서 화면 위 직선 거리나 측정 의미가 없습니다. Save New Job으로 곡선과 계산·표시 조건을 저장합니다.</p><label>Curve Type <select aria-label=\"Curve Type\"><option value=\"curved\">Curved</option><option value=\"freehand\">Freehand</option></select></label> <label>Half Height (mm) <input type=\"number\" aria-label=\"Curved MPR Half Height\" min=\"1\" max=\"150\" step=\"1\" value=\"20\" style=\"width:70px\"></label> <button type=\"button\" data-action=\"draw\">Draw Curve</button> <button type=\"button\" data-action=\"finish\">Finish Drawing</button> <button type=\"button\" data-action=\"delete\">Delete Point</button> <button type=\"button\" data-action=\"clear\">Clear Curve</button> <button type=\"button\" data-action=\"go\">Go to Curve Plane</button><p data-kin-curved-state>No Curve</p><div class=\"result\" hidden><p class=\"badge\" style=\"color:#5fd0ff;font-weight:bold\">CURVED MPR · Derived display · Not a source image</p><canvas aria-label=\"Curved MPR result\" style=\"display:block;width:100%;height:auto;max-height:min(360px,calc(var(--kin-dock-height,420px) - 60px));object-fit:contain;image-rendering:pixelated;background:#000\"></canvas><p class=\"caption\"></p><p class=\"note\">가로축은 곡선을 따라 잰 길이, 세로축은 그리기 평면의 수직 방향입니다. 화면 위 직선 거리·측정 의미가 없고 원본 영상이 아닙니다. 짙은 파란 표본은 볼륨 밖입니다. 측정·표식·출력은 지원하지 않습니다.</p></div><div class=\"drafts\"></div><p role=\"status\"></p>");
   const typeInput=panel.querySelector('select'),heightInput=panel.querySelector('input[type=number]'),stateText=panel.querySelector('[data-kin-curved-state]'),status=panel.querySelector('[role=status]');
   const resultBox=panel.querySelector('.result'),canvas=panel.querySelector('canvas'),caption=panel.querySelector('.caption'),drafts=panel.querySelector('.drafts');
   const buttons=Object.fromEntries([...panel.querySelectorAll('button[data-action]')].map(b=>[b.dataset.action,b]));
@@ -32,14 +33,14 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   // intercept fixture); they are read once per loaded volume and never rescaled again here.
   function source(t){
     const v=volume(t),g=geometry(t),manager=v?.voxelManager;
-    if(typeof manager?.getCompleteScalarDataArray!=='function')throw Error('원본 화소 배열을 확인할 수 없어 곡면 MPR을 계산하지 않았습니다.');
-    const count=g.dimensions.reduce((a,b)=>a*b,1);if(count>model.LIMITS.voxels)throw Error('원본 볼륨이 곡면 MPR 계산 한도를 넘습니다.');
+    if(typeof manager?.getCompleteScalarDataArray!=='function')throw kinError("원본 화소 배열을 확인할 수 없어 곡면 MPR을 계산하지 않았습니다.");
+    const count=g.dimensions.reduce((a,b)=>a*b,1);if(count>model.LIMITS.voxels)throw kinError("원본 볼륨이 곡면 MPR 계산 한도를 넘습니다.");
     let data=scalars.get(v);if(!data){data=manager.getCompleteScalarDataArray();if(data?.length===count)scalars.set(v,data);}
-    if(!data||data.length!==count)throw Error('원본 화소 배열 길이가 볼륨 크기와 달라 곡면 MPR을 계산하지 않았습니다.');
+    if(!data||data.length!==count)throw kinError("원본 화소 배열 길이가 볼륨 크기와 달라 곡면 MPR을 계산하지 않았습니다.");
     const toIndex=model.affine(g),last=g.dimensions.map(n=>n-1);
     for(const probe of [[0,0,0],last,[last[0],0,Math.floor(last[2]/2)]]){
       const back=toIndex(Array.from(v.imageData.indexToWorld(probe)));
-      if(back.some((n,i)=>!(Math.abs(n-probe[i])<=1e-6)))throw Error('원본 볼륨 좌표 변환을 확인할 수 없어 곡면 MPR을 계산하지 않았습니다.');
+      if(back.some((n,i)=>!(Math.abs(n-probe[i])<=1e-6)))throw kinError("원본 볼륨 좌표 변환을 확인할 수 없어 곡면 MPR을 계산하지 않았습니다.");
     }
     return {scalars:data,dimensions:g.dimensions,worldToIndex:toIndex};
   }
@@ -93,7 +94,7 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
       canvas.getContext('2d').putImageData(new ImageData(model.raster(result,value.display),result.columns,result.rows),0,0);
       drawn={result,display};
     }
-    caption.textContent=(label==='Final'?'Final · '+model.ALGORITHM:'Preview · refining · 최종 결과가 아닙니다')+' · '+(value.kind==='curved'?'Curved':'Freehand')+' · Arc length '+result.length.toFixed(2)+' mm · Half height '+value.output.halfHeight+' mm · Spacing '+result.spacing+' mm · '+result.columns+'×'+result.rows+' samples · Outside '+result.outside;
+    caption.textContent=(label==='Final'?'Final · '+model.ALGORITHM:kinText("Preview · refining · 최종 결과가 아닙니다"))+' · '+(value.kind==='curved'?'Curved':'Freehand')+' · Arc length '+result.length.toFixed(2)+' mm · Half height '+value.output.halfHeight+' mm · Spacing '+result.spacing+' mm · '+result.columns+'×'+result.rows+' samples · Outside '+result.outside;
   }
   function paint(){
     if(!bound||!live())return;
@@ -131,9 +132,9 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   const stop=e=>{e.preventDefault();e.stopImmediatePropagation();};
   function editable(item,value){
     if(!value)return;
-    if(item.index!==value.cell)throw Error('곡선을 그린 평면에서만 점을 편집할 수 있습니다.');
+    if(item.index!==value.cell)throw kinError("곡선을 그린 평면에서만 점을 편집할 수 있습니다.");
     const state=model.planeState(item.view.getCamera(),value.plane);
-    if(!state.aligned||Math.abs(state.offset)>.01)throw Error('그리기 평면에서 벗어나 편집할 수 없습니다. Go to Curve Plane으로 돌아간 뒤 편집하세요.');
+    if(!state.aligned||Math.abs(state.offset)>.01)throw kinError("그리기 평면에서 벗어나 편집할 수 없습니다. Go to Curve Plane으로 돌아간 뒤 편집하세요.");
   }
   function hit(item,value,e){
     if(!value||item.index!==value.cell)return -1;
@@ -145,13 +146,13 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   function start(t,item){
     const camera=item.view.getCamera(),normal=model.unit(camera.viewPlaneNormal),along=camera.viewUp.reduce((s,n,i)=>s+n*normal[i],0);
     const viewUp=model.unit(camera.viewUp.map((n,i)=>n-along*normal[i])),display=displayOf(item.view.getProperties()),frame=frameOfReference(t),height=Number(heightInput.value),kind=typeInput.value;
-    if(display.VOILUTFunction!=='LINEAR')throw Error('곡면 MPR은 LINEAR 창 설정 표시에서만 계산합니다. 창 설정 함수를 LINEAR로 바꾼 뒤 그리세요.');
-    if(!frame)throw Error('원본 좌표계(Frame of Reference)를 확인할 수 없어 곡선을 그리지 않았습니다.');
-    if(!Number.isFinite(height)||height<1||height>150)throw Error('Half Height는 1~150 mm로 입력하세요.');
+    if(display.VOILUTFunction!=='LINEAR')throw kinError("곡면 MPR은 LINEAR 창 설정 표시에서만 계산합니다. 창 설정 함수를 LINEAR로 바꾼 뒤 그리세요.");
+    if(!frame)throw kinError("원본 좌표계(Frame of Reference)를 확인할 수 없어 곡선을 그리지 않았습니다.");
+    if(!Number.isFinite(height)||height<1||height>150)throw kinError("Half Height는 1~150 mm로 입력하세요.");
     return {kind,frameOfReference:frame,cell:item.index,plane:{origin:model.round(camera.focalPoint),normal,viewUp},points:[],spacing:finest(t),halfHeight:height,display};
   }
   function propose(t,item,points,base){
-    if(points.some(p=>!model.inside(p,geometry(t))))throw Error('볼륨 밖의 점은 지정할 수 없습니다.');
+    if(points.some(p=>!model.inside(p,geometry(t))))throw kinError("볼륨 밖의 점은 지정할 수 없습니다.");
     const value=base?rebuild(base,{points}):model.build({...start(t,item),points});
     model.check(value,{partial:true});return value;
   }
@@ -165,19 +166,19 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
     if(index<0&&!armed)return;
     stop(e);swallow=true;
     try{
-      if(!allowed())throw Error('다른 작업을 마친 뒤 곡선을 편집하세요.');
+      if(!allowed())throw kinError("다른 작업을 마친 뒤 곡선을 편집하세요.");
       editable(item,r.value);
       if(index>=0){selected=index;drag={item,index,before:r.value,pointerId:e.pointerId,moved:false};item.view.element.setPointerCapture?.(e.pointerId);paint();update();return;}
       const point=at(item,e);
       if(typeInput.value==='freehand'){
-        if(r.value)throw Error('Freehand 곡선은 한 번에 그립니다. Clear Curve로 지운 뒤 다시 그리세요.');
-        if(!model.inside(point,geometry(t)))throw Error('볼륨 밖의 점은 지정할 수 없습니다.');
+        if(r.value)throw kinError("Freehand 곡선은 한 번에 그립니다. Clear Curve로 지운 뒤 다시 그리세요.");
+        if(!model.inside(point,geometry(t)))throw kinError("볼륨 밖의 점은 지정할 수 없습니다.");
         stroke={item,points:[point],pointerId:e.pointerId};item.view.element.setPointerCapture?.(e.pointerId);paint();show();return;
       }
       const next=propose(t,item,[...(r.value?.points||[]),point],r.value);
       if(!r.value)r.seen=displayKey(item.view.getProperties());
       r.value=next;selected=next.points.length-1;
-      status.textContent=next.points.length<2?'첫 점을 지정했습니다. 같은 평면에서 다음 점을 클릭하세요.':'점을 추가했습니다. 계속 클릭하거나 Finish Drawing을 누르세요.';
+      status.textContent=next.points.length<2?kinText("첫 점을 지정했습니다. 같은 평면에서 다음 점을 클릭하세요."):kinText("점을 추가했습니다. 계속 클릭하거나 Finish Drawing을 누르세요.");
       paint();update();request();
     }catch(error){status.textContent=error.message;}
   }
@@ -185,7 +186,7 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
     if(drag&&e.pointerId===drag.pointerId){
       stop(e);
       // An invalid position (outside the volume, over a limit) is not applied; the last valid one stays.
-      try{if(!allowed())throw Error('다른 작업이 시작되어 점 이동을 적용하지 않았습니다.');const r=record(bound),points=r.value.points.map(p=>p.slice());points[drag.index]=at(drag.item,e);r.value=propose(bound,drag.item,points,r.value);drag.moved=true;paint();request({final:false});}
+      try{if(!allowed())throw kinError("다른 작업이 시작되어 점 이동을 적용하지 않았습니다.");const r=record(bound),points=r.value.points.map(p=>p.slice());points[drag.index]=at(drag.item,e);r.value=propose(bound,drag.item,points,r.value);drag.moved=true;paint();request({final:false});}
       catch(error){status.textContent=error.message;}
       return;
     }
@@ -197,21 +198,21 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
   function up(e,cancelled=false){
     if(drag&&e.pointerId===drag.pointerId){
       stop(e);const d=drag,r=record(bound);drag=null;swallow=false;try{d.item.view.element.releasePointerCapture?.(e.pointerId);}catch(_){}
-      if(cancelled&&d.moved){r.value=d.before;status.textContent='점 이동을 취소했습니다.';}
-      else if(d.moved)status.textContent='점을 옮겼습니다. 최종 결과가 나오면 Save New Job으로 저장할 수 있습니다.';
+      if(cancelled&&d.moved){r.value=d.before;status.textContent=kinText("점 이동을 취소했습니다.");}
+      else if(d.moved)status.textContent=kinText("점을 옮겼습니다. 최종 결과가 나오면 Save New Job으로 저장할 수 있습니다.");
       paint();update();request();return;
     }
     if(stroke&&e.pointerId===stroke.pointerId){
       stop(e);const s=stroke,t=bound,r=record(t);stroke=null;armed=false;swallow=false;try{s.item.view.element.releasePointerCapture?.(e.pointerId);}catch(_){}
       try{
-        if(cancelled)throw Error('Freehand 그리기를 취소했습니다.');
-        if(!allowed())throw Error('다른 작업이 시작되어 Freehand 곡선을 적용하지 않았습니다.');
+        if(cancelled)throw kinError("Freehand 그리기를 취소했습니다.");
+        if(!allowed())throw kinError("다른 작업이 시작되어 Freehand 곡선을 적용하지 않았습니다.");
         const points=model.simplify(s.points);
-        if(points.length<2)throw Error('Freehand 곡선이 너무 짧습니다. 더 길게 그리세요.');
-        if(points.length>model.LIMITS.freehand)throw Error('Freehand 곡선 점이 128개를 넘습니다. 더 짧거나 단순하게 그리세요.');
+        if(points.length<2)throw kinError("Freehand 곡선이 너무 짧습니다. 더 길게 그리세요.");
+        if(points.length>model.LIMITS.freehand)throw kinError("Freehand 곡선 점이 128개를 넘습니다. 더 짧거나 단순하게 그리세요.");
         const next=propose(t,s.item,points,null);model.check(next);
         r.seen=displayKey(s.item.view.getProperties());r.value=next;selected=-1;
-        status.textContent='Freehand 곡선을 그렸습니다. 점을 끌어 고치거나 최종 결과 뒤 Save New Job으로 저장하세요.';request();
+        status.textContent=kinText("Freehand 곡선을 그렸습니다. 점을 끌어 고치거나 최종 결과 뒤 Save New Job으로 저장하세요.");request();
       }catch(error){status.textContent=error.message;}
       paint();update();show();return;
     }
@@ -242,7 +243,7 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
     let props;try{props=item.view.getProperties();}catch(_){return;}
     const key=displayKey(props);if(r.seen===key)return;
     const display=displayOf(props);
-    if(display.VOILUTFunction!=='LINEAR'||![display.voiRange.lower,display.voiRange.upper].every(Number.isFinite)||display.voiRange.upper<=display.voiRange.lower){r.seen=key;status.textContent='곡면 MPR 결과는 LINEAR 창 설정만 표시합니다. 이전 표시 조건을 유지합니다.';return;}
+    if(display.VOILUTFunction!=='LINEAR'||![display.voiRange.lower,display.voiRange.upper].every(Number.isFinite)||display.voiRange.upper<=display.voiRange.lower){r.seen=key;status.textContent=kinText("곡면 MPR 결과는 LINEAR 창 설정만 표시합니다. 이전 표시 조건을 유지합니다.");return;}
     if(!allowed())return;
     r.seen=key;r.value=rebuild(r.value,{display});show();
   }
@@ -273,48 +274,48 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
     update();paint();show();
   }
   function goToPlane(){
-    const t=bound;if(!t||!allowed())throw Error('다른 작업을 마친 뒤 곡선 평면으로 이동하세요.');
-    const value=record(t).value;if(!value)throw Error('이동할 곡선이 없습니다.');
+    const t=bound;if(!t||!allowed())throw kinError("다른 작업을 마친 뒤 곡선 평면으로 이동하세요.");
+    const value=record(t).value;if(!value)throw kinError("이동할 곡선이 없습니다.");
     const view=t.items[value.cell].view,before=view.getCamera(),p=value.plane,distance=Math.hypot(...before.position.map((n,i)=>n-before.focalPoint[i]))||1;
     try{
       view.setCamera({focalPoint:p.origin.slice(),position:p.origin.map((n,i)=>n+p.normal[i]*distance),viewUp:p.viewUp.slice(),viewPlaneNormal:p.normal.slice()});view.render();
       const state=model.planeState(view.getCamera(),p);if(!state.aligned||Math.abs(state.offset)>1e-5)throw Error('plane');
     }catch(_){
-      try{view.setCamera(before);view.render();}catch(__){throw Error('곡선 평면 이동과 이전 화면 복구에 실패했습니다. 현재 영상을 확인하세요.');}
-      throw Error('곡선 평면으로 이동하지 못했습니다. 이전 화면으로 복구했습니다.');
+      try{view.setCamera(before);view.render();}catch(__){throw kinError("곡선 평면 이동과 이전 화면 복구에 실패했습니다. 현재 영상을 확인하세요.");}
+      throw kinError("곡선 평면으로 이동하지 못했습니다. 이전 화면으로 복구했습니다.");
     }
-    paint();status.textContent='곡선을 그린 평면으로 돌아왔습니다.';
+    paint();status.textContent=kinText("곡선을 그린 평면으로 돌아왔습니다.");
   }
   const act=fn=>()=>{try{fn();}catch(error){status.textContent=error.message;}};
   buttons.draw.onclick=act(()=>{
-    if(!bound||!allowed())throw Error('완전히 로드된 3평면 MPR에서 다른 작업을 마친 뒤 곡선을 그리세요.');
+    if(!bound||!allowed())throw kinError("완전히 로드된 3평면 MPR에서 다른 작업을 마친 뒤 곡선을 그리세요.");
     armed=true;selected=-1;
-    status.textContent=typeInput.value==='freehand'?'Freehand: MPR 평면 위에서 누른 채 끌어 곡선을 그리세요. 손을 떼면 끝납니다.':'Curved: MPR 평면을 클릭해 제어점을 추가하세요. 기존 점은 끌어서 옮기고, 마치면 Finish Drawing을 누르세요.';
+    status.textContent=typeInput.value==='freehand'?kinText("Freehand: MPR 평면 위에서 누른 채 끌어 곡선을 그리세요. 손을 떼면 끝납니다."):kinText("Curved: MPR 평면을 클릭해 제어점을 추가하세요. 기존 점은 끌어서 옮기고, 마치면 Finish Drawing을 누르세요.");
     update();show();
   });
   buttons.finish.onclick=act(()=>{
     armed=false;stroke=null;const value=bound&&record(bound).value;
-    status.textContent=value&&!model.normalize(value)?'곡선 점이 두 개 이상이어야 계산합니다.':'곡선 그리기를 마쳤습니다.';update();request();
+    status.textContent=value&&!model.normalize(value)?kinText("곡선 점이 두 개 이상이어야 계산합니다."):kinText("곡선 그리기를 마쳤습니다.");update();request();
   });
   buttons.delete.onclick=act(()=>{
-    if(!bound||!allowed())throw Error('다른 작업을 마친 뒤 점을 삭제하세요.');
-    const r=record(bound);if(!r.value||selected<0)throw Error('삭제할 점을 먼저 선택하세요.');
+    if(!bound||!allowed())throw kinError("다른 작업을 마친 뒤 점을 삭제하세요.");
+    const r=record(bound);if(!r.value||selected<0)throw kinError("삭제할 점을 먼저 선택하세요.");
     const points=r.value.points.filter((_,i)=>i!==selected);
     r.value=points.length?propose(bound,bound.items[r.value.cell],points,r.value):null;selected=-1;
-    status.textContent='점을 삭제했습니다.';paint();update();request();
+    status.textContent=kinText("점을 삭제했습니다.");paint();update();request();
   });
   buttons.clear.onclick=act(()=>{
     if(!bound||!live()||!permitted()||elsewhere())return;
     const r=record(bound);cancel();r.value=null;r.final=r.preview=r.failed=null;
-    status.textContent='곡선을 지웠습니다. 저장한 작업은 그대로입니다.';paint();update();show();
+    status.textContent=kinText("곡선을 지웠습니다. 저장한 작업은 그대로입니다.");paint();update();show();
   });
   buttons.go.onclick=act(goToPlane);
-  typeInput.onchange=()=>{const value=bound&&record(bound).value;if(value){typeInput.value=value.kind;status.textContent='곡선 종류를 바꾸려면 Clear Curve로 지운 뒤 다시 그리세요.';}};
+  typeInput.onchange=()=>{const value=bound&&record(bound).value;if(value){typeInput.value=value.kind;status.textContent=kinText("곡선 종류를 바꾸려면 Clear Curve로 지운 뒤 다시 그리세요.");}};
   heightInput.onchange=()=>{
     const r=bound&&record(bound);if(!r?.value)return;
     try{
-      if(!allowed())throw Error('다른 작업을 마친 뒤 Half Height를 바꾸세요.');
-      const height=Number(heightInput.value);if(!Number.isFinite(height)||height<1||height>150)throw Error('Half Height는 1~150 mm로 입력하세요.');
+      if(!allowed())throw kinError("다른 작업을 마친 뒤 Half Height를 바꾸세요.");
+      const height=Number(heightInput.value);if(!Number.isFinite(height)||height<1||height>150)throw kinError("Half Height는 1~150 mm로 입력하세요.");
       const next=rebuild(r.value,{halfHeight:height});model.check(next,{partial:true});r.value=next;request();
     }catch(error){heightInput.value=String(r.value.output.halfHeight);status.textContent=error.message;}
     update();
@@ -325,22 +326,22 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
     dirty,
     busy:()=>live()&&(!!drag||!!stroke),
     capture(readOnly=false){
-      if(!live())throw Error('곡면 MPR 계정이 변경되어 저장하지 않았습니다.');
-      if(armed||drag||stroke)throw Error('곡선 그리기를 Finish Drawing으로 마친 뒤 저장하세요.');
+      if(!live())throw kinError("곡면 MPR 계정이 변경되어 저장하지 않았습니다.");
+      if(armed||drag||stroke)throw kinError("곡선 그리기를 Finish Drawing으로 마친 뒤 저장하세요.");
       // No curve work anywhere: every existing Job shape saves exactly as it did before this tool.
       if(![...records.values()].some(r=>r.value||changed(r)))return null;
       const t=target(true,readOnly);
       if(!t){
         // Without a three-plane target a curve cannot be put into this Job, and saving without
         // it would look like it was kept. Only a screen with no curve anywhere saves as it is.
-        if([...records.values()].some(r=>r.value||changed(r)))throw Error('곡면 MPR 곡선이 있는 원본의 3평면 화면을 확인하지 못했습니다. 3평면 화면이 준비된 뒤 저장하거나 Clear Curve로 지운 뒤 저장하세요.');
+        if([...records.values()].some(r=>r.value||changed(r)))throw kinError("곡면 MPR 곡선이 있는 원본의 3평면 화면을 확인하지 못했습니다. 3평면 화면이 준비된 뒤 저장하거나 Clear Curve로 지운 뒤 저장하세요.");
         return null;
       }
       const r=records.get(keyOf(t));if(!r?.value)return null;
-      const value=model.normalize(r.value);if(!value)throw Error('곡선 점을 두 개 이상 지정하거나 Clear Curve로 지운 뒤 저장하세요.');
-      if(value.frameOfReference!==frameOfReference(t))throw Error('곡선의 좌표계가 현재 원본과 달라 저장하지 않았습니다.');
+      const value=model.normalize(r.value);if(!value)throw kinError("곡선 점을 두 개 이상 지정하거나 Clear Curve로 지운 뒤 저장하세요.");
+      if(value.frameOfReference!==frameOfReference(t))throw kinError("곡선의 좌표계가 현재 원본과 달라 저장하지 않았습니다.");
       const key=signature(value);
-      if(r.final?.signature!==key||r.final.volume!==volume(t))throw Error(r.failed?.signature===key?'곡면 MPR 계산에 실패해 저장하지 않았습니다. 곡선을 고치거나 지운 뒤 저장하세요.':'곡면 MPR 최종 결과 계산이 끝난 뒤 저장하세요.');
+      if(r.final?.signature!==key||r.final.volume!==volume(t))throw Error(r.failed?.signature===key?kinText("곡면 MPR 계산에 실패해 저장하지 않았습니다. 곡선을 고치거나 지운 뒤 저장하세요."):kinText("곡면 MPR 최종 결과 계산이 끝난 뒤 저장하세요."));
       return value;
     },
     saved(value,source){
@@ -351,27 +352,27 @@ window.kinCreateVolumeCurved=function({target,permitted,alive,owner,host}){
       }catch(_){}
     },
     async restore(value,current=()=>true,deadline=Date.now()+60000){
-      if(!live())throw Error('곡면 MPR 계정이 변경되어 복원하지 않았습니다.');
+      if(!live())throw kinError("곡면 MPR 계정이 변경되어 복원하지 않았습니다.");
       const t=target(true,true),next=model.normalize(value);
-      if(!t||!next)throw Error('저장한 곡면 MPR 형식이나 3평면 화면을 확인할 수 없습니다.');
-      if(next.frameOfReference!==frameOfReference(t))throw Error('저장한 곡면 MPR의 좌표계(Frame of Reference)가 현재 원본과 달라 복원하지 않았습니다.');
-      if(Math.abs(next.output.spacing-finest(t))>1e-6)throw Error('저장한 곡면 MPR 출력 간격이 현재 원본 voxel 간격과 달라 복원하지 않았습니다.');
-      if(![next.plane.origin,...next.points].every(p=>model.inside(p,geometry(t))))throw Error('저장한 곡선 점이 현재 볼륨 밖에 있어 복원하지 않았습니다.');
+      if(!t||!next)throw kinError("저장한 곡면 MPR 형식이나 3평면 화면을 확인할 수 없습니다.");
+      if(next.frameOfReference!==frameOfReference(t))throw kinError("저장한 곡면 MPR의 좌표계(Frame of Reference)가 현재 원본과 달라 복원하지 않았습니다.");
+      if(Math.abs(next.output.spacing-finest(t))>1e-6)throw kinError("저장한 곡면 MPR 출력 간격이 현재 원본 voxel 간격과 달라 복원하지 않았습니다.");
+      if(![next.plane.origin,...next.points].every(p=>model.inside(p,geometry(t))))throw kinError("저장한 곡선 점이 현재 볼륨 밖에 있어 복원하지 않았습니다.");
       const key=keyOf(t),previous=records.get(key);
       const r={source:[t.source.uid,t.source.series],value:next,saved:JSON.stringify(next),final:null,preview:null,failed:null,seen:displayKey(t.views[next.cell].getProperties()),requested:{key:signature(next),volume:volume(t)}};
       records.set(key,r);
       try{
         cancel();refresh();
-        if(bound?.group!==t.group)throw Error('곡면 MPR 화면을 연결하지 못해 복원하지 않았습니다.');
+        if(bound?.group!==t.group)throw kinError("곡면 MPR 화면을 연결하지 못해 복원하지 않았습니다.");
         const mine=++generation,outcome=await run(r,bound,mine,'final',{current,deadline});
-        if(outcome!=='done')throw Error(r.failed?'저장한 곡면 MPR을 다시 계산하지 못했습니다. '+r.failed.message:'화면이 바뀌었거나 시간이 초과되어 곡면 MPR 복원을 중단했습니다.');
-        status.textContent='저장한 곡선과 최종 곡면 결과를 복원했습니다.';paint();update();show();
+        if(outcome!=='done')throw Error(r.failed?kinText("저장한 곡면 MPR을 다시 계산하지 못했습니다. {0}", r.failed.message):kinText("화면이 바뀌었거나 시간이 초과되어 곡면 MPR 복원을 중단했습니다."));
+        status.textContent=kinText("저장한 곡선과 최종 곡면 결과를 복원했습니다.");paint();update();show();
       }catch(error){
         if(records.get(key)===r){if(previous)records.set(key,previous);else records.delete(key);}
         cancel();refresh();throw error;
       }
     },
-    clearForJob(){if(!live())throw Error('곡면 MPR 계정이 변경되었습니다.');cancel();records.clear();refresh();},
+    clearForJob(){if(!live())throw kinError("곡면 MPR 계정이 변경되었습니다.");cancel();records.clear();refresh();},
     inspect({values=false}={}){
       const r=bound&&record(bound);if(!r)return null;
       return {state:stateText.textContent,armed,selected,generation,current:signature(r.value),value:r.value?structuredClone(r.value):null,final:pack(r.final,values),preview:pack(r.preview,values),failed:r.failed?{...r.failed}:null};

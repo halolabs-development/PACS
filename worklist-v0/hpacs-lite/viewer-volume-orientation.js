@@ -1,10 +1,14 @@
 // The pinned Viewport.setCamera re-derives slab clipping planes only when the focal point moves along the new
 // normal or viewUp changes, so a plane turned in place about its own focal point keeps its previous planes.
 // Re-apply the unchanged slab through the public API; setSlabThickness clamps below 0.1, so the default uses reset.
-window.kinReapplyVolumeSlab=v=>{const half=v.getSlabThickness();if(Math.abs(half-.05)<1e-8)v.resetSlabThickness();else v.setSlabThickness(half);if(Math.abs(v.getSlabThickness()-half)>1e-9)throw Error('MPR 단면 두께를 유지하지 못했습니다.');};
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
+window.kinReapplyVolumeSlab=v=>{const half=v.getSlabThickness();if(Math.abs(half-.05)<1e-8)v.resetSlabThickness();else v.setSlabThickness(half);if(Math.abs(v.getSlabThickness()-half)>1e-9)throw kinError("MPR 단면 두께를 유지하지 못했습니다.");};
 window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,owner=()=>null,host}){
   const panel=document.createElement('section');panel.id='kin-volume-orientation';panel.style.cssText='border-top:1px solid #657c9f;padding:8px 0';
-  panel.innerHTML='<strong>MPR Orientation</strong><p class="target"></p><label>Axis <select aria-label="MPR Rotation Axis"><option value="0">Patient L/R</option><option value="1">Patient A/P</option><option value="2">Patient H/F</option></select></label> <label>Degrees <input type="number" aria-label="MPR Rotation Degrees" min="-180" max="180" step="5" value="15" style="width:80px"></label> <button type="button">Rotate Three Planes</button> <button type="button">Reset Planes</button> <button type="button">Basic Orthogonal</button><p role="status"></p><p>세 평면의 교점을 유지해 회전합니다. Basic Orthogonal은 교점과 평면별 확대·화면 이동·표시 설정을 유지한 채 세 평면을 환자 기준 기본 Axial·Sagittal·Coronal 방향으로 맞춥니다. Reset Planes는 이 화면을 열거나 작업을 복원한 시점의 방향·위치·확대로 돌아가므로, 기울어진 작업을 복원한 뒤에는 그 기울기로 돌아갑니다. Save New Job으로 표시를 저장할 수 있습니다.</p>';
+  panel.innerHTML=kinHtml("<strong>MPR Orientation</strong><p class=\"target\"></p><label>Axis <select aria-label=\"MPR Rotation Axis\"><option value=\"0\">Patient L/R</option><option value=\"1\">Patient A/P</option><option value=\"2\">Patient H/F</option></select></label> <label>Degrees <input type=\"number\" aria-label=\"MPR Rotation Degrees\" min=\"-180\" max=\"180\" step=\"5\" value=\"15\" style=\"width:80px\"></label> <button type=\"button\">Rotate Three Planes</button> <button type=\"button\">Reset Planes</button> <button type=\"button\">Basic Orthogonal</button><p role=\"status\"></p><p>세 평면의 교점을 유지해 회전합니다. Basic Orthogonal은 교점과 평면별 확대·화면 이동·표시 설정을 유지한 채 세 평면을 환자 기준 기본 Axial·Sagittal·Coronal 방향으로 맞춥니다. Reset Planes는 이 화면을 열거나 작업을 복원한 시점의 방향·위치·확대로 돌아가므로, 기울어진 작업을 복원한 뒤에는 그 기울기로 돌아갑니다. Save New Job으로 표시를 저장할 수 있습니다.</p>");
   host.append(panel);
   const axis=panel.querySelector('select'),degrees=panel.querySelector('input'),[rotate,reset,basic]=panel.querySelectorAll('button'),status=panel.querySelector('[role=status]'),caption=panel.querySelector('.target');
   const model=window.KinVolumeOrientation,volumeKeys=new WeakMap(),readyRepairs=new WeakMap();let nextVolume=0,ended=false,busy=false,shown='',baseline=null,pending=null,unavailable=null;
@@ -44,11 +48,11 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
         return null;
       }
       if(verify){
-        if(readOnly!==true&&!permitted())throw Error('다른 작업을 마친 뒤 MPR 방향을 조절하세요.');
-        if(volume.imageIds.length!==volume.dimensions?.[2])throw Error('MPR 원본 프레임 수를 확인할 수 없습니다.');
+        if(readOnly!==true&&!permitted())throw kinError("다른 작업을 마친 뒤 MPR 방향을 조절하세요.");
+        if(volume.imageIds.length!==volume.dimensions?.[2])throw kinError("MPR 원본 프레임 수를 확인할 수 없습니다.");
         for(let i=0;i<volume.imageIds.length;i++){
           const m=cornerstone.metaData.get('instance',volume.imageIds[i]);
-          if(m?.SOPClassUID!=='1.2.840.10008.5.1.4.1.1.2'||m.Modality!=='CT'||Number(m.SamplesPerPixel)!==1||m.PhotometricInterpretation!=='MONOCHROME2'||Number(m.Rows)!==volume.dimensions[1]||Number(m.Columns)!==volume.dimensions[0]||!same(m.PixelSpacing,[volume.spacing[1],volume.spacing[0]])||!same(m.ImagePositionPatient,Array.from(volume.imageData.indexToWorld([0,0,i])))||!same(m.ImageOrientationPatient,Array.from(volume.direction).slice(0,6)))throw Error('정규 CT 원본 좌표를 확인한 뒤 회전하세요.');
+          if(m?.SOPClassUID!=='1.2.840.10008.5.1.4.1.1.2'||m.Modality!=='CT'||Number(m.SamplesPerPixel)!==1||m.PhotometricInterpretation!=='MONOCHROME2'||Number(m.Rows)!==volume.dimensions[1]||Number(m.Columns)!==volume.dimensions[0]||!same(m.PixelSpacing,[volume.spacing[1],volume.spacing[0]])||!same(m.ImagePositionPatient,Array.from(volume.imageData.indexToWorld([0,0,i])))||!same(m.ImageOrientationPatient,Array.from(volume.direction).slice(0,6)))throw kinError("정규 CT 원본 좌표를 확인한 뒤 회전하세요.");
         }
       }
       if(!volumeKeys.has(volume))volumeKeys.set(volume,++nextVolume);
@@ -90,8 +94,8 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
         if(!sameViews(pending,t))pending={group:t.group,viewRefs:t.views.map(v=>new WeakRef(v)),deadline:now+START_DEADLINE,reading:null,touched:null};
         if(reading&&reading.key===pending.reading?.key){
           if(pending.touched===null||pending.touched===reading.cameras)capture(t);
-          else{unavailable={group:pending.group,viewRefs:pending.viewRefs,reason:'시작 MPR 화면을 확인하기 전에 평면이 바뀌어 Reset Planes를 사용할 수 없습니다.'};pending=null;}
-        }else if(now>=pending.deadline){unavailable={group:pending.group,viewRefs:pending.viewRefs,reason:'시작 MPR 화면이 안정되지 않아 Reset Planes를 사용할 수 없습니다.'};pending=null;}
+          else{unavailable={group:pending.group,viewRefs:pending.viewRefs,reason:kinText("시작 MPR 화면을 확인하기 전에 평면이 바뀌어 Reset Planes를 사용할 수 없습니다.")};pending=null;}
+        }else if(now>=pending.deadline){unavailable={group:pending.group,viewRefs:pending.viewRefs,reason:kinText("시작 MPR 화면이 안정되지 않아 Reset Planes를 사용할 수 없습니다.")};pending=null;}
         else pending.reading=reading;
       }
     }
@@ -115,11 +119,11 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
     panel.hidden=!alive()||!eligible;
     const ready=sameViews(baseline,t),missing=sameViews(unavailable,t)?unavailable:null,idle=busy||workspaceBusy()||!t||!permitted();
     rotate.disabled=basic.disabled=axis.disabled=degrees.disabled=idle||!ready&&!missing;reset.disabled=idle||!ready;
-    if(!t){shown='';caption.textContent='완전히 로드된 단일 정규 CT의 3평면을 선택하세요.';return;}
+    if(!t){shown='';caption.textContent=kinText("완전히 로드된 단일 정규 CT의 3평면을 선택하세요.");return;}
     shown=t.selection;
     try{
       const point=model.intersection(t.cameras);
-      caption.textContent=t.source.study.id+' · Center L/P/H (mm): '+point.map(n=>Number(n.toFixed(3))).join(' / ')+(ready?'':' · '+(missing?missing.reason:'시작 MPR 화면을 확인하는 중입니다.'));
+      caption.textContent=t.source.study.id+' · Center L/P/H (mm): '+point.map(n=>Number(n.toFixed(3))).join(' / ')+(ready?'':' · '+(missing?missing.reason:kinText("시작 MPR 화면을 확인하는 중입니다.")));
     }catch(error){rotate.disabled=basic.disabled=true;reset.disabled=idle||!ready;caption.textContent=error.message;}
   }
   const setCamera=(v,camera)=>{v.setCamera({flipHorizontal:camera.flipHorizontal,flipVertical:camera.flipVertical});const next={...camera};delete next.rotation;delete next.flipHorizontal;delete next.flipVertical;v.setCamera(next);window.kinReapplyVolumeSlab(v);v.render();};
@@ -131,24 +135,24 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
     if(busy)return;
     let t,before,changed=false;const starting=mode==='reset',basicMode=mode==='basic';
     try{
-      t=target(true);if(!t||workspaceBusy()||t.selection!==shown)throw Error('선택한 MPR 평면이 바뀌었습니다. 대상을 확인하고 다시 적용하세요.');
+      t=target(true);if(!t||workspaceBusy()||t.selection!==shown)throw kinError("선택한 MPR 평면이 바뀌었습니다. 대상을 확인하고 다시 적용하세요.");
       // A plane moved before its start screen is confirmed, or known to be unavailable, would become that start screen.
-      if(!sameViews(baseline,t)&&!sameViews(unavailable,t))throw Error('시작 MPR 화면을 확인하는 중입니다. 잠시 후 다시 적용하세요.');
+      if(!sameViews(baseline,t)&&!sameViews(unavailable,t))throw kinError("시작 MPR 화면을 확인하는 중입니다. 잠시 후 다시 적용하세요.");
       const angle=Number(degrees.value),index=Number(axis.value);
-      if(mode==='rotate'&&(!degrees.value.trim()||![0,1,2].includes(index)||!Number.isFinite(angle)||Math.abs(angle)>180))throw Error('회전축과 -180~180도 범위의 각도를 입력하세요.');
-      if(starting&&!sameViews(baseline,t))throw Error('이 배치의 시작 화면을 확인할 수 없습니다.');
+      if(mode==='rotate'&&(!degrees.value.trim()||![0,1,2].includes(index)||!Number.isFinite(angle)||Math.abs(angle)>180))throw kinError("회전축과 -180~180도 범위의 각도를 입력하세요.");
+      if(starting&&!sameViews(baseline,t))throw kinError("이 배치의 시작 화면을 확인할 수 없습니다.");
       // Basic never reads the baseline: after an oblique Job restore that baseline is oblique.
       const next=starting?structuredClone(baseline.cameras):basicMode?model.orthogonal(t.cameras,t.planes,nativePlanes()):model.rotate(t.cameras,[0,1,2].map(i=>i===index?1:0),angle);
-      before=t.cameras;busy=true;status.textContent='MPR 방향을 적용 중입니다.';refresh();changed=true;
+      before=t.cameras;busy=true;status.textContent=kinText("MPR 방향을 적용 중입니다.");refresh();changed=true;
       t.views.forEach((v,i)=>setCamera(v,next[i]));
       if(basicMode)center(t);
       await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-      const after=target(true);if(!after||after.group!==t.group||after.selection!==t.selection)throw Error('화면이 변경되어 회전 결과를 확인하지 못했습니다.');
-      for(let i=0;i<3;i++)for(const key of ['position','focalPoint','viewUp','viewPlaneNormal'])if(!same(after.cameras[i][key],next[i][key]))throw Error('MPR 방향을 확인하지 못했습니다.');
-      model.intersection(after.cameras);status.textContent=starting?'시작 MPR 화면으로 돌아왔습니다.':basicMode?'세 평면을 기본 Axial·Sagittal·Coronal 방향으로 맞췄습니다. 교점·확대·화면 이동과 원본·판독문은 그대로입니다.':'세 평면을 '+angle+'도 회전했습니다. 원본과 판독문은 그대로입니다.';
+      const after=target(true);if(!after||after.group!==t.group||after.selection!==t.selection)throw kinError("화면이 변경되어 회전 결과를 확인하지 못했습니다.");
+      for(let i=0;i<3;i++)for(const key of ['position','focalPoint','viewUp','viewPlaneNormal'])if(!same(after.cameras[i][key],next[i][key]))throw kinError("MPR 방향을 확인하지 못했습니다.");
+      model.intersection(after.cameras);status.textContent=starting?kinText("시작 MPR 화면으로 돌아왔습니다."):basicMode?kinText("세 평면을 기본 Axial·Sagittal·Coronal 방향으로 맞췄습니다. 교점·확대·화면 이동과 원본·판독문은 그대로입니다."):kinText("세 평면을 {0}도 회전했습니다. 원본과 판독문은 그대로입니다.", angle);
     }catch(error){
       if(changed&&alive())try{const current=target();if(current?.group===t.group&&current.selection===t.selection){t.views.forEach((v,i)=>setCamera(v,before[i]));if(basicMode)center(t);}}catch(_){}
-      if(alive())status.textContent=error.message||'MPR 방향을 적용하지 못했습니다.';
+      if(alive())status.textContent=error.message||kinText("MPR 방향을 적용하지 못했습니다.");
     }finally{busy=false;refresh();}
   }
   rotate.onclick=()=>apply('rotate');reset.onclick=()=>apply('reset');basic.onclick=()=>apply('basic');
@@ -176,7 +180,7 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
     releaseVrRecovery=recovery.onContextLoss(({engine})=>{
       const t=target(true,true,{requireRenderReady:false});
       if(t?.views.some(v=>v.getRenderingEngine()===engine)){
-        vrLostEngines.add(engine);vr.setContextLoss?.('영상 표시가 중단되었습니다. Close VR로 돌아간 뒤 Reload Viewer를 누르세요.');
+        vrLostEngines.add(engine);vr.setContextLoss?.(kinText("영상 표시가 중단되었습니다. Close VR로 돌아간 뒤 Reload Viewer를 누르세요."));
       }
     },({engine})=>{
       vrLostEngines.delete(engine);
@@ -190,8 +194,8 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
       for(const [name,file] of [['KinVolumeRendering','volume-rendering.js'],['KinVolumeSculpt','volume-sculpt.js'],['KinVolumeMaskRenderer','volume-mask-renderer.js'],['KinVolumeRemoval','volume-rendering-removal.js'],['kinCreateVolumeSculpt','viewer-volume-sculpt.js'],['kinCreateVolumeRendering','viewer-volume-rendering.js']])if(!window[name])await new Promise((resolve,reject)=>{
         const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+file;let finished=false;
         const finish=error=>{if(finished)return;finished=true;clearTimeout(timer);script.onload=script.onerror=null;script.remove();error?reject(error):resolve();};
-        const timer=setTimeout(()=>finish(Error('VR 도구를 불러오지 못했습니다. 다시 누르세요.')),30000);
-        script.onload=()=>finish(window[name]?null:Error('VR 도구를 확인하지 못했습니다.'));script.onerror=()=>finish(Error('VR 도구를 불러오지 못했습니다. 다시 누르세요.'));document.head.append(script);
+        const timer=setTimeout(()=>finish(kinError("VR 도구를 불러오지 못했습니다. 다시 누르세요.")),30000);
+        script.onload=()=>finish(window[name]?null:kinError("VR 도구를 확인하지 못했습니다."));script.onerror=()=>finish(kinError("VR 도구를 불러오지 못했습니다. 다시 누르세요."));document.head.append(script);
       });
       if(!alive())return;vr||=window.kinCreateVolumeRendering({target,permitted:()=>!busy&&permitted(),alive,owner,notice:message=>{if(alive())status.textContent=message;}});await vr.open();vrRecovery=null;bindVrRecovery();
     }catch(error){if(alive())status.textContent=error.message;}finally{vrLoading=false;vrButton.disabled=!alive();}
@@ -205,17 +209,17 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
       const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+file;let finished=false;
       const finish=error=>{if(finished)return;finished=true;clearTimeout(timer);script.onload=script.onerror=null;script.remove();error?reject(error):resolve();};
       const timer=setTimeout(()=>finish(Error(message)),Math.max(0,Math.min(30000,deadline-Date.now())));
-      script.onload=()=>finish(window[name]?null:Error(name==='KinVolumeMipBatch'?message:'MIP Viewer 도구를 확인하지 못했습니다.'));script.onerror=()=>finish(Error(message));document.head.append(script);
+      script.onload=()=>finish(window[name]?null:Error(name==='KinVolumeMipBatch'?message:kinText("MIP Viewer 도구를 확인하지 못했습니다.")));script.onerror=()=>finish(Error(message));document.head.append(script);
     });
     for(const entry of [['KinVolumeMip','volume-mip.js'],['KinVolumeMipJob','volume-mip-job.js'],['kinCreateVolumeMip','viewer-volume-mip.js']])await load(entry,failure);
-    const batchFailure='MIP Batch 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다.';
+    const batchFailure=kinText("MIP Batch 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다.");
     try{await load(['KinVolumeMipBatch','volume-mip-batch.js'],batchFailure);}catch(error){if(batch)throw error;}
   };
   const createMip=()=>mip||=window.kinCreateVolumeMip({target,permitted:()=>!busy&&permitted(),alive,owner,notice:message=>{if(alive())status.textContent=message;}});
   mipButton.onclick=async()=>{
     if(mipLoading||!alive()||busy||!permitted()||workspaceBusy())return;mipLoading=true;mipButton.disabled=true;
     try{
-      await loadMip(Infinity,'MIP Viewer 도구를 불러오지 못했습니다. 다시 누르세요.');
+      await loadMip(Infinity,kinText("MIP Viewer 도구를 불러오지 못했습니다. 다시 누르세요."));
       if(!alive())return;await createMip().open();
     }catch(error){if(alive())status.textContent=error.message;}finally{mipLoading=false;mipButton.disabled=!alive();}
   };
@@ -232,20 +236,20 @@ window.kinCreateVolumeOrientation=function({services,selected,live,allowed=live,
     cancels:event=>{try{return !!mip&&mip.job.cancels(event);}catch(_){return false;}},
     async restore(value,current=()=>true,deadline=Date.now()+60000,viewportId,batch=null,version=12){
       try{
-        if(!alive())throw Error('MIP Viewer 계정이 변경되어 MIP 작업을 복원하지 않았습니다.');
-        await loadMip(deadline,'MIP Viewer 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다.',batch!==null);
-        if(!alive()||!current())throw Error('화면이 변경되어 MIP 작업 복원을 중단했습니다.');
+        if(!alive())throw kinError("MIP Viewer 계정이 변경되어 MIP 작업을 복원하지 않았습니다.");
+        await loadMip(deadline,kinText("MIP Viewer 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다."),batch!==null);
+        if(!alive()||!current())throw kinError("화면이 변경되어 MIP 작업 복원을 중단했습니다.");
         await createMip().job.restore(value,{current,deadline,viewportId,batch,version});
       }catch(error){
         // The Job rollback follows every MIP restore failure, so the reason says so even when it names no screen itself.
-        const message=error?.message||'MIP 작업을 복원하지 못했습니다.';
-        throw Error(/이전 화면/.test(message)?message:message+' 이전 화면으로 되돌립니다.');
+        const message=error?.message||kinText("MIP 작업을 복원하지 못했습니다.");
+        throw Object.assign(Error(/이전 화면|previous (view|screen)/i.test(message)?message:kinText("{0} 이전 화면으로 되돌립니다.", message)),{kinWords:true});
       }
     },
     clearForJob(){mip?.job.clearForJob();},
   };
   window.kinVolumeMipJob=mipJob;
-  const cineTarget=(v,verify=false)=>{if(verify&&(busy||!permitted()))throw Error('다른 작업을 마친 뒤 MPR을 재생하세요.');const t=target(verify);if(!t||t.source.viewportId!==v?.id||!t.views.includes(v))return null;return {key:JSON.stringify([t.group,t.selection]),contentKey:JSON.stringify([t.group,v.id]),allowed:!busy&&permitted(),volume:cornerstone.cache.getVolume(v.getVolumeId())};};
+  const cineTarget=(v,verify=false)=>{if(verify&&(busy||!permitted()))throw kinError("다른 작업을 마친 뒤 MPR을 재생하세요.");const t=target(verify);if(!t||t.source.viewportId!==v?.id||!t.views.includes(v))return null;return {key:JSON.stringify([t.group,t.selection]),contentKey:JSON.stringify([t.group,v.id]),allowed:!busy&&permitted(),volume:cornerstone.cache.getVolume(v.getVolumeId())};};
   window.kinGetVolumeCineTarget=cineTarget;
   return {dispose(){ended=true;releaseVrRecovery?.();window.removeEventListener('kin-context-recovery-ready',bindVrRecovery);path?.dispose();curved?.dispose();vr?.dispose();if(window.kinVolumeMipJob===mipJob)delete window.kinVolumeMipJob;mip?.dispose();if(window.kinGetVolumeCineTarget===cineTarget){delete window.kinGetVolumeCineTarget;window.dispatchEvent(new Event('kin-volume-cine-target-ended'));}batch?.dispose();marks?.dispose();progressive?.dispose();preferences?.dispose();synchronization?.dispose();display?.dispose();crosshair?.dispose();clearInterval(timer);clearInterval(startTimer);panel.remove();for(const name of ['pointerdown','wheel','keydown']){document.removeEventListener(name,guard,true);document.removeEventListener(name,early,true);}}};
 };

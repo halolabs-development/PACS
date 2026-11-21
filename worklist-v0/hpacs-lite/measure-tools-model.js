@@ -1,6 +1,10 @@
 // Pure values of the Measure menu's base tools: Spine Label level order, Circle by Diameter shape and statistics,
 // and the texts of Marking, Text and Memo. Nothing here reads the screen; coordinates are image pixel coordinates
 // (column x, row y; a whole number is the centre of a pixel) and lengths are millimetres.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api; else root.KinMeasureToolsModel = api;
@@ -68,9 +72,9 @@
   // A circle of the given diameter on the patient: on pixels that are not square it is an ellipse of pixels.
   // spacing = [row spacing, column spacing] in mm (DICOM PixelSpacing order).
   function circleShape(center, diameter, spacing) {
-    if (!Array.isArray(center) || center.length !== 2 || !center.every(finite)) throw new Error('원의 가운데를 확인할 수 없습니다');
-    if (!finite(diameter) || diameter <= 0) throw new Error('지름은 0보다 커야 합니다');
-    if (!Array.isArray(spacing) || spacing.length !== 2 || !spacing.every(n => finite(n) && n > 0)) throw new Error('이 영상에서는 mm 지름을 쓸 수 없습니다');
+    if (!Array.isArray(center) || center.length !== 2 || !center.every(finite)) throw kinError("원의 가운데를 확인할 수 없습니다");
+    if (!finite(diameter) || diameter <= 0) throw kinError("지름은 0보다 커야 합니다");
+    if (!Array.isArray(spacing) || spacing.length !== 2 || !spacing.every(n => finite(n) && n > 0)) throw kinError("이 영상에서는 mm 지름을 쓸 수 없습니다");
     const radius = diameter / 2, rx = radius / spacing[1], ry = radius / spacing[0];
     return { center: [...center], radius, rx, ry, edge: [center[0] + rx, center[1]], area: Math.PI * radius * radius };
   }
@@ -90,12 +94,12 @@
   // Mean, SD (of the pixels, not of a sample), minimum, maximum and count of the modality values inside the circle.
   // value(x, y) gives the modality value (rescaled) of one pixel. null when no pixel centre falls inside.
   function circleStats(shape, rows, columns, spacing, value) {
-    if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(columns) || rows < 1 || columns < 1) throw new Error('영상 크기를 확인할 수 없습니다');
-    if ((2 * shape.rx + 1) * (2 * shape.ry + 1) > MAX_PIXELS) throw new Error('원이 너무 커서 통계를 계산하지 않습니다');
+    if (!Number.isSafeInteger(rows) || !Number.isSafeInteger(columns) || rows < 1 || columns < 1) throw kinError("영상 크기를 확인할 수 없습니다");
+    if ((2 * shape.rx + 1) * (2 * shape.ry + 1) > MAX_PIXELS) throw kinError("원이 너무 커서 통계를 계산하지 않습니다");
     let count = 0, sum = 0, squares = 0, min = Infinity, max = -Infinity;
     for (const [x, y] of circlePixels(shape, rows, columns, spacing)) {
       const n = value(x, y);
-      if (!finite(n)) throw new Error('화소값을 읽을 수 없습니다');
+      if (!finite(n)) throw kinError("화소값을 읽을 수 없습니다");
       count++; sum += n; squares += n * n; if (n < min) min = n; if (n > max) max = n;
     }
     if (!count) return null;
@@ -109,11 +113,11 @@
   }
   // The lines shown beside a circle and in the panel. unit '' is a pixel value without a unit.
   function circleLines(values, unit, basisLabel) {
-    if (!Array.isArray(values) || ![2, 7].includes(values.length) || !values.every(finite)) return ['재확인 필요: 값을 확인할 수 없습니다'];
+    if (!Array.isArray(values) || ![2, 7].includes(values.length) || !values.every(finite)) return [kinText("재확인 필요: 값을 확인할 수 없습니다")];
     const one = n => (Math.round(n * 10) / 10).toFixed(1), u = unit ? ' ' + unit : '';
     const lines = ['Ø ' + one(values[0]) + ' mm · Area ' + one(values[1]) + ' mm²'];
     if (values.length === 7) lines.push('Mean ' + one(values[2]) + u + ' · SD ' + one(values[3]) + u, 'Min ' + one(values[4]) + u + ' · Max ' + one(values[5]) + u + ' · n ' + values[6]);
-    else lines.push('통계 없음(원 안에 화소가 없거나 색 영상)');
+    else lines.push(kinText("통계 없음(원 안에 화소가 없거나 색 영상)"));
     if (basisLabel) lines.push(basisLabel);
     return lines;
   }
@@ -139,9 +143,9 @@
   }
   function addMarking(list, value) {
     const text = cleanText(value, MARKING_LIMIT);
-    if (!text || /[\r\n]/.test(text)) return { list, error: '문구는 한 줄, ' + MARKING_LIMIT + '자까지입니다.' };
-    if (list.includes(text)) return { list, error: '이미 목록에 있는 문구입니다.' };
-    if (list.length >= MARKINGS) return { list, error: '목록은 ' + MARKINGS + '개까지입니다.' };
+    if (!text || /[\r\n]/.test(text)) return { list, error: kinText("문구는 한 줄, {0}자까지입니다.", MARKING_LIMIT) };
+    if (list.includes(text)) return { list, error: kinText("이미 목록에 있는 문구입니다.") };
+    if (list.length >= MARKINGS) return { list, error: kinText("목록은 {0}개까지입니다.", MARKINGS) };
     return { list: [...list, text], error: '' };
   }
 

@@ -1,6 +1,10 @@
 /* Patient-space reference view and clipped batch-plane guides. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.KinVolumeBatchScout=api;})(typeof window!=='undefined'?window:globalThis,function(){
-  const fail=()=>{throw Error('단면 위치 안내선의 좌표를 확인할 수 없습니다.');};
+  const fail=()=>{throw kinError("단면 위치 안내선의 좌표를 확인할 수 없습니다.");};
   const vector=v=>Array.isArray(v)&&v.length===3&&v.every(Number.isFinite);
   const dot=(a,b)=>a.reduce((sum,n,i)=>sum+n*b[i],0),sub=(a,b)=>a.map((n,i)=>n-b[i]);
   const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];

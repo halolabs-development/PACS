@@ -5,6 +5,10 @@
 // coordinates times the spacing), so pixels that are not square do not change a ratio or an angle.
 // A value that cannot be defined (a line of length 0, a ratio over 0) is null; the screen shows it as "—".
 // The server checks a saved mark with the same calculation (api/src/measure-lines.ts).
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api; else root.KinMeasureLinesModel = api;
@@ -13,12 +17,12 @@
   const EPS = 1e-9;
   function checkSpacing(spacing) {
     if (spacing === null) return [1, 1];
-    if (!Array.isArray(spacing) || spacing.length !== 2 || !spacing.every(n => finite(n) && n > 0)) throw new Error('간격을 확인할 수 없습니다');
+    if (!Array.isArray(spacing) || spacing.length !== 2 || !spacing.every(n => finite(n) && n > 0)) throw kinError("간격을 확인할 수 없습니다");
     return spacing;
   }
   function checkPoints(points, count) {
     if (!Array.isArray(points) || points.length !== count || !points.every(p => Array.isArray(p) && p.length === 2 && p.every(finite)))
-      throw new Error('점 ' + count + '개가 필요합니다');
+      throw kinError("점 {n0}개가 필요합니다", count);
   }
   // Pixel ↔ patient (mm, or pixels without a spacing).
   const toMm = (p, s) => [p[0] * s[1], p[1] * s[0]];
@@ -84,7 +88,7 @@
   // Moving one end of the second line: it slides along the line only (the line stays parallel; its other end stays).
   function parallelSlide(points, index, to, spacing) {
     checkPoints(points, 4); checkPoints([to], 1);
-    if (index !== 2 && index !== 3) throw new Error('둘째 선의 끝점만 미끄러집니다');
+    if (index !== 2 && index !== 3) throw kinError("둘째 선의 끝점만 미끄러집니다");
     const s = checkSpacing(spacing), [a, b, c, d] = points.map(p => toMm(p, s)), dir = sub(b, a), n = dot(dir, dir);
     const base = index === 2 ? c : d, other = index === 2 ? d : c, t = toMm(to, s);
     const moved = n > EPS ? add(base, scale(dir, dot(sub(t, base), dir) / n)) : base;
@@ -148,7 +152,7 @@
   const FORMULAS = Object.freeze(['ellipsoid', 'prolate']);
   const formulaParts = formula => formula === 'prolate' ? ['Length', 'Width'] : ['Length', 'Height', 'Width'];
   function volume(formula, lengths) {
-    if (!FORMULAS.includes(formula)) throw new Error('공식을 고르세요');
+    if (!FORMULAS.includes(formula)) throw kinError("공식을 고르세요");
     const parts = formulaParts(formula), values = parts.map(part => lengths?.[part]);
     if (!values.every(n => finite(n) && n > 0)) return null;
     const [l, a, b] = values;
@@ -162,7 +166,7 @@
     ratio: { points: 4, values: ratio }, centreangle: { points: 8, values: centreAngle } });
   const BASES = Object.freeze(['pixel', 'detector', 'ermf', 'dbt', 'us', 'px']);
   function calculate(tool, points, spacing) {
-    const spec = TOOLS[tool]; if (!spec) throw new Error('알 수 없는 측정입니다');
+    const spec = TOOLS[tool]; if (!spec) throw kinError("알 수 없는 측정입니다");
     return spec.values(points, spacing);
   }
   // Values are equal when each is null in both or within a millionth of a millimetre (or degree).
@@ -174,17 +178,17 @@
   const two = n => n === null || !finite(n) ? '—' : (Math.round(n * 100) / 100).toFixed(2);
   const percent = n => n === null || !finite(n) ? '' : ' (' + one(n * 100) + '%)';
   const unitOf = basis => basis === 'px' ? 'px' : 'mm';
-  const PIXEL_BASED = '픽셀 기준(간격 미확인)';
+  const PIXEL_BASED = kinText("픽셀 기준(간격 미확인)");
   function lines(tool, values, basis) {
     const u = ' ' + unitOf(basis), px = basis === 'px';
-    if (!Array.isArray(values)) return ['재확인 필요: 값을 확인할 수 없습니다'];
+    if (!Array.isArray(values)) return [kinText("재확인 필요: 값을 확인할 수 없습니다")];
     switch (tool) {
       case 'ctr4': return ['CTR ' + two(values[3]) + percent(values[3]), 'MRD ' + one(values[0]) + u + ' · MLD ' + one(values[1]) + u + ' · ID ' + one(values[2]) + u, ...(px ? [PIXEL_BASED] : [])];
       case 'ctr2': return ['CTR ' + two(values[2]) + percent(values[2]), 'CD ' + one(values[0]) + u + ' · ID ' + one(values[1]) + u, ...(px ? [PIXEL_BASED] : [])];
-      case 'parallel': return ['Gap ' + one(values[0]) + u + ' · Centre ' + one(values[1]) + u, ...(px ? ['간격 확인 불가'] : [])];
+      case 'parallel': return ['Gap ' + one(values[0]) + u + ' · Centre ' + one(values[1]) + u, ...(px ? [kinText("간격 확인 불가")] : [])];
       case 'ratio': return ['Ratio (L1/L2) ' + two(values[2]), 'Length 1 ' + one(values[0]) + u + ' · Length 2 ' + one(values[1]) + u, ...(px ? [PIXEL_BASED] : [])];
       case 'centreangle': return [values[0] === null ? 'Angle —' : 'Angle ' + one(values[0]) + '° (' + one(values[1]) + '°)', ...(px ? [PIXEL_BASED] : [])];
-      default: return ['재확인 필요: 값을 확인할 수 없습니다'];
+      default: return [kinText("재확인 필요: 값을 확인할 수 없습니다")];
     }
   }
   const volumeText = n => n === null || !finite(n) ? '—' : two(n) + ' mL';

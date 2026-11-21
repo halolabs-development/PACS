@@ -5,47 +5,49 @@
    속성 변경이 생기지 않고, 도구막대가 다시 그려지면(계정 도구막대 적용·writer가 아닌 문서의 도구막대 줄이기 포함) 새 버튼에 다시 붙는다.
    분할 버튼의 목록 항목처럼 글자가 보이는 항목은 보이는 이름을 aria-label로 써서 화면 글자와 읽히는 이름이 어긋나지 않게 한다. */
 const kinViewerToolbarLabels = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const PRIMARY = {
-    MeasurementTools: ['Measurements', '측정 도구'],
-    Zoom: ['Zoom', '확대/축소'],
-    Pan: ['Pan', '이동'],
-    TrackballRotate: ['3D Rotate', '3D 회전(볼륨에서만 동작)'],
-    WindowLevel: ['Window / Level', '창/레벨 조절(드래그)'],
+    MeasurementTools: ['Measurements', kinText("측정 도구")],
+    Zoom: ['Zoom', kinText("확대/축소")],
+    Pan: ['Pan', kinText("이동")],
+    TrackballRotate: ['3D Rotate', kinText("3D 회전(볼륨에서만 동작)")],
+    WindowLevel: ['Window / Level', kinText("창/레벨 조절(드래그)")],
     // The pinned download form passes 'jpg'/'png' to canvas.toDataURL, which only knows MIME types, so every
     // choice writes PNG bytes; a jpg choice changes the file name only.
-    Capture: ['Capture', '선택한 영상 칸의 화면을 PNG 이미지로 다운로드 · File Type을 jpg로 두어도 파일 내용은 PNG입니다 · DICOM 원본·판독문·서버 작업 저장 아님 · 식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.'],
-    Layout: ['Layout', '화면 배치'],
-    Crosshairs: ['Crosshairs', 'MPR 교차선(3D/MPR에서만 동작)'],
-    MoreTools: ['More Tools', '기타 도구'],
+    Capture: ['Capture', kinText("선택한 영상 칸의 화면을 PNG 이미지로 다운로드 · File Type을 jpg로 두어도 파일 내용은 PNG입니다 · DICOM 원본·판독문·서버 작업 저장 아님 · 식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.")],
+    Layout: ['Layout', kinText("화면 배치")],
+    Crosshairs: ['Crosshairs', kinText("MPR 교차선(3D/MPR에서만 동작)")],
+    MoreTools: ['More Tools', kinText("기타 도구")],
   };
   const ITEMS = {
-    Length: ['Length', '길이'],
-    Bidirectional: ['Bidirectional', '장축·단축 길이'],
-    ArrowAnnotate: ['Arrow', '화살표 주석'],
-    EllipticalROI: ['Ellipse ROI', '타원 ROI(HU)'],
-    RectangleROI: ['Rectangle ROI', '사각형 ROI'],
-    CircleROI: ['Circle ROI', '원형 ROI'],
-    PlanarFreehandROI: ['Freehand ROI', '자유곡선 ROI'],
-    SplineROI: ['Spline ROI', '스플라인 ROI'],
-    LivewireContour: ['Livewire Contour', '라이브와이어 윤곽'],
-    Reset: ['Reset', '재설정(현재 영상 칸의 화면 조작을 처음으로)'],
-    'rotate-right': ['Rotate Right', '시계 방향 90° 회전'],
-    flipHorizontal: ['Flip Horizontal', '좌우 반전'],
-    ImageSliceSync: ['Image Slice Sync', '영상 칸 사이 단면 위치 맞춤'],
-    ReferenceLines: ['Reference Lines', '기준선 표시'],
-    ImageOverlayViewer: ['Image Overlay', '영상 오버레이 표시'],
-    StackScroll: ['Stack Scroll', '영상 넘기기(드래그)'],
-    invert: ['Invert', '흑백 반전'],
-    Probe: ['Probe', '한 지점의 값 확인'],
-    Cine: ['Cine', '연속 재생'],
-    Angle: ['Angle', '각도'],
-    CobbAngle: ['Cobb Angle', 'Cobb 각도'],
-    Magnify: ['Magnify', '돋보기'],
-    CalibrationLine: ['Calibration Line', '길이 보정선'],
-    TagBrowser: ['Tag Browser', 'DICOM 태그 보기'],
-    AdvancedMagnify: ['Magnify Probe', '고급 돋보기'],
-    UltrasoundDirectionalTool: ['Ultrasound Directional', '초음파 방향 측정'],
-    WindowLevelRegion: ['Window Level Region', '영역 창/레벨'],
+    Length: ['Length', kinText("길이")],
+    Bidirectional: ['Bidirectional', kinText("장축·단축 길이")],
+    ArrowAnnotate: ['Arrow', kinText("화살표 주석")],
+    EllipticalROI: ['Ellipse ROI', kinText("타원 ROI(HU)")],
+    RectangleROI: ['Rectangle ROI', kinText("사각형 ROI")],
+    CircleROI: ['Circle ROI', kinText("원형 ROI")],
+    PlanarFreehandROI: ['Freehand ROI', kinText("자유곡선 ROI")],
+    SplineROI: ['Spline ROI', kinText("스플라인 ROI")],
+    LivewireContour: ['Livewire Contour', kinText("라이브와이어 윤곽")],
+    Reset: ['Reset', kinText("재설정(현재 영상 칸의 화면 조작을 처음으로)")],
+    'rotate-right': ['Rotate Right', kinText("시계 방향 90° 회전")],
+    flipHorizontal: ['Flip Horizontal', kinText("좌우 반전")],
+    ImageSliceSync: ['Image Slice Sync', kinText("영상 칸 사이 단면 위치 맞춤")],
+    ReferenceLines: ['Reference Lines', kinText("기준선 표시")],
+    ImageOverlayViewer: ['Image Overlay', kinText("영상 오버레이 표시")],
+    StackScroll: ['Stack Scroll', kinText("영상 넘기기(드래그)")],
+    invert: ['Invert', kinText("흑백 반전")],
+    Probe: ['Probe', kinText("한 지점의 값 확인")],
+    Cine: ['Cine', kinText("연속 재생")],
+    Angle: ['Angle', kinText("각도")],
+    CobbAngle: ['Cobb Angle', kinText("Cobb 각도")],
+    Magnify: ['Magnify', kinText("돋보기")],
+    CalibrationLine: ['Calibration Line', kinText("길이 보정선")],
+    TagBrowser: ['Tag Browser', kinText("DICOM 태그 보기")],
+    AdvancedMagnify: ['Magnify Probe', kinText("고급 돋보기")],
+    UltrasoundDirectionalTool: ['Ultrasound Directional', kinText("초음파 방향 측정")],
+    WindowLevelRegion: ['Window Level Region', kinText("영역 창/레벨")],
   };
   // 누르면 켜지고 다른 도구를 고르면 꺼지는 버튼. Capture·Layout·More Tools는 동작·목록이라 켜짐 상태가 없다.
   const TOGGLES = new Set(['MeasurementTools', 'Zoom', 'Pan', 'TrackballRotate', 'WindowLevel', 'Crosshairs']);
@@ -60,7 +62,7 @@ const kinViewerToolbarLabels = (() => {
     if (Object.hasOwn(PRIMARY, id)) {
       const [name, description] = PRIMARY[id];
       return split?.[2] === 'secondary'
-        ? { id, name: name + ' Menu', description: description + ' 목록 열기', toggle: false, item: false }
+        ? { id, name: name + ' Menu', description: kinText("{0} 목록 열기", description), toggle: false, item: false }
         : { id, name, description, toggle: TOGGLES.has(id), item: false };
     }
     if (!split && Object.hasOwn(ITEMS, id)) { const [name, description] = ITEMS[id]; return { id, name, description, toggle: false, item: true }; }
@@ -79,7 +81,7 @@ const kinViewerToolbarLabels = (() => {
         if (!nativePressed) { put(element, 'aria-pressed', String(active)); put(element, 'data-kin-pressed', ''); }
       }
       put(element, 'aria-label', visible || found.name);
-      put(element, 'title', found.description + (active ? ' · 사용 중' : ''));
+      put(element, 'title', found.description + (active ? kinText(" · 사용 중") : ''));
       // viewer-tech-note.js의 Zoom 진입 보완이 정리할 때 이 이름을 자기 것으로 알고 지우지 않게 표시한다.
       put(element, 'data-kin-tool-label', found.id);
     }

@@ -39,6 +39,8 @@ async function kinFetchBulk(uri) {
 // The generic comparison protocol chooses by arrival order, not by breast/view/image kind.
 // Use the existing DICOM classifier, while leaving pixels and viewport tools with OHIF.
 function kinCreateMammographyHanging() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let protocolId = 'kin.mammography';
   let services, extensions, stop, institution;
   let preference = { layout: 'compare', kind: null };
@@ -209,7 +211,7 @@ function kinCreateMammographyHanging() {
         if (element && spec.issues.includes('voi-lut-table-invalid')) {
           const notice = document.createElement('div'); notice.className = 'kin-mg-voi-notice';
           notice.setAttribute('role', 'status');
-          notice.textContent = '저장된 VOI LUT를 읽을 수 없습니다. 영상 밝기와 대비를 확인해 주세요.';
+          notice.textContent = kinText("저장된 VOI LUT를 읽을 수 없습니다. 영상 밝기와 대비를 확인해 주세요.");
           notice.style.cssText = 'position:absolute;top:40px;left:8px;z-index:5;color:#fff;background:#713f12;padding:4px 8px;pointer-events:none';
           element.append(notice);
         }
@@ -331,15 +333,15 @@ function kinCreateMammographyHanging() {
         if (!matched && !unverified) return;
         const at = owner ? owner.repeat.findIndex(r => r.uid === showing) : -1;
         const next = owner ? owner.repeat[(at + 1) % owner.repeat.length] : null;
-        const slotText = owner ? owner.name + ' · ' + owner.repeat.length + '장 중 ' + (at + 1) + '장 · 재촬영' : cell.label;
+        const slotText = owner ? kinText("{0} · {n1}장 중 {2}장 · 재촬영", owner.name, owner.repeat.length, (at + 1)) : cell.label;
         const text = (matched ? slotText : '') + (unverified ? (matched ? ' · ' : '') + 'Orientation Unverified' : '');
         if (label?.dataset.text !== text + (next?.uid || '')) {
           if (!label) { label = document.createElement('div'); label.className = 'kin-mg-slot'; host.append(label); }
           label.style.cssText = 'position:absolute;bottom:24px;left:8px;z-index:5;pointer-events:none;color:#fff;background:#101e32;padding:3px 6px;font:12px sans-serif';
           label.textContent = text;
           label.dataset.text = text + (next?.uid || '');
-          label.title = [unverified ? '영상 방향을 확인할 수 없어 저장된 방향으로 표시합니다.' : '',
-            owner ? '같은 좌우·촬영 방향·영상 종류의 영상이 여러 장입니다. 가장 최근 촬영을 먼저 표시합니다.' : ''].filter(Boolean).join(' ');
+          label.title = [unverified ? kinText("영상 방향을 확인할 수 없어 저장된 방향으로 표시합니다.") : '',
+            owner ? kinText("같은 좌우·촬영 방향·영상 종류의 영상이 여러 장입니다. 가장 최근 촬영을 먼저 표시합니다.") : ''].filter(Boolean).join(' ');
           if (owner) label.append(switchButton(v.viewportId, owner.key, next));
         }
         shown.add(label);
@@ -356,7 +358,7 @@ function kinCreateMammographyHanging() {
     function switchButton(viewportId, key, next) {
       const button = document.createElement('button');
       button.type = 'button'; button.textContent = 'Switch';
-      button.title = '같은 위치의 다른 영상으로 바꿉니다.';
+      button.title = kinText("같은 위치의 다른 영상으로 바꿉니다.");
       button.style.cssText = 'margin-left:6px;pointer-events:auto;cursor:pointer;color:#fff;background:#101e32;border:1px solid #657c9f;padding:0 4px;font:12px sans-serif';
       // The label sits inside the viewport element; a press here must not start an image tool.
       for (const type of ['pointerdown', 'mousedown']) button.addEventListener(type, event => event.stopPropagation());
@@ -425,7 +427,7 @@ function kinCreateMammographyHanging() {
           const selected = choices ? choices[chosen] : slot?.status === 'ready' ? displaySetOf(slot.object) : null;
           selectors[key] = { seriesMatchingRules: [{ attribute: 'displaySetInstanceUID', required: true,
             constraint: { equals: { value: selected?.displaySetInstanceUID || '' } } }] };
-          const state = choices ? ' · ' + choices.length + '장 중 ' + (chosen + 1) + '장 · 재촬영' : selected ? '' :
+          const state = choices ? kinText(" · {n0}장 중 {1}장 · 재촬영", choices.length, (chosen + 1)) : selected ? '' :
             slot?.status === 'ambiguous' ? ' · Select Image' : slot?.status === 'missing' ? ' · Missing' : ' · Unverified';
           const name = (spec.role === 'current' ? 'Current' : 'Prior') + ' · ' + spec.side + ' ' + spec.view + ' · ' + labels[kind];
           return { key, name, selected: selected?.displaySetInstanceUID, label: name + state,
@@ -463,7 +465,7 @@ function kinCreateMammographyHanging() {
         panel.append(select);
       }
       missing = document.createElement('div'); missing.setAttribute('role', 'status');
-      missing.title = '같은 좌우·촬영 방향·영상 종류가 확인된 영상만 자동 배치합니다. 빈 칸은 다른 영상으로 대체하지 않습니다.';
+      missing.title = kinText("같은 좌우·촬영 방향·영상 종류가 확인된 영상만 자동 배치합니다. 빈 칸은 다른 영상으로 대체하지 않습니다.");
       panel.append(missing);
       document.querySelector('#kin-viewer-layout')?.append(panel);
     }
@@ -522,7 +524,7 @@ function kinCreateMammographyHanging() {
     services = servicesManager.services; extensions = extensionManager;
     await new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/mammography-model.js';
-      script.onload = resolve; script.onerror = () => reject(Error('유방영상 분류를 불러오지 못했습니다.')); document.head.append(script);
+      script.onload = resolve; script.onerror = () => reject(kinError("유방영상 분류를 불러오지 못했습니다.")); document.head.append(script);
     });
     const response = await fetch('/api/me', { credentials: 'same-origin' });
     const me = response.ok ? await response.json() : null;
