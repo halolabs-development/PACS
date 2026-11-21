@@ -740,8 +740,9 @@
     tag.dataset.unread = kind;
     tag.title = UNREAD.tip;
     tag.style.marginLeft = '6px';
-    tag.style.borderColor = '#d29a3a';
-    tag.style.color = '#f0c27a';
+    // The page's emphasis colour (the theme's --accent), as the selected folder and focus use it.
+    tag.style.borderColor = 'var(--accent)';
+    tag.style.color = 'var(--accent)';
     return tag;
   }
 
