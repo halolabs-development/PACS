@@ -476,7 +476,8 @@ export class PacsWorklist {
     // Reading request (pacs/reading-request.ts): the open request each own exam row shows - a request kept on an original
     // shows on the row examOpenUids opens it on, the rule the in-app unread marks use. Exam rows only; a source list has none.
     const readingRequests = exams ? await worklistReadingRequests(this.prisma, this.studyAccess, c, pageUids
-      .filter(uid => shown.get(uid)?.institutionId === me).map(uid => ({ uid, studies: examByUid.get(uid)?.studies ?? [uid] }))) : new Map();
+      .filter(uid => shown.get(uid)?.institutionId === me).map(uid => ({ uid, studies: examByUid.get(uid)?.studies ?? [uid] })),
+      uid => sourceStates.get(uid)) : new Map();
     const out: any[] = [];
     for (const st of sourceRows) {
       const uid = uidOf(st);

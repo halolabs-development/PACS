@@ -66,11 +66,8 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
   { kinds: ['study-metadata'], operation: 'write', causes: ['service-job'],
     routes: ['POST gateway/announce'] },
   { kinds: ['image'], operation: 'write', causes: ['service-job'], routes: ['POST gateway/stow/:uid'] },
-  // The clinician list rows carry each study's reading request (pacs/reading-request.ts); the timeline rows do not.
-  { kinds: ['study-metadata', 'report-head', 'assignment'], operation: 'read', causes: ['user-view', 'background-fetch'],
-    routes: ['GET clinician/studies'] },
   { kinds: ['study-metadata', 'report-head'], operation: 'read', causes: ['user-view', 'background-fetch'],
-    routes: ['GET clinician/studies/:uid/timeline'] },
+    routes: ['GET clinician/studies', 'GET clinician/studies/:uid/timeline'] },
   // D1882: an administrator's confirmed sending device or InstitutionName spelling; the held studies it now decides are
   // attached by the server's own registration (StudyState owner), never by a per-study choice.
   { kinds: ['institution', 'study-metadata'], operation: 'write', causes: ['user-view'],
@@ -141,8 +138,7 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['POST templates', 'DELETE templates/:id'] },
   { kinds: ['study-metadata', 'report-head', 'private-draft', 'order', 'received-order', 'institution', 'preferences', 'reading-template'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET bootstrap'] },
-  // Worklist rows carry the open reading request shown on them (pacs/reading-request.ts).
-  { kinds: ['study-metadata', 'report-head', 'private-draft', 'order', 'assignment'], operation: 'read', causes: ['user-view', 'background-fetch'],
+  { kinds: ['study-metadata', 'report-head', 'private-draft', 'order'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET studies'] },
   { kinds: ['study-metadata', 'study-correction', 'report-head', 'private-draft'], operation: 'write', causes: ['user-view'],
     routes: ['PATCH studies/:uid', 'DELETE studies/:uid'] },
@@ -173,8 +169,7 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
   // The forced discard also writes each discarded draft as an unsigned `discarded` ReportVersion: its own 기재.
   { kinds: ['private-draft', 'report-head', 'report-evidence', 'report-version'], operation: 'write', causes: ['user-view'],
     routes: ['DELETE studies/:uid/draft/force'] },
-  // An approval also closes the reading requests of the studies that row answers for (pacs/reading-request.ts).
-  { kinds: ['report-head', 'report-version', 'private-draft', 'report-evidence', 'assignment'], operation: 'write', causes: ['user-view'],
+  { kinds: ['report-head', 'report-version', 'private-draft', 'report-evidence'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/report/commit'] },
   { kinds: ['report-version', 'report-evidence'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET studies/:uid/report/versions', 'GET studies/:uid/report/versions/:version/citations'] },
@@ -182,7 +177,9 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET studies/:uid/report/citations', 'GET studies/:uid/report/structure', 'GET studies/:uid/report/drawings', 'GET studies/:uid/report/drawings/:id'] },
   { kinds: ['assignment'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/hold', 'POST studies/:uid/release', 'POST studies/:uid/release/force', 'POST studies/:uid/reader-assignment'] },
-  // Reading request: a clinician asks for an existing study to be read (a work-flow mark on the study, no text, no signer).
+  // Reading request: a clinician asks for an existing study to be read - a work-flow mark on the study (no text, no signer),
+  // a non-record target like a hold. The study rows that carry it (GET studies, GET clinician/studies) and the approval that
+  // closes it (POST report/commit) keep their record kinds: adding this non-record kind there would make those routes mixed.
   { kinds: ['assignment'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/reading-request'] },
   { kinds: ['assignment'], operation: 'read', causes: ['user-view', 'background-fetch'],

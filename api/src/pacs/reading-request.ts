@@ -66,32 +66,36 @@ export function readingRequestView(state: any): ReadingRequestView | null {
  * The approval of `uid` closes the open requests of the originals that row answers for - the studies `examOpenUids`
  * opens on it: every study of a merged exam on its base row, and on a split exam only the original on the row that is
  * itself (the first part; the second part's own approval closes nothing). Written in the approval's transaction, after its
- * StudyState row is locked, so a refused or rolled-back approval leaves the request open.
+ * StudyState row is locked, so a refused or rolled-back approval leaves the request open. The approved row's own request is
+ * closed by the approval's own StudyState write (`ownClose`, judged on that locked row); the other studies of a merged exam
+ * by `closeMergedReadingRequests` in the same transaction.
  */
-export async function closeReadingRequests(tx: any, uid: string, scope: Pick<ResolvedExamScope, 'kind' | 'studies'>, at: Date) {
-  const studies = scope.kind === 'split' ? scope.studies.filter(study => study === uid) : scope.studies;
-  if (!studies.length) return;
-  await tx.$executeRaw`UPDATE "StudyState" SET "readingRequestClosedAt"=${at}
-    WHERE uid = ANY(${studies}::text[]) AND "readingRequestAt" IS NOT NULL AND "readingRequestClosedAt" IS NULL`;
+export function ownReadingRequestClose(prev: any, at: Date): { readingRequestClosedAt?: Date } {
+  return readingRequestOpen(prev) ? { readingRequestClosedAt: at } : {};
+}
+export async function closeMergedReadingRequests(tx: any, uid: string, scope: Pick<ResolvedExamScope, 'kind' | 'studies'>, at: Date) {
+  const others = scope.kind === 'merge' ? scope.studies.filter(study => study !== uid) : [];
+  if (!others.length) return;
+  await tx.studyState.updateMany({ where: { uid: { in: others }, readingRequestAt: { not: null }, readingRequestClosedAt: null },
+    data: { readingRequestClosedAt: at } });
 }
 
 /**
  * The worklist rows' open requests: for each row (its uid and the originals it shows), the open request of an original of
  * the caller's own institution whose open row (`examOpenUids`) is that row. Two originals of one merged row show once: the
- * request opened first (then the lower study UID). A tele receiver never sees the owner's requests.
+ * request opened first (then the lower study UID). A tele receiver never sees the owner's requests. Judged on the StudyState
+ * rows the list itself read (`stateOf`); nothing more is read unless a row has an open request.
  */
 export async function worklistReadingRequests(prisma: PrismaService, access: StudyAccessService, c: Caller,
-  rows: { uid: string; studies: string[] }[]): Promise<Map<string, { at: string; by: string }>> {
+  rows: { uid: string; studies: string[] }[], stateOf: (uid: string) => any): Promise<Map<string, { at: string; by: string }>> {
   const out = new Map<string, { at: string; by: string }>();
-  const candidates = [...new Set(rows.flatMap(row => row.studies))];
-  if (!candidates.length || typeof c.institution !== 'string' || !c.institution) return out;
-  const open: any[] = await prisma.$queryRaw`SELECT uid, "readingRequestAt", "readingRequestBy", "readingRequestByName"
-    FROM "StudyState" WHERE uid = ANY(${candidates}::text[]) AND "institutionId" = ${c.institution}
-      AND "readingRequestAt" IS NOT NULL AND "readingRequestClosedAt" IS NULL`;
+  if (typeof c.institution !== 'string' || !c.institution) return out;
+  const open: any[] = [...new Set(rows.flatMap(row => row.studies))].map(uid => stateOf(uid))
+    .filter(state => state && state.institutionId === c.institution && readingRequestOpen(state));
   if (!open.length) return out;
   const target = await examOpenUids(prisma, prisma, access, c, open.map(row => row.uid));
   const listed = new Set(rows.map(row => row.uid));
-  const ordered = open.map(row => ({ row, at: iso(row.readingRequestAt)! }))
+  const ordered = open.map(row => ({ row, at: iso(row.readingRequestAt) })).filter((e): e is { row: any; at: string } => e.at !== null)
     .sort((a, b) => a.at.localeCompare(b.at) || (a.row.uid < b.row.uid ? -1 : a.row.uid > b.row.uid ? 1 : 0));
   for (const { row, at } of ordered) {
     const on = target.get(row.uid);
@@ -103,11 +107,13 @@ export async function worklistReadingRequests(prisma: PrismaService, access: Stu
 /**
  * The clinician list rows' requests: the row's own latest request (shown only while the study opens on a row now) and
  * whether this caller may ask now (an own-institution study, its open row neither approved nor destroyed, no open request).
- * `states` are the rows' StudyState fields read with the list (uid, institutionId, rs and the five request fields).
+ * `uids` are the listed studies (the clinician list's own selection); their request fields are read here.
  */
-export async function clinicianReadingRequests(prisma: PrismaService, access: StudyAccessService, c: Caller, states: any[]) {
+export async function clinicianReadingRequests(prisma: PrismaService, access: StudyAccessService, c: Caller, uids: string[]) {
   const out = new Map<string, { readingRequest: ReadingRequestView | null; readingRequestable: boolean }>();
-  if (!states.length) return out;
+  if (!uids.length) return out;
+  const states: any[] = await prisma.studyState.findMany({ where: { uid: { in: uids } }, select: { uid: true, institutionId: true,
+    rs: true, readingRequestAt: true, readingRequestBy: true, readingRequestByName: true, readingRequestClosedAt: true } });
   const target = await examOpenUids(prisma, prisma, access, c, states.map(state => state.uid));
   const byUid = new Map(states.map(state => [state.uid, state]));
   const others = [...new Set([...target.values()].filter(uid => !byUid.has(uid)))];

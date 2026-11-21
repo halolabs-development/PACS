@@ -74,7 +74,9 @@ const CONTRACT = {
  * image request record (the S5-U4c merge), is the same kind of owner-only study-scoped row and takes the same row, and
  * so does `study.critical-result`, the S7-U1a critical result delivery record (contract S7-U1p section 11.2: owner-only,
  * never the Members console; the admin is no actor of a delivery). */
-CONTRACT.hidden_study_scoped_owner_only = ["study.question", "study.image-request", "study.critical-result"];
+/* The reading request record (`study.reading-request`, api/src/pacs/reading-request.ts) is the same kind of owner-only
+ * study-scoped row (its detail names the creating institution) and takes the same row. */
+CONTRACT.hidden_study_scoped_owner_only = ["study.question", "study.image-request", "study.critical-result", "study.reading-request"];
 CONTRACT.synthetic_vectors.push({"row":31,"action":"study.question","rule":"hidden:study_scoped_owner_only","record_time_visible_to":[],"withheld_sides":{},"note":"clinician question naming its institution: study-scoped owner-only audit, never the Members console"});
 /* S7-U5 (TEST-S7-U5-ATTRIBUTION AT-01..AT-02, D7): the access-record rows auth.login, auth.logout and auth.session.expired
  * are attributed to the institution they recorded at the event - the token's one group then (the verified token at login,

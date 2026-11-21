@@ -60,8 +60,7 @@ export class PacsClinician {
     const { body: list, identities, institutions } = await this.worklist.selectStudies(c, query, 'source');
     const uids: string[] = list.studies.map((row: any) => row.uid);
     const current = !uids.length ? [] : await this.prisma.$queryRaw<any[]>`
-      SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm, s."readingRequestAt", s."readingRequestBy",
-        s."readingRequestByName", s."readingRequestClosedAt",
+      SELECT s.uid, s."institutionId", s."teleInstitutionId", s.rs, s."repDoc", s.confirm,
         COALESCE(r.version, 0) AS version, v.action, r.findings, r.conclusion, r.recommendation, r."groupId", r."updatedBy", r."updatedBySub"
       FROM "StudyState" s
       LEFT JOIN "Report" r ON r.uid = s.uid
@@ -75,8 +74,8 @@ export class PacsClinician {
     // Merge Exam: a study reported as one exam with others says so (the exam's studies and whether it is merged now).
     for (const row of body.studies as any[]) { const exam = exams.get(row.uid); if (exam) row.exam = exam; }
     // Reading request (pacs/reading-request.ts): the study's latest request and whether this caller may ask now, judged on the
-    // row the study opens on (the openUid rule). Read from the same snapshot rows as the report state.
-    const requests = await clinicianReadingRequests(this.prisma, this.studyAccess, c, current);
+    // row the study opens on (the openUid rule). Its own read: the request is not part of the report state the list pins.
+    const requests = await clinicianReadingRequests(this.prisma, this.studyAccess, c, uids);
     for (const row of body.studies as any[]) Object.assign(row, requests.get(row.uid) ?? { readingRequest: null, readingRequestable: false });
     await this.markUnavailable(c, body.studies as any[]);
     return new LocalReadResponse(body, [
