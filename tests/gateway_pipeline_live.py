@@ -70,9 +70,9 @@ AGENT_ENV = {
 # Contract section 5 with A1 (B 290 -> 320, R 205 -> 235); their sum plus a 45 s teardown margin is the suite cap. Block G
 # waits for the settings read (60 s) and the independent forward retry (90 s).
 DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360}
-# After Block G (not a block: no scenario ID): the DICOM receive self-check through one pause of the hospital Orthanc
-# (three 30 s beats, each C-ECHO bounded by 5 s) and one admin Operations read.
-LISTENER_CHECK_SECONDS = 150
+# After Block G (not a block: no scenario ID): the DICOM receive self-check over two 30 s beats (each C-ECHO bounded by
+# 5 s) and one admin Operations read.
+LISTENER_CHECK_SECONDS = 75
 # Block G's hospital PACS: a second Orthanc of the same image on the Gateway's own networks, labelled into the Gateway
 # project so its residue is the project's. The Gateway reaches it by an alias on the local network only, so detaching
 # that network is a destination that is down.
@@ -438,11 +438,12 @@ class GatewayPipelineLive(unittest.TestCase):
         return recent[0] if recent else None
 
     def receive_check_and_server_status(self, admin):
-        """After Block G, on the same stack: the DICOM receive self-check against the real hospital Orthanc, and the
-        admin Operations answer (Server Status and this institution's storage) against the real KIN services.
+        """After Block G, on the same stack: the DICOM receive self-check against the real hospital Orthanc (Accepted:
+        the agent's own C-ECHO was accepted by Orthanc's DICOM listener), and the admin Operations answer (Server Status
+        and this institution's storage) against the real KIN services.
 
-        The self-check reads Accepted, then No Answer once the hospital Orthanc is paused (its REST API and its DICOM port
-        both stop; the beat itself still reaches KIN), then Accepted again after it resumes, each with a newer check time.
+        The No Answer side is not run here: pausing the hospital Orthanc also fails the agent's main-loop reads
+        (agent.retry), which X-2 rightly forbids over the whole run. The agent cases cover it against real sockets.
         """
         deadline = time.monotonic() + LISTENER_CHECK_SECONDS
         record = {}
@@ -479,16 +480,9 @@ class GatewayPipelineLive(unittest.TestCase):
         record['storage'] = {'owned': len(owned), 'expected': expected, 'row': storage}
         self.assertTrue(owned and expected > 0, 'the institution owns the studies this suite sent')
         self.assertEqual((storage['state'], storage['value']), ('observed', expected))
-        # The hospital Orthanc stops answering: the next check says so; it comes back after it resumes.
-        self.docker('pause', self.gw_orthanc)
-        try:
-            down = self.until('DICOM listener No Answer while paused', deadline,
-                              newer('no_answer', record['accepted']['observedAt']))
-            record['paused'] = down['dicomListener']
-        finally:
-            self.docker('unpause', self.gw_orthanc)
-        back = self.until('DICOM listener Accepted after resume', deadline, newer('accepted', record['paused']['observedAt']))
-        record['resumed'] = back['dicomListener']
+        # A later beat checks again: a newer Accepted, never the first result carried over.
+        again = self.until('DICOM listener checked again', deadline, newer('accepted', record['accepted']['observedAt']))
+        record['again'] = again['dicomListener']
         self.write_artifact('receive-check.json', record)
 
     def cloud_instances(self, uid):

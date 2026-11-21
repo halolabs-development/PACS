@@ -606,11 +606,11 @@ PROFILES = {
         'project_prefix': 'kin-gateway-e2e-ci-',
         # S4-EG1, dispatch only (.github/workflows/gateway-e2e.yml): the real Gateway agent and hospital Orthanc in their
         # own Compose project against this stack, six fixed methods. The cap is the contract's segment deadlines after A1
-        # (backoff 90/90), Block G (Gateway settings, 360s) and the DICOM receive self-check after it (150s) plus a teardown
-        # margin: (1770+35) = 1805s leaves 205s of its 2010s deadline for a stack whose recorded hosted setup and cleanup took
+        # (backoff 90/90), Block G (Gateway settings, 360s) and the DICOM receive self-check after it (75s) plus a teardown
+        # margin: (1695+35) = 1730s leaves 205s of its 1935s deadline for a stack whose recorded hosted setup and cleanup took
         # about 80s. A ceiling, not an estimate.
-        'suite_timeout': 1770,
-        'deadline_seconds': 2010,
+        'suite_timeout': 1695,
+        'deadline_seconds': 1935,
         'suites': (('gateway_pipeline_live.py', 'GatewayPipelineLive', 'ci-eg1-gateway'),),
     },
     'critical-result-screens': {
