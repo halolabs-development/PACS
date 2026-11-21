@@ -276,7 +276,7 @@
         // A merged or split exam whose originals cannot all be read now is not shown as an ordinary row.
         if(lost?.kind){const badge=el('span',{className:'exam-merged exam-merged-unavailable',text:kinSay(lost.kind==='split'?'Split · original unavailable':'Merged · original unavailable'),'data-kin-keep':'title'});
           // The reason in the list's language (English only; otherwise as written).
-          kinWrite(badge,window.KinLanguage?.sayEnglish?window.KinLanguage.sayEnglish(lost.message):lost.message,'title');
+          kinWrite(badge,window.KinLanguage?.sayEnglish?window.KinLanguage.sayEnglish(lost.words):lost.words,'title');
           cell.append(' ',badge);continue;}
         const scope=scopes.read(row);if(!scope?.groupId)continue;
         const label=scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:`Merged ×${scope.sources.length} · ${count(row.count)} img`;

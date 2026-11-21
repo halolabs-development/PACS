@@ -1122,6 +1122,24 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.pick(1)
         expect(self.page.locator("#exam-note")).to_be_hidden()
 
+    def test_b14_on_an_english_page_the_reason_an_exam_cannot_be_read_whole_reads_in_english(self):
+        """The same row on a page that follows the English chosen on the work page: the row's reason, the picked study's
+        note and the refused opening read in English."""
+        self.fresh_context("localStorage.setItem('kin-language:v1', JSON.stringify("
+                           "{version: 1, worklist: 'en', reading: 'en', session: 'SYN-SESSION-SYN-CLIN-SUB'}))")
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(7)].update(examUnavailable=True, examUnavailableKind="merge")
+        merge = ("Some originals of this merged exam cannot be read, so it is not opened or preloaded. An original is missing "
+                 "from the image archive or this account cannot see it. Refresh the list.")
+        self.open_home()
+        expect(self.row(7).locator("td[data-report] [data-unavailable]")).to_have_attribute("title", merge)
+        self.pick(7, "status")
+        expect(self.page.locator("#exam-note")).to_contain_text(merge)
+        self.page.evaluate("() => { window.synOpened = []; window.open = (...args) => { window.synOpened.push(args); return null; }; }")
+        self.page.locator("#open-viewer").click()
+        expect(self.page.locator("#viewer-note")).to_have_text(merge)
+        self.assertEqual([], self.page.evaluate("window.synOpened"))
+
     def test_b14_a_stored_version_says_which_one_and_leaves_the_row_alone(self):
         """F35 / B14 (Astra's design answer): a stored version read from the Exam Reports buttons shows that version and says
         so; the row keeps the state of its own latest read (it is not that version)."""

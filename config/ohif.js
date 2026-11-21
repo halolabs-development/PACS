@@ -147,7 +147,10 @@
   function unavailable(row) {
     if(row?.examUnavailable!==true)return null;
     const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
-    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
+    // message: the words in the language of the screen last written (its readers write it as it is); words: as written,
+    // for the list's badge, which writes them in the list's language.
+    const words=kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.';
+    return {kind,words,message:kinText(words)};
   }
   // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
   // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
@@ -166,7 +169,7 @@
   }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
     const lost=unavailable(current)||unavailable(prior);
-    if(lost)throw kinError(lost.message);
+    if(lost)throw kinError(lost.words);
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw kinError('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw kinError('원본 검사 UID를 확인할 수 없습니다.');

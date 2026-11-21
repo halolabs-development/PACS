@@ -68,6 +68,14 @@ class LanguageSite(WorkspaceSite):
         self.filters = []
         self.clinical_fixture = None
         self.planter = None  # language_data_probe.Planter: answers carry planted data
+        self.lost = {}  # uid -> exam kind: the list server's mark for an exam whose originals cannot all be read now
+
+    def list_body(self, account, rename=None):
+        body = super().list_body(account, rename)
+        for row in body["studies"]:
+            if row["uid"] in self.lost:
+                row.update(examUnavailable=True, examUnavailableKind=self.lost[row["uid"]])
+        return body
 
     def api(self, route, request, method, path, query):
         if self.planter is not None and path != "/api/reading-appearance":
@@ -250,6 +258,28 @@ class WorklistLanguageDOM(unittest.TestCase):
                     expect(guidance).to_contain_text(words[lang])
                     page.locator("#tech-note-close").click()
                     expect(page.locator("#tech-note-dialog")).to_be_hidden()
+
+    def test_the_reason_an_exam_cannot_be_read_whole_reads_in_the_language_of_its_screen(self):
+        """A merged exam whose originals cannot all be read now: the list's badge (Technician) gives its reason in the list's
+        language, also when the reading screen in English was the last touched."""
+        self.site.second_study, self.site.lost = True, {auth.UID_B: "merge"}
+        self.boot()
+        page = self.page
+        ko = re.compile("^합친 검사의 원본 일부를 볼 수 없어")
+        en = "Some originals of this merged exam cannot be read, so it is not opened or preloaded. An original is missing from the image archive or this account cannot see it. Refresh the list."
+        self.apply("en")
+        page.locator('[data-tab="Technician"]').click()
+        badge = page.locator(f"#rows tr[data-uid='{auth.UID_B}'] td.acc .exam-merged-unavailable")
+        expect(badge).to_have_attribute("title", en)
+        # A Korean list beside an English reading screen: the badge stays Korean after the reading screen was touched and the
+        # list painted again.
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'en'})")
+        expect(badge).to_have_attribute("title", ko)
+        badge.evaluate("b => { b.dataset.synPainted = 'before'; }")
+        page.locator("#b-approve").dispatch_event("pointerdown")
+        page.locator("#m-refresh").dispatch_event("click")
+        expect(badge).not_to_have_attribute("data-syn-painted", "before")
+        expect(badge).to_have_attribute("title", ko)
 
     def test_a_known_server_sentence_in_an_error_place_follows_the_screen_and_another_stays_as_written(self):
         """History's error place: a server message that is a known sentence of the glossary reads in English on an English
