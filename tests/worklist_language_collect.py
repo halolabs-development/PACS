@@ -9,6 +9,7 @@ code chose (every value a literal), `{e0}` an error message.
 """
 from __future__ import annotations
 
+import collections
 import html
 import json
 import os
@@ -34,6 +35,8 @@ class Piece:
     file: str
     line: int
     kind: str  # html | js-ko | js-en | css | server
+    through: bool = True  # (scripts) reaches the screen through the screen-language write path
+    reads: bool = False   # (scripts) words the code reads back (compared, matched, a key, a log line), not writes
 
 
 def normalize(text: str) -> str:
@@ -140,9 +143,9 @@ def collect_js(names=None) -> list[Piece]:
         for text in pieces_of(lit["value"], lit["kinds"]):
             if not meaningful(text): continue
             if HANGUL.search(SLOT.sub("", text)):
-                found.append(Piece(text, lit["file"], lit["line"], "js-ko"))
+                found.append(Piece(text, lit["file"], lit["line"], "js-ko", lit.get("through", True), lit.get("reads", False)))
             elif english_label(text, lit["ui"], has_tags):
-                found.append(Piece(text, lit["file"], lit["line"], "js-en"))
+                found.append(Piece(text, lit["file"], lit["line"], "js-en", lit.get("through", True), lit.get("reads", False)))
     return found
 
 
@@ -223,14 +226,27 @@ def collect() -> list[Piece]:
 PAGES = ("clinician.html", "admin.html", "audit.html", "index.html")
 
 
+# The screen language itself (glossary, translator, the viewer mark) is shared into config/ohif.js but holds no viewer words.
+LANGUAGE = {"viewer-language.js", "worklist-language-terms.js", "worklist-language.js"}
+
+
 def viewer_scripts() -> list[Path]:
+    """config/ohif's sources and shared files, and every page script the viewer loads, followed through the scripts that
+    load further ones (a quoted file name of worklist-v0/hpacs-lite in viewer code)."""
     order = json.loads((ROOT / "config/ohif/source-order.json").read_text(encoding="utf-8"))
-    files = [ROOT / "config/ohif" / name for name in order["sources"]] + [ROOT / name for name in order.get("shared", [])]
-    names = set()
-    for source in sorted((ROOT / "config/ohif").glob("*.js")):
-        text = source.read_text(encoding="utf-8")
-        names |= set(re.findall(r"/worklist/hpacs-lite/([\w.-]+\.js)", text)) | set(re.findall(r"'(viewer-[\w.-]+\.js)'", text))
-    return files + [PAGE_DIR / name for name in sorted(names) if (PAGE_DIR / name).exists()]
+    files = [ROOT / "config/ohif" / name for name in order["sources"]]
+    files += [ROOT / name for name in order.get("shared", []) if Path(name).name not in LANGUAGE]
+    seen = {p.name for p in files if p.parent == PAGE_DIR}
+    queue = list(files)
+    loaded = []
+    while queue:
+        text = queue.pop(0).read_text(encoding="utf-8")
+        for name in sorted(set(re.findall(r"""['"`/]([\w.-]+\.js)['"`]""", text))):
+            if name in seen or name in LANGUAGE or not (PAGE_DIR / name).exists(): continue
+            seen.add(name)
+            loaded.append(PAGE_DIR / name)
+            queue.append(PAGE_DIR / name)
+    return files + sorted(loaded)
 
 
 def collect_document(name: str, tmp) -> list[Piece]:
@@ -255,6 +271,12 @@ def missing_by_document(known: set, css: set) -> dict:
             out[name] = {"words": len(distinct), "need": len(needs),
                          "missing": sorted(f"{p.file}:{p.line} [{p.kind}] {t}" for t, p in needs.items()
                                            if t not in known and not (p.kind == "css" and t in css))}
+            if name == "viewer":
+                # The viewer has no page markup of ours: a Korean word reaches the screen only through the write path
+                # (kinText / kinHtml / kinError, kinSay / kinWrite). Per file, the Korean writes that do not go through it.
+                unwritten = collections.Counter(p.file for p in pieces
+                                                if p.kind == "js-ko" and not p.through and not p.reads)
+                out[name]["unwritten"] = dict(sorted(unwritten.items(), key=lambda kv: (-kv[1], kv[0])))
     return out
 
 
@@ -270,7 +292,10 @@ if __name__ == "__main__":
         for name, row in result.items():
             print(f"{name}: {row['words']} words, {row['need']} need an entry, {len(row['missing'])} without one")
             for line in row["missing"]: print("  " + line)
-        sys.exit(1 if any(row["missing"] for row in result.values()) else 0)
+            if "unwritten" in row:
+                print(f"{name}: {sum(row['unwritten'].values())} Korean writes outside the write path, in {len(row['unwritten'])} files")
+                for file, count in row["unwritten"].items(): print(f"  {file}: {count}")
+        sys.exit(1 if any(row["missing"] or row.get("unwritten") for row in result.values()) else 0)
     ps = collect()
     by = collections.Counter(p.kind for p in ps)
     distinct = {}
