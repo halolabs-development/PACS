@@ -1360,13 +1360,16 @@ class StudyPanelPageDOM(unittest.TestCase):
         # the band at its 140 px minimum, so the pilot's 900x1200 is used here.)
         self.page.set_viewport_size(dict(width=900,height=1200))
         # Wait for the tall, stacked layout's visible geometry, including its
-        # resize-driven reflow, before comparing a keyboard resize with it.
+        # resize-driven reflow, before comparing a keyboard resize with it. The
+        # narrow sheet's band (840 px) already holds its open panels, 140 px and
+        # more, so its end is part of the wait.
         self.page.wait_for_function("""() => {
             const panel = document.querySelector('.rw').getBoundingClientRect();
             const left = document.querySelector('.left').getBoundingClientRect();
             const right = document.querySelector('.right').getBoundingClientRect();
-            return panel.height >= 140 && right.top >= left.bottom;
+            return !document.body.classList.contains('workspace-narrow') && panel.height >= 140 && right.top >= left.bottom;
         }""")
+        settle(self.page)
         before = self.page.locator('.rw').bounding_box()['height']
         self.page.locator('#resize-top').focus()
         self.page.keyboard.press('ArrowUp')

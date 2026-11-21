@@ -382,6 +382,66 @@ class HeldCaptureTests(unittest.TestCase):
         self.assertEqual(len(restores), 2)
         self.assertTrue(all("--create" in command and "--no-owner" not in command and "--no-privileges" not in command for command in restores))
 
+    def test_14_a_held_capture_that_lost_or_changed_a_component_of_its_own_starts_no_restore(self):
+        """A held capture rehearsed through ops.rehearse is admitted by its own component table: its values, catalog
+        and configuration components are checked before any volume or container exists, like its dumps."""
+        host = FakeHost(self.folder)
+        directory = host.capture()
+        for name, changed in (("values.json", None), ("catalog.json", b"{}"), ("docker-compose.monitor.yml", None)):
+            path = directory / name
+            original = path.read_bytes()
+            if changed is None:
+                path.unlink()
+            else:
+                path.write_bytes(changed)
+            host.commands.clear()
+            with self.subTest(component=name), host.bound(), patch.object(ops, "remove_owned_if_present"):
+                with self.assertRaises(RuntimeError) as refused:
+                    ops.rehearse(directory)
+                self.assertEqual(str(refused.exception), "Backup component checksum mismatch: " + name)
+                self.assertEqual(host.commands, [], "no volume, no container, no restore")
+                self.assertEqual(list(directory.glob("rehearsal-*.json")), [])
+            path.write_bytes(original)
+        # The configuration list shortened while the manifest still records the component it named, and that file gone:
+        # the manifest's own list no longer is the capture's table.
+        written = (directory / "manifest.json").read_bytes()
+        configuration = (directory / "docker-compose.monitor.yml").read_bytes()
+        (directory / "manifest.json").write_text(json.dumps({**json.loads(written), "config": []}))
+        (directory / "docker-compose.monitor.yml").unlink()
+        host.commands.clear()
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            for opening in (ops.rehearse, lambda path: ops.opened_set(path).__enter__()):
+                with self.assertRaisesRegex(ops.StoredSetError, "Backup component inventory differs"):
+                    opening(directory)
+        self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
+        # The same when its name is left in the sizes only.
+        partly = json.loads(written)
+        partly["config"] = []
+        partly["sha256"].pop("docker-compose.monitor.yml")
+        (directory / "manifest.json").write_text(json.dumps(partly))
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            with self.assertRaisesRegex(ops.StoredSetError, "Backup component inventory differs"):
+                ops.rehearse(directory)
+        self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
+        (directory / "manifest.json").write_bytes(written)
+        (directory / "docker-compose.monitor.yml").write_bytes(configuration)
+        with host.bound(), patch.object(ops, "remove_owned_if_present"):
+            ops.rehearse(directory)
+        (record,) = directory.glob("rehearsal-*.json")
+        self.assertTrue(json.loads(record.read_text())["success"])
+        # A post-EMR capture attests one pause by its shape: without the entry that says so it starts no restore.
+        host = FakeHost(tempfile.mkdtemp(dir=self.folder), shape="post")
+        directory = host.capture(label="emr-b1")
+        manifest = json.loads((directory / "manifest.json").read_text())
+        for changed in ({name: value for name, value in manifest.items() if name != "emr"},
+                        {**manifest, "emr": {**manifest["emr"], "same_pause": False}}):
+            (directory / "manifest.json").write_text(json.dumps(changed))
+            host.commands.clear()
+            with host.bound(), patch.object(ops, "remove_owned_if_present"):
+                with self.assertRaisesRegex(ops.StoredSetError, "was not paused together"):
+                    ops.rehearse(directory)
+            self.assertEqual((host.commands, list(directory.glob("rehearsal-*.json"))), ([], []))
+
     def test_13_a_restore_whose_row_values_differ_is_refused_with_equal_counts(self):
         """IRT2-24: the held restore check compares every table's value digest of both databases (any schema) with the
         capture's values.json: a changed Keycloak value, a changed row of the kin database, or a table of another schema

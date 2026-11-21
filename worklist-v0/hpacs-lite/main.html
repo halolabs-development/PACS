@@ -1543,7 +1543,24 @@
     /* ── S7-U3b 끝 ── */
     /* The drawer is explicit, so neither it nor the closed Folders rail takes
        worklist width on first paint. A narrow window keeps a scrollable sheet. */
-    body.workspace-narrow .rw { height: 48px !important; min-height: 48px; overflow: auto; }
+    body.workspace-narrow .rw { min-height: 48px; overflow: auto; }
+    /* The narrow sheet's band (601-899 px wide; at 600 px and less the panels stack at their own heights): its panel
+       row is the band's own floor (140 px, the least a reader can drag it to), each panel scrolling past that, plus the
+       folded names and AI Report tab rows as they are. The open Clinical Information keeps its button row and the
+       first lines of its text. The panel row does not follow what the panels hold, so the Study Panel drawer borrowing
+       them leaves it in place; the rows above it are held at the height they had when the drawer opened
+       (--kin-narrow-band-held, feature-mounts.js, dropped once the window leaves the sheet). The band's handle is not
+       offered here and a stored band height is kept for a wider window. The Reading Workspace's band keeps its own
+       height (reading-workspace.css). */
+    @media (min-width: 601px) {
+      body.workspace-narrow:not(.reading) .right > .rw { height: var(--kin-narrow-band-held, auto) !important; }
+      body.workspace-narrow:not(.reading):not(.kin-report-window-folded):not(.kin-report-window-tabs) .right > .rw { grid-template-rows: 140px; }
+      body.workspace-narrow:not(.reading):not(.kin-report-window-folded):not(.kin-report-window-tabs):is(.kin-report-window-strip, .kin-report-window-folds) .right > .rw { grid-template-rows: auto 140px; }
+      body.workspace-narrow:not(.reading):not(.kin-report-window-folded):not(.kin-report-window-tabs).kin-report-window-strip.kin-report-window-folds .right > .rw { grid-template-rows: auto auto 140px; }
+      body.workspace-narrow:not(.reading) .right > .rw > section { min-height: 0; overflow: auto; }
+      body.workspace-narrow:not(.reading) .right > .rw > .s-clinical > .clin-pair { min-height: 4.5em; }
+      body.workspace-narrow:not(.reading) #resize-top { display: none !important; }
+    }
     body.workspace-narrow .left { height: 180px !important; }
     /* A list column whose controls leave the list less than its header and one
        whole row keeps that floor (feature-mounts.js) and scrolls vertically. The

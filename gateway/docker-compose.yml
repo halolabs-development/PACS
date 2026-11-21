@@ -37,6 +37,12 @@ services:
       STOW_TIMEOUT_SECONDS: ${GW_STOW_TIMEOUT_SECONDS:-300}
       BACKOFF_BASE_SECONDS: ${GW_BACKOFF_BASE_SECONDS:-5}
       BACKOFF_MAX_SECONDS: ${GW_BACKOFF_MAX_SECONDS:-300}
+      # Signed updates: the public keys this host trusts (base64 Ed25519, comma separated; empty = no update installs).
+      GW_UPDATE_KEYS: ${GW_UPDATE_KEYS:-}
+      # Remote support (diagnostics, restart, update) over the agent's own outbound calls; off = every request refused.
+      GW_REMOTE_SUPPORT: ${GW_REMOTE_SUPPORT:-on}
+    # An update or a remote restart lets the agent finish the pass it is in (a STOW may take STOW_TIMEOUT_SECONDS).
+    stop_grace_period: 6m
     depends_on:
       - gw-orthanc
     volumes:

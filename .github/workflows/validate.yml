@@ -66,6 +66,14 @@ jobs:
       # Every live step and loop class has its own KIN_LIVE_ENVIRONMENT, so a failed run's inspection marker
       # never refuses the next one (tests/live_test_gate.py); later steps still run after a failure, and the
       # job fails if any of them did. The auth (265) and draft (52) suites run once, in the runtime job.
+      - name: Pinned age for encrypted daily backups
+        run: |
+          umask 077
+          age_dir=$(mktemp -d "$RUNNER_TEMP/kin-backup-age.XXXXXXXX")
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o "$age_dir/age.tar.gz"
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $age_dir/age.tar.gz" | sha256sum --check --strict
+          tar -xzf "$age_dir/age.tar.gz" -C "$age_dir" age/age age/age-keygen
+          echo "KIN_TEST_AGE=$age_dir/age/age" >> "$GITHUB_ENV"
       - name: Existing candidate selectors on the PG implementation
         timeout-minutes: 15
         env:
@@ -288,6 +296,14 @@ jobs:
       run: python3 -B tests/ops_audit_integrity_test.py AuditIntegrityPure.test_pv04_init_only_and_integrity_events_are_reported_not_failed AuditIntegrityPure.test_pv11_ledger_writers_need_no_write_beside_the_tool_and_still_take_turns AuditIntegrityPure.test_pv04_retention_expected_list_comes_from_the_ledger AuditIntegrityPure.test_pv06_calendar_retention_and_plan_years AuditIntegrityPure.test_pv12_a_retention_plan_never_lands_inside_a_rotations_deletion
     - name: Ops size and host lease behavior
       run: python3 -B tests/caution_ops_test.py
+    - name: Pinned age for encrypted daily backups
+      run: |
+        umask 077
+        age_dir=$(mktemp -d "$RUNNER_TEMP/kin-backup-age.XXXXXXXX")
+        curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o "$age_dir/age.tar.gz"
+        echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $age_dir/age.tar.gz" | sha256sum --check --strict
+        tar -xzf "$age_dir/age.tar.gz" -C "$age_dir" age/age age/age-keygen
+        echo "KIN_TEST_AGE=$age_dir/age/age" >> "$GITHUB_ENV"
     - name: Backup safety regressions
       run: python3 scripts/record-run.py --run-dir tmp/runtime-ci/backup-safety --cwd . --file scripts/ops_backup.py --file scripts/ops_audit_integrity.py --file scripts/ops_monitor.py --file tests/ops_audit_integrity_test.py --file tests/ops_backup_test.py -- python3 tests/ops_backup_test.py
     - name: D-MEASURE2 session recovery and SR guard regressions (no containers)
@@ -1706,6 +1722,9 @@ jobs:
     - name: Gateway settings (routing rules, kept copies, lossless compression) form, revision, audit and the Gateway's read
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-settings-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_settings_server_test.cjs -- node --test tests/gateway_settings_server_test.cjs
+    - name: Gateway remote support requests, line binding, audit before publish, result states, closed diagnostics report and held update versions
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-support-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_support_server_test.cjs -- node --test tests/gateway_support_server_test.cjs
     - name: Screen language in the account appearance (version 12 form, other display choices kept, an older client cannot erase it)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/worklist-language-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/worklist_language_service_test.cjs -- node --test tests/worklist_language_service_test.cjs
@@ -2624,6 +2643,15 @@ jobs:
         if missing or failed or malformed:
             raise SystemExit("rehearsal incomplete: " + json.dumps(summary))
         PY
+    - name: Pinned age for encrypted daily backups
+      if: ${{ always() && !github.event.pull_request.draft }}
+      run: |
+        umask 077
+        age_dir=$(mktemp -d "$RUNNER_TEMP/kin-backup-age.XXXXXXXX")
+        curl --fail --location --proto '=https' --tlsv1.2 --retry 2 --max-time 60 https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz -o "$age_dir/age.tar.gz"
+        echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $age_dir/age.tar.gz" | sha256sum --check --strict
+        tar -xzf "$age_dir/age.tar.gz" -C "$age_dir" age/age age/age-keygen
+        echo "KIN_TEST_AGE=$age_dir/age/age" >> "$GITHUB_ENV"
     - name: EMR-B provision, installer migration, runtime and same-point backup restore
       if: ${{ always() && !github.event.pull_request.draft }}
       run: |

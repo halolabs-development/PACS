@@ -3,9 +3,11 @@
 import json, math, re, sys, time, unittest, uuid
 from pathlib import Path
 import numpy as np
-from pydicom.dataset import FileDataset, FileMetaDataset
+from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+from pydicom.sequence import Sequence
 from pydicom.uid import (ComputedRadiographyImageStorage, DigitalXRayImageStorageForPresentation, ExplicitVRLittleEndian,
-                         XRayAngiographicImageStorage, XRayRadiofluoroscopicImageStorage, generate_uid)
+                         UltrasoundImageStorage, UltrasoundMultiFrameImageStorage, XRayAngiographicImageStorage,
+                         XRayRadiofluoroscopicImageStorage, generate_uid)
 from pynetdicom import AE
 from invariants_live import Fixture
 from test_measurement_panel import MeasurementPanelE2E, expect
@@ -132,6 +134,96 @@ def synthetic_projection(stack, patient, label, date, modality, sop_class, tags,
     if stack.request("PATCH", "/studies/" + uid, "jmryu", {"ss": "Verified"}).status != 200:
         raise RuntimeError("Synthetic projection verification failed")
     return fixture
+
+US_LEFT, US_RIGHT = (.02, .03), (.05, .04)  # PhysicalDeltaX, PhysicalDeltaY in cm of the two regions below.
+US_BASIS = 'US Region Calibration'
+US_OUTSIDE = '초음파 보정 영역 안에서만 mm로 잴 수 있습니다'
+
+
+def us_region(x0, x1, delta):
+    """A 2D tissue Region Calibration (DICOM PS3.3 C.8.5.5) over columns x0..x1 of all 256 rows, in cm; no deltas if None."""
+    region = Dataset()
+    region.RegionSpatialFormat, region.RegionDataType, region.RegionFlags = 1, 1, 0
+    region.RegionLocationMinX0, region.RegionLocationMinY0, region.RegionLocationMaxX1, region.RegionLocationMaxY1 = x0, 0, x1, 255
+    region.PhysicalUnitsXDirection = region.PhysicalUnitsYDirection = 3
+    if delta is not None:
+        region.PhysicalDeltaX, region.PhysicalDeltaY = delta
+    return region
+
+
+def synthetic_us(stack, patient, label, date, regions, frames=1):
+    """An ultrasound image as devices send it: no PixelSpacing, position or orientation, a Sequence of Ultrasound Regions.
+    Synthetic tags and pixels, not a device file; frames > 1 is an Ultrasound Multi-frame image (a cine)."""
+    sop_class = UltrasoundMultiFrameImageStorage if frames > 1 else UltrasoundImageStorage
+    uid, series, sop = generate_uid(), generate_uid(), generate_uid()
+    fixture = Fixture(uid, patient, "한림병원", "jmryu", "US-SYNTHETIC-" + label)
+    stack.active[uid] = fixture
+    ae = AE(ae_title="HALLYM_CT")
+    ae.add_requested_context(sop_class, ExplicitVRLittleEndian)
+    assoc = ae.associate("127.0.0.1", 4242, ae_title="KINLAB")
+    if not assoc.is_established:
+        raise RuntimeError("Local synthetic US association failed")
+    try:
+        meta = FileMetaDataset()
+        meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        meta.MediaStorageSOPClassUID = sop_class
+        meta.MediaStorageSOPInstanceUID = sop
+        meta.ImplementationClassUID = generate_uid()
+        ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+        ds.is_little_endian, ds.is_implicit_VR = True, False
+        ds.SOPClassUID, ds.SOPInstanceUID = sop_class, sop
+        ds.SpecificCharacterSet = "ISO_IR 192"
+        ds.PatientName, ds.PatientID = "US^SYNTHETIC", patient
+        ds.PatientBirthDate, ds.PatientSex, ds.InstitutionName = "", "O", "한림병원"
+        ds.StudyInstanceUID, ds.SeriesInstanceUID = uid, series
+        ds.StudyDate = ds.SeriesDate = date
+        ds.StudyTime = ds.SeriesTime = "120000"
+        ds.AccessionNumber, ds.StudyID = "US" + label[:14], "US"
+        ds.StudyDescription = ds.SeriesDescription = "US " + label
+        ds.Modality, ds.BodyPartExamined, ds.SeriesNumber, ds.InstanceNumber = "US", "ABDOMEN", 1, 1
+        ds.ImageType = ["ORIGINAL", "PRIMARY"]
+        ds.Rows, ds.Columns = 256, 320
+        ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+        ds.BitsAllocated = ds.BitsStored = 16
+        ds.HighBit, ds.PixelRepresentation = 15, 0
+        ds.WindowCenter, ds.WindowWidth = 500, 1000
+        ds.SequenceOfUltrasoundRegions = Sequence(regions)
+        pixels = np.full((frames, 256, 320), 200, dtype=np.uint16)
+        pixels[:, 40:216, 30:130] = 600
+        pixels[:, 40:216, 190:290] = 800
+        if frames > 1:
+            ds.NumberOfFrames, ds.FrameIncrementPointer = frames, (0x0018, 0x1063)
+            ds.FrameTime = 100
+        ds.PixelData = pixels.astype("<u2").tobytes()
+        status = assoc.send_c_store(ds)
+        if status is None or status.Status != 0:
+            raise RuntimeError("Synthetic US C-STORE failed")
+    finally:
+        assoc.release()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        result = stack.request("GET", "/studies", "jmryu")
+        if result.status == 200 and any(s.get("uid") == uid for s in result.body.get("studies", [])):
+            break
+        time.sleep(.25)
+    else:
+        raise RuntimeError("Synthetic US did not reach the real API")
+    if stack.request("PATCH", "/studies/" + uid, "jmryu", {"ss": "Verified"}).status != 200:
+        raise RuntimeError("Synthetic US verification failed")
+    return fixture
+
+
+# The canvas position of image pixel (x, y) of an ultrasound frame whose origin is [0, 0, z0], and of a world point.
+US_CANVAS = '''([x,y,z0])=>{const v=cornerstone.getEnabledElements()[0].viewport, [cx,cy]=v.worldToCanvas([0,x,z0-y]), r=v.canvas.getBoundingClientRect();
+  return [r.left+cx, r.top+cy];}'''
+WORLD_CANVAS = '''w=>{const v=cornerstone.getEnabledElements()[0].viewport, [cx,cy]=v.worldToCanvas(w), r=v.canvas.getBoundingClientRect(); return [r.left+cx, r.top+cy];}'''
+LAST_LENGTH = "()=>cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='Length').at(-1).data.handles.points"
+
+
+def us_length(points, delta, z0=0):
+    """Hand computation: the image pixel offsets of the two points (columns along y, rows along -z) times the deltas in mm."""
+    (a, b) = points
+    return math.hypot((b[1] - a[1]) * delta[0] * 10, (-(b[2] - z0) + (a[2] - z0)) * delta[1] * 10)
 
 # Each: modality, SOP class, tags (no position or orientation), [row, column] spacing the measurement must use, basis words.
 PROJECTIONS = [
@@ -401,6 +493,125 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         expect(p.locator('svg.svg-layer')).to_contain_text('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다')
         self.assertNotIn(' mm', p.evaluate(SVG_TEXT))
         self.assertEqual([], self.saved(f))
+
+    def us_viewer(self, f):
+        w = self.login('doctor'); self.addCleanup(w.close)
+        p = w.context.new_page(); self.addCleanup(p.close)
+        p.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid); canvas_ready(p, 1)
+        expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('개 저장 항목')
+        self.open_measurement_tools(p)
+        return w, p
+
+    def us_line(self, p, start, end, z0=0):
+        """A Length pulled with the mouse from image pixel start to end (x, y) of the shown ultrasound frame."""
+        self.choose(p, 'Length')
+        a, b = (p.evaluate(US_CANVAS, [x, y, z0]) for x, y in (start, end))
+        p.mouse.move(*a); p.mouse.down(); p.mouse.move(*b, steps=10); p.mouse.up()
+
+    def us_text(self, p, want):
+        try:
+            p.wait_for_function("want=>[...document.querySelectorAll('svg.svg-layer text')].map(t=>t.textContent).join(' ').includes(want)", arg=want, timeout=15000)
+        except Exception:
+            self.fail('Not drawn: ' + want + ' | ' + p.evaluate(SVG_TEXT) + ' | ' + p.locator('#kin-viewer-history [role=status]').inner_text())
+        return p.evaluate(SVG_TEXT)
+
+    def move_handle(self, p, index, to, z0=0):
+        """The Length's handle index dragged with the mouse to image pixel `to`."""
+        here = p.evaluate(WORLD_CANVAS, p.evaluate(LAST_LENGTH)[index])
+        there = p.evaluate(US_CANVAS, [to[0], to[1], z0])
+        p.mouse.move(*here); p.mouse.down(); p.mouse.move(*there, steps=8); p.mouse.up()
+
+    def test_calibration_ultrasound_region_length_uses_its_deltas_saves_edits_and_reopens(self):
+        """An ultrasound image without spacing, position or orientation and with two Region Calibrations: a Length inside
+        the left region is drawn in mm with that region's deltas and its basis, saved as a verified measurement and read
+        back the same; moved so that it crosses into the right region it says why it has no value and makes no revision;
+        moved wholly into the right region it is measured with that region's deltas and saved as r2, and a new viewer shows it."""
+        f = synthetic_us(self.stack, 'USREG-' + uuid.uuid4().hex[:12], 'usreg' + uuid.uuid4().hex[:6], '20261121',
+                         [us_region(0, 159, US_LEFT), us_region(160, 319, US_RIGHT)])
+        w, p = self.us_viewer(f)
+        self.us_line(p, (40, 60), (120, 180))
+        p.wait_for_function('''()=>cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Length' &&
+            !a.invalidated && Object.values(a.data.cachedStats||{}).some(s=>Number.isFinite(s.length)))''')
+        p.wait_for_timeout(350)  # the pinned native calculator's trailing throttle
+        native = p.evaluate(NATIVE, 'Length')
+        # The viewer places it with rows along [0,1,0], columns along [0,0,-1], origin [0,0,0], display spacing 1.
+        self.assertEqual([native['row'], native['column'], native['origin']], [[0, 1, 0], [0, 0, -1], [0, 0, 0]], native)
+        expected = us_length(native['points'], US_LEFT)
+        self.assertGreater(expected, 10)
+        text = self.us_text(p, US_BASIS)
+        self.assertNotIn('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', text)
+        self.assertNotIn(SCREEN, text)
+        self.assertLess(abs(float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1)) - expected), .051, (text, expected, native))
+        row = p.locator('#kin-viewer-history section[data-kind=length]').last
+        row.get_by_role('button', name='Save', exact=True).click()
+        expect(row).to_contain_text('저장 완료')
+        saved = self.saved(f)
+        self.assertEqual(1, len(saved))
+        self.assertEqual('verified', saved[0]['referenceStatus'])
+        self.assertEqual(('kin-planar-manual-v1:us', 1), (saved[0]['item']['baseline']['calculator'], saved[0]['item']['frame']), saved[0])
+        self.assertLess(abs(saved[0]['item']['baseline']['values'][0] - expected), 1e-6)
+        # Edited: the end dragged into the right region — the line crosses the two, so no value and no new revision.
+        row.get_by_role('button', name='Edit', exact=True).click()
+        self.move_handle(p, 1, (240, 180))
+        self.us_text(p, US_OUTSIDE)
+        row.get_by_role('button', name='Save', exact=True).click()
+        p.wait_for_timeout(800)
+        self.assertEqual([1], [h['revision'] for h in self.saved(f)])
+        # The start dragged into the right region too: measured with the right region's deltas, saved as r2.
+        self.move_handle(p, 0, (200, 60))
+        p.wait_for_timeout(350)
+        text = self.us_text(p, US_BASIS)
+        points = p.evaluate(LAST_LENGTH)
+        moved = us_length(points, US_RIGHT)
+        self.assertNotIn(US_OUTSIDE, text)
+        self.assertLess(abs(float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1)) - moved), .051, (text, moved, points))
+        row.get_by_role('button', name='Save', exact=True).click()
+        expect(row).to_contain_text('Saved r2')
+        head = self.saved(f)[0]
+        self.assertEqual((2, 'verified'), (head['revision'], head['referenceStatus']))
+        self.assertEqual(head['item']['points'], points)
+        self.assertLess(abs(head['item']['baseline']['values'][0] - moved), 1e-6)
+        # A new viewer: the saved Length is drawn with the same value and basis, nothing to re-check.
+        p2 = w.context.new_page(); self.addCleanup(p2.close)
+        p2.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + f.uid); canvas_ready(p2, 1)
+        text = self.us_text(p2, US_BASIS)
+        self.assertNotIn('재확인 필요', text)
+        self.assertLess(abs(float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1)) - moved), .051, text)
+
+    def test_calibration_ultrasound_cine_frame_and_regions_without_deltas(self):
+        """Frame 2 of an ultrasound cine without a position (the viewer's origin [0,0,2]): the Length is measured with the
+        region's deltas and saved on frame 2. An ultrasound image whose region gives no deltas: Length is refused as before,
+        with no mark and nothing saved."""
+        f = synthetic_us(self.stack, 'USCINE-' + uuid.uuid4().hex[:12], 'uscine' + uuid.uuid4().hex[:6], '20261121',
+                         [us_region(0, 319, US_LEFT)], frames=2)
+        w, p = self.us_viewer(f)
+        p.evaluate("async()=>{await cornerstone.getEnabledElements()[0].viewport.setImageIdIndex(1);}")
+        p.wait_for_function("()=>/\\/frames\\/2$/.test(cornerstone.getEnabledElements()[0].viewport.getCurrentImageId())")
+        canvas_ready(p, 1)
+        self.us_line(p, (40, 60), (200, 180), z0=2)
+        p.wait_for_function('''()=>cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==='Length' &&
+            !a.invalidated && Object.values(a.data.cachedStats||{}).some(s=>Number.isFinite(s.length)))''')
+        p.wait_for_timeout(350)
+        native = p.evaluate(NATIVE, 'Length')
+        self.assertEqual(native['origin'], [0, 0, 2], native)
+        expected = us_length(native['points'], US_LEFT, 2)
+        text = self.us_text(p, US_BASIS)
+        self.assertLess(abs(float(re.search(r'(\d+(?:\.\d+)?) mm', text).group(1)) - expected), .051, (text, expected, native))
+        row = p.locator('#kin-viewer-history section[data-kind=length]').last
+        row.get_by_role('button', name='Save', exact=True).click()
+        expect(row).to_contain_text('저장 완료')
+        saved = self.saved(f)
+        self.assertEqual(('verified', 2, 'kin-planar-manual-v1:us'),
+                         (saved[0]['referenceStatus'], saved[0]['item']['frame'], saved[0]['item']['baseline']['calculator']), saved[0])
+        self.assertLess(abs(saved[0]['item']['baseline']['values'][0] - expected), 1e-6)
+        p.close(); w.close()
+        # A region without deltas: the rule it had.
+        g = synthetic_us(self.stack, 'USNODELTA-' + uuid.uuid4().hex[:12], 'usnod' + uuid.uuid4().hex[:6], '20261121', [us_region(0, 319, None)])
+        w, p = self.us_viewer(g)
+        self.us_line(p, (40, 60), (200, 180))
+        expect(p.locator('#kin-viewer-history [role=status]')).to_have_text('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다')
+        self.assertEqual(0, p.evaluate("()=>cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='Length').length"))
+        self.assertEqual([], self.saved(g))
 
 
 if __name__ == '__main__':

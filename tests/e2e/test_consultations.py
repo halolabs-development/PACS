@@ -75,9 +75,10 @@ class ConsultationE2E(WorklistE2E):
         self.assertEqual(received.status,200);self.assertEqual([r['id'] for r in received.body['items']],[row['id']])
         for who in ['doctor','tech','kdoctor']:self.create_request(b,recipient=who,status=400)
         self.assertEqual(self.stack.request('GET','/consultation-candidates','tech').status,403)
-        target=self.stack.user_ids['doctor2'];self.assertEqual(self.stack.kc_admin('PUT',f'/users/{target}',{'enabled':False}).status,204)
+        # Suspended through the product's member command (the member table is the authority; the provider account stays).
+        target=self.stack.user_ids['doctor2'];self.assertFalse(self.stack.set_member_rights(target,enabled=False)['enabled'])
         try:self.create_request(b,status=400)
-        finally:self.assertEqual(self.stack.kc_admin('PUT',f'/users/{target}',{'enabled':True}).status,204)
+        finally:self.assertTrue(self.stack.set_member_rights(target,enabled=True)['enabled'])
         foreign=self.fixture(institution='KIN 판독센터');self.create_request(foreign,status=404)
         self.assertEqual(psql('SELECT to_jsonb(t)::text FROM "StudyState" t WHERE uid='+lit(a.uid)),original)
         self.assertEqual(self.versions(a),versions)
