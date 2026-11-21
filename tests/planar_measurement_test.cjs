@@ -5,8 +5,9 @@ const fs=require('node:fs'),vm=require('node:vm');
 const {viewerCommand,verifyViewerReference}=require('/app/dist/viewer-input.js');
 const {srMeasurement,srDataset,srFile}=require('/app/dist/manual-sr-dicom.js');
 const {planarGeometry,manualGeometry,viewerPlaneImage}=require('/app/dist/planar-geometry.js');
-const context=vm.createContext({});
-for(const file of ['mg-length','planar-geometry'])vm.runInContext(fs.readFileSync('config/ohif/'+file+'.js','utf8'),context);
+// The viewer's write path (viewer-language.js) first, as config/ohif.js carries it before these sources.
+const context=vm.createContext({window:{}});
+for(const file of ['worklist-v0/hpacs-lite/viewer-language.js','config/ohif/mg-length.js','config/ohif/planar-geometry.js'])vm.runInContext(fs.readFileSync(file,'utf8'),context);
 const base={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',SOPClassUID:'1.2.840.10008.5.1.4.1.1.4',Rows:128,Columns:128,PixelSpacing:[.5,.25],ImagePositionPatient:[0,0,0],ImageOrientationPatient:[1,0,0,0,1,0]};
 for(const modality of ['MR','DX','US','XA','MG'])test(modality+' length, angle and area survive source verification and SR',()=>{
  const tags={...base,Modality:modality,...(modality==='MG'?{SOPClassUID:'1.2.840.10008.5.1.4.1.1.1.2'}:{})};

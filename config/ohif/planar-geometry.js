@@ -138,8 +138,6 @@ function kinUsRegionGeometry(tags) {
 // (the pinned OHIF combineFrameInstance) — with the deltas of the region that holds both points. Regions of different
 // deltas that both hold them, or none, give no length. Everything else is kinPlanarGeometry's.
 function kinManualGeometry(tags, frame, kind) {
-  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
-  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
   const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
   if (!us) return kinPlanarGeometry(tags, frame);
