@@ -1,5 +1,13 @@
 (function () {
   'use strict';
+  // The page's write path (worklist-language.js): its own words read in English on an English screen and stay as written
+  // otherwise; data and the server's words are written as they are.
+  const kinSayEn = globalThis.KinLanguage?.sayEnglish || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
   // Patient Consent: the administrator loads one patient of this institution by the original Patient ID, reads that
   // patient's consent records, records a new one and withdraws one (POST /api/admin/patient-consent/lookup, POST
   // /api/admin/patient-consent, POST /api/admin/patient-consent/:id/withdraw). The patient ID goes in the body only.
@@ -17,7 +25,7 @@
 
   function message(text) {
     const el = $('#patient-consent-message');
-    el.textContent = text || '';
+    kinWrite(el, text || '');
     el.classList.toggle('show', !!text);
   }
 
@@ -105,8 +113,8 @@
   // The server's input wording answers 400/404/409; other refusals and lost answers get fixed sentences.
   function failure(error, what) {
     if ([400, 404, 409].includes(error?.status) && error.said) return error.said;
-    if (error?.status === 403) return '이 계정으로는 환자 동의 기록을 다룰 수 없습니다.';
-    return `${what} 결과를 확인하지 못했습니다.`;
+    if (error?.status === 403) return kinSayEn('이 계정으로는 환자 동의 기록을 다룰 수 없습니다.');
+    return kinSayEn('{0} 결과를 확인하지 못했습니다.', what);
   }
 
   // After a write: read the patient again. A refusal (the account lost this patient) leaves nothing of the patient drawn.
@@ -114,7 +122,7 @@
     try { await lookup(patientId); return ''; }
     catch (error) {
       if (error?.ended) throw error;
-      if ([403, 404].includes(error?.status)) { clear(); return failure(error, '조회'); }
+      if ([403, 404].includes(error?.status)) { clear(); return failure(error, kinSayEn('조회')); }
       return '';
     }
   }
@@ -130,7 +138,7 @@
     if (!enabled || busy || KinConsoleSession.ended()) return;
     busy = true; controls(); message('');
     try { await work(); }
-    catch (error) { if (!error?.ended && !KinConsoleSession.ended()) message(error.message === 'answer' ? '불러온 기록을 확인하지 못했습니다.' : error.message); }
+    catch (error) { if (!error?.ended && !KinConsoleSession.ended()) message(error.message === 'answer' ? kinSayEn('불러온 기록을 확인하지 못했습니다.') : error.message); }
     finally { busy = false; controls(); }
   }
 
@@ -141,7 +149,7 @@
         if (error?.ended) throw error;
         // A refusal or a failed read says nothing about this patient's records: nothing stays drawn.
         clear();
-        throw new Error(error.message === 'answer' ? 'answer' : failure(error, '조회'));
+        throw new Error(error.message === 'answer' ? 'answer' : failure(error, kinSayEn('조회')));
       }
     });
   }
@@ -149,7 +157,7 @@
   function instant(value) {
     if (!value) return null;
     const d = new Date(value + 'Z');
-    if (!Number.isFinite(d.getTime())) throw new Error('UTC 시각을 확인하세요');
+    if (!Number.isFinite(d.getTime())) throw new Error(kinSayEn('UTC 시각을 확인하세요'));
     return d.toISOString();
   }
 
@@ -161,20 +169,20 @@
       saved = true;
     } catch (error) {
       if (error?.ended) throw error;
-      if ([400, 409].includes(error?.status)) { retry = null; throw new Error(failure(error, '저장')); }
-      if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, '저장')); }
+      if ([400, 409].includes(error?.status)) { retry = null; throw new Error(failure(error, kinSayEn('저장'))); }
+      if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, kinSayEn('저장'))); }
       // Lost or delayed: whether it was written is unknown. Read the patient again; the same request can be sent again.
       retry = body;
       const refused = await reread(patientId);
       if (refused) throw new Error(refused);
-      throw new Error('저장되었는지 확인하지 못했습니다. 목록을 다시 확인하고, 없으면 Retry Same Request로 같은 요청을 다시 보내세요.');
+      throw new Error(kinSayEn('저장되었는지 확인하지 못했습니다. 목록을 다시 확인하고, 없으면 Retry Same Request로 같은 요청을 다시 보내세요.'));
     }
     if (!saved) return;
     retry = null;
     $('#patient-consent-form').reset();
     const refused = await reread(patientId);
     if (refused) throw new Error(refused);
-    if (current?.patientId === patientId) message('동의 기록을 저장했습니다.');
+    if (current?.patientId === patientId) message(kinSayEn('동의 기록을 저장했습니다.'));
   }
 
   function openWithdraw(record) {
@@ -192,7 +200,7 @@
   $('#patient-consent-lookup').addEventListener('submit', event => {
     event.preventDefault();
     const patientId = box().value;
-    if (!patientId || patientId !== patientId.trim()) { message('Original Patient ID를 앞뒤 공백 없이 입력하세요.'); return; }
+    if (!patientId || patientId !== patientId.trim()) { message(kinSayEn('Original Patient ID를 앞뒤 공백 없이 입력하세요.')); return; }
     clear();
     void load(patientId);
   });
@@ -226,21 +234,21 @@
         await request('/' + encodeURIComponent(target.id) + '/withdraw', { patientId: target.patientId, reason });
       } catch (error) {
         if (error?.ended) throw error;
-        if (error?.status === 400) throw new Error(failure(error, '철회'));
+        if (error?.status === 400) throw new Error(failure(error, kinSayEn('철회')));
         // 403/404: this account can no longer reach the patient (or the record): nothing of the patient stays drawn.
-        if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, '철회')); }
+        if ([403, 404].includes(error?.status)) { clear(); throw new Error(failure(error, kinSayEn('철회'))); }
         withdrawing = null;
         $('#patient-consent-withdraw').hidden = true;
         const refused = await reread(target.patientId);
         if (refused) throw new Error(refused);
-        throw new Error(error?.status === 409 ? failure(error, '철회')
-          : '철회되었는지 확인하지 못했습니다. 다시 불러온 목록에서 상태를 확인하세요.');
+        throw new Error(error?.status === 409 ? failure(error, kinSayEn('철회'))
+          : kinSayEn('철회되었는지 확인하지 못했습니다. 다시 불러온 목록에서 상태를 확인하세요.'));
       }
       withdrawing = null;
       $('#patient-consent-withdraw').hidden = true;
       const refused = await reread(target.patientId);
       if (refused) throw new Error(refused);
-      if (current?.patientId === target.patientId) message('동의 기록을 철회했습니다.');
+      if (current?.patientId === target.patientId) message(kinSayEn('동의 기록을 철회했습니다.'));
     });
   });
   // Enabled only for the administrator session the Members console accepts.
