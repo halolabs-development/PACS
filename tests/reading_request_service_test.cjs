@@ -19,8 +19,17 @@ const CLIN = member('syn-clin', ['clinician']);
 const owner = c => [c.institution, c.sub];
 const code = (status, value) => e => typeof e?.getStatus === 'function' && e.getStatus() === status && e.getResponse()?.code === value;
 
-/** A store with one StudyState row per uid (no exam groups); every raw statement is recorded with its values. */
-function world(rows = {}) {
+/** Does a Prisma `where` of the exam-group reads (OR of uid columns, groupId or id `in`) match this row? */
+const matches = (row, where = {}) => Object.entries(where).every(([key, want]) => key === 'OR'
+  ? want.some(part => matches(row, part))
+  : want && typeof want === 'object' && Array.isArray(want.in) ? want.in.includes(row[key]) : row[key] === want);
+
+/**
+ * A store with one StudyState row per uid; every raw statement is recorded with its values. `sources` is how many patient
+ * resources Orthanc answered per uid (one unless named). `merged` is an exam group that only the transaction's own reads
+ * see: committed by a merge while the request waited for the study row's lock (the reads before the lock saw none).
+ */
+function world(rows = {}, { sources = {}, merged = null } = {}) {
   const statements = [], audits = [], identities = [];
   const text = (strings, values) => ({ text: [...strings].join('?'), params: values });
   const tx = {
@@ -33,17 +42,24 @@ function world(rows = {}) {
       return [];
     },
     studyGroupMember: { findMany: async () => [] },
+    studyGroup: { findMany: async () => [] },
     studyState: { updateMany: async args => { statements.push({ text: 'updateMany', params: [args] }); return { count: 0 }; },
       findUnique: async ({ where }) => rows[where.uid] ?? null,
       findMany: async ({ where }) => (where.uid.in ?? []).filter(uid => rows[uid]).map(uid => ({ ...rows[uid] })) },
     auditLog: { create: async ({ data }) => { audits.push(data); statements.push({ text: 'AUDIT', params: [] }); return data; } },
   };
-  const prisma = { ...tx, $transaction: async fn => fn(tx) };
+  const prisma = { ...tx, $transaction: async fn => fn(merged ? { ...tx,
+    studyGroupMember: { findMany: async ({ where }) => merged.members.filter(m => matches(m, where)) },
+    studyGroup: { findMany: async ({ where }) => [merged.group].filter(g => matches(g, where)) } } : tx) };
   const access = { prepare: async () => {}, snapshot: async () => ({ policy: { restricted: false }, revision: 1 }),
     require: async () => {}, prepareSourceIdentity: async () => { identities.push('prepared'); },
-    assertUnsplitSource: (_c, uid) => { identities.push(uid); return { sourcePatientId: 'SYN-P' }; } };
+    assertUnsplitSource: (_c, uid) => { identities.push(uid); return { sourcePatientId: 'SYN-P' }; },
+    observedSourceCount: (_c, uid) => sources[uid] ?? 1 };
   return { prisma, access, statements, audits, rows, identities };
 }
+/** A merge of UID into UID_B's exam (UID_B the base row), as the merge commits it. */
+const mergeIntoB = () => ({ group: { id: 'syn-group-1', kind: 'merge', baseUid: UID_B, institutionId: INST, dissolvedAt: null },
+  members: [UID_B, UID].map((uid, part) => ({ groupId: 'syn-group-1', logicalUid: uid, studyUid: uid, part, seriesUids: [] })) });
 const state = (extra = {}) => ({ uid: UID, institutionId: INST, rs: 'W', readingRequestAt: null, readingRequestBySub: null,
   readingRequestBy: null, readingRequestByName: null, readingRequestClosedAt: null, ...extra });
 const create = (w, c = CLIN, body = { expectedOwner: owner(c) }, uid = UID) => R.createReadingRequest(w.prisma, w.access, c, uid, body);
@@ -129,6 +145,24 @@ test('an approved or destroyed report row refuses a new request; another institu
   }
   // Waiting, saved, on hold or preliminary: not approved yet, so a request is made.
   for (const rs of ['W', 'T', 'H', 'P']) assert.equal((await create(world({ [UID]: state({ rs }) }))).created, true, rs);
+});
+
+test('a study whose original this request observed none of is not found: no request, no audit row', async () => {
+  // Orthanc answered no patient resource for the study (its StudyState row of the caller's institution is still there).
+  const w = world({ [UID]: state() }, { sources: { [UID]: 0 } });
+  await assert.rejects(create(w), code(404, 'STUDY_NOT_FOUND'));
+  assert.equal(w.statements.filter(s => s.text.startsWith('UPDATE')).length, 0);
+  assert.deepEqual(w.audits, []);
+  // Checked inside the lock, right after the source check.
+  assert.match(w.statements.find(s => /FOR UPDATE/.test(s.text)).text, /FOR UPDATE/);
+});
+
+test('a merge committed while the request waited for the lock: not saved, the busy answer to press again', async () => {
+  // Before the lock the study opened on itself; inside it the study is now in the merged exam whose base is UID_B.
+  const w = world({ [UID]: state(), [UID_B]: state({ uid: UID_B }) }, { merged: mergeIntoB() });
+  await assert.rejects(create(w), code(503, 'READING_REQUEST_BUSY'));
+  assert.equal(w.statements.filter(s => s.text.startsWith('UPDATE')).length, 0);
+  assert.deepEqual(w.audits, []);
 });
 
 test('the approval closes the open requests of the originals its row answers for, with its own time', async () => {

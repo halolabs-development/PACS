@@ -14,7 +14,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import type { PrismaService } from '../prisma.service';
 import type { StudyAccessService } from '../study-access.service';
-import { examOpenUids, prepareExamRead, resolveExamScope } from '../exam-merge.service';
+import { activeGroups, examOpenUids, prepareExamRead, resolveExamScope } from '../exam-merge.service';
 import type { ResolvedExamScope } from '../exam-merge.service';
 import { CLINICIAN_ROLE } from '../clinician-policy';
 import type { Caller } from './access';
@@ -152,7 +152,9 @@ export async function clinicianReadingRequests(prisma: PrismaService, access: St
  * `POST studies/:uid/reading-request` with exactly `{expectedOwner}`. The clinician role (a mixed-role member who holds it
  * too may ask); the study owned by the caller's institution now, inside the access policy, with a row it opens on now
  * (404 otherwise, the same answer for each). The study row is locked first, so two presses - one person's or two - make
- * one request; an approval racing it either closes it (it waits for this lock) or is seen here and refuses it.
+ * one request; an approval racing it either closes it (it waits for this lock) or is seen here and refuses it. Inside the
+ * lock a study whose original this request observed none of is not found, and a merge or unmerge committed while it waited
+ * (the row it opens on is no longer the one chosen before the lock) saves nothing and answers busy.
  */
 export async function createReadingRequest(prisma: PrismaService, access: StudyAccessService, c: RequestCaller, uid: string, body: any) {
   if (c.kind !== 'member' || ![c.institution, c.sub, c.actor].every(v => typeof v === 'string' && v.length > 0 && v.length <= 256))
@@ -178,6 +180,12 @@ export async function createReadingRequest(prisma: PrismaService, access: StudyA
       // The study the clinician picked: inside the access policy and one identified source (the list shows no other).
       try { await resolveExamScope(tx, access, c, { uid, purpose: 'source', state, identity: true }); }
       catch (e) { if (e instanceof NotFoundException) throw missing(); throw e; }
+      // A study of which this request observed no original (Orthanc answered none) is not there to be read.
+      if (access.observedSourceCount(c, uid) === 0) throw missing();
+      // The row it opens on, as the exam groups say now: a merge or an unmerge committed while this waited for the lock
+      // moves it, and the request is not saved against the row chosen before (the busy answer: press again).
+      const merged = (await activeGroups(tx, [uid])).find(group => group.kind === 'merge');
+      if ((merged ? merged.baseUid : uid) !== on) throw busy();
       const target = on === uid ? state : (await tx.$queryRaw`SELECT rs FROM "StudyState" WHERE uid=${on}` as any[])[0];
       const refusal = readingRequestRefusal(c, state, target?.rs);
       if (refusal === 'open') return { owner, created: false, readingRequest: readingRequestView(state)! };
