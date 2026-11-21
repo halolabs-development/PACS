@@ -86,6 +86,10 @@
     compareNone: '같은 환자 키의 다른 검사가 목록에 없어 나란히 비교할 검사가 없습니다.',
     compareNoKey: '이 검사에는 서버 환자 키가 없어 비교할 검사를 찾지 않습니다.',
     close: '이 검사를 패널에서 내립니다. 검사 목록은 그대로 남습니다.',
+    // B18: a key image or a cited line opens its original frame with its mark in the read-only viewer.
+    openAnnotated: 'Open Annotated Image',
+    annotatedAsked: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.',
+    keyTarget: '키 이미지의 원본 식별(시리즈·영상·프레임)을 확인할 수 없어 열지 않았습니다.',
     closeBack: label => `이 검사를 닫고 타임라인에서 옮기기 전 검사(${label})로 돌아갑니다.`,
   };
   // C-R02-120 사용자 단추의 역할 칸. /api/me의 역할 중 KIN 업무 역할만 영어 이름으로 보인다(Keycloak 기본 역할은 뺀다).
@@ -787,7 +791,7 @@
    * 골랐으면 다른 환자의 검사를 나란히 열 수 있다. 그 창이 읽기 전용인지는 창의 문서(config/ohif.js)가 서버 /me로 정하고, 쓰기는
    * 서버가 거절한다. 이 화면은 역할을 보고 여기서 무엇을 막지 않는다.
    */
-  function openViewer(otherUid) {
+  function openViewer(otherUid, image = null) {
     if (leaving || selected === null) return;
     const row = byUid.get(selected);
     if (!row) return;
@@ -829,9 +833,10 @@
         // B14: a viewer opened from the Physician screen is read-only for every account that opens it here (config/ohif
         // session.js keeps this mode for the window's reloads): a radiologist who also holds the clinician role annotates
         // from the Radiologist screen.
-        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician'});popup.opener=null;
+        // B18: the original image to open first (a key image, a cited line), as the server named it.
+        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician',...(image?{target:image}:{})});popup.opener=null;
         if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
-        note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
+        note.textContent=image?say(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked;
       }catch(error){if(fresh())note.textContent=describe(error);}
     })();
   }
@@ -969,13 +974,38 @@
     return section;
   }
 
+  /**
+   * B18: the original image a saved item names, as the server gave it (its own study, series, SOP and frame, and its id);
+   * null when one of them cannot be read. The viewer opens there and highlights that item (config/ohif/session.js).
+   */
+  function imageTarget(studyUid, item, itemId) {
+    if (![studyUid, item?.seriesUid, item?.sopUid].every(uid => typeof uid === 'string' && uid.length <= 64 && STUDY_UID.test(uid))
+        || !Number.isSafeInteger(item.frame) || item.frame < 1 || typeof itemId !== 'string' || !/^[0-9a-f-]{36}$/.test(itemId)) return null;
+    return { studyUid, seriesUid: item.seriesUid, sopUid: item.sopUid, frame: item.frame, itemId };
+  }
+
   function keyItem(key) {
     const item = key && typeof key.item === 'object' && key.item ? key.item : {};
     const entry = node('li', 'key');
-    entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
-    if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
+    const titled = typeof item.title === 'string' && item.title.trim();
+    const title = node('p', 'key-title', titled ? item.title : TEXT.untitled);
+    if (titled) title.setAttribute('translate', 'no');
+    entry.append(title);
+    if (typeof item.description === 'string' && item.description.trim()) {
+      const description = node('p', 'key-description', item.description);
+      description.setAttribute('translate', 'no');
+      entry.append(description);
+    }
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
     entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
+    const open = node('button', 'key-open', say(TEXT.openAnnotated));
+    open.type = 'button';
+    open.addEventListener('click', () => {
+      const target = imageTarget(key?.sourceUid || selected, item, key?.id);
+      if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
+      openViewer(null, target);
+    });
+    entry.append(open);
     return entry;
   }
 
