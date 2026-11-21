@@ -2052,6 +2052,8 @@
              their place (the questions under the editor, the requests under the button row). -->
         <div id="report-alerts">
           <button type="button" id="question-notice" aria-controls="question-pane" hidden></button>
+          <!-- In-app unread (unread-badges.js): the server's count of the pool's Open questions this reader has not opened; opens the Inbox. -->
+          <button type="button" id="question-unread" aria-controls="question-pane" hidden></button>
           <button type="button" id="image-request-notice" aria-controls="image-request-pane" hidden></button>
         </div>
         <!-- W4: 검사를 옮기지 않았을 때만 보인다(쓰던 글의 저장 거절·결과 모름·충돌·글자 조합). 무엇을 누르면 되는지 함께 말한다. -->
@@ -2722,6 +2724,7 @@
   <script src="report-popout.js"></script>
   <script src="clinical-info-actions.js"></script>
   <script src="work-mode.js"></script>
+  <script src="unread-badges.js"></script>
 <script src="main-split.bundle.js"></script>
 </body>
 </html>

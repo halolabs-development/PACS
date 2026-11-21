@@ -217,6 +217,13 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET image-requests', 'GET image-requests/:id', 'GET studies/:uid/image-requests'] },
   { kinds: ['image-request'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/image-requests', 'POST image-requests/:id'] },
+  // In-app unread: a view's unread count and the id, study and listed revision of each unread question thread or image
+  // request (no body), read as the person looks and by the screens' polling. Its 열람 is the listed head, as a list row's.
+  { kinds: ['clinical-question', 'clinical-answer', 'image-request'], operation: 'read', causes: ['user-view', 'background-fetch'],
+    routes: ['GET unread'] },
+  // The person's seen mark of a thread or request their screen showed: their own reading state, no clinical record.
+  { kinds: ['preferences'], operation: 'write', causes: ['user-view'],
+    routes: ['POST questions/:id/seen', 'POST image-requests/:id/seen'] },
   { kinds: ['manual-sr'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/manual-sr', 'POST studies/:uid/manual-sr/:id/store'] },
   { kinds: ['measurement', 'key-image'], operation: 'read', causes: ['user-view', 'background-fetch'],

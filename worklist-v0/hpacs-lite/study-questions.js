@@ -23,6 +23,8 @@
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
+      // In-app unread (unread-badges.js): the band's count of the pool's Open questions this reader has not opened.
+      const unreadButton = $('#question-unread');
       const TEXT = {
         unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
         // 끊긴 동안(online() — 화면의 한 연결 규칙)은 읽은 것을 그대로 보이고, 답변·닫기·Retry는 보내지 않는다(쓰던 글은 남는다).
@@ -56,6 +58,9 @@
         inboxFailed: '받은 질문을 불러오지 못했습니다.',
         inboxEmpty: '이 조건의 질문이 없습니다.',
         inboxReady: (n, more) => `질문 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
+        unreadTip: '서버가 센 안 읽은 질문입니다(소속 기관의 Open 질문 중 이 계정이 아직 열어 보지 않은 것). 누르면 Inbox를 엽니다. 이메일·문자로 보내지 않습니다.',
+        unreadStale: '안 읽은 질문 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
+        unreadOutside: '최신 50건 목록 밖의 질문입니다. 새 질문이 있습니다.',
         notListed: '이 검사는 지금 워크리스트에 없어 열 수 없습니다. 목록을 새로고침하거나 검색 조건을 바꾸세요.',
         unlisted: '워크리스트에 없는 검사',
         noText: '내용을 입력하세요.',
@@ -316,7 +321,57 @@
       inboxMore.id = 'question-inbox-more';
       inboxView.append(make('p', 'question-muted', kinSay(TEXT.inboxHint)), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
-
+      // The server's unread count of this reader's inbox view (question-inbox). Its reads and seen writes go through call()
+      // like every request of this row, wait while offline or locked, and stop with the row.
+      const UNREAD = 'question-inbox';
+      let unread = null, unreadAsked = false;
+      try {
+        if (window.KinUnread) unread = window.KinUnread.mount({ send: (method, path, body) => call(method, path, body).then(sent => ({ status: sent.status, body: sent.data })),
+          views: [UNREAD], owner, allowed: () => !ended && lock === null && allowed() && online(), onChange: () => paintUnread(),
+          onAccount: () => accountChanged('') });
+      } catch (_) { unread = null; }
+      const unreadTag = () => { const tag = make('span', 'question-status', kinSay('New')); tag.dataset.unread = ''; kinWrite(tag, kinSay(TEXT.unreadTip), 'title'); return tag; };
+      /** A row of the study list or the Inbox: its `New` tag follows the server's unread items. */
+      const paintRowUnread = li => {
+        const old = li.querySelector(':scope > [data-unread]'), want = !!unread && unread.unread(UNREAD, li.dataset.id);
+        if (want && !old) li.prepend(unreadTag(), ' ');
+        else if (!want && old) { if (old.nextSibling && old.nextSibling.nodeType === 3) old.nextSibling.remove(); old.remove(); }
+      };
+      /** The band's button and the rows' tags. Shown only when the server answered a count above 0 for this reader. */
+      function paintUnread() {
+        const known = unread && unread.view(UNREAD);
+        const count = !ended && lock === null && known && known.available ? known.count : 0;
+        if (unreadButton) {
+          unreadButton.hidden = count === 0;
+          if (count) {
+            kinWrite(unreadButton, kinSay('New Questions {0}', count));
+            kinWrite(unreadButton, kinSay(known.failed ? TEXT.unreadStale : TEXT.unreadTip), 'title');
+          }
+        }
+        for (const li of list.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        for (const li of inboxList.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        if (mode === 'study' && items !== null && !listFailure && !listLoading) renderOutside();
+      }
+      /** Unread questions of the reading target that its latest-50 list does not hold: a row each that opens the thread. */
+      function renderOutside() {
+        for (const li of list.querySelectorAll(':scope > li[data-unread-outside]')) li.remove();
+        const known = unread && unread.view(UNREAD);
+        if (!known || !known.available || uid === null || items === null) return;
+        const listed = new Set(items.map(item => item.id));
+        for (const [id, item] of known.items) {
+          if (item.studyUid !== uid || listed.has(id)) continue;
+          const li = make('li');
+          li.dataset.id = id;
+          li.dataset.unreadOutside = '';
+          if (id === threadId) li.setAttribute('aria-current', 'true');
+          const open = button(kinSay('Open Thread'), () => openThread(id));
+          open.dataset.openThread = '';
+          li.append(make('span', 'question-muted', kinSay(TEXT.unreadOutside)), ' ', open);
+          list.append(li);
+          paintRowUnread(li);
+        }
+        list.hidden = !list.children.length;
+      }
       /**
        * 줄과 창의 겉모습. 줄은 읽는 사람이 연 동안(mode)만 선다 — 답이 줄을 만들거나 없애지 않는다. 질문·실패·잠금은 줄이 접혀
        * 있는 동안 안내 띠의 알림이 말한다. 읽는 중(아직 모름)에는 알림을 그대로 두고, 성공한 빈 답이면 내린다.
@@ -356,6 +411,9 @@
         lockBox.querySelector('.question-detail').textContent = lock ? lock.detail : '';
         studyView.hidden = lock !== null || mode !== 'study';
         inboxView.hidden = lock !== null || mode !== 'inbox';
+        // A thread is seen only while the study pane shows it.
+        if (unread && (mode !== 'study' || lock !== null || ended)) unread.hidden(UNREAD);
+        paintUnread();
       }
 
       function renderList() {
@@ -364,6 +422,7 @@
           || TEXT.ready(items.length), listFailure ? readDetail(listFailure) : '');
         listRetry.hidden = !listFailure;
         list.replaceChildren(...(listFailure || !items ? [] : items).map(listItem));
+        if (!listFailure && items) renderOutside();
         list.hidden = !list.children.length;
       }
 
@@ -375,6 +434,7 @@
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
           TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -421,6 +481,7 @@
 
       function renderThread() {
         if (uid === null || threadId === null || listFailure !== null) {
+          if (unread) unread.hidden(UNREAD);
           clearThreadBox();
           return;
         }
@@ -438,6 +499,11 @@
         part('retry').hidden = !threadFailure;
         part('entries').replaceChildren(...(loaded ? loaded.entries.map(item => entryItem(item, loaded.current, loaded.emr)) : []));
         part('closed').hidden = !loaded || loaded.state !== 'Closed';
+        // A thread drawn in the open pane is seen by this reader: its seen mark goes to the server (unread-badges.js decides).
+        if (unread) {
+          unread.hidden(UNREAD);
+          if (loaded && mode === 'study' && !ended && lock === null) unread.shown(UNREAD, loaded.id, loaded.revision);
+        }
         for (const wrap of threadBox.querySelectorAll('.question-compose')) {
           paintComposer(wrap);
           // 닫힌 스레드에는 쓰는 칸을 두지 않는다. 쓰던 글이나 결과를 모르는 요청이 남은 칸만 그대로 둔다.
@@ -640,6 +706,8 @@
         drafts.delete(key);
         setNote(attempt.noteKey, 'saved', sent.data.replayed ? TEXT.replayed : TEXT.saved);
         repaintComposer(key);
+        // An answer or a close ends what this reader's inbox waited for: the count is read again.
+        if (unread) unread.refresh();
         // 화면의 스레드는 쓰기 응답(적용 결과)이 아니라 읽기 route로 다시 읽은 현재 상태로만 그린다.
         if (lock === null && attempt.uid === uid) loadList();
       }
@@ -688,6 +756,7 @@
       function lockPanel(text, detail, account = false) {
         if (ended || (lock !== null && (lock.account || !account))) return;
         lock = { text, detail: detail || '', account };
+        if (unread) unread.hidden(UNREAD);
         epoch++;
         listSeq++;
         threadSeq++;
@@ -891,6 +960,7 @@
         }
         li.append(badge(item.state), ' ', make('span', null, label), ' ',
           make('span', 'question-muted', TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -918,6 +988,8 @@
        */
       function sync() {
         if (ended) return;
+        // The first time this reader may read: the inbox count once now, then with the list polling (refresh).
+        if (unread && !unreadAsked && lock === null && allowed() && online()) { unreadAsked = true; unread.refresh(); }
         const shown = current(), selectedUid = allowed() ? shown : null;
         const row = selectedUid ? study(selectedUid) : null;
         const next = row && row.tele !== true ? selectedUid : null;
@@ -990,6 +1062,7 @@
         clearThreadBox();
         list.replaceChildren();
         inboxList.replaceChildren();
+        if (unread) unread.end();
         paint();
       }
 
@@ -1010,12 +1083,15 @@
         paint();
         if (uid !== null && online()) loadList();
         if (mode === 'inbox') loadInbox(false);
+        if (unread) unread.refresh();
       }
       /**
        * 목록 폴링이 부른다(worklist-polling.js): 같은 판독 대상의 질문을 다시 읽는다 — 판독 칸을 연 뒤에 온 질문도 알게 된다.
        * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
        */
       function refresh() {
+        // The inbox count is the reader's, not the reading target's: read with every poll, a study chosen or not.
+        if (unread && !ended && lock === null && allowed() && online()) unread.refresh();
         if (ended || lock !== null || uid === null || listLoading || !online()) return;
         loadList();
       }
@@ -1043,6 +1119,14 @@
       });
       // 안내 띠의 알림: 읽는 사람이 누르면 이 검사의 줄과 창을 제자리에 연다(Show Questions와 같다). 알림은 줄이 서면
       // 내려가므로 초점은 그 줄의 Hide Questions로 옮긴다.
+      // The band's unread count opens the Inbox on the Open questions (whatever state it last showed).
+      unreadButton?.addEventListener('click', () => {
+        if (ended) return;
+        inboxState = 'open';
+        mode = 'inbox';
+        paint();
+        if (lock === null) loadInbox(false);
+      });
       notice?.addEventListener('click', () => {
         if (ended) return;
         inboxSeq++;

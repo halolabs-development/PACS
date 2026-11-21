@@ -155,7 +155,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261120130000_study_qc_flag/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
               'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
-              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql']
+              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql',
+              'api/prisma/migrations/20261121120000_unread_seen/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -180,6 +181,7 @@ TABLES = sorted(['PreloadCacheKey', 'ImportOperation', 'AuthSession', 'MemberIso
                  'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
                  'FavoriteWorkspace', 'StudyTagCatalog', 'ReaderAssignment', 'ReadingPreferences', 'ReadingAppearance', 'WorkspaceShortcuts', 'HangingProtocolPreference', 'UserFilterCollection', 'SharedFilterLibrary', 'StudyConsultation', 'StudyAccessPolicy', 'StudyAccessRevision',
                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt',
+                 'StudyQuestionSeen', 'StudyImageRequestSeen',
                  'CriticalResult', 'CriticalResultEvent', 'CriticalResultReceipt',
                  'GatewayReceipt', 'GatewayRetryRequest'])
 SEQUENCES = ['AuditLog_id_seq', 'ProviderChange_id_seq', 'ReadingTemplate_id_seq', 'ReportVersion_id_seq', 'UserFilter_id_seq']
@@ -552,6 +554,10 @@ def expected_rows(uid):
         result=dict(id=parent, studyUid=uid, requestId=request_id, kind=kind, action=action, to=to, revision=revision,
             at='2026-09-06T00:00:00.123Z', **{'from': before}), at=STAMP)
         for index, (request_id, parent, kind, subject, action, before, to, revision) in enumerate(receipts)]
+    # In-app unread: one radiologist's seen mark of the question and the requester's of the processed request (their
+    # revisions as the screens drew them), so a restore keeps each person's unread state.
+    rows['StudyQuestionSeen'] = [dict(questionId=question_id, subjectSub='SYNTHETIC-reader-sub', revision=1, at=STAMP)]
+    rows['StudyImageRequestSeen'] = [dict(imageRequestId=closed_request, subjectSub='SYNTHETIC-clinician-sub', revision=3, at=STAMP)]
     # S7-U1a: four critical result records (contract S7-U1p section 12.3-3) - an acknowledged one to a clinician (v1), a
     # superseded one to a radiologist (v1) with its replacement still created (v2, supersedes the old one), and a cancelled
     # one to another clinician (v2) - their seven events (created seq 1 and one terminal seq 2 each; the replacement has
@@ -966,7 +972,7 @@ def create_product(name, db, uid):
                   'ViewerItem', 'ViewerRevision', 'ViewerStorageBudget', 'ViewerRequest', 'Finding', 'FindingRevision', 'WorkspaceLayout', 'WorklistColumns',
                   'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
                   'FavoriteWorkspace', 'StudyTagCatalog', 'ReaderAssignment', 'ReadingPreferences', 'ReadingAppearance', 'WorkspaceShortcuts', 'HangingProtocolPreference', 'UserFilterCollection', 'SharedFilterLibrary', 'StudyConsultation', 'StudyAccessPolicy', 'StudyAccessRevision',
-                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt', 'ReportDraftInsertReceipt',
+                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt', 'StudyQuestionSeen', 'StudyImageRequestSeen', 'ReportDraftInsertReceipt',
                   'ReportDraftPurposeEnd', 'PurposeLedgerAnchor', 'ReportLedgerAnchor', 'CriticalResult', 'CriticalResultEvent', 'CriticalResultReceipt', 'MemberIsolation', 'ProviderChange', 'MemberRights', 'MemberRightsImport',
                   'ImportOperation', 'GatewayReceipt', 'GatewayRetryRequest'):
         rows = data[table]

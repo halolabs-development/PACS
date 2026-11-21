@@ -11198,5 +11198,86 @@
         "optional": []
       }
     }
+  },
+  "di_additions_in_app_unread": {
+    "unit": "in-app-unread",
+    "decision": "In-app unread marks",
+    "note": "A view's unread count and items (one read recorded as the question and image request lists' heads are) and the person's seen mark of a question thread or an image request, on a feature controller of its own over the existing ClinicianQuestionService and ImageRequestService. No new provider. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "UnreadController"
+    ],
+    "providers": [],
+    "routes": [
+      {
+        "controller": "UnreadController",
+        "handler": "list",
+        "method": "GET",
+        "paths": [
+          "/|unread"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0",
+          "4:1@1:null:0"
+        ]
+      },
+      {
+        "controller": "UnreadController",
+        "handler": "question",
+        "method": "POST",
+        "paths": [
+          "/|questions/:id/seen"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "3:2@2:null:0",
+          "5:0@0:\"id\":0"
+        ]
+      },
+      {
+        "controller": "UnreadController",
+        "handler": "request",
+        "method": "POST",
+        "paths": [
+          "/|image-requests/:id/seen"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "3:2@2:null:0",
+          "5:0@0:\"id\":0"
+        ]
+      }
+    ],
+    "injectables": {
+      "UnreadController": {
+        "params": [
+          "ClinicianQuestionService",
+          "ImageRequestService",
+          "ClinicalRoutes"
+        ],
+        "scope": null,
+        "declared": [
+          "2:Symbol(EMR_CLINICAL_ROUTES)"
+        ],
+        "optional": [
+          2
+        ]
+      }
+    }
   }
 }

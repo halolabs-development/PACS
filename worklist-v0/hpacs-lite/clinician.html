@@ -222,6 +222,8 @@
     <section class="panel" id="studies-panel" aria-labelledby="studies-title">
       <div class="panel-head">
         <h2 id="studies-title">Studies</h2>
+        <!-- In-app unread (unread-badges.js): the server's count of new answers and processed requests; hidden at 0. -->
+        <span id="unread-summary" role="status" aria-live="polite" style="border:1px solid #d29a3a;border-radius:5px;padding:0 5px;font-size:12px;color:#f0c27a" hidden></span>
         <div class="spacer"></div>
         <button type="button" id="refresh">Refresh</button>
       </div>
@@ -296,6 +298,7 @@
   <script src="physician-name.js"></script>
   <script src="worklist-folder-tree.js"></script>
   <script src="work-mode.js"></script>
+  <script src="unread-badges.js"></script>
   <script src="clinician.js"></script>
   <script>KinClinicianHome.boot();</script>
   <script src="product-info-data.js"></script>
