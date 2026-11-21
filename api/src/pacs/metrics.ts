@@ -10,6 +10,8 @@ import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
 import { currentExamStates } from '../exam-merge.service';
 import { apiProcessFacts } from '../api-process';
+import { databaseUptime, loginServerAnswers, orthancUptimeSample, serverComponentRows } from './server-status';
+import type { ServerRead } from './server-status';
 
 /**
  * ── S5-U6b 관리자 운영 지표 (REQ-S5-U6b-OPS-METRICS → RISK-S5-U6b-UNKNOWN-AS-ZERO/INVENTED-THRESHOLD/TENANT-AGGREGATE) ──
@@ -22,7 +24,15 @@ import { apiProcessFacts } from '../api-process';
  *  unobservable  원천이 실패했거나(source_failed·invalid_answer·timeout) 제품에 원천이 없다(no_source)
  * 임계값·정상/이상 판정은 싣지 않는다. 출처 있는 사이트 설정이 없다(C-7 — 목업의 30/240분은 원천이 아니다).
  * 대기·TAT의 입력은 사람이 입력한 Emergency 표시(em)와 서버 시각뿐이고, 영상·판독 본문·외부 결과는 읽지 않는다
- * (UXR-S5-17). 서버 전체 값은 Orthanc 저장량 하나뿐이고(D11), 기관별 저장량은 원천이 없어 늘 관측 불가다.
+ * (UXR-S5-17). 서버 전체 값은 Orthanc 저장량 하나뿐이다(D11).
+ * 기관 저장량(`storage.institution`)은 이 기관이 **소유한** 원본 검사(원격판독으로 받은 검사는 소유 기관 몫이라 뺀다)의 UID를 가진
+ * Orthanc Study 자원마다 `GET /studies/{id}/statistics`의 DiskSize를 한 번씩 더한 값이다(`institutionStorageBytes` 한 곳).
+ * Study 목록(`/tools/find`)이 전부라고 확인될 때만 센다 — 목록의 자원 수가 같은 조회의 `/statistics` CountStudies와 같아야
+ * 한다(검색 결과 상한 `LimitFindResults`나 읽는 사이의 도착이면 'incomplete').
+ * 모든 자원이 답했을 때만 값이 나간다 — 하나라도 실패·형식 오류·제한 시간 넘김이면, 또 한 UID에 자원이 여럿이라(환자 둘)
+ * 어느 기관 몫인지 정하지 못하면 줄 전체가 관측 불가이고 부분 합계를 내지 않는다. KIN에 등록되지 않은 Orthanc 검사는 어느
+ * 기관에도 넣지 않는다(서버 전체 값에만 있다). 범위 재확인(`metricsScopeHeld`)이 실패하면 이 값도 버린다.
+ * 서버 구성요소의 가동 상태(답의 `server`)는 `server-status.ts`의 규칙이다.
  */
 export const ADMIN_METRIC_KEYS = Object.freeze([
   'storage.server', 'storage.institution', 'studies.own', 'studies.tele', 'studies.flag_unreadable',
@@ -46,6 +56,45 @@ const ADMIN_METRIC_WAITING_RS = ['W', 'T', 'P', 'H'];
 
 export type AdminMetricFailure = 'source_failed' | 'invalid_answer' | 'timeout';
 export interface AdminMetricStorage { bytes?: number; observedAt?: string; failure?: AdminMetricFailure }
+/**
+ * 기관 저장량. `unattributed` = 소유 UID 하나에 Orthanc Study 자원이 여럿이라 기관 몫을 정하지 못함. `incomplete` = Study 목록이
+ * 전부라고 확인되지 않음(목록의 자원 수가 같은 조회의 `/statistics` CountStudies와 다름 — 검색 결과 상한·읽는 사이의 도착).
+ */
+export interface AdminMetricInstitutionStorage { bytes?: number; observedAt?: string;
+  failure?: AdminMetricFailure | 'unattributed' | 'incomplete' }
+const INSTITUTION_STORAGE_SOURCE = 'Orthanc GET /studies/{id}/statistics DiskSize (studies this institution owns)';
+/** 기관 저장량을 읽을 때 Orthanc에 한꺼번에 보내는 Study 통계 요청 수. */
+const INSTITUTION_STORAGE_PARALLEL = 8;
+
+/**
+ * 기관 저장량의 합(순수). `owned`는 이 기관이 소유한 원본 검사 UID, `resources`는 Orthanc가 준 Study 자원 목록, `studyCount`는
+ * 같은 조회에서 Orthanc `/statistics`가 말한 Study 자원 수(모르면 null), `sizeOf`는 자원 id의 DiskSize 바이트(또는 null = 모름).
+ * 목록이 전부라고 확인되지 않으면(수가 다르거나 모름) 'incomplete' — 목록에 없는 소유 검사를 0바이트로 셀 수 없기 때문이다.
+ * 소유 UID 하나에 자원이 둘 이상이면 'unattributed', 바이트 하나라도 모르면 null.
+ */
+export function institutionStorageBytes(owned: Iterable<string>, resources: { id: string; uid: string }[], studyCount: number | null,
+  sizeOf: (id: string) => number | null): number | null | 'unattributed' | 'incomplete' {
+  if (studyCount === null || new Set(resources.map(r => r.id)).size !== resources.length || resources.length !== studyCount)
+    return 'incomplete';
+  const byUid = new Map<string, string[]>();
+  for (const r of resources) byUid.set(r.uid, [...(byUid.get(r.uid) ?? []), r.id]);
+  let total = 0;
+  for (const uid of new Set(owned)) {
+    const ids = [...new Set(byUid.get(uid) ?? [])];
+    if (ids.length > 1) return 'unattributed';
+    for (const id of ids) {
+      const bytes = sizeOf(id);
+      if (bytes === null) return null;
+      total += bytes;
+    }
+  }
+  return Number.isSafeInteger(total) ? total : null;
+}
+
+/** 소유 원본 검사 UID: 묶음의 논리 행(분할의 둘째 행)이 아닌 원본(`originals`) 가운데 institutionId가 이 기관인 것. */
+export function ownedOriginalUids(institution: string, read: AdminMetricStudies): string[] {
+  return (read.originals ?? read.sourceStates ?? read.states ?? []).filter(s => s && s.institutionId === institution).map(s => s.uid);
+}
 export interface AdminMetricStudies { observedAt: string; states: any[]; firstApproved: Map<string, unknown>; sourceStates?:any[]; originals?:any[]; generations?:string[] }
 
 /** Orthanc `/statistics`의 TotalDiskSize(바이트, 문자열). 음수·소수·지수·안전 정수 밖은 모름이다. */
@@ -56,6 +105,18 @@ export function orthancDiskBytes(answer: unknown): number | null {
   if (!/^\d+$/.test(text)) return null;
   const value = Number(text);
   return Number.isSafeInteger(value) ? value : null;
+}
+
+/** Orthanc `/statistics`의 CountStudies(Study 자원 수) — 기관 저장량 목록이 전부인지 대 보는 데만 쓰고 응답에 싣지 않는다. */
+export function orthancStudyCount(answer: unknown): number | null {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
+  return orthancDiskBytes({ TotalDiskSize: (answer as any).CountStudies });
+}
+
+/** Orthanc `/studies/{id}/statistics`의 DiskSize(바이트, 문자열) — TotalDiskSize와 같은 규칙. */
+export function orthancStudyDiskBytes(answer: unknown): number | null {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return null;
+  return orthancDiskBytes({ TotalDiskSize: (answer as any).DiskSize });
 }
 
 const metricTime = (value: unknown): number | null => {
@@ -77,7 +138,7 @@ function metricDurations(seconds: number[]) {
  * 한 번 더 걸러, 다른 기관 행이 섞여 들어와도 어느 합계에도 들어가지 않게 한다.
  */
 export function adminMetricRows(institution: string, storage: AdminMetricStorage, studies: AdminMetricStudies | null,
-  apiProcess?: AdminMetricProcess) {
+  apiProcess?: AdminMetricProcess, ownStorage?: AdminMetricInstitutionStorage) {
   const row = (key: string, scope: 'server' | 'institution', unit: 'byte' | 'study' | 'second' | 'duration_seconds' | 'timestamp',
     rest: any) => ({
     key, state: 'observed', reason: null, scope, source: null, observedAt: null, unit, value: null, max: null,
@@ -91,8 +152,19 @@ export function adminMetricRows(institution: string, storage: AdminMetricStorage
         denominator: { unit: 'byte', value: null } }
     : { state: 'unobservable', reason: storage.failure ?? 'invalid_answer', source: 'Orthanc GET /statistics TotalDiskSize',
         denominator: { unit: 'byte', value: null } }));
-  rows.push(row('storage.institution', 'institution', 'byte',
-    { state: 'unobservable', reason: 'no_source', denominator: { unit: 'byte', value: null } }));
+  // 기관 저장량: 읽기가 주어지지 않으면(원천 없이 부른 경우) no_source. DB 범위를 확인하지 못했으면(studies null) 바이트를
+  // 이 기관 몫이라 할 수 없으므로 source_failed다.
+  {
+  const own = ownStorage;
+  const ownOk = !!own && own.failure === undefined && Number.isSafeInteger(own.bytes) && (own.bytes as number) >= 0
+    && metricTime(own.observedAt) !== null;
+  rows.push(row('storage.institution', 'institution', 'byte', own === undefined
+    ? { state: 'unobservable', reason: 'no_source', denominator: { unit: 'byte', value: null } }
+    : studies && ownOk
+      ? { source: INSTITUTION_STORAGE_SOURCE, observedAt: own.observedAt, value: own.bytes, denominator: { unit: 'byte', value: null } }
+      : { state: 'unobservable', reason: !studies ? 'source_failed' : own.failure ?? 'invalid_answer', source: INSTITUTION_STORAGE_SOURCE,
+          denominator: { unit: 'byte', value: null } }));
+  }
 
   const now = studies ? metricTime(studies.observedAt) : null;
   const sources: Record<string, string> = {
@@ -217,30 +289,111 @@ export class PacsMetrics {
     if (access.policy.restricted)
       throw new ForbiddenException({ code: 'ADMIN_METRICS_RESTRICTED',
         message: '검사 접근 범위가 제한된 계정은 기관 운영 지표를 볼 수 없습니다' });
-    const [storage, read] = await Promise.all([this.metricsStorage(), this.metricsStudies(me,c)]);
+    const apiFacts = this.metricsProcess();
+    // 기관 저장량은 DB 읽기가 고른 소유 원본으로 읽고, 범위 재확인 전에 끝낸다. 서버 구성요소 점검은 각자 따로 기다린다.
+    // 기관 저장량이 Study 목록의 완전성을 대 보는 수(CountStudies)는 같은 `/statistics` 읽기에서 온다.
+    const storageRead = this.metricsStorage();
+    const [storage, counted, components] = await Promise.all([storageRead,
+      this.metricsStudies(me,c).then(async read => ({ read, own: read ? await this.metricsInstitutionStorage(me, read, storageRead) : undefined })),
+      this.metricsComponents()]);
     // 기관 범위 재확인은 모든 원천이 답한 뒤(Orthanc 대기 포함)에 한다. 범위가 바뀐 것은 원천 실패가 아니므로
     // metricsStudies의 catch 밖에서 409로 던진다 — 관측 불가 줄로 바꿔 내보내지 않는다.
-    const studies = read && await this.metricsScopeHeld(me, read,c);
-    const metrics = adminMetricRows(me, storage, studies, this.metricsProcess());
+    const studies = counted.read && await this.metricsScopeHeld(me, counted.read,c);
+    const metrics = adminMetricRows(me, storage, studies, apiFacts, counted.own ?? { failure: 'source_failed' });
+    const server = serverComponentRows({ api: apiFacts, imageStoreStatistics: storage.failure === undefined && storage.observedAt
+      ? { at: Date.parse(storage.observedAt), value: true } : { at: storage.at ?? this.metricsClock(), failure: storage.failure ?? 'invalid_answer' },
+      imageStoreMetrics: components.imageStore, database: components.database, loginServer: components.loginServer });
     // 읽는 동안 접근 조건이 바뀌었으면 그 전 조건으로 센 합계를 내보내지 않는다.
     await this.studyAccess.unchanged(c, access);
-    return { institutionId: me, generatedAt: new Date(this.metricsClock()).toISOString(), metrics };
+    return { institutionId: me, generatedAt: new Date(this.metricsClock()).toISOString(), metrics, server };
+  }
+
+  /** 한 원천을 대기 상한 안에서 읽는다. 늦으면 신호를 끊고 timeout, 실패는 source_failed. 끝난 서버 시각을 함께 둔다. */
+  private async bounded<T>(read: (signal: AbortSignal) => Promise<T | { failure: 'invalid_answer' }>): Promise<ServerRead<T>> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), this.metricsTimeoutMs); });
+    try {
+      const value = await Promise.race([read(controller.signal), late]);
+      if (value === 'timeout') return { at: this.metricsClock(), failure: 'timeout' };
+      if (value && typeof value === 'object' && (value as any).failure === 'invalid_answer') return { at: this.metricsClock(), failure: 'invalid_answer' };
+      return { at: this.metricsClock(), value: value as T };
+    } catch {
+      return { at: this.metricsClock(), failure: 'source_failed' };
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+  }
+
+  /** 로그인 서버 점검. 제품은 API가 Keycloak에 쓰는 주소의 realm 발견 문서이고, 시험만 인스턴스 값을 바꾼다. */
+  protected metricsLoginServer = (signal: AbortSignal) => loginServerAnswers(signal);
+
+  /** 서버 구성요소 점검(server-status.ts의 규칙): Orthanc 가동 시간 표본, DB 시작 시각, 로그인 서버. 각자 따로 기다린다. */
+  private async metricsComponents() {
+    const [imageStore, database, loginServer] = await Promise.all([
+      this.bounded<number | null>(async signal => {
+        const sample = orthancUptimeSample(await this.orthanc.metricsText(signal));
+        return sample === undefined || Number.isNaN(sample) ? { failure: 'invalid_answer' as const } : sample;
+      }),
+      this.bounded<{ uptimeSeconds: number; startedAt: number }>(async () => {
+        const rows = await this.prisma.$queryRaw`SELECT EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time()))::bigint AS up,
+          pg_postmaster_start_time() AS started`;
+        return databaseUptime(rows) ?? { failure: 'invalid_answer' as const };
+      }),
+      this.bounded<true>(async signal => (await this.metricsLoginServer(signal)) ? true as const : { failure: 'invalid_answer' as const }),
+    ]);
+    return { imageStore, database, loginServer };
+  }
+
+  /**
+   * 기관 저장량(위 머리말의 규칙). 소유 원본이 없으면 Orthanc에 묻지 않고 0이다. 대기 상한 하나가 목록 읽기부터 마지막 통계까지를
+   * 덮고, 넘으면 남은 요청을 끊는다(새 요청을 쌓지 않는다). 실패 문구는 싣지 않는다.
+   */
+  private async metricsInstitutionStorage(me: string, read: AdminMetricStudies,
+    storageRead: Promise<AdminMetricStorage & { studies?: number }>): Promise<AdminMetricInstitutionStorage> {
+    const owned = ownedOriginalUids(me, read);
+    if (!owned.length) return { bytes: 0, observedAt: new Date(this.metricsClock()).toISOString() };
+    const result = await this.bounded<number | 'unattributed' | 'incomplete'>(async signal => {
+      const [resources, server] = await Promise.all([this.orthanc.studyResources(signal), storageRead]);
+      // The list must be every Study resource before an owned study absent from it can count as 0 bytes.
+      if (institutionStorageBytes([], resources, server.studies ?? null, () => null) === 'incomplete') return 'incomplete';
+      const wanted = new Set(owned), ids = [...new Set(resources.filter(r => wanted.has(r.uid)).map(r => r.id))];
+      const sizes = new Map<string, number | null>();
+      let next = 0;
+      const worker = async () => {
+        while (next < ids.length) {
+          signal.throwIfAborted();
+          const id = ids[next++];
+          sizes.set(id, orthancStudyDiskBytes(await this.orthanc.studyStatistics(id, signal)));
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(INSTITUTION_STORAGE_PARALLEL, ids.length) }, worker));
+      const total = institutionStorageBytes(owned, resources, server.studies ?? null, id => sizes.get(id) ?? null);
+      return total === null ? { failure: 'invalid_answer' as const } : total;
+    });
+    if ('failure' in result) return { failure: result.failure };
+    if (result.value === 'unattributed' || result.value === 'incomplete') return { failure: result.value };
+    return { bytes: result.value, observedAt: new Date(result.at).toISOString() };
   }
 
   /**
    * Orthanc 서버 전체 저장량(D11). 통계 전용 공개 계약을 사용해 인증된 원천 읽기는 OrthancService에 맡긴다.
    * 실패 문구(원천 주소가 섞일 수 있다)는 응답에 싣지 않고 이유 코드만 남긴다.
    */
-  private async metricsStorage(): Promise<AdminMetricStorage> {
+  private async metricsStorage(): Promise<AdminMetricStorage & { at?: number; studies?: number }> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<'timeout'>(resolve => { timer = setTimeout(() => resolve('timeout'), this.metricsTimeoutMs); });
     try {
       const answer = await Promise.race([this.orthanc.statistics(), late]);
-      if (answer === 'timeout') return { failure: 'timeout' };
+      if (answer === 'timeout') return { failure: 'timeout', at: this.metricsClock() };
       const bytes = orthancDiskBytes(answer);
-      return bytes === null ? { failure: 'invalid_answer' } : { bytes, observedAt: new Date(this.metricsClock()).toISOString() };
+      // CountStudies never leaves the server: it only proves the institution storage's Study list is complete.
+      const studies = orthancStudyCount(answer) ?? undefined;
+      return bytes === null ? { failure: 'invalid_answer', at: this.metricsClock(), studies }
+        : { bytes, observedAt: new Date(this.metricsClock()).toISOString(), studies };
     } catch {
-      return { failure: 'source_failed' };
+      return { failure: 'source_failed', at: this.metricsClock() };
     } finally {
       clearTimeout(timer);
     }

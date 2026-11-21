@@ -1049,7 +1049,8 @@ class OrthancConnectionTests(unittest.TestCase):
         self.assertEqual(len(connections), 3)
 
 
-HEARTBEAT_KEYS = {"epoch", "bootId", "seq", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc"}
+HEARTBEAT_KEYS = {"epoch", "bootId", "seq", "version", "uptimeSeconds", "queue", "lastStowAgeSeconds", "localOrthanc",
+                  "dicomListener"}
 
 
 class BeatCloud:
@@ -1119,6 +1120,7 @@ class HeartbeatTests(unittest.TestCase):
         self.assertEqual(body["queue"], {"waiting": 3, "retry": 2, "failed": 1}, "complete is never reported")
         self.assertIsNone(body["lastStowAgeSeconds"], "no STOW yet")
         self.assertIsNone(body["localOrthanc"], "no local request yet")
+        self.assertIsNone(body["dicomListener"], "no DICOM check yet")
         wire = json.dumps(body)
         for absent in ("1.2.", "SYNTHETIC", "byte budget", "STOW HTTP", "Z\""):
             self.assertNotIn(absent, wire)
@@ -2326,6 +2328,130 @@ class SupportTests(unittest.TestCase):
                                     "handled": [REQ], "reported": [], "restart": None}))
         support = self.support(agent)
         self.assertEqual(support.memo["handled"], [])
+try:   # the real DICOM SCP these cases talk to; the CI venv that runs this file installs pynetdicom (validate.yml)
+    import pynetdicom
+    from pynetdicom import AE, evt
+    from pynetdicom.sop_class import CTImageStorage, Verification
+except ImportError:   # pragma: no cover
+    pynetdicom = None
+
+
+def free_port() -> int:
+    with socketserver.TCPServer(("127.0.0.1", 0), socketserver.BaseRequestHandler) as server:
+        return server.server_address[1]
+
+
+@unittest.skipIf(pynetdicom is None, "pynetdicom is not installed: the real DICOM SCP cases cannot run here")
+class DicomListenerCheckTests(unittest.TestCase):
+    """The DICOM receive self-check: one C-ECHO to the listener's DICOM port, judged only by the listener's answer."""
+
+    def scp(self, *, contexts=("verification",), title="KINGW", require_called=False, status=0x0000):
+        ae = AE(ae_title=title)
+        ae.require_called_aet = require_called
+        if "verification" in contexts:
+            ae.add_supported_context(Verification)
+        if "ct" in contexts:
+            ae.add_supported_context(CTImageStorage)
+        echoes = []
+
+        def on_echo(event):
+            echoes.append(event.assoc.requestor.ae_title)
+            return status
+        port = free_port()
+        server = ae.start_server(("127.0.0.1", port), block=False, evt_handlers=[(evt.EVT_C_ECHO, on_echo)])
+        self.addCleanup(server.shutdown)
+        return port, echoes
+
+    def test_an_accepting_listener_is_accepted_and_really_received_the_echo(self):
+        port, echoes = self.scp()
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", port, "KINGW"), "accepted")
+        self.assertEqual([str(title).strip() for title in echoes], ["KINGW-CHECK"])
+
+    def test_a_refused_association_context_or_status_is_rejected(self):
+        port, _echoes = self.scp(title="KINGW", require_called=True)
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", port, "OTHER"), "rejected", "A-ASSOCIATE-RJ")
+        port, echoes = self.scp(contexts=("ct",))
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", port, "KINGW"), "rejected", "Verification not supported")
+        self.assertEqual(echoes, [])
+        port, echoes = self.scp(status=0x0122)
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", port, "KINGW"), "rejected", "a failure Status")
+        self.assertEqual(len(echoes), 1)
+
+    def test_a_closed_port_a_silent_listener_and_a_bare_close_are_no_answer(self):
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", free_port(), "KINGW", timeout=1), "no_answer")
+        silent = socketserver.TCPServer(("127.0.0.1", 0), socketserver.BaseRequestHandler, bind_and_activate=True)
+        self.addCleanup(silent.server_close)   # listens, never accepts or answers
+        started = time.monotonic()
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", silent.server_address[1], "KINGW", timeout=0.5),
+                         "no_answer")
+        self.assertLess(time.monotonic() - started, 3, "one deadline from connecting to the answer")
+
+        class Hangup(socketserver.BaseRequestHandler):
+            def handle(self):
+                self.request.recv(4096)   # reads the request and closes without any PDU
+
+        hangup = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Hangup)
+        threading.Thread(target=hangup.serve_forever, daemon=True).start()
+        self.addCleanup(hangup.server_close)
+        self.addCleanup(hangup.shutdown)
+        self.assertEqual(agent_module.dicom_echo("127.0.0.1", hangup.server_address[1], "KINGW", timeout=2), "no_answer")
+
+    def heartbeat(self, port: int):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        agent = Agent(config(str(Path(directory.name) / "queue.db"), dicom_host="127.0.0.1", dicom_port=port))
+        self.addCleanup(agent.queue.close)
+        beat = agent_module.Heartbeat(agent.config, agent.queue.epoch, agent.orthanc, agent.cloud, time.monotonic())
+        self.addCleanup(beat.cloud.session.close)
+        self.addCleanup(beat.stop)
+        beat.cloud = BeatCloud()
+        return agent, beat
+
+    def test_the_rest_answer_never_fills_the_dicom_result(self):
+        agent, beat = self.heartbeat(free_port())   # nothing listens on the DICOM port
+        agent.orthanc.observed = (True, time.monotonic())   # while the REST API answers
+        self.assertIsNone(beat.body()["dicomListener"], "the REST answer is not a DICOM check")
+        self.assertEqual(beat.check_listener(), "no_answer")
+        body = beat.body()
+        self.assertEqual(body["localOrthanc"]["answered"], True)
+        self.assertEqual(body["dicomListener"], {"result": "no_answer", "ageSeconds": 0})
+
+    def test_each_beat_carries_its_own_fresh_check_and_a_failed_check_still_beats(self):
+        port, echoes = self.scp()
+        _agent, beat = self.heartbeat(port)
+        with patch.object(agent_module, "HEARTBEAT_SECONDS", 0.05):
+            beat.start()
+            deadline = time.monotonic() + 10
+            while len(beat.cloud.bodies) < 2 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            beat.stop()
+        self.assertGreaterEqual(len(beat.cloud.bodies), 2)
+        self.assertEqual(beat.cloud.bodies[0]["dicomListener"]["result"], "accepted", "the first beat is checked first")
+        self.assertGreaterEqual(len(echoes), len(beat.cloud.bodies), "one C-ECHO before each beat")
+        _agent, closed = self.heartbeat(free_port())
+        with patch.object(agent_module, "HEARTBEAT_SECONDS", 0.05):
+            closed.start()
+            deadline = time.monotonic() + 10
+            while not closed.cloud.bodies and time.monotonic() < deadline:
+                time.sleep(0.01)
+            closed.stop()
+        self.assertEqual(closed.cloud.bodies[0]["dicomListener"]["result"], "no_answer")
+
+    def test_the_listener_address_and_its_configuration(self):
+        base = config("unused", orthanc_url="http://gw-orthanc:8042")
+        self.assertEqual(base.listener(), ("gw-orthanc", 4242, "KINGW"), "defaults: the Orthanc host, 4242, KINGW")
+        self.assertEqual(dataclasses.replace(base, dicom_host="dicom.local", dicom_port=11112, dicom_aet="HOSP").listener(),
+                         ("dicom.local", 11112, "HOSP"))
+        env = {"LOCAL_ORTHANC_URL": "http://gw-orthanc:8042", "LOCAL_ORTHANC_USER": "u", "LOCAL_ORTHANC_PASS": "p",
+               "KIN_BASE_URL": "https://cloud.invalid", "KIN_CLIENT_ID": "c", "KIN_CLIENT_SECRET": "s"}
+        with patch.dict("os.environ", {**env, "LOCAL_DICOM_HOST": "gw-orthanc", "LOCAL_DICOM_PORT": "4242",
+                                       "LOCAL_DICOM_AET": "KINGW"}, clear=True):
+            self.assertEqual(Config.from_env().listener(), ("gw-orthanc", 4242, "KINGW"))
+        for name, value in (("LOCAL_DICOM_PORT", "0"), ("LOCAL_DICOM_PORT", "x"), ("LOCAL_DICOM_PORT", "70000"),
+                            ("LOCAL_DICOM_AET", "A" * 17), ("LOCAL_DICOM_AET", "A\\B"), ("LOCAL_DICOM_AET", "   ")):
+            with patch.dict("os.environ", {**env, name: value}, clear=True):
+                with self.assertRaises(GatewayError, msg=name + "=" + value):
+                    Config.from_env()
 
 
 if __name__ == "__main__":

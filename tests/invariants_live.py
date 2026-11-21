@@ -4756,10 +4756,11 @@ class LiveInvariantTests(unittest.TestCase):
         # 18 -> 25: S4-U4 added RetryNowTests (T1-T6, seven cases) for Now Retry.
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
         # 70 -> 76: the receipt's series count (SeriesCountTests and one routing case).
+        # 76 -> 82: the DICOM receive self-check (DicomListenerCheckTests against a real DICOM SCP).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        # 76 -> 89: signed updates and remote support added SupportTests (the agent's half).
-        self.assertIn("Ran 89 tests", completed.stderr + completed.stdout)
+        # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
+        self.assertIn("Ran 95 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

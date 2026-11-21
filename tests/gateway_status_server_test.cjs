@@ -39,7 +39,11 @@ const code = error => error?.getResponse?.()?.code;
 const rowOf = async h => (await h.service.status(ADMIN)).gateways.find(g => g.queueInstance === EPOCH);
 
 test('the body is closed: every key, type and bound; ages never exceed the uptime', () => {
-  assert.deepEqual(H.parseGatewayHeartbeat(beat()), beat());
+  // An old agent sends no dicomListener: accepted, and read like an explicit null (not checked yet).
+  assert.deepEqual(H.parseGatewayHeartbeat(beat()), { ...beat(), dicomListener: null });
+  assert.deepEqual(H.parseGatewayHeartbeat(beat({ dicomListener: null })), { ...beat(), dicomListener: null });
+  for (const result of ['accepted', 'rejected', 'no_answer'])
+    assert.deepEqual(H.parseGatewayHeartbeat(beat({ dicomListener: { result, ageSeconds: 2 } })).dicomListener, { result, ageSeconds: 2 });
   assert.deepEqual(H.parseGatewayHeartbeat(beat({ seq: Number.MAX_SAFE_INTEGER })).seq, Number.MAX_SAFE_INTEGER);
   assert.deepEqual(H.parseGatewayHeartbeat(beat({ queue: null, lastStowAgeSeconds: null, localOrthanc: null })).queue, null);
   const bad = [undefined, null, [], 'x', {}, { ...beat(), extra: 1 }, (() => { const b = beat(); delete b.version; return b; })(),
@@ -54,7 +58,12 @@ test('the body is closed: every key, type and bound; ages never exceed the uptim
     beat({ queue: { waiting: -1, retry: 0, failed: 0 } }), beat({ queue: { waiting: '1', retry: 0, failed: 0 } }),
     beat({ queue: [] }), beat({ lastStowAgeSeconds: 601 }), beat({ lastStowAgeSeconds: -1 }),
     beat({ localOrthanc: { answered: 'yes', ageSeconds: 1 } }), beat({ localOrthanc: { answered: true } }),
-    beat({ localOrthanc: { answered: true, ageSeconds: 601 } }), beat({ localOrthanc: { answered: true, ageSeconds: 1, at: 'x' } })];
+    beat({ localOrthanc: { answered: true, ageSeconds: 601 } }), beat({ localOrthanc: { answered: true, ageSeconds: 1, at: 'x' } }),
+    beat({ dicomListener: { result: 'answered', ageSeconds: 1 } }), beat({ dicomListener: { result: 'ACCEPTED', ageSeconds: 1 } }),
+    beat({ dicomListener: { result: 'accepted' } }), beat({ dicomListener: { result: 'accepted', ageSeconds: 601 } }),
+    beat({ dicomListener: { result: 'accepted', ageSeconds: -1 } }), beat({ dicomListener: { result: true, ageSeconds: 1 } }),
+    beat({ dicomListener: { result: 'accepted', ageSeconds: 1, port: 4242 } }), beat({ dicomListener: 'accepted' }),
+    beat({ dicomListener: [] })];
   for (const body of bad) assert.throws(() => H.parseGatewayHeartbeat(body), H.GatewayHeartbeatInputError, JSON.stringify(body));
 });
 
@@ -64,6 +73,9 @@ test('times come from the server reception: start = R - uptime, last STOW = R - 
   assert.equal(row.startedAt, R - 600000);
   assert.equal(row.lastStowAt, R - 12000);
   assert.deepEqual(row.localOrthanc, { answered: true, observedAt: R - 1000 });
+  assert.equal(row.dicomListener, null, 'no check: no DICOM result, whatever the REST answer says');
+  const checked = H.gatewayHeartbeatRow(H.parseGatewayHeartbeat(beat({ dicomListener: { result: 'rejected', ageSeconds: 3 } })), 'sub', 'label', 'inst-a', R);
+  assert.deepEqual(checked.dicomListener, { result: 'rejected', observedAt: R - 3000 });
   assert.equal(row.receivedAt, R);
 });
 
@@ -170,10 +182,11 @@ test('admin read: this institution only, newest contact first, No Contact after 
   assert.deepEqual(first.gateways, [
     { gateway: 'gw-inst-a', queueInstance: EPOCH2, contact: 'recent', lastContactAt: '2026-11-16T12:00:10.000Z',
       startedAt: '2026-11-16T11:59:50.000Z', version: '2026.11.1', queue: null, lastStowAt: null,
-      localOrthanc: { answered: false, observedAt: '2026-11-16T12:00:06.000Z' } },
+      localOrthanc: { answered: false, observedAt: '2026-11-16T12:00:06.000Z' }, dicomListener: null },
     { gateway: 'gw-inst-a', queueInstance: EPOCH, contact: 'recent', lastContactAt: '2026-11-16T12:00:00.000Z',
       startedAt: '2026-11-16T11:50:00.000Z', version: '2026.11.1', queue: { waiting: 3, retry: 1, failed: 0 },
-      lastStowAt: '2026-11-16T11:59:48.000Z', localOrthanc: { answered: true, observedAt: '2026-11-16T11:59:59.000Z' } }]);
+      lastStowAt: '2026-11-16T11:59:48.000Z', localOrthanc: { answered: true, observedAt: '2026-11-16T11:59:59.000Z' },
+      dicomListener: null }]);
   assert.equal(JSON.stringify(first).includes('inst-b'), false, 'nothing of another institution');
   assert.equal(JSON.stringify(first).includes('sub-gw'), false, 'no account id');
   h.at('2026-11-16T12:03:00.000Z');   // exactly 180 s after the first row's contact: still recent
@@ -188,6 +201,30 @@ test('admin read: this institution only, newest contact first, No Contact after 
   assert.deepEqual(other.gateways.map(g => g.gateway), ['gw-inst-b']);
 });
 
+test('the DICOM receive check: each stored beat brings its own result and time; a stale beat or REST answer never changes it', async () => {
+  const h = harness();
+  h.service.heartbeat(beat({ seq: 1, dicomListener: { result: 'accepted', ageSeconds: 0 } }), GW);
+  assert.deepEqual((await rowOf(h)).dicomListener, { result: 'accepted', observedAt: '2026-11-16T12:00:00.000Z' });
+  h.tick(30000);
+  h.service.heartbeat(beat({ seq: 2, uptimeSeconds: 630, localOrthanc: { answered: true, ageSeconds: 0 },
+    dicomListener: { result: 'no_answer', ageSeconds: 0 } }), GW);
+  const down = await rowOf(h);
+  assert.deepEqual([down.localOrthanc.answered, down.dicomListener], [true, { result: 'no_answer', observedAt: '2026-11-16T12:00:30.000Z' }],
+    'the REST API answered while the DICOM port did not: the row says both, separately');
+  h.tick(1000);
+  assert.deepEqual(h.service.heartbeat(beat({ seq: 1, dicomListener: { result: 'accepted', ageSeconds: 0 } }), GW), { result: 'stale' });
+  assert.deepEqual((await rowOf(h)).dicomListener.result, 'no_answer', 'a late older body does not bring back Accepted');
+  h.tick(29000);
+  h.service.heartbeat(beat({ seq: 3, uptimeSeconds: 660, dicomListener: { result: 'accepted', ageSeconds: 1 } }), GW);
+  assert.deepEqual((await rowOf(h)).dicomListener, { result: 'accepted', observedAt: '2026-11-16T12:00:59.000Z' });
+  h.tick(181000);
+  const lost = await rowOf(h);
+  assert.deepEqual([lost.contact, lost.dicomListener.observedAt], ['no_contact', '2026-11-16T12:00:59.000Z'],
+    'No Contact keeps the last result with its own time, never a fresh one');
+  h.tick(1000);
+  assert.deepEqual(h.service.heartbeat(beat({ bootId: BOOT2, seq: 1, uptimeSeconds: 5, lastStowAgeSeconds: null, localOrthanc: null }), GW), { result: 'stored' });
+  assert.equal((await rowOf(h)).dicomListener, null, 'an old agent (no key) reads Not Checked, its queue and contact still stored');
+});
 test('admin read: admin only, restricted accounts refused like the metrics, an access change while reading is not answered', async () => {
   const h = harness();
   for (const caller of [TECH, GW, { ...ADMIN, roles: ['radiologist'] }])
