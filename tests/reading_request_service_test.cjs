@@ -21,7 +21,7 @@ const code = (status, value) => e => typeof e?.getStatus === 'function' && e.get
 
 /** A store with one StudyState row per uid (no exam groups); every raw statement is recorded with its values. */
 function world(rows = {}) {
-  const statements = [], audits = [];
+  const statements = [], audits = [], identities = [];
   const text = (strings, values) => ({ text: [...strings].join('?'), params: values });
   const tx = {
     $executeRaw: async (strings, ...values) => { statements.push(text(strings, values)); return 1; },
@@ -40,8 +40,9 @@ function world(rows = {}) {
   };
   const prisma = { ...tx, $transaction: async fn => fn(tx) };
   const access = { prepare: async () => {}, snapshot: async () => ({ policy: { restricted: false }, revision: 1 }),
-    require: async () => {}, prepareSourceIdentity: async () => {} };
-  return { prisma, access, statements, audits, rows };
+    require: async () => {}, prepareSourceIdentity: async () => { identities.push('prepared'); },
+    assertUnsplitSource: (_c, uid) => { identities.push(uid); return { sourcePatientId: 'SYN-P' }; } };
+  return { prisma, access, statements, audits, rows, identities };
 }
 const state = (extra = {}) => ({ uid: UID, institutionId: INST, rs: 'W', readingRequestAt: null, readingRequestBySub: null,
   readingRequestBy: null, readingRequestByName: null, readingRequestClosedAt: null, ...extra });
@@ -86,6 +87,8 @@ test('a new request locks the study row first, writes the five fields and one au
   assert.deepEqual(Object.keys(detail).sort(), ['at', 'institution', 'openUid', 'role', 'sub']);
   assert.deepEqual([detail.institution, detail.sub, detail.openUid, detail.role], [INST, CLIN.sub, UID, 'clinician']);
   assert.equal(detail.at, answer.readingRequest.at);
+  // The study is one identified source (prepared before the lock, asserted inside it).
+  assert.deepEqual(w.identities, ['prepared', UID]);
 });
 
 test('a token without a name is named by its login; a mixed-role member who holds clinician may ask', async () => {
@@ -165,6 +168,15 @@ test('the views: open or closed with the closing time, and who may ask now', asy
   const w = world(Object.fromEntries(rows.map(row => [row.uid, row])));
   const out = await R.clinicianReadingRequests(w.prisma, w.access, CLIN, rows.map(row => row.uid));
   assert.deepEqual(rows.map(row => out.get(row.uid).readingRequestable), [true, false, false, false, false, true]);
+  // Why not, as the POST would refuse it: approved, destroyed, open (shown as the request), another institution's.
+  assert.deepEqual(rows.map(row => out.get(row.uid).readingRequestRefusal), [null, 'reported', 'destroyed', null, 'unavailable', null]);
+  // A session without the clinician role (an administrator on the Physician screen) is never offered the press.
+  const admin = await R.clinicianReadingRequests(w.prisma, w.access, member('syn-admin', ['admin']), ['2.25.1']);
+  assert.deepEqual([admin.get('2.25.1').readingRequestable, admin.get('2.25.1').readingRequestRefusal], [false, 'role']);
+  // The one rule, in its order.
+  assert.equal(R.readingRequestRefusal(CLIN, state(), undefined), 'unavailable', 'no row it opens on');
+  assert.equal(R.readingRequestRefusal(CLIN, state({ readingRequestAt: new Date() }), 'A'), 'open', 'an open request is answered as it is first');
+  assert.equal(R.readingRequestRefusal(CLIN, state(), 'P'), null);
   // Another institution's study (a tele receiver's row) shows no request of the owner's.
   assert.equal(out.get('2.25.5').readingRequest, null);
   assert.equal(out.get('2.25.6').readingRequest.open, false);

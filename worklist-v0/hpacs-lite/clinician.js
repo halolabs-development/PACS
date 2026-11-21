@@ -1471,7 +1471,13 @@
     open: '판독문이 승인되면 의뢰가 닫힙니다.',
     closed: '판독문이 승인되어 의뢰가 닫혔습니다.',
     again: '판독문이 다시 승인 전 상태라 새로 의뢰할 수 있습니다.',
-    unavailable: '이 검사는 지금 판독을 의뢰할 수 없습니다(승인되었거나 파기된 판독문, 원격판독으로 받은 검사, 지금 열 수 없는 검사).',
+    unavailable: '이 검사는 지금 판독을 의뢰할 수 없습니다(원격판독으로 받은 검사이거나 지금 열 수 없는 검사).',
+    // Why not, as the server said it (readingRequestRefusal); an unknown reason reads as `unavailable`.
+    refusals: {
+      reported: '승인된 판독문이 있어 판독을 의뢰할 수 없습니다. 판독문을 보거나 Questions로 물어보세요.',
+      destroyed: '보존 기간이 끝나 판독문을 파기한 검사라 판독을 의뢰할 수 없습니다.',
+      role: '판독 의뢰는 진료과 의사(clinician) 계정만 할 수 있습니다.',
+    },
     sending: '보내는 중입니다…',
     created: '판독을 의뢰했습니다.',
     existing: '이미 열린 판독 의뢰가 있어 그 의뢰를 그대로 보여 줍니다.',
@@ -1506,7 +1512,7 @@
       state.replaceChildren(node('span', null, READING.malformed));
       section.dataset.state = 'malformed';
     } else if (view === null) {
-      state.replaceChildren(node('span', null, allowed ? READING.none : READING.unavailable));
+      state.replaceChildren(node('span', null, allowed ? READING.none : READING.refusals[row.readingRequestRefusal] || READING.unavailable));
       section.dataset.state = allowed ? 'none' : 'unavailable';
     } else if (view.open) {
       state.replaceChildren(node('b', null, 'Requested'), ' ', readingData(requestTime(view.at)), ' · ', readingData(view.by || '—'),
@@ -1524,8 +1530,8 @@
     $('#reading-request-note').textContent = note;
   }
 
+  // A press out stays out when the panel is closed: its answer still lands on its row (fresh() below).
   function clearReadingRequest() {
-    readingPresses.clear();
     const section = $('#reading-request');
     section.hidden = true;
     delete section.dataset.uid;
@@ -1552,7 +1558,9 @@
       if (!fresh()) return;
       if (error.code === 'OWNER_CHANGED') { accountChanged(describe(error)); return; }
       // A refusal said by the server: the study is approved or destroyed now, or out of reach - no button for it here.
-      if (error.status === 409 || error.status === 404 || error.status === 403) row.readingRequestable = false;
+      if (error.status === 409 || error.status === 404 || error.status === 403) Object.assign(row, { readingRequestable: false,
+        readingRequestRefusal: { READING_REQUEST_REPORTED: 'reported', READING_REQUEST_DESTROYED: 'destroyed',
+          READING_REQUEST_ROLE_REQUIRED: 'role' }[error.code] || 'unavailable' });
       paint(error.status ? describe(error) : `${describe(error)} ${READING.unknown}`);
       return;
     }
@@ -1563,8 +1571,7 @@
       paint(READING.malformed);
       return;
     }
-    row.readingRequest = view;
-    row.readingRequestable = false;
+    Object.assign(row, { readingRequest: view, readingRequestable: false, readingRequestRefusal: null });
     paint(body.created ? READING.created : READING.existing);
   }
 

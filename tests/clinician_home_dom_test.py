@@ -1499,7 +1499,8 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.rows[1]["readingRequest"] = {"at": "2026-09-21T00:10:00.000Z", "by": "SYN Dr. ASKER", "open": False,
                                           "closedAt": "2026-09-22T01:00:00.000Z"}                  # uid(2) A: closed
         self.rows[1]["readingRequestable"] = False
-        self.rows[3]["readingRequest"], self.rows[3]["readingRequestable"] = None, False           # uid(4): not now
+        self.rows[3]["readingRequest"], self.rows[3]["readingRequestable"] = None, False           # uid(4): not now,
+        self.rows[3]["readingRequestRefusal"] = "reported"                                        # its report approved
 
     def release_reading(self, route, status, body):
         request = route.request
@@ -1548,10 +1549,11 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual(("closed", False), (shown["state"], shown["button"]))
         self.assertEqual([self.local("2026-09-22T01:00:00.000Z"), self.local("2026-09-21T00:10:00.000Z"), "SYN Dr. ASKER"], shown["data"])
         self.assertIn("판독문이 승인되어 의뢰가 닫혔습니다.", shown["text"])
-        # A study the server says may not be asked for now (approved, destroyed, tele, out of reach): no button.
+        # A study the server says may not be asked for now: no button, and why, as the server said it.
         self.pick(4, "status")
         shown = self.reading()
         self.assertEqual(("unavailable", False), (shown["state"], shown["button"]))
+        self.assertIn("승인된 판독문이 있어 판독을 의뢰할 수 없습니다", shown["text"])
         # Back to the study asked for on this page: still shown open from the answer, no second press.
         self.pick(5, "status")
         self.assertEqual(("open", False), (self.reading()["state"], self.reading()["button"]))
@@ -1577,6 +1579,24 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertIn("이미 승인된 판독문이 있습니다", self.reading()["note"])
         self.assertFalse(self.reading()["button"])
         self.assertEqual("unavailable", self.reading()["state"])
+        self.assertIn("승인된 판독문이 있어 판독을 의뢰할 수 없습니다", self.reading()["text"])
+
+    def test_b19_closing_the_study_while_a_press_is_out_keeps_its_answer(self):
+        self.reading_rows()
+        self.open_home()
+        self.held_readings = []
+        self.pick(5, "status")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: len(self.held_readings) == 1, "the press reached the server")
+        # Close takes the study down; the answer that arrives then still belongs to the row it was pressed on.
+        self.page.locator("#detail-close").click()
+        self.wait_until(lambda: self.reading()["hidden"], "the study taken down")
+        target, route = self.held_readings.pop()
+        self.release_reading(route, *self.reading_created())
+        self.pick(5, "status")
+        shown = self.reading()
+        self.assertEqual(("open", False), (shown["state"], shown["button"]))
+        self.assertEqual(1, len(self.readings), "no second press")
 
     def test_b19_a_late_answer_lands_on_its_own_row_and_never_over_a_newer_list(self):
         self.reading_rows()

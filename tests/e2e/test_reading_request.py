@@ -14,8 +14,9 @@ each on its own synthetic studies:
   reading_03  closed by the approval: a save, a hold and a refused approval leave it open; the approval closes it with the
               approval's own time; a new request on the approved report is refused; a Reset keeps it closed and a new
               request after it is a second request (a second audit row).
-  reading_04  a merged exam: a request on a merged study shows on the base row and the base row's approval closes it; an
-              approval racing a press on two connections never leaves an open request on an approved report.
+  reading_04  a merged exam: a request on a merged study (made before or after the merge) shows on the base row and the base
+              row's approval closes it; an approval racing a press on two connections never leaves an open request on an
+              approved report.
 
 Synthetic stack only, through scripts/run-tests.py (LiveStack refuses any other entry):
 
@@ -258,6 +259,24 @@ class ReadingRequestE2E(unittest.TestCase):
         self.assertIsNotNone(self.fields(b.uid)["closedAt"])
         self.assertEqual(self.fields(b.uid)["closedAt"], self.fields(a.uid)["approvedAt"])
         self.assertIsNone(self.worklist_row(a.uid)["readingRequest"])
+        # Asked after the merge, on the merged study: the clinician row offers the press (the base row is not approved) and
+        # the request shows on the base row.
+        later = "SYN-RREQ-" + uuid.uuid4().hex[:12]
+        d, e = self.study(later), self.study(later)
+        regrouped = self.stack.request("POST", "/exam-groups", "rtech", {"baseUid": d.uid, "uids": [d.uid, e.uid]})
+        self.assertEqual(regrouped.status, 200, regrouped.text[:400])
+
+        def ungroup_later():
+            groups = psql(f'SELECT DISTINCT "groupId" FROM "StudyGroupMember" WHERE "studyUid" IN ({lit(d.uid)},{lit(e.uid)})')
+            if groups:
+                ids = ",".join(lit(g) for g in groups)
+                psql(f'BEGIN; SET LOCAL session_replication_role=replica; '
+                     f'DELETE FROM "StudyGroupMember" WHERE "groupId" IN ({ids}); DELETE FROM "StudyGroup" WHERE id IN ({ids}); COMMIT;')
+        self.addCleanup(ungroup_later)
+        self.assertEqual((self.clinician_row(e.uid)["readingRequestable"], self.clinician_row(e.uid)["readingRequestRefusal"]), (True, None))
+        self.ask("rclin", e.uid, 201)
+        self.assertIsNotNone(self.worklist_row(d.uid)["readingRequest"])
+        self.assertFalse(self.clinician_row(e.uid)["readingRequestable"])
         # An approval and a press at the same moment: either the press is refused or the approval closes it.
         c = self.study()
         self.commit(c.uid, "rrad", "save", 0, findings="SYNTHETIC race findings")

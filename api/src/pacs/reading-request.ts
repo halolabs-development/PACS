@@ -20,8 +20,6 @@ import { CLINICIAN_ROLE } from '../clinician-policy';
 import type { Caller } from './access';
 
 export const READING_REQUEST_AUDIT_ACTION = 'study.reading-request';
-/** The report states a request is refused on (the row it opens on): approved, and destroyed at the end of retention. */
-const REPORTED: readonly string[] = Object.freeze(['A', 'D']);
 const STUDY_UID = /^\d+(?:\.\d+)+$/;
 
 type RequestCaller = Caller & { name?: string };
@@ -105,12 +103,31 @@ export async function worklistReadingRequests(prisma: PrismaService, access: Stu
 }
 
 /**
- * The clinician list rows' requests: the row's own latest request (shown only while the study opens on a row now) and
- * whether this caller may ask now (an own-institution study, its open row neither approved nor destroyed, no open request).
- * `uids` are the listed studies (the clinician list's own selection); their request fields are read here.
+ * Why this caller may not make a new request on this study now, or null when they may: the one rule the POST and the
+ * clinician list both apply. `state` is the study's own StudyState row and `onRs` the report state of the row it opens on
+ * now (undefined when it opens on none). In this order: the clinician role, the owning institution, a row it opens on, a
+ * request already open (the POST answers that one as it is), an approved or a destroyed report.
+ */
+export type ReadingRequestRefusal = 'role' | 'unavailable' | 'open' | 'reported' | 'destroyed';
+export function readingRequestRefusal(c: Caller, state: any, onRs: unknown): ReadingRequestRefusal | null {
+  if (!holds(c, CLINICIAN_ROLE)) return 'role';
+  if (typeof c.institution !== 'string' || !c.institution || state?.institutionId !== c.institution || typeof onRs !== 'string')
+    return 'unavailable';
+  if (readingRequestOpen(state)) return 'open';
+  if (onRs === 'A') return 'reported';
+  if (onRs === 'D') return 'destroyed';
+  return null;
+}
+
+/**
+ * The clinician list rows' requests: the row's own latest request (shown only for an own-institution study that opens on
+ * a row now), whether this caller may ask now and, when not, why (readingRequestRefusal; an open request is shown as such,
+ * not as a refusal). `uids` are the listed studies (the clinician list's own selection); their request fields are read
+ * here, and the report state of a row they open on that is not itself listed.
  */
 export async function clinicianReadingRequests(prisma: PrismaService, access: StudyAccessService, c: Caller, uids: string[]) {
-  const out = new Map<string, { readingRequest: ReadingRequestView | null; readingRequestable: boolean }>();
+  const out = new Map<string, { readingRequest: ReadingRequestView | null; readingRequestable: boolean;
+    readingRequestRefusal: Exclude<ReadingRequestRefusal, 'open'> | null }>();
   if (!uids.length) return out;
   const states: any[] = await prisma.studyState.findMany({ where: { uid: { in: uids } }, select: { uid: true, institutionId: true,
     rs: true, readingRequestAt: true, readingRequestBy: true, readingRequestByName: true, readingRequestClosedAt: true } });
@@ -121,11 +138,12 @@ export async function clinicianReadingRequests(prisma: PrismaService, access: St
     select: { uid: true, rs: true } }) : []).map(row => [row.uid, row.rs]));
   for (const state of states) {
     const on = target.get(state.uid);
-    const own = !!c.institution && state.institutionId === c.institution;
-    if (!on || !own) { out.set(state.uid, { readingRequest: null, readingRequestable: false }); continue; }
-    const onRs = on === state.uid ? state.rs : rs.get(on);
-    out.set(state.uid, { readingRequest: readingRequestView(state),
-      readingRequestable: typeof onRs === 'string' && !REPORTED.includes(onRs) && !readingRequestOpen(state) });
+    // The row it opens on is this study, another listed study (its row read above) or one read for it.
+    const onRs = !on ? undefined : on === state.uid ? state.rs : byUid.get(on)?.rs ?? rs.get(on);
+    const refusal = readingRequestRefusal(c, state, onRs);
+    const shown = !!on && !!c.institution && state.institutionId === c.institution;
+    out.set(state.uid, { readingRequest: shown ? readingRequestView(state) : null, readingRequestable: refusal === null,
+      readingRequestRefusal: refusal === 'open' ? null : refusal });
   }
   return out;
 }
@@ -144,8 +162,8 @@ export async function createReadingRequest(prisma: PrismaService, access: StudyA
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).join() !== 'expectedOwner') throw invalid();
   const owner = [c.institution, c.sub];
   if (JSON.stringify(body.expectedOwner) !== JSON.stringify(owner)) throw ownerChanged();
-  // The source tags the access policy reads, before any lock (as an image request's create).
-  await prepareExamRead(prisma, access, c, uid);
+  // The source tags the access policy reads and the study's own source identity (one patient resource), before any lock.
+  await prepareExamRead(prisma, access, c, uid, true);
   const on = (await examOpenUids(prisma, prisma, access, c, [uid])).get(uid);
   if (!on) throw missing();
   const name = Array.from(typeof c.name === 'string' && c.name.trim() ? c.name : c.actor).slice(0, 256).join('');
@@ -157,12 +175,15 @@ export async function createReadingRequest(prisma: PrismaService, access: StudyA
         "readingRequestBy", "readingRequestByName", "readingRequestClosedAt" FROM "StudyState" WHERE uid=${uid} FOR UPDATE`;
       const state = rows[0];
       if (!state || state.institutionId !== c.institution) throw missing();
-      try { await resolveExamScope(tx, access, c, { uid, purpose: 'source', state }); }
+      // The study the clinician picked: inside the access policy and one identified source (the list shows no other).
+      try { await resolveExamScope(tx, access, c, { uid, purpose: 'source', state, identity: true }); }
       catch (e) { if (e instanceof NotFoundException) throw missing(); throw e; }
-      if (readingRequestOpen(state)) return { owner, created: false, readingRequest: readingRequestView(state)! };
       const target = on === uid ? state : (await tx.$queryRaw`SELECT rs FROM "StudyState" WHERE uid=${on}` as any[])[0];
-      if (!target) throw missing();
-      if (REPORTED.includes(target.rs)) throw reported(target.rs);
+      const refusal = readingRequestRefusal(c, state, target?.rs);
+      if (refusal === 'open') return { owner, created: false, readingRequest: readingRequestView(state)! };
+      if (refusal === 'reported' || refusal === 'destroyed') throw reported(target.rs);
+      if (refusal === 'role') throw roleRequired();
+      if (refusal !== null) throw missing();
       const at = new Date();
       await tx.$executeRaw`UPDATE "StudyState" SET "readingRequestAt"=${at}, "readingRequestBySub"=${c.sub},
         "readingRequestBy"=${c.actor}, "readingRequestByName"=${name}, "readingRequestClosedAt"=NULL, "updatedAt"=${at}
