@@ -498,6 +498,23 @@ def psql(sql: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
+def drop_viewer_rows(uid: str) -> None:
+    """A run-owned synthetic study's viewer rows (findings, manual SR, viewer items with their revisions and requests, the
+    storage budget), children first: they reference StudyState, so the study's own cleanup can then delete it. RESTRICT is
+    bypassed only in the owned fixture teardown; product routes have no DELETE."""
+    if not re.fullmatch(r"[0-9.]+", uid):
+        raise RuntimeError("Viewer cleanup requires a synthetic study UID")
+    q = "'" + uid + "'"
+    psql('BEGIN; '
+         f'DELETE FROM "FindingRevision" WHERE "findingId" IN (SELECT id FROM "Finding" WHERE "studyUid"={q}); '
+         f'DELETE FROM "Finding" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ManualSr" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ViewerRequest" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={q}); '
+         f'DELETE FROM "ViewerRevision" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={q}); '
+         f'DELETE FROM "ViewerItem" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ViewerStorageBudget" WHERE "studyUid"={q}; COMMIT;')
+
+
 UUID_RE = r"^[0-9a-f-]{36}$"
 
 
@@ -4760,10 +4777,11 @@ class LiveInvariantTests(unittest.TestCase):
         # 18 -> 25: S4-U4 added RetryNowTests (T1-T6, seven cases) for Now Retry.
         # 25 -> 26: S4-EG1 added OrthancConnectionTests (local reads never reuse a pooled connection).
         # 70 -> 76: the receipt's series count (SeriesCountTests and one routing case).
+        # 76 -> 82: the DICOM receive self-check (DicomListenerCheckTests against a real DICOM SCP).
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
-        # 76 -> 89: signed updates and remote support added SupportTests (the agent's half).
-        self.assertIn("Ran 89 tests", completed.stderr + completed.stdout)
+        # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
+        self.assertIn("Ran 95 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

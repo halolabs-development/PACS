@@ -4,8 +4,9 @@ their tissue against the chest wall each stored orientation names: current needs
 both axes): Mirrored point on eight cells (the same view only, in image coordinates through each image's stored
 orientation), Quadrant Zoom Next ×3 by the quarters of the breast as it was made, the I key, the lens, Breast Edge, Fit
 Breast and Match Size on the image as it was made, a synthetic five-frame DBT where Step
-Interval, Slab Thickness (pixel values in the cell and on its canvas, and back) and Play run on the real stack, and
-Mammo Keypad Patient ▶ between two patient tabs with a linked reading screen holding unconfirmed text."""
+Interval, Slab Thickness (pixel values in the cell and on its canvas, and back) and Play run on the real stack,
+Mammo Keypad Patient ▶ between two patient tabs with a linked reading screen holding unconfirmed text, and Add Key Image
+on breast images drawn flipped (stored orientation, Flip Horizontal) and on a DBT frame: the stored original and frame."""
 import json, os, re, time, unittest, uuid
 import numpy as np
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
@@ -15,7 +16,8 @@ from playwright.sync_api import expect
 from test_viewer_ux_priors import ViewerUXPriorsE2E
 from test_mammography_hanging import MammographyHangingE2E as MG
 from test_prior_selection import canvas_ready
-from invariants_live import Fixture
+from invariants_live import Fixture, drop_viewer_rows
+from viewer_tools import image_tool
 
 # Per-cell state read from the viewer: identity from the image's metadata, the zoom and the focal point in image indices.
 CELLS = '''() => [...services.viewportGridService.getState().viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x).map(g=>{
@@ -357,6 +359,99 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         at = self.cell(page, f.uid, 'R', 'CC')['index']; page.wait_for_timeout(600)
         self.assertEqual(at, self.cell(page, f.uid, 'R', 'CC')['index'])
         panel.get_by_role('button', name='Close').click()
+
+    def history_panel(self, page):
+        expect(page.locator('#kin-workspace-dock')).to_have_count(1, timeout=45000)
+        tab = page.locator('#kin-workspace-dock nav button[aria-controls=kin-viewer-history]')
+        if tab.get_attribute('aria-expanded') != 'true': tab.click()
+        expect(page.locator('#kin-viewer-history [role=status]')).to_contain_text('개 저장 항목', timeout=45000)
+
+    def shown(self, page, cell):
+        return page.evaluate('''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), c = v.getCamera();
+          const m = cornerstone.metaData.get('instance', v.getCurrentImageId());
+          return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID, index: v.getCurrentImageIdIndex(), flipH: !!c.flipHorizontal, flipV: !!c.flipVertical }; }''', cell)
+
+    def key_on(self, page, cell, title):
+        box = page.locator('[data-viewport-uid="' + cell + '"]').bounding_box()
+        page.mouse.click(box['x'] + box['width'] * 0.5, box['y'] + box['height'] * 0.5)
+        page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=cell)
+        page.get_by_role('button', name='Add Key Image', exact=True).click()
+        row = page.locator('#kin-viewer-history section[data-kind=key]').last
+        row.get_by_label('Key Title').fill(title)
+        row.get_by_role('button', name='Save', exact=True).click()
+        expect(row).to_contain_text('저장 완료', timeout=30000)
+
+    def keys(self, study):
+        result = self.stack.request('GET', '/studies/' + study + '/viewer-items', 'doctor')
+        self.assertEqual(200, result.status, result.text)
+        return {i['item']['title']: i['item'] for i in result.body['items'] if i['item']['kind'] == 'key'}
+
+    def test_mg_05_key_image_on_flipped_and_tomosynthesis_breast_images_names_the_stored_original(self):
+        # The earlier study's L images are stored flipped on both axes: the viewer draws them flipped back. A display mirror
+        # flips the R MLO on the screen only. Either way the Key Image names the stored original and its frame.
+        patient = 'MGKEY-' + uuid.uuid4().hex[:12]
+        prior = MG.phantom(self, patient, prior=True)
+        self.addCleanup(drop_viewer_rows, prior.uid)
+        page = self.login()
+        MG.open_mg(self, page, [prior], 4)
+        MG.image_state(self, page)
+        self.history_panel(page)
+        flipped = self.cell(page, prior.uid, 'L', 'CC')['id']
+        mirrored = self.cell(page, prior.uid, 'R', 'MLO')['id']
+        # The toolbar's own Flip Horizontal on the active R MLO cell (a screen-only flip).
+        page.evaluate('id => services.viewportGridService.setActiveViewportId(id)', mirrored)
+        page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=mirrored)
+        image_tool(page, 'flipHorizontal').click()
+        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id).getCamera().flipHorizontal', arg=mirrored, timeout=15000)
+        before = {'L CC key': self.shown(page, flipped), 'R MLO key': self.shown(page, mirrored)}
+        self.assertEqual((before['L CC key']['flipH'], before['L CC key']['flipV']), (True, True), before)
+        self.assertEqual((before['R MLO key']['flipH'], before['R MLO key']['flipV']), (True, False), before)
+        self.key_on(page, flipped, 'L CC key')
+        self.key_on(page, mirrored, 'R MLO key')
+        page.screenshot(path=str(self.artifacts() / 'MG-key-image-saved.png'))
+        stored = self.keys(prior.uid)
+        for title, shown in before.items():
+            # Only the image is kept: its series, SOP and frame, never the screen's flips.
+            self.assertLessEqual(set(stored[title]), {'schemaVersion', 'kind', 'seriesUid', 'sopUid', 'frame', 'title', 'description', 'hidden'}, stored[title])
+            self.assertEqual((stored[title]['seriesUid'], stored[title]['sopUid'], stored[title]['frame']), (shown['series'], shown['sop'], 1))
+
+        # Opened again: the same rows, and Go to Image, pressed with a cell showing another image active, brings that stored
+        # image (and its frame) into the active cell.
+        MG.open_mg(self, page, [prior], 4)
+        self.history_panel(page)
+        for title, shown in before.items():
+            start = next(c['id'] for c in self.cells(page) if self.shown(page, c['id'])['sop'] != shown['sop'])
+            self.go_to_image(page, start, title, shown['sop'], 1)
+
+        # A tomosynthesis object: the Key Image names the frame shown (frame 3 of 5).
+        dbt = self.dbt('MGKEYD-' + uuid.uuid4().hex[:12])
+        self.addCleanup(drop_viewer_rows, dbt.uid)
+        MG.open_mg(self, page, [dbt], 4)
+        self.history_panel(page)
+        cell = self.cell(page, dbt.uid, 'L', 'CC')['id']
+        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getImageIds?.().length === 5', arg=cell, timeout=60000)
+        self.frame_index(page, cell, 2)
+        shown = self.shown(page, cell)
+        self.key_on(page, cell, 'DBT L CC frame 3')
+        item = self.keys(dbt.uid)['DBT L CC frame 3']
+        self.assertEqual((item['seriesUid'], item['sopUid'], item['frame']), (shown['series'], shown['sop'], 3))
+        # Back on frame 1 of the same object: Go to Image returns to frame 3.
+        self.frame_index(page, cell, 0)
+        self.go_to_image(page, cell, 'DBT L CC frame 3', shown['sop'], 3)
+
+    def frame_index(self, page, cell, index):
+        page.evaluate('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(n)', [cell, index])
+        page.wait_for_function('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).getCurrentImageId().endsWith("/frames/" + (n + 1))', arg=[cell, index])
+
+    def go_to_image(self, page, start, title, sop, frame):
+        page.evaluate('id => services.viewportGridService.setActiveViewportId(id)', start)
+        page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=start)
+        row = page.locator('#kin-viewer-history section').filter(has_text=title)
+        expect(row).to_be_visible()
+        row.get_by_role('button', name='Go to Image').click()
+        page.wait_for_function('''([id, sop, frame]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), image = v?.getCurrentImageId?.();
+          return services.viewportGridService.getActiveViewportId() === id && cornerstone.metaData.get('instance', image)?.SOPInstanceUID === sop
+            && (frame === 1 ? !/\\/frames\\/(?!1$)\\d+$/.test(image) : image.endsWith('/frames/' + frame)); }''', arg=[start, sop, frame], timeout=30000)
 
     def test_mg_03_keypad_patient_move_takes_images_and_report_target_together(self):
         a = MG.phantom(self, 'MGKA-' + uuid.uuid4().hex[:12]); b = MG.phantom(self, 'MGKB-' + uuid.uuid4().hex[:12])

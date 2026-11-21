@@ -39,6 +39,7 @@ import { AuthService } from './auth.service';
 import { AdminController } from './admin.controller';
 import { AdminService } from './admin.service';
 import { AdminAccessReview } from './admin-access-review';
+import { AdminAccessAlerts } from './admin-access-alerts';
 import { SigningKeyAdminController } from './signing-key-admin.controller';
 import { ViewerController } from './viewer.controller';
 import { ViewerService } from './viewer.service';
@@ -109,7 +110,7 @@ import { GatewaySupportService } from './gateway-support.service';
       useFactory: (clinical: ClinicalContextSource, catalog: OrthancImageCatalog) => new ProductionImageContext(clinical, catalog) },
     AsrService, StudyAccessService, PrismaService, PacsService, OrthancService, KeycloakService, AuthService, AdminService, ViewerService, FindingService, ViewerJobService, ConnectService, PatientConsentService, ManualSrService, FavoriteService, StudyTagsService, ReaderAssignmentService, ConsultationService, ClinicianQuestionService, ImageRequestService, ClinicalContextService, CriticalResultService,
     StudyTransferLocalService, DicomImportGateService, StudyImageDeliveryRecorder, DicomFrameService, QueryRetrieveService, StudyAttachmentService, FilmPrintService, TechnicianOrdersService, ModalityWorklistService, ExamMergeService, ViewerAutoViewService, GatewayStatusService, GatewaySettingsService,
-    GatewaySupportService, AdminAccessReview,
+    GatewaySupportService, AdminAccessReview, AdminAccessAlerts,
     { provide: APP_GUARD, useClass: AuthGuard },
     // W9 source selections use the same request-bound A1 response recorder.
     MultiStudyViewService, ViewingSetAccess,

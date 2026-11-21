@@ -110,9 +110,9 @@ function timestamp(value: Date | string) {
   return typeof value === 'string' ? new Date(value + 'Z') : value;
 }
 // A client reads only the record versions it names with X-KIN-Finding-Schema: none (a shipped client) reads version 1,
-// '2' reads 1-2, '3' reads 1-3. A page holding a newer row is refused whole: a client would drop the fields it does not know.
+// '2' reads 1-2, '3' reads 1-3, '4' reads 1-4. A page holding a newer row is refused whole: a client would drop the fields it does not know.
 const readable = (items: any[], schema?: string) => {
-  const newest = schema === '3' ? 3 : schema === '2' ? 2 : 1;
+  const newest = schema === '4' ? 4 : schema === '3' ? 3 : schema === '2' ? 2 : 1;
   return items.every(item => Number.isSafeInteger(item?.schemaVersion) && item.schemaVersion >= 1 && item.schemaVersion <= newest);
 };
 function result(head: any, revision?: any) {
@@ -452,14 +452,14 @@ export class FindingService {
         if (head.authorSub !== c.sub) denied();
         if (head.revision !== command.expectedRevision) conflict();
         if ((command.action === 'hide' && head.hidden) || (command.action === 'restore' && !head.hidden)) conflict();
-        // Version rule: an edit may promote (1 to 2 or 3, 2 to 3) but never write an older version over a newer one, whose
-        // characteristics, job copies or lesion location an older client cannot carry. Hide and restore keep the head's
+        // Version rule: an edit may promote (1 to 2, 3 or 4, and so on) but never write an older version over a newer one, whose
+        // characteristics, job copies, lesion location or size an older client cannot carry. Hide and restore keep the head's
         // version; from version 2 on they also keep its content exactly.
         const from = head.snapshot?.schemaVersion, to = command.item.schemaVersion, item = command.item;
-        if (![1, 2, 3].includes(from) || (command.action === 'edit' ? to < from : to !== from)) schemaVersion();
+        if (![1, 2, 3, 4].includes(from) || (command.action === 'edit' ? to < from : to !== from)) schemaVersion();
         if (command.action !== 'edit' && from >= 2 && (item.title !== head.snapshot.title || item.text !== head.snapshot.text ||
             item.characteristics !== head.snapshot.characteristics || item.primary !== head.snapshot.primary ||
-            (from === 3 && item.lesionLocation !== head.snapshot.lesionLocation))) schemaVersion();
+            (from >= 3 && item.lesionLocation !== head.snapshot.lesionLocation) || (from === 4 && item.size !== head.snapshot.size))) schemaVersion();
       }
       // An unchanged {itemId, revision} pair (or job key) keeps its frozen copy byte for byte, even when that
       // item or job was edited, hidden or lost since. Only a new pair or an explicitly refreshed one is
@@ -514,7 +514,10 @@ export class FindingService {
       }
       if (comparisonStudies(uid, [...lineage, ...sources.flatMap(sourceStudies)]).length > 1) oneComparison();
       const hidden = command.action === 'hide' || (command.action === 'edit' && head?.hidden === true);
-      const snapshot = command.item.schemaVersion === 3
+      const snapshot = command.item.schemaVersion === 4
+        ? { schemaVersion: 4, title: command.item.title, text: command.item.text, characteristics: command.item.characteristics,
+          lesionLocation: command.item.lesionLocation, size: command.item.size, hidden, primary: command.item.primary, sources }
+        : command.item.schemaVersion === 3
         ? { schemaVersion: 3, title: command.item.title, text: command.item.text, characteristics: command.item.characteristics,
           lesionLocation: command.item.lesionLocation, hidden, primary: command.item.primary, sources }
         : command.item.schemaVersion === 2
