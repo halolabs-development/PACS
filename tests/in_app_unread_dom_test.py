@@ -18,10 +18,16 @@ request) above the revision the person's seen mark records. The screens are the 
   04  an unread thread outside the study's latest 50: a row that opens it (GET questions/:id), and its seen mark.
   05  an unread answer naming another account: the page stops and shows no mark.
   08  a count read that fails keeps the last marks (never a made-up 0); a refused one (403) clears them.
+  09  a merged exam (A holds B): an answer on B's thread is marked on A's row (where the server answers for the exam), not
+      on B's; A's Questions lists B's thread (the server's scope names B), it opens and its seen mark is sent.
   Reading screen (the S5-U4b block of main.html as shipped, with unread-badges.js before it)
   06  no study chosen: the band's New Questions 1 after the list poll; it opens the Inbox on Open questions, the row says
       New, Open Study draws the thread and sends its seen mark; the band's mark goes. An admin-only session (no inbox
       view) shows nothing; offline sends nothing.
+  10  a thread drawn while its pane is laid out is seen; a follow-up read while the reading pane is not laid out (another
+      work tab) sends no seen mark for the new revision.
+  11  the Inbox question of a merged exam's original opens on the listed exam row, its thread opens and is seen.
+  12  the band's count stands after the two notices and steps aside while the move/insert notice stands.
 
 Synthetic data only (SYN-* names): no server, no network, no credentials.
 """
@@ -173,6 +179,13 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
             route.fulfill(status=status, json=payload)
             return
         owner = [self.me.get("institution"), self.me.get("sub")] if isinstance(self.me, dict) else None
+        if self.MERGED and method == "GET" and path == f"/api/studies/{q.A}/questions":
+            rows = [t for t in self.server.threads.values() if t["studyUid"] in (q.A, q.B)
+                    and (q.QuestionServer.scope(self.me) == "all" or t["authorSub"] == self.me["sub"])]
+            self.q_requests.append({"kind": "list", "method": method, "path": path, "query": {}, "body": None})
+            route.fulfill(json={"owner": owner, "scope": self.merged_scope(),
+                                "items": [q.QuestionServer.summary(t) for t in self.server.newest(rows)[:50]]})
+            return
         found = re.fullmatch(r"/api/studies/([^/]+)/image-requests", path)
         if method == "GET" and found:
             u = unquote(found.group(1))
@@ -193,6 +206,15 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
         super().route(route)
 
     # ── helpers ──
+    # Merge Exam: A's exam holds A and B (the server answers for it on A). Per-study reads of A list both originals' items
+    # with the exam scope, as clinician-question.service.ts and image-request.service.ts forStudy() do.
+    MERGED = None
+
+    def merged_scope(self):
+        return {"reportUid": q.A, "groupId": "SYN-GROUP-1", "kind": "merge", "part": None, "active": True,
+                "sources": [{"studyUid": q.A, "series": {"mode": "all", "uids": []}}, {"studyUid": q.B, "series": {"mode": "all", "uids": []}}],
+                "generation": "SYN-GEN-1"}
+
     def answered(self, u, body="SYN question"):
         thread = self.server.seed(u, q.CLINICIAN, body)
         self.server.step(thread, "answer", q.RADIOLOGIST, "radiologist", "SYN answer")
@@ -319,6 +341,25 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
         self.wait_until(lambda: self.summary() is None, "the refused view cleared")
         self.assertEqual([], self.row_tags(q.A))
 
+    def test_u09_a_merged_exam_is_marked_on_its_report_row(self):
+        self.MERGED = True
+        scope = self.merged_scope()
+        for row in self.rows:
+            if row["uid"] in (q.A, q.B):
+                row["exam"] = {"studies": [q.A, q.B], "scope": copy.deepcopy(scope)}
+        thread = self.answered(q.B, "SYN question on the merged original")
+        self.open_home()
+        self.settled_counts(2)
+        self.assertEqual(["New Answers 1"], self.row_tags(q.A), "the exam's report row, where the server answers for it")
+        self.assertEqual([], self.row_tags(q.B))
+        self.pick(q.A)
+        self.open_questions("ready")
+        expect(self.page.locator(f'#question-list > li[data-id="{thread["id"]}"] [data-unread="item"]')).to_have_text("New")
+        self.open_thread(thread["id"], "Answered")
+        self.wait_until(lambda: len(self.seen_posts) == 1, "the seen write")
+        self.assertEqual(f"/api/questions/{thread['id']}/seen", self.seen_posts[0]["path"])
+        self.wait_until(lambda: self.summary() is None, "the marks gone")
+
     # ── Reading screen ──
     def test_u06_reading_screen_band_count_opens_the_inbox(self):
         thread = self.server.seed(q.A, q.CLINICIAN, "SYN question for the pool")
@@ -358,11 +399,73 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
         self.assertEqual([], self.seen_posts)
 
 
+class InAppUnreadReaderDOMTest(InAppUnreadDOMTest):
+    """The reading screen's further cases (merged exam, laid-out pane, band) over the same harness."""
+
+    def reader_with_scope(self, session, studies=None):
+        # exam-scope.js is a page script the cut block reads through window.KinExamScope (the Inbox's listed exam row).
+        self.open_reader(session, studies=studies, block=q.lf_text(q.HPACS / "exam-scope.js") + "\n" + UNREAD_JS + "\n" + q.READER_BLOCK)
+
+    def test_u10_a_pane_not_laid_out_sends_no_seen(self):
+        thread = self.server.seed(q.A, q.CLINICIAN, "SYN question for the pool")
+        self.reader_with_scope(q.me(q.RADIOLOGIST, ["radiologist"]))
+        self.page.evaluate("() => studyQuestions.refresh()")
+        expect(self.page.locator("#question-unread")).to_have_text("New Questions 1")
+        self.page.locator("#question-unread").click()
+        self.page.locator(f'#question-inbox-list > li[data-id="{thread["id"]}"] button[data-open-study]').click()
+        self.wait_until(lambda: len(self.seen_posts) == 1, "the seen write of the drawn thread")
+        self.assertEqual(1, self.seen_posts[0]["body"]["revision"])
+        # Another work tab lays the reading pane out of view; the author's follow-up reaches the pane by the list poll.
+        self.server.step(thread, "followup", q.CLINICIAN, "clinician", "SYN follow-up")
+        self.page.evaluate("() => { document.querySelector('#question-p').style.display = 'none'; }")
+        reads = len(self.requests("thread"))
+        self.page.evaluate("() => studyQuestions.refresh()")
+        self.wait_until(lambda: len(self.requests("thread")) > reads, "the thread read again")
+        self.settle()
+        self.assertEqual(1, len(self.seen_posts), "no seen mark for a revision the reader did not see")
+        self.assertEqual(1, self.unread.seen[("question", q.RADIOLOGIST["sub"], thread["id"])])
+
+    def test_u11_an_inbox_question_of_a_merged_original_opens_on_the_exam_row(self):
+        self.MERGED = True
+        thread = self.server.seed(q.B, q.CLINICIAN, "SYN question on the merged original")
+        studies = [{**q.READER_STUDIES[0], "examScope": self.merged_scope()}] + [s for s in q.READER_STUDIES if s["uid"] not in (q.A, q.B)]
+        self.reader_with_scope(q.me(q.RADIOLOGIST, ["radiologist"]), studies=studies)
+        self.page.evaluate("() => studyQuestions.refresh()")
+        expect(self.page.locator("#question-unread")).to_have_text("New Questions 1")
+        self.page.locator("#question-unread").click()
+        row = self.page.locator(f'#question-inbox-list > li[data-id="{thread["id"]}"]')
+        expect(row.locator("button[data-open-study]")).to_be_enabled()
+        row.locator("button[data-open-study]").click()
+        expect(self.page.locator("#question-thread")).to_have_attribute("data-id", thread["id"])
+        self.wait_until(lambda: len(self.seen_posts) == 1, "the seen write")
+        self.assertEqual([q.A], self.page.evaluate("() => window.synSelects"), "opened on the exam's row")
+        expect(self.page.locator("#question-unread")).to_be_hidden()
+
+    def test_u12_the_band_count_steps_aside_for_the_move_notice(self):
+        self.server.seed(q.A, q.CLINICIAN, "SYN question for the pool")
+        self.reader_with_scope(q.me(q.RADIOLOGIST, ["radiologist"]))
+        self.page.evaluate("() => studyQuestions.refresh()")
+        button = self.page.locator("#question-unread")
+        expect(button).to_have_text("New Questions 1")
+        order = self.page.evaluate("() => [...document.querySelectorAll('#report-alerts > button')].map(b => b.id)")
+        self.assertEqual(["question-notice", "image-request-notice", "question-unread"], order)
+        self.page.evaluate("() => { document.querySelector('#report-notice').style.display = 'flex'; }")
+        expect(button).to_be_hidden()
+        self.page.evaluate("() => { document.querySelector('#report-notice').style.display = 'none'; }")
+        expect(button).to_be_visible()
+
+    # Only this class's own cases; the inherited ones run in InAppUnreadDOMTest.
+    own = ("test_u10_", "test_u11_", "test_u12_")
+
+
 def load_tests(loader, tests, pattern):
     suite = unittest.TestSuite()
     for name in sorted(vars(InAppUnreadDOMTest)):
         if name.startswith("test_u"):
             suite.addTest(InAppUnreadDOMTest(name))
+    for name in sorted(vars(InAppUnreadReaderDOMTest)):
+        if name.startswith(InAppUnreadReaderDOMTest.own):
+            suite.addTest(InAppUnreadReaderDOMTest(name))
     return suite
 
 

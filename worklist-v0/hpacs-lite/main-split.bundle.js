@@ -14013,7 +14013,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // api()의 401, 확정한 Log out, 받아쓰기의 401, 목록의 계정 변경, 이 절의 401(expire) — 은 로그아웃 POST·초안 저장 같은
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
-    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
+    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true, listed = () => null }) {
       // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
       const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
@@ -14216,17 +14216,35 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       }
 
+      /**
+       * The originals one per-study read covers: the target, and when the server answered for its exam (a merged or split
+       * exam whose report study is the target: the answer's scope names it as reportUid) every original that scope lists.
+       * A thread of one of those originals is this target's; anything else is another study's. The thread read (no scope)
+       * is checked against the last list read of the same target (listUids).
+       */
+      const examUids = (target, data) => {
+        const out = new Set([target]), scope = data && data.scope;
+        if (scope && typeof scope === 'object' && scope.reportUid === target && Array.isArray(scope.sources))
+          for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+        return out;
+      };
+      let listUids = null;
+      const targetUids = target => listUids && listUids.target === target ? listUids.uids : new Set([target]);
+      /** A pane is drawn only when the browser lays it out (not in a folded row, not under another work tab). */
+      const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
       /** #3·#1 응답의 모양 검사. target이 있으면 모든 행이 그 검사의 것이어야 한다. 하나라도 틀리면 답 전체를 그리지 않는다. */
       function readSummaries(data, target) {
-        const rows = data && data.items;
+        const rows = data && data.items, uids = target === null ? null : examUids(target, data);
         if (!Array.isArray(rows) || rows.length > 50) throw new Error(TEXT.malformed);
         for (const row of rows) {
           if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !ID.test(row.id) || typeof row.studyUid !== 'string'
-              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : row.studyUid !== target)
+              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : !uids.has(row.studyUid))
               || !STATES.includes(row.state) || !Number.isSafeInteger(row.revision) || row.revision < 1
               || !Number.isSafeInteger(row.entryCount) || row.entryCount < 1 || !row.author || typeof row.author !== 'object')
             throw new Error(TEXT.malformed);
         }
+        if (target !== null) listUids = { target, uids };
         return rows;
       }
 
@@ -14240,7 +14258,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
         if (!item || typeof item !== 'object' || item.id !== id) throw new Error(TEXT.malformed);
         // 다른 검사의 질문이면 판독 대상 곁에 열지 않고 그 이유를 보인다(Inbox에서 고른 질문도 이 단건 읽기로 확인한다).
-        if (item.studyUid !== target) throw new Error(TEXT.otherStudy);
+        if (!targetUids(target).has(item.studyUid)) throw new Error(TEXT.otherStudy);
         if (!STATES.includes(item.state) || !who(item.author) || !Array.isArray(item.entries) || !item.entries.length
             || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
             || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -14266,7 +14284,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             || !ACTIONS[attempt.action].includes(applied.action)) return false;
         const step = STEPS[applied.action], entry = applied.entry, base = attempt.base;
         const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-        return mine(applied.requestId) && applied.studyUid === attempt.uid && applied.id === attempt.threadId
+        return mine(applied.requestId) && applied.studyUid === (base.studyUid || attempt.uid) && applied.id === attempt.threadId
           && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
           && applied.revision === base.revision + 1 && step.from.includes(applied.from) && applied.from === base.state
           && applied.to === step.to && typeof applied.at === 'string' && !Number.isNaN(Date.parse(applied.at));
@@ -14355,7 +14373,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (!known || !known.available || uid === null || items === null) return;
         const listed = new Set(items.map(item => item.id));
         for (const [id, item] of known.items) {
-          if (item.studyUid !== uid || listed.has(id)) continue;
+          if (!targetUids(uid).has(item.studyUid) || listed.has(id)) continue;
           const li = make('li');
           li.dataset.id = id;
           li.dataset.unreadOutside = '';
@@ -14498,7 +14516,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // A thread drawn in the open pane is seen by this reader: its seen mark goes to the server (unread-badges.js decides).
         if (unread) {
           unread.hidden(UNREAD);
-          if (loaded && mode === 'study' && !ended && lock === null) unread.shown(UNREAD, loaded.id, loaded.revision);
+          if (loaded && mode === 'study' && !ended && lock === null && drawnNow(threadBox)) unread.shown(UNREAD, loaded.id, loaded.revision);
         }
         for (const wrap of threadBox.querySelectorAll('.question-compose')) {
           paintComposer(wrap);
@@ -14636,7 +14654,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
         const path = `/questions/${encodeURIComponent(id)}/${action === 'close' ? 'close' : 'entries'}`;
         const attempt = { requestId, owner: who, uid: target, threadId: id, action, noteKey, path, text: value, busy: false, unknown: false,
-          base: { revision: loaded.revision, state: loaded.state },
+          base: { revision: loaded.revision, state: loaded.state, studyUid: loaded.studyUid },
           payload: { revision: loaded.revision, [action === 'close' ? 'note' : 'body']: value } };
         drafts.set(key, value);
         attempts.set(key, attempt);
@@ -14946,7 +14964,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const li = make('li');
         li.dataset.id = item.id;
         li.dataset.uid = item.studyUid;
-        const row = study(item.studyUid);
+        const row = inboxRow(item);
         const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
         const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
@@ -14964,18 +14982,24 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * Inbox의 질문을 연다: 그 검사를 판독 대상으로 고르고(select) 그 검사의 목록을 읽은 뒤 이 스레드를 단건 읽기(#2)로 연다.
        * 스레드는 그 검사의 목록(최신 50)에 있는지와 무관하게 연다(sync·loadList).
        */
+      /** The worklist row an Inbox question opens on: the listed exam that holds its original (a merged exam's report row), else its study. */
+      function inboxRow(item) {
+        return listed(item.studyUid) || study(item.studyUid) || null;
+      }
+
       function openFromInbox(item) {
-        if (ended || lock !== null || !study(item.studyUid)) return;
+        const row = inboxRow(item);
+        if (ended || lock !== null || !row) return;
         inboxSeq++;
         mode = 'study';
-        if (item.studyUid === uid) {
+        if (row.uid === uid) {
           paint();
           openThread(item.id);
           return;
         }
-        pendingThread = { uid: item.studyUid, id: item.id };
+        pendingThread = { uid: row.uid, id: item.id };
         paint();
-        openStudy(item.studyUid);
+        openStudy(row.uid);
       }
 
       /**
@@ -15151,6 +15175,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     try {
       studyQuestions = mountStudyQuestions({ apiBase: API, work, transport, current: () => selectedUid,
         study: uid => studies.find(s => s.uid === uid),
+        // The listed exam holding an original (a merged exam's row), for an Inbox question on one of its originals.
+        listed: uid => window.KinExamScope && typeof KinExamScope.listedExam === 'function' ? KinExamScope.listedExam(studies, uid) : null,
         openStudy: uid => select(uid),
         // Who may read this row (a signed-in reader or admin); whether the server answers now is online(). A lost connection
         // is not a move: the open thread and what is being written stay, and the reads wait for it.

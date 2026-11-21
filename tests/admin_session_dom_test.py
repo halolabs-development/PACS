@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import time
 import unittest
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import sync_playwright, expect
 from clinician_home_dom_test import ROWS, REPORTS
 from admin_gateway_status_dom_test import MEMBERS, ACCESS, FIVE, HOSTS
@@ -178,6 +178,10 @@ class PageSessionDOMTest(unittest.TestCase):
             route.fulfill(json={'owner':OWNER,'items':[]})
         elif path == '/api/critical-results':
             route.fulfill(json={'owner':OWNER,'view':'received','items':[],'nextCursor':None,'pending':0})
+        elif path == '/api/unread':
+            # In-app unread (unread-badges.js): Clinician Home reads its views with the list; nothing unread for this session.
+            view = (parse_qs(urlparse(req.url).query).get('view') or [None])[0]
+            route.fulfill(json={'owner':[OWNER[0], self.me_owner],'view':view,'available':True,'count':0,'items':[],'nextCursor':None})
         elif path == '/favicon.ico' or path.startswith('/kin-brand/'):
             route.fulfill(status=404)
         else:

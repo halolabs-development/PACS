@@ -659,6 +659,27 @@
     rove(buttons[next].closest('tr').dataset.uid, true);
   }
 
+  // ── 검사 묶음의 원본 ──
+  /**
+   * The originals one per-study read covers: the selected study, and when the server answered for its exam (a merged or
+   * split exam whose report row is this one: the answer's scope names this row as its reportUid) every original that scope
+   * lists. A question or request of one of those originals belongs to this row's sections; anything else is malformed.
+   */
+  function examUids(uid, data) {
+    const out = new Set([uid]);
+    const scope = data && data.scope;
+    if (scope && typeof scope === 'object' && scope.reportUid === uid && Array.isArray(scope.sources))
+      for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+    return out;
+  }
+  // The originals of the last successful per-study read of each section ({ uid, uids }). A thread or single request read
+  // (which carries no scope) is checked against them; another study's answer falls back to the study alone.
+  let questionScope = null, requestScope = null;
+  const questionUids = uid => questionScope && questionScope.uid === uid ? questionScope.uids : new Set([uid]);
+  const requestUids = uid => requestScope && requestScope.uid === uid ? requestScope.uids : new Set([uid]);
+  /** A pane is drawn only when the browser lays it out (not collapsed, not in a hidden page part). */
+  const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
   // ── 안 읽음 표시 ──
   // In-app unread (unread-badges.js): the server's count of this person's own question threads with a new answer and own
   // image requests with a new processing result, inside HALO only (no email, message or push). Read with the list, on
@@ -697,8 +718,13 @@
 
   /** The listed row an unread item belongs to: the exam that holds its original study, else the row of that study. */
   function unreadRow(studyUid) {
-    const listed = root.KinExamScope && typeof root.KinExamScope.listedExam === 'function' ? root.KinExamScope.listedExam(studies, studyUid) : null;
-    return listed || byUid.get(studyUid) || null;
+    // A merged or split exam is opened on its report row (the server answers for the exam there): that row holds it.
+    for (const row of studies) {
+      let scope = null;
+      try { scope = row.exam && row.exam.scope && root.KinExamScope ? root.KinExamScope.read(row.exam.scope) : null; } catch (_) { scope = null; }
+      if (scope && scope.reportUid === row.uid && scope.sources.some(source => source.studyUid === studyUid)) return row;
+    }
+    return byUid.get(studyUid) || null;
   }
 
   /** Unread items of a view on one listed row (its exam's originals). */
@@ -783,7 +809,7 @@
     const section = $('#image-requests');
     if (section && section.open && selected !== null && requestsItems !== null && requestsLock === null) {
       const listed = new Set([...document.querySelectorAll('#image-request-list > li[data-id]')].map(li => li.dataset.id));
-      if (unreadOn(UNREAD_REQUESTS, selected).some(item => item.studyUid === selected && !listed.has(item.id))) loadRequests(selected);
+      if (unreadOn(UNREAD_REQUESTS, selected).some(item => requestUids(selected).has(item.studyUid) && !listed.has(item.id))) loadRequests(selected);
     }
   }
   // ── 선택한 검사 ──
@@ -1406,9 +1432,10 @@
    * (서버 CHECK와 같은 조건). 하나라도 어긋나면 답 전체를 그리지 않는다.
    */
   function requestItemOk(item, uid) {
+    const owned = uid instanceof Set ? uid : new Set([uid]);
     const text = value => typeof value === 'string';
     const person = value => !!value && typeof value === 'object' && text(value.actor) && text(value.name);
-    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && item.studyUid === uid
+    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && owned.has(item.studyUid)
       && Object.prototype.hasOwnProperty.call(REQUEST_KINDS, item.kind) && REQUEST_STATES.includes(item.state)
       && Number.isSafeInteger(item.revision) && item.revision >= 1 && person(item.requester)
       && !!item.counterparty && typeof item.counterparty === 'object' && text(item.counterparty.text)
@@ -1418,10 +1445,11 @@
   }
 
   function readRequestItems(data, uid) {
-    const items = data && data.items;
-    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uid))
+    const items = data && data.items, uids = examUids(uid, data);
+    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uids))
         || new Set(items.map(item => item.id)).size !== items.length)
       throw new Error(REQUEST.malformed);
+    requestScope = { uid, uids };
     return items;
   }
 
@@ -1437,7 +1465,7 @@
     const at = applied && typeof applied.at === 'string' ? new Date(applied.at) : null;
     return sent.status === 201 && !!applied && typeof applied === 'object' && typeof reply.replayed === 'boolean'
       && typeof applied.requestId === 'string' && applied.requestId.toLowerCase() === attempt.requestId
-      && applied.studyUid === attempt.uid && applied.action === attempt.action
+      && applied.studyUid === (attempt.itemUid || attempt.uid) && applied.action === attempt.action
       && applied.id === (create ? attempt.requestId : attempt.itemId) && applied.kind === attempt.kind
       && applied.from === attempt.from && applied.to === (create ? 'Requested' : 'Cancelled')
       && applied.revision === (create ? 1 : attempt.payload.revision + 1)
@@ -1502,7 +1530,7 @@
     const waiting = [...new Set([...requestAttempts.values()].filter(attempt => attempt.uid === uid && attempt.itemId !== null
       && !listed.has(attempt.itemId)).map(attempt => attempt.itemId)
       // An unread request of this study that the latest 50 do not hold (its new processing result is read on its own).
-      .concat(unreadOn(UNREAD_REQUESTS, uid).filter(item => item.studyUid === uid && !listed.has(item.id)).map(item => item.id)))];
+      .concat(unreadOn(UNREAD_REQUESTS, uid).filter(item => requestUids(uid).has(item.studyUid) && !listed.has(item.id)).map(item => item.id)))];
     return Promise.all(waiting.map(async id => {
       try {
         const data = await request(`/image-requests/${encodeURIComponent(id)}`);
@@ -1512,7 +1540,7 @@
           accountChanged('');
           return { id, item: null, error: null };
         }
-        if (same === null || !requestItemOk(data.item, uid) || data.item.id !== id) throw new Error(REQUEST.malformed);
+        if (same === null || !requestItemOk(data.item, requestUids(uid)) || data.item.id !== id) throw new Error(REQUEST.malformed);
         return { id, item: data.item, error: null };
       } catch (error) {
         return { id, item: null, error };
@@ -1736,7 +1764,7 @@
     // The open section drew these requests: their seen marks go to the server (unread-badges.js decides whether to send).
     if (unread) {
       unread.hidden(UNREAD_REQUESTS);
-      for (const item of requestsItems) unread.shown(UNREAD_REQUESTS, item.id, item.revision);
+      if (drawnNow($('#image-request-list'))) for (const item of requestsItems) unread.shown(UNREAD_REQUESTS, item.id, item.revision);
     }
   }
 
@@ -1975,7 +2003,7 @@
       return;
     }
     // kind·from은 보낼 때 읽은 그 요청의 값이다. 적용 결과가 이 둘과 맞아야 저장 결과로 받는다(requestApplied).
-    const attempt = { requestId, owner: [...owner], uid, itemId: id, action: 'cancel', kind: item.kind, from: item.state, key, draft,
+    const attempt = { requestId, owner: [...owner], uid, itemId: id, itemUid: item.studyUid, action: 'cancel', kind: item.kind, from: item.state, key, draft,
       busy: false, unknown: false, path: `/image-requests/${encodeURIComponent(id)}`,
       payload: { revision: item.revision, action: 'cancel', note: draft.note } };
     requestDrafts.set(key, draft);
@@ -2444,14 +2472,15 @@
 
   /** #3 응답의 모양 검사. 다른 검사의 행이나 모르는 상태가 하나라도 있으면 답 전체를 그리지 않는다. */
   function readQuestionSummaries(data, uid) {
-    const items = data && data.items;
+    const items = data && data.items, uids = examUids(uid, data);
     if (!Array.isArray(items) || items.length > 50) throw new Error(QUESTION.malformed);
     for (const item of items) {
-      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || item.studyUid !== uid
+      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || !uids.has(item.studyUid)
           || !QUESTION_STATES.includes(item.state) || !Number.isSafeInteger(item.revision) || item.revision < 1
           || !Number.isSafeInteger(item.entryCount) || item.entryCount < 1 || !item.author || typeof item.author !== 'object')
         throw new Error(QUESTION.malformed);
     }
+    questionScope = { uid, uids };
     return items;
   }
 
@@ -2466,7 +2495,7 @@
       && (!role || Object.prototype.hasOwnProperty.call(QUESTION_ROLE, value.role));
     const anchor = value => !!value && typeof value === 'object' && text(value.rs) && value.rs.length > 0
       && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
-    if (!item || typeof item !== 'object' || item.id !== id || item.studyUid !== uid || !QUESTION_STATES.includes(item.state)
+    if (!item || typeof item !== 'object' || item.id !== id || !questionUids(uid).has(item.studyUid) || !QUESTION_STATES.includes(item.state)
         || !person(item.author) || !Array.isArray(item.entries) || !item.entries.length
         || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
         || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -2493,7 +2522,7 @@
         || !QUESTION_ACTIONS[attempt.action].includes(applied.action)) return false;
     const step = QUESTION_STEPS[applied.action], entry = applied.entry, base = attempt.base;
     const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-    return mine(applied.requestId) && applied.studyUid === attempt.uid
+    return mine(applied.requestId) && applied.studyUid === (base && base.studyUid || attempt.uid)
       && applied.id === (attempt.threadId === null ? attempt.requestId : attempt.threadId)
       && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
       && applied.revision === (base ? base.revision + 1 : 1)
@@ -2858,7 +2887,7 @@
     setThreadState('ready', '');
     paintQuestionComposers(uid, item.id);
     // The thread is drawn in the open section: its seen mark goes to the server (unread-badges.js decides whether to send).
-    if (unread) { unread.hidden(UNREAD_QUESTIONS); unread.shown(UNREAD_QUESTIONS, item.id, item.revision); }
+    if (unread) { unread.hidden(UNREAD_QUESTIONS); if (drawnNow($('#question-thread'))) unread.shown(UNREAD_QUESTIONS, item.id, item.revision); }
   }
 
   function questionEntry(entry, current, evidence) {
@@ -3021,7 +3050,7 @@
       return;
     }
     const attempt = { requestId, uid, threadId, action, noteKey, path, text, busy: false, unknown: false,
-      base: base ? { revision: base.revision, state: base.state } : null,
+      base: base ? { revision: base.revision, state: base.state, studyUid: base.studyUid } : null,
       payload: { ...(base ? { revision: base.revision } : {}), [action === 'close' ? 'note' : 'body']: text } };
     questionDrafts.set(key, text);
     questionAttempts.set(key, attempt);
