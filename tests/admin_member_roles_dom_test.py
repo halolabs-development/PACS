@@ -236,6 +236,8 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.version_reads = 0
         self.held_lists = None
         self.patch_error = None
+        self.held_patches = None
+        self.list_error = None
         self.creates, self.create_reply = [], None
         self.page = self.browser.new_page(viewport={"width": 1280, "height": 900})
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
@@ -276,6 +278,9 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
             if self.held_lists is not None:
                 self.held_lists.append(route)
                 return
+            if self.list_error:
+                route.fulfill(status=self.list_error[0], json=self.list_error[1])
+                return
             route.fulfill(json=self.listing())
             return
         if method == "POST" and path == "/api/admin/users" and self.create_reply:
@@ -287,6 +292,9 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         if user and method == "PATCH" and not found.group(2):
             body = request.post_data_json
             self.patches.append((user["id"], body))
+            if self.held_patches is not None:
+                self.held_patches.append(route)
+                return
             if self.patch_error:
                 route.fulfill(status=self.patch_error[0], json=self.patch_error[1])
                 return
@@ -309,6 +317,13 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
 
     @staticmethod
     def apply(user, body):
+        # Change Name / Email (AdminService.changeIdentity): the login account and the member row take the values together.
+        if "identity" in body:
+            provider = dict(user["provider"], **body["identity"])
+            user.update(provider=provider, email=provider["email"], identityUnconfirmed=False,
+                        name=" ".join(part for part in (provider["lastName"], provider["firstName"]) if part),
+                        version=user["version"] + 1)
+            return
         # The part of AdminService.patchUser this page reaches: an approval or membership write takes
         # the institution and roles it did not receive from the stored member (patchUser :252-253) and
         # replaces the whole role list, returned deduplicated and sorted as row() does.
@@ -984,6 +999,112 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.assertEqual((rows_before, reads_before, 2), (self.page.locator("#users").inner_text(), self.list_reads,
                                                           self.version_reads))
         self.assertEqual(([], []), (self.patches, self.resets))
+
+    # ── Change Name / Email ──
+    def editable(self):
+        # The server sends `provider` (the login account's current values) only for a member this administrator may
+        # change (AdminService.listUsers): an approved member of the own institution.
+        clinician, mixed = self.user("syn-clinician"), self.user("syn-mixed")
+        clinician.update(version=3, provider={"email": "syn-clinician@members.test", "firstName": "Clinician", "lastName": "SYN"},
+                         identityUnconfirmed=False)
+        mixed.update(version=5, provider={"email": "syn-mixed-new@members.test", "firstName": "Mixed", "lastName": "SYN"},
+                     identityUnconfirmed=True)
+
+    def open_identity(self, username):
+        self.row(username).get_by_role("button", name="Change Name / Email", exact=True).click()
+        self.page.wait_for_function("() => document.querySelector('#identity-dialog').open")
+
+    def identity_fields(self):
+        form = self.page.locator("#identity-form")
+        return {name: form.locator(f"input[name={name}]").input_value() for name in ("lastName", "firstName", "email")}
+
+    def test_12_change_name_email_sends_only_what_changed_and_keeps_the_input_on_a_refusal(self):
+        self.editable()
+        self.load()
+        # The new button is the last of the row; the others keep their names and places.
+        self.assertEqual(["Change Membership", "Revoke Approval", "Temp Password", "Email Reset Link", "Suspend",
+                          "Study Access", "Signing Key", "Change Name / Email"], self.actions("syn-clinician"))
+        self.assertNotIn("Change Name / Email", self.actions("syn-pending"))
+        self.assertNotIn("Change Name / Email", self.actions("syn-legacy"), "no provider values, no button")
+        self.open_identity("syn-clinician")
+        self.assertEqual({"lastName": "SYN", "firstName": "Clinician", "email": "syn-clinician@members.test"}, self.identity_fields())
+        self.assertEqual("syn-clinician", self.page.locator("#identity-target").text_content())
+        self.assertTrue(self.page.locator("#identity-unconfirmed").is_hidden())
+        # Unchanged: nothing is sent and the dialog stays.
+        self.page.locator("#identity-form button[type=submit]").click()
+        expect(self.page.locator("#identity-message")).to_have_text("변경된 내용이 없어 저장하지 않았습니다.")
+        self.assertEqual([], self.patches)
+        # The address another account has: the server's words in the dialog, the input kept, the list not re-read.
+        form = self.page.locator("#identity-form")
+        form.locator("input[name=email]").fill("syn-taken@members.test")
+        words = "같은 이메일의 계정이 이미 있습니다. 다른 이메일로 바꾸세요."
+        self.patch_error = (409, {"code": "MEMBER_EXISTS", "field": "email", "message": words})
+        reads = self.list_reads
+        form.locator("button[type=submit]").click()
+        expect(self.page.locator("#identity-message")).to_have_text(words)
+        self.assertTrue(self.page.evaluate("() => document.querySelector('#identity-dialog').open"))
+        self.assertEqual("syn-taken@members.test", self.identity_fields()["email"])
+        self.assertEqual(("SYN-U-CLIN", {"identity": {"email": "syn-taken@members.test"}, "version": 3}), self.patches[-1])
+        self.assertEqual(reads, self.list_reads)
+        # Saved: the email only (with the version the dialog opened on), the dialog closes, the list is read again.
+        self.patch_error = None
+        form.locator("input[name=email]").fill("syn-corrected@members.test")
+        form.locator("button[type=submit]").click()
+        self.wait_until(lambda: self.list_reads > reads, "the member list reload after the change")
+        self.page.wait_for_function("() => !document.querySelector('#identity-dialog').open")
+        self.assertEqual(("SYN-U-CLIN", {"identity": {"email": "syn-corrected@members.test"}, "version": 3}), self.patches[-1])
+        expect(self.row("syn-clinician")).to_contain_text("syn-corrected@members.test")
+        # A name change sends the family and given name together, nothing else.
+        self.open_identity("syn-clinician")
+        self.page.locator("#identity-form input[name=firstName]").fill("Renamed")
+        reads = self.list_reads
+        self.page.locator("#identity-form button[type=submit]").click()
+        self.wait_until(lambda: self.list_reads > reads, "the member list reload after the rename")
+        self.assertEqual(("SYN-U-CLIN", {"identity": {"lastName": "SYN", "firstName": "Renamed"}, "version": 4}), self.patches[-1])
+        expect(self.row("syn-clinician")).to_contain_text("SYN Renamed")
+        # Member data in the dialog is not translated.
+        self.assertEqual(["no", "no", "no", "no"], self.page.evaluate(
+            "() => ['#identity-target', '#identity-form input[name=lastName]', '#identity-form input[name=firstName]', "
+            "'#identity-form input[name=email]'].map(s => document.querySelector(s).getAttribute('translate'))"))
+
+    def test_13_change_name_email_unconfirmed_member_late_answers_and_closing(self):
+        self.editable()
+        self.load()
+        # The login account differs from the row: the row says so; the dialog opens on the login account's values and
+        # an unchanged Save makes the two one.
+        expect(self.row("syn-mixed")).to_contain_text("이메일·이름 반영 미확인")
+        self.assertNotIn("이메일·이름 반영 미확인", self.row("syn-clinician").inner_text())
+        self.open_identity("syn-mixed")
+        self.assertEqual("syn-mixed-new@members.test", self.identity_fields()["email"])
+        self.assertTrue(self.page.locator("#identity-unconfirmed").is_visible())
+        reads = self.list_reads
+        self.page.locator("#identity-form button[type=submit]").click()
+        self.wait_until(lambda: self.list_reads > reads, "the reload after making the two one")
+        self.assertEqual(("SYN-U-MIXED", {"identity": {"email": "syn-mixed-new@members.test"}, "version": 5}), self.patches[-1])
+        expect(self.row("syn-mixed")).not_to_contain_text("이메일·이름 반영 미확인")
+        # A late answer of an earlier opening neither closes nor writes into a later one.
+        self.held_patches = []
+        self.open_identity("syn-clinician")
+        self.page.locator("#identity-form input[name=email]").fill("syn-late@members.test")
+        self.page.locator("#identity-form button[type=submit]").click()
+        self.wait_until(lambda: len(self.held_patches) == 1, "the held change")
+        self.page.locator("#identity-dialog [data-close]").click()
+        self.open_identity("syn-mixed")
+        self.held_patches[0].fulfill(status=409, json={"code": "MEMBER_VERSION_CONFLICT", "message": "회원 상태가 바뀌었습니다. 새로고침하세요"})
+        self.held_patches = None
+        self.page.wait_for_timeout(200)
+        self.assertTrue(self.page.evaluate("() => document.querySelector('#identity-dialog').open"), "the later dialog stays")
+        self.assertEqual("", self.page.locator("#identity-message").text_content(), "and gets no earlier error")
+        self.assertEqual("syn-mixed-new@members.test", self.identity_fields()["email"])
+        # The member list is closed (a read refused): the dialog closes and its fields are emptied.
+        self.page.locator("#identity-form input[name=email]").fill("syn-typed@members.test")
+        self.list_error = (403, {"message": "회원 관리는 admin 권한이 필요합니다"})
+        # The modal dialog stays open; the list read starts underneath it (as an expired session's next read would).
+        self.page.evaluate("() => document.querySelector('#refresh').click()")
+        self.page.wait_for_function("() => !document.querySelector('#users tr')")
+        self.assertFalse(self.page.evaluate("() => document.querySelector('#identity-dialog').open"))
+        self.assertEqual({"lastName": "", "firstName": "", "email": ""}, self.identity_fields())
+        self.assertEqual("", self.page.locator("#identity-target").text_content())
 
 
 if __name__ == "__main__":

@@ -596,6 +596,11 @@ class PgLedgerReplaceLive(PgLedgerFixture):
         self.node_case('rights-replace')
 
 
+class PgLedgerIdentityLive(PgLedgerFixture):
+    def test_member_identity_change_locks_and_commit_outcome(self):
+        self.node_case('rights-identity')
+
+
 class PgLedgerImportLive(PgLedgerFixture):
     def test_import_atomicity_and_restart(self):
         self.node_case('rights-import')

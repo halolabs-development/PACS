@@ -20,8 +20,25 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 export const AUDIT_MEMBER_ACTIONS: readonly string[] = Object.freeze([
   "admin.user.create", "admin.user.create.failed", "admin.user.approve", "admin.user.update",
   "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password", "admin.user.reset-password.failed",
-  "admin.user.patch.failed",
+  "admin.user.patch.failed", "admin.user.identity",
 ]);
+
+/** Change Name / Email's row: its `identity` (old -> new of each changed field) is projected only from this action. */
+const IDENTITY_ACTION = "admin.user.identity";
+/** `{ email?: {from, to}, name?: {from, to} }` with at least one field and nothing else, or undefined. */
+function identityChange(value: unknown): Record<string, { from: string; to: string }> | undefined {
+  if (!plain(value)) return undefined;
+  const keys = Object.keys(value);
+  if (!keys.length || keys.some(key => key !== 'email' && key !== 'name')) return undefined;
+  const out: Record<string, { from: string; to: string }> = {};
+  for (const key of keys) {
+    const pair = value[key];
+    if (!plain(pair) || Object.keys(pair).sort().join() !== 'from,to' || typeof pair.from !== 'string' || typeof pair.to !== 'string')
+      return undefined;
+    out[key] = { from: pair.from, to: pair.to };
+  }
+  return out;
+}
 
 export type AuditFieldSource = 'detail.institutionId' | 'detail.by' | 'detail.institution' | 'target';
 
@@ -264,6 +281,13 @@ function memberAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'd
   if (typeof detail.verificationOverride === 'boolean') events.verificationOverride = detail.verificationOverride;
   if (detail.mode === 'temp' || detail.mode === 'email') events.mode = detail.mode;
   if (detail.failed === true) events.failed = true;
+  if (base.action === IDENTITY_ACTION) {
+    // The old and new email are shown only to the one institution both sides recorded; any other shape hides the row.
+    const change = identityChange(detail.identity);
+    if (!change || !before.recorded || !after.recorded || before.institution === null || before.institution !== after.institution)
+      return hidden(rule, 'ambiguous_identity');
+    events.identity = change;
+  }
   const projection_by_side = new Map<string, AuditProjection>();
   for (const reader of sides)
     projection_by_side.set(reader, { ...base, rule, detail: { before: side(before, reader), after: side(after, reader), ...events } });

@@ -13,7 +13,8 @@ import {
 import { AuthService, lockWaitExceeded } from './auth.service';
 // 역할 목록은 clinician-policy 한 곳에서 온다. 여기서 별도 literal을 두면 guard와 어긋난다.
 import { APP_ROLES } from './clinician-policy';
-import { KeycloakService, KeycloakUser, MemberExists, RosterWriteFailure, within } from './keycloak.service';
+import { IdentityFields, KeycloakService, KeycloakUser, MemberExists, RosterWriteFailure, within } from './keycloak.service';
+import { LedgerFailure } from './emr-runtime/store';
 import {
   adminInstitution, inScope, memberInstitution, memberNotFound, requireInScope, requireOwnAssignment,
 } from './member-scope';
@@ -47,6 +48,9 @@ const MEMBER_EXISTS_MESSAGE = {
 } as const;
 const memberExists = (field: 'username' | 'email' | null) =>
   new ConflictException({ code: 'MEMBER_EXISTS', field, message: MEMBER_EXISTS_MESSAGE[field ?? 'either'] });
+/** Change Name / Email to an address another account has: the same code and words as Create Member's, nothing changed. */
+const emailInUse = () => new ConflictException({ code: 'MEMBER_EXISTS', field: 'email',
+  message: '같은 이메일의 계정이 이미 있습니다. 다른 이메일로 바꾸세요.' });
 
 /** The ledger event of an operator command, as for the realm import's service job (member-rights-import.ts). */
 const OPERATOR_EVENT = {
@@ -114,6 +118,51 @@ function successorGate(s: { toRow: any; isolated: boolean; identity: KeycloakUse
   if (groups.length && !(groups.length === 1 && groups[0] === s.institution))
     throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임의 소속 그룹이 이 기관과 다릅니다');
 }
+/** How long the identity change waits on the provider while it holds the member's lock (token wait included). */
+const IDENTITY_WRITE_MS = 2500, IDENTITY_READ_MS = 1500;
+const sameEmail = (a: unknown, b: unknown) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
+/** The member row's shown name: the provider's family and given name (or the username without either). */
+const shownName = (user: { lastName: string; firstName: string; username: string }) =>
+  [user.lastName, user.firstName].filter(Boolean).join(' ') || user.username;
+const IDENTITY_NOT_CHANGED = () => new ServiceUnavailableException({ code: 'MEMBER_IDENTITY_NOT_CHANGED',
+  message: '이메일·이름을 바꾸지 못했습니다. 아무것도 바뀌지 않았습니다. 다시 시도하세요.' });
+/** The provider's outcome is not known: no success is claimed and nothing is put back (a late write may still land). */
+class IdentityUnconfirmed extends ServiceUnavailableException {
+  constructor() { super({ code: 'MEMBER_IDENTITY_UNCONFIRMED',
+    message: '바뀌었는지 확인하지 못했습니다. Refresh로 목록을 다시 읽고, 바뀌지 않았으면 같은 값으로 다시 저장하세요.' }); }
+}
+/** The fields an identity change asks for: an email, a family and given name (together), or both. Only these are checked. */
+type IdentityRequest = { version: number; email?: string; firstName?: string; lastName?: string };
+function identityRequest(body: any): IdentityRequest {
+  if (Object.keys(body).some(key => key !== 'identity' && key !== 'version'))
+    throw new BadRequestException('이메일·이름 변경은 다른 회원 변경과 함께 보낼 수 없습니다');
+  if (!Number.isSafeInteger(body.version) || body.version < 1) throw new BadRequestException('version이 올바르지 않습니다');
+  const value = body.identity;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('identity가 올바르지 않습니다');
+  const keys = Object.keys(value);
+  if (!keys.length || keys.some(key => !['email', 'firstName', 'lastName'].includes(key)))
+    throw new BadRequestException('identity가 올바르지 않습니다');
+  if (keys.includes('firstName') !== keys.includes('lastName')) throw new BadRequestException('성과 이름을 함께 보내세요');
+  const wanted: IdentityRequest = { version: body.version };
+  for (const [key, max] of [['email', 254], ['firstName', 128], ['lastName', 128]] as const) {
+    if (!keys.includes(key)) continue;
+    if (typeof value[key] === 'string' && /[\x00-\x1f\x7f]/.test(value[key])) throw new BadRequestException(`${key} 길이가 올바르지 않습니다`);
+    wanted[key] = text(value[key], key, max);
+  }
+  if (wanted.email !== undefined && !wanted.email.includes('@')) throw new BadRequestException('email 형식이 올바르지 않습니다');
+  return wanted;
+}
+/** Only an approved member of the administrator's own institution: the change's audit row then belongs to that institution. */
+function identityTarget(row: any, admin: string) {
+  if (row.institution !== admin || !row.approved)
+    throw new BadRequestException('이 기관의 승인된 회원만 이메일·이름을 바꿀 수 있습니다');
+}
+/** The provider user holds exactly these written fields. */
+const holds = (user: KeycloakUser, fields: IdentityFields) => (fields.email === undefined || sameEmail(user.email, fields.email))
+  && (fields.emailVerified === undefined || user.emailVerified === fields.emailVerified)
+  && (fields.firstName === undefined || user.firstName === fields.firstName)
+  && (fields.lastName === undefined || user.lastName === fields.lastName);
+
 function memberSubject(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value || value.length > 256 || value.trim() !== value) throw new BadRequestException(`${field}가 올바르지 않습니다`);
   return value;
@@ -163,6 +212,23 @@ export class AdminService {
   private identity(user: KeycloakUser) {
     return { username: user.username, email: user.email, emailVerified: user.emailVerified,
       name: [user.lastName, user.firstName].filter(Boolean).join(' ') || user.username };
+  }
+
+  /**
+   * The identity fields a member change writes. A new row, or Change Name / Email (`adopt`): the provider's. Any other
+   * change of an existing row keeps the row's email and name — a difference the list marks as unconfirmed is taken only
+   * by the explicit, audited change — and refreshes the verification state only for the same address.
+   */
+  private identityWrite(observed: any, user: KeycloakUser | null, adopt: boolean) {
+    if (!user) return {};
+    const fresh = this.identity(user);
+    if (adopt) return fresh;
+    return { username: fresh.username, ...(sameEmail(observed?.email, fresh.email) ? { emailVerified: fresh.emailVerified } : {}) };
+  }
+
+  /** The provider identity differs from the member row (email, ignoring case, or the shown name). */
+  private identityDiffers(row: any, user: KeycloakUser) {
+    return !sameEmail(row.email, user.email) || row.name !== this.identity(user).name;
   }
 
   private async register(tx: any, user: KeycloakUser) {
@@ -219,7 +285,12 @@ export class AdminService {
         users.push({ ...this.row(this.pendingMember(user)), rosterUnconfirmed: false });
         continue;
       }
-      users.push({ ...this.row(rights), rosterUnconfirmed: await this.rosterUnconfirmed(user.id) });
+      // Change Name / Email opens on the provider's current values (only for a member it may change); the shown row stays
+      // the member row's, and a provider identity that differs from it is marked.
+      const editable = rights.approved && rights.institution === admin;
+      users.push({ ...this.row(rights), rosterUnconfirmed: await this.rosterUnconfirmed(user.id),
+        identityUnconfirmed: this.identityDiffers(rights, user),
+        ...(editable ? { provider: { email: user.email, firstName: user.firstName, lastName: user.lastName } } : {}) });
     }
     const pendingCount = visible.filter(user => !bySub.get(user.id)?.approved).length;
     const response = { page, pageSize, total: visible.length, pendingCount, users };
@@ -304,6 +375,9 @@ export class AdminService {
   }
 
   async patchUser(id: string, body: any, c: Caller, facts: AdminRequestFacts, operator?: FirstAdminOperator) {
+    // Change Name / Email arrives through the same member route and gate; it is its own change (changeIdentity).
+    if (!operator && body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'identity'))
+      return this.changeIdentity(id, body, c, facts);
     const admin = this.admin(c);
     if (!facts?.request || facts.actor.subject !== c.sub)
       throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
@@ -421,6 +495,137 @@ export class AdminService {
   }
 
   /**
+   * Change Name / Email: an administrator corrects an approved member's email and/or name, in the identity provider and
+   * the member row together. The rule: the change happened when, and only when, the member row's version CAS commits it
+   * (with its one audit row `admin.user.identity`, old value -> new value of each field that changed). Under the
+   * institution's and the member's locks — taken before the provider is written, so two administrators' changes of one
+   * member never interleave — the provider is written (bounded; the caller's authorization checked just before it is
+   * sent), read again, and the row committed through applyMember (version, re-login boundary, every product session of
+   * the member ended, ledger event, audit row). A provider refusal changes nothing. A lost provider answer that the
+   * read-back does not settle, or a lost commit answer that the own audit row does not settle, is reported unconfirmed and
+   * nothing is put back. A confirmed non-commit puts back what this request wrote, under the same locks and only while
+   * the member and the provider still hold this request's values. The list marks a member whose provider identity differs
+   * from the row; saving the same values again makes them one. Ownership is the account id (owner-identity.ts): the member's
+   * drafts, saved searches and templates stay theirs, and no stored history is rewritten.
+   */
+  async changeIdentity(id: string, body: any, c: Caller, facts: AdminRequestFacts) {
+    const admin = this.admin(c);
+    if (!facts?.request || facts.actor.subject !== c.sub)
+      throw new ServiceUnavailableException('회원 변경 요청의 접속 사실을 확인할 수 없습니다');
+    const wanted = identityRequest(body);
+    // The database first: no row and another institution answer alike, before any provider call.
+    const existing = await this.prisma.memberRights.findUnique({ where: { sub: id } });
+    if (!existing) throw memberNotFound();
+    requireInScope(admin, memberInstitution(existing));
+    identityTarget(existing, admin);
+    const conflict = () => new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 새로고침하세요' });
+    if (wanted.version !== existing.version) throw conflict();
+    const account = await this.managed(id).catch(error => {
+      if (!(error instanceof RosterWriteFailure)) throw error;
+      throw new ServiceUnavailableException({ code: 'MEMBER_DIRECTORY_UNAVAILABLE', message: '회원 명부를 읽지 못했습니다. 잠시 뒤 다시 시도하세요.' });
+    });
+    const target = { email: wanted.email ?? account.email, firstName: wanted.firstName ?? account.firstName,
+      lastName: wanted.lastName ?? account.lastName };
+    const emailChanging = !sameEmail(account.email, target.email);
+    const nameChanging = account.firstName !== target.firstName || account.lastName !== target.lastName;
+    const rowSame = sameEmail(existing.email, target.email) && existing.name === shownName({ ...target, username: account.username });
+    if (!emailChanging && !nameChanging && rowSame) throw new BadRequestException('바뀐 값이 없습니다');
+    if (emailChanging && (await this.keycloak.accountsWithEmail(target.email).catch(() => {
+      throw new ServiceUnavailableException({ code: 'MEMBER_DIRECTORY_UNAVAILABLE', message: '회원 명부를 읽지 못했습니다. 잠시 뒤 다시 시도하세요.' });
+    })).some(other => other !== id)) throw emailInUse();
+    // What this request writes to the provider, and what it puts back on a confirmed non-commit.
+    const send: IdentityFields = { ...(emailChanging ? { email: target.email, emailVerified: false } : {}),
+      ...(nameChanging ? { firstName: target.firstName, lastName: target.lastName } : {}) };
+    const back: IdentityFields = { ...(emailChanging ? { email: account.email, emailVerified: account.emailVerified } : {}),
+      ...(nameChanging ? { firstName: account.firstName, lastName: account.lastName } : {}) };
+    const issuer = facts.actor.issuer;
+    if (!issuer) throw new Error('Missing member identity issuer');
+    const affected = { issuer, subject: id, id: await facts.request.work.resolveRequestIdentity(issuer, id) };
+    let sent = false, auditId: number | null = null;
+    try {
+      const committed = await facts.request.work.transactionWithRecords(async (tx: any, record: any) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        await lockInstitution(tx, admin);
+        await lockMemberRights(tx, id);
+        const current = await tx.memberRights.findUnique({ where: { sub: id } });
+        if (!current) throw memberNotFound();
+        requireInScope(admin, memberInstitution(current));
+        identityTarget(current, admin);
+        if (current.version !== existing.version) throw conflict();
+        await facts.request.requireCurrent(tx);
+        let identity = account;
+        if (Object.keys(send).length) {
+          const answer = await this.keycloak.updateIdentity(id, send, within(IDENTITY_WRITE_MS), async () => {
+            await facts.request.requireCurrent(tx);
+            sent = true;
+          });
+          if (answer.state === 'void') {
+            sent = false;
+            // A 409 to an email change is the address another account has; to a name change it says nothing we can name.
+            if (answer.outcome === 'http_409' && emailChanging) throw emailInUse();
+            throw IDENTITY_NOT_CHANGED();
+          }
+          const reread = await this.keycloak.getUser(id, within(IDENTITY_READ_MS)).catch(() => null);
+          if (!reread || !holds(reread, send)) throw new IdentityUnconfirmed();
+          identity = reread;
+        }
+        const name = shownName(identity), changed: Record<string, { from: string; to: string }> = {};
+        if (current.email !== identity.email) changed.email = { from: current.email, to: identity.email };
+        if (current.name !== name) changed.name = { from: current.name, to: name };
+        const [{ boundary }] = await tx.$queryRaw<{ boundary: Date }[]>`SELECT clock_timestamp() AS boundary`;
+        const result = await this.applyMember(tx, record, { id, register: null, version: current.version, observed: current,
+          identity, adopt: true, fields: { approved: current.approved, suspended: current.suspended, institution: current.institution,
+            roles: current.roles }, action: 'identity', before: this.row(current), verificationOverride: false,
+          approvalMutation: false, affected, actor: c.actor, facts, service: false, operatorDetail: null, boundary,
+          extraDetail: { identity: changed } });
+        auditId = result.auditId;
+        return result;
+      }, { maxWait: 4000, timeout: 10000 });
+      return { ...committed.after, rosterUnconfirmed: committed.rosterUnconfirmed };
+    } catch (error) {
+      if (error instanceof IdentityUnconfirmed) throw error;
+      if (error instanceof LedgerFailure && error.code === 'CommitUnknown') {
+        // Settled by this request's own audit row alone: written in its transaction, it exists only if that committed.
+        const saved = auditId === null ? null : await this.prisma.auditLog.findFirst({
+          where: { id: auditId, target: id, action: 'admin.user.identity' } }).catch(() => null);
+        if (!saved) throw new IdentityUnconfirmed();
+        const after = JSON.parse(saved.detail ?? '{}')?.after;
+        return { ...after, rosterUnconfirmed: await this.rosterUnconfirmed(id).catch(() => true) };
+      }
+      // Not committed: put back what this request wrote, then record the failure.
+      if (sent) {
+        await this.restoreIdentity(id, admin, existing.version, send, back);
+        await this.audit(c.actor, 'admin.user.patch.failed', id, { before: this.row(existing), after: null,
+          verificationOverride: false, failed: true }).catch(() => undefined);
+      }
+      if (lockWaitExceeded(error))
+        throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 시도하세요' });
+      throw error;
+    }
+  }
+
+  /**
+   * After a confirmed non-commit of changeIdentity: under the same locks, and only while the member row is as the request
+   * found it (same institution, approved, same version) and the provider still holds what the request wrote, write back
+   * those fields. Anything else (another administrator's change committed meanwhile, the provider changed, a failure)
+   * leaves it: the list then marks the member, and the same save makes the two one.
+   */
+  private async restoreIdentity(id: string, admin: string, version: number, wrote: IdentityFields, back: IdentityFields) {
+    try {
+      await this.prisma.$transaction(async tx => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        await lockInstitution(tx, admin);
+        await lockMemberRights(tx, id);
+        const row = await tx.memberRights.findUnique({ where: { sub: id } });
+        if (!row || row.institution !== admin || !row.approved || row.version !== version) return;
+        const now = await this.keycloak.getUser(id, within(IDENTITY_READ_MS));
+        if (!now || !holds(now, wrote)) return;
+        await this.keycloak.updateIdentity(id, back, within(IDENTITY_WRITE_MS), async () => {});
+      }, { maxWait: 4000, timeout: 8000 });
+    } catch {}
+  }
+
+  /**
    * One member's rights change inside the caller's records transaction, after the caller has locked the member and decided
    * the change on the locked row: the ledger event, the version CAS, the re-login boundary, every product session of the
    * member ended (isolation), the audit row and — for an approval or a change of institution/roles — the roster intent.
@@ -438,6 +643,11 @@ export class AdminService {
     operatorIdentity?: boolean;
     /** The re-login boundary the caller read from the database; by default this transaction's `now()`. */
     boundary?: Date;
+    /** Change Name / Email: the row takes the provider's email and name. Otherwise an existing row keeps its own (a
+     * difference the list marks is taken only by that explicit, audited change). */
+    adopt?: boolean;
+    /** More of the audit row's detail (Change Name / Email: `identity`, old -> new of each changed field). */
+    extraDetail?: Record<string, unknown>;
   }): Promise<{ after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean; auditId: number }> {
     const { id, facts } = w;
     let result: { after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean; auditId: number };
@@ -449,7 +659,7 @@ export class AdminService {
       if (w.register) await this.register(tx, w.register);
       const boundary = w.boundary ?? (await tx.$queryRaw<{ boundary: Date }[]>`SELECT now() AS boundary`)[0].boundary;
       const { count } = await tx.memberRights.updateMany({ where: { sub: id, version: w.version }, data: {
-        ...w.fields, ...(w.identity ? this.identity(w.identity) : {}),
+        ...w.fields, ...this.identityWrite(w.observed, w.identity, !!w.register || !!w.adopt),
         version: { increment: 1 }, newAuthAfter: boundary,
       } });
       if (count !== 1) throw new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 새로고침하세요' });
@@ -479,7 +689,7 @@ export class AdminService {
       const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
         actor: w.actor, action: `admin.user.${w.action}`, target: id,
         detail: JSON.stringify({ before: w.before, after, verificationOverride: w.verificationOverride,
-          ...(w.operatorDetail ? { operator: w.operatorDetail } : {}) }) } });
+          ...(w.operatorDetail ? { operator: w.operatorDetail } : {}), ...(w.extraDetail ?? {}) }) } });
       const change = w.approvalMutation ? await tx.providerChange.create({ data: {
         kind: 'credentials', target: id, sub: id, generation: after.version, state: 'unknown', createdAt: new Date(),
       } }) : null;
@@ -721,6 +931,12 @@ export class AdminService {
       // the new password is set but never shown here (that institution resets it again).
       requireInScope(admin, memberInstitution(after));
       return { ...after, temporaryPassword };
+    }
+    // The mail goes to the provider's address: while that differs from the address this console shows, nothing is sent.
+    if (user.email && !sameEmail(user.email, before.email)) {
+      await this.audit(c.actor, 'admin.user.reset-password.failed', id, { before, after: before, mode, reason: 'address-unconfirmed', failed: true });
+      throw new ConflictException({ code: 'RESET_MAIL_ADDRESS_UNCONFIRMED',
+        message: '명부의 이메일이 이 화면의 이메일과 다릅니다. Change Name / Email로 주소를 확인해 저장한 뒤 다시 보내세요.' });
     }
     if (!user.email) {
       await this.audit(c.actor, 'admin.user.reset-password.failed', id, { before, after: before, mode, reason: 'no-address', failed: true });

@@ -438,6 +438,26 @@
     </form>
   </dialog>
 
+  <dialog id="identity-dialog">
+    <form class="dialog-body" id="identity-form">
+      <h2>Change Name / Email</h2>
+      <p id="identity-target" translate="no"></p>
+      <p class="message" id="identity-message" role="alert"></p>
+      <div class="form-grid">
+        <label>성<input name="lastName" maxlength="128" autocomplete="off" translate="no"></label>
+        <label>이름<input name="firstName" maxlength="128" autocomplete="off" translate="no"></label>
+        <label class="full">이메일<input name="email" type="email" required maxlength="254" autocomplete="off" translate="no"></label>
+        <p class="full" id="identity-unconfirmed" hidden>명부(로그인 계정)의 값이 회원 표와 다릅니다. 칸에는 명부의 값이 들어 있습니다 — Save하면 두 곳 모두 칸의 값으로 맞춥니다.</p>
+        <p class="full">바꾸면 이 회원은 다시 로그인합니다. 지난 기록의 옛 이메일은 그대로 남습니다.</p>
+        <p class="full" id="identity-self" hidden>본인 계정입니다. Save하면 이 화면에서 로그아웃되고, 다시 로그인하면 새 값이 보입니다.</p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" data-close="identity-dialog">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="held-dialog">
     <form class="dialog-body" id="held-form">
       <h2 id="held-dialog-title">Register Device</h2>
@@ -615,6 +635,13 @@
           note.textContent = "명부 반영 미확인";
           cell.append(note);
         }
+        if (user.identityUnconfirmed) {
+          const note = document.createElement("div");
+          note.className = "identity-unconfirmed";
+          note.textContent = "이메일·이름 반영 미확인";
+          note.title = "로그인 계정(명부)의 이메일·이름이 이 표와 다릅니다. Change Name / Email에서 값을 확인해 Save하면 맞춰집니다.";
+          cell.append(note);
+        }
         row.append(cell);
       }
 
@@ -744,6 +771,8 @@
             : action("Activate", () => mutate(user, { enabled: true })));
           if(user.enabled && user.institution===KinAuth.session()?.institution && user.approvalState==="APPROVED")actions.append(action("Study Access",()=>KinStudyAccessAdmin.open(user)));
           if (KinSigningKeyAdmin.eligible(user)) actions.append(action("Signing Key", () => KinSigningKeyAdmin.open(user)));
+          // The server sends `provider` only for a member it lets this administrator change (approved, own institution).
+          if (user.provider && user.approvalState === "APPROVED") actions.append(action("Change Name / Email", () => openIdentity(user)));
           row.append(actions);
           body.append(row);
         });
@@ -888,6 +917,72 @@
       $("#membership-dialog").addEventListener("close", () => { state.editing = null; });
 
       /*
+       * Change Name / Email. The fields open on the login account's current values (the server's `provider`), and Save
+       * sends only what differs from them, with the version the dialog opened on. The server writes the login account and
+       * the member row together (admin.service.ts changeIdentity); a failure is shown in the dialog with the input kept.
+       * Each opening has its own number: a late answer of an earlier opening neither closes nor writes into a later one.
+       */
+      let identitySeq = 0, identityBase = null;
+      function openIdentity(user) {
+        if (membersDenied || !user.provider) return;
+        identitySeq++;
+        identityBase = { id: user.id, version: user.version, provider: { ...user.provider }, unconfirmed: !!user.identityUnconfirmed };
+        const form = $("#identity-form");
+        form.elements.lastName.value = user.provider.lastName || "";
+        form.elements.firstName.value = user.provider.firstName || "";
+        form.elements.email.value = user.provider.email || "";
+        $("#identity-target").textContent = user.username;
+        $("#identity-unconfirmed").hidden = !identityBase.unconfirmed;
+        $("#identity-self").hidden = user.id !== KinAuth.session()?.sub;
+        setDialogMessage("#identity-message", "");
+        $("#identity-dialog").showModal();
+      }
+
+      function closeIdentity() {
+        identitySeq++;
+        identityBase = null;
+        $("#identity-dialog").close();
+        $("#identity-form").reset();
+        $("#identity-target").textContent = "";
+        setDialogMessage("#identity-message", "");
+      }
+
+      $("#identity-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const base = identityBase, seq = identitySeq;
+        if (!base) { setDialogMessage("#identity-message", "회원 정보를 다시 불러오세요."); return; }
+        const form = event.currentTarget;
+        const value = { lastName: form.elements.lastName.value.trim(), firstName: form.elements.firstName.value.trim(),
+          email: form.elements.email.value.trim() };
+        const identity = {};
+        if (value.email !== (base.provider.email || "")) identity.email = value.email;
+        if (value.lastName !== (base.provider.lastName || "") || value.firstName !== (base.provider.firstName || "")) {
+          identity.lastName = value.lastName;
+          identity.firstName = value.firstName;
+        }
+        // Unchanged fields but a member row that differs: saving these values makes the two one.
+        if (!Object.keys(identity).length && base.unconfirmed) {
+          if (value.email) identity.email = value.email;
+          else { identity.lastName = value.lastName; identity.firstName = value.firstName; }
+        }
+        if (!Object.keys(identity).length) {
+          setDialogMessage("#identity-message", "변경된 내용이 없어 저장하지 않았습니다.");
+          return;
+        }
+        setDialogMessage("#identity-message", "");
+        try {
+          await request("PATCH", `/admin/users/${encodeURIComponent(base.id)}`, { identity, version: base.version });
+          if (KinConsoleSession.ended() || seq !== identitySeq) return;
+          closeIdentity();
+          await loadUsers();
+        } catch (error) {
+          if (KinConsoleSession.ended() || error.stale || membersDenied || seq !== identitySeq) return;
+          setDialogMessage("#identity-message", error.message);
+        }
+      });
+      $("#identity-dialog").addEventListener("close", () => { identitySeq++; identityBase = null; });
+
+      /*
        * The page session ended (Log out, a confirmed session end, or a matching notice). Runs before anything is awaited
        * (S5-U6a-F03): the members, the institutions they named, the edit in progress, both forms, the search and a
        * temporary password go, every dialog of this console closes and its controls turn off. An answer still out is
@@ -900,6 +995,7 @@
         Object.assign(state, { page: 1, total: 0, users: [], editing: null, institutions: new Set() });
         $("#create-dialog").close();
         $("#membership-dialog").close();
+        closeIdentity();
         closeTemporaryPassword();
         $("#create-form").reset();
         $("#membership-form").reset();
@@ -1731,7 +1827,12 @@
         none: "기록된 값이 비어 있습니다.",
       });
       const SNAPSHOT_FIELDS = Object.freeze(["id", "username", "name", "roles", "enabled", "approvalState", "emailVerified", "institution"]);
-      const EVENT_FIELDS = Object.freeze(["verificationOverride", "mode", "failed"]);
+      const EVENT_FIELDS = Object.freeze(["verificationOverride", "mode", "failed", "identity"]);
+      /** Change Name / Email's `identity`: only `email` and `name`, each exactly {from, to} strings, at least one. */
+      const identityChange = value => plain(value) && Object.keys(value).length > 0
+        && Object.keys(value).every(key => (key === "email" || key === "name") && plain(value[key])
+          && Object.keys(value[key]).sort().join() === "from,to"
+          && typeof value[key].from === "string" && typeof value[key].to === "string");
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
       const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
       const owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -1761,6 +1862,7 @@
             || Object.keys(raw.detail).some(key => key !== "before" && key !== "after" && !EVENT_FIELDS.includes(key))) return null;
           const before = side(raw.detail.before), after = side(raw.detail.after);
           if (!before || !after) return null;
+          if (owns(raw.detail, "identity") && (raw.action !== "admin.user.identity" || !identityChange(raw.detail.identity))) return null;
           return { ...base, member: true, before, after,
             events: EVENT_FIELDS.filter(key => owns(raw.detail, key)).map(key => [key, raw.detail[key]]) };
         }
@@ -1807,7 +1909,10 @@
         const reason = !row.member && typeof row.detail.reason === "string"
           ? [{ label: null, text: row.detail.reason, state: "value", title: "" }] : [notRecorded(null)];
         const detail = row.member
-          ? [...sideLines("after", row.after), ...row.events.map(([key, value]) => valueLine(key, value))]
+          ? [...sideLines("after", row.after), ...row.events.flatMap(([key, value]) => key === "identity"
+            // One line per changed field: old -> new, as recorded.
+            ? Object.keys(value).map(field => ({ label: field, text: `${value[field].from} → ${value[field].to}`, state: "value", title: "" }))
+            : [valueLine(key, value)])]
           : Object.keys(row.detail).filter(key => key !== "reason").map(key => valueLine(key, row.detail[key]));
         return { time: format(row.at), timeTitle: `기록한 서버 시각 ${row.at}`, actor: row.actor, action: row.action,
           target: row.target, previous, reason, detail: detail.length ? detail : [notRecorded(null)] };
