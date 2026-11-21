@@ -2455,7 +2455,7 @@ class RetentionTests(unittest.TestCase):
         self.purge(agent)
         self.assertEqual(len(self.deletes(agent)), 1, "a purged study is not looked at again")
         self.assertEqual(self.totals(agent)["deletedInstances"], 2)
-        self.assertIn(("study.purged", {"uid": self.UID, "sops": 2, "left": 0}), self.events)
+        self.assertIn(("study.purged", {"uid": self.UID, "sops": 2, "failed": 0}), self.events)
 
     def test_no_period_unknown_settings_or_an_unsent_study_delete_nothing(self):
         agent = self.agent(days=None)

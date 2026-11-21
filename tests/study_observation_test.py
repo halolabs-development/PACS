@@ -246,7 +246,7 @@ def gateway(receipt, b):
         reasons.append("kin_below_reported" if b["state"] == "observed" else "not_observed_with_reported_transfer")
     if b.get("changedAt") and parse_time(receipt["serverReceivedAt"]) < parse_time(b["changedAt"]):
         reasons.append("receipt_older_than_change")
-    return "Gateway 보고(%s): 병원 보유 %d건 중 %d건 전송" % (receipt["serverReceivedAt"], n, m), reasons
+    return "Gateway 보고(%s): Gateway가 집계한 %d건 중 %d건 전송" % (receipt["serverReceivedAt"], n, m), reasons
 
 
 def labels(assignment, b, receipt):

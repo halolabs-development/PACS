@@ -239,7 +239,7 @@
         <div class="spacer"></div>
         <button type="button" id="gateway-rules-refresh" disabled>Load Gateway Rules</button>
       </div>
-      <p class="gateway-hint">이 기관 Gateway가 받은 검사를 어디로 보낼지(Routing), HALO PACS로 보낼 때 무손실로 줄일지(Compression)를 정합니다. 규칙은 적은 조건(Modality, 보낸 장비의 AE Title)이 모두 맞는 검사에 쓰이고, 빈 조건은 모든 검사에 맞습니다. 한 검사에 여러 규칙이 맞으면(예: CT와 SR 시리즈가 함께 있는 검사) 그 규칙들의 목적지 모두로 보내고, 맞는 규칙이 없는 검사는 HALO PACS로만 보냅니다. 목적지는 HALO PACS와 DICOM Peers에 PACS / Modality로 등록한 상대입니다. 재전송과 늦게 도착한 영상은 처음 정한 목적지 중 현재 규칙과 등록 정보가 일치하는 곳으로만 보냅니다. 모든 목적지가 받은 뒤에도 Gateway에 영상이 남습니다. 무손실 압축은 HALO PACS로 보내는 비압축 영상에만 쓰이며 화소 값은 바뀌지 않습니다(원내 PACS로는 받은 그대로 보냅니다). Gateway는 약 1분 안에 저장한 규칙을 읽습니다.</p>
+      <p class="gateway-hint">이 기관 Gateway가 받은 검사를 어디로 보낼지(Routing), HALO PACS로 보낼 때 무손실로 줄일지(Compression)를 정합니다. 규칙은 적은 조건(Modality, 보낸 장비의 AE Title)이 모두 맞는 검사에 쓰이고, 빈 조건은 모든 검사에 맞습니다. 한 검사에 여러 규칙이 맞으면(예: CT와 SR 시리즈가 함께 있는 검사) 그 규칙들의 목적지 모두로 보내고, 맞는 규칙이 없는 검사는 HALO PACS로만 보냅니다. 목적지는 HALO PACS와 DICOM Peers에 PACS / Modality로 등록한 상대입니다. 재전송과 늦게 도착한 영상은 처음 정한 목적지 중 현재 규칙과 등록 정보가 일치하는 곳으로만 보냅니다. Delete Delivered Copies After에 날 수를 적으면, 모든 목적지가 받은 것이 확인된 검사의 Gateway 사본을 마지막 목적지가 받은 때부터 그 날 수가 지난 뒤 지웁니다(비워 두면 지우지 않습니다). 아직 보내지 못했거나(대기·재시도·실패) 목적지 하나라도 받지 못한 검사는 날 수가 지나도 지우지 않습니다. 무손실 압축은 HALO PACS로 보내는 비압축 영상에만 쓰이며 화소 값은 바뀌지 않습니다(원내 PACS로는 받은 그대로 보냅니다). Gateway는 약 1분 안에 저장한 규칙을 읽습니다.</p>
       <form id="gateway-rules-form">
         <div class="audit-table" id="gateway-rules-wrap" hidden>
           <table>
@@ -251,6 +251,7 @@
         <div class="audit-head">
           <button type="button" id="gateway-rule-add" disabled>Add Rule</button>
           <label>Compression <select id="gateway-compression" disabled><option value="none" selected>None</option><option value="lossless">Lossless</option></select></label>
+          <label>Delete Delivered Copies After <input id="gateway-retention-days" inputmode="numeric" size="5" maxlength="4" placeholder="Never" autocomplete="off" disabled> days</label>
           <button type="submit" class="primary" id="gateway-rules-save" disabled>Save Gateway Rules</button>
         </div>
       </form>

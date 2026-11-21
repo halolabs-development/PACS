@@ -4759,7 +4759,7 @@ class LiveInvariantTests(unittest.TestCase):
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
         # 76 -> 89: signed updates and remote support added SupportTests (the agent's half).
-        self.assertIn("Ran 89 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 106 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

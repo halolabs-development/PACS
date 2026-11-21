@@ -57,7 +57,7 @@ test('the form is closed: conditions, destinations, overlap and compression', ()
   const peers = new Set([P1, P2]);
   const ok = S.parseGatewaySettingsInput(form({ routes: [route(' ct ', ' SYN_CT ', 'kin', P1), route('MG', null, P2)] }), peers);
   assert.deepEqual(ok, { expectedRevision: 0, settings: { routes: [route('CT', 'SYN_CT', 'kin', P1), route('MG', null, P2)],
-    compression: 'lossless' } });
+    compression: 'lossless', retentionDays: null } });
   assert.deepEqual(S.parseGatewaySettingsInput(form({ routes: [route('', '', 'kin')], compression: 'none' }), peers)
     .settings.routes, [route(null, null, 'kin')], 'empty conditions are no condition');
   const bad = [
@@ -68,7 +68,9 @@ test('the form is closed: conditions, destinations, overlap and compression', ()
     [form({ routes: [route('CT', null)] }), 'routes[0].destinations'], [form({ routes: [route('CT', null, 'kin', 'kin')] }), 'routes[0].destinations'],
     [form({ routes: [route('CT', null, PRINTER)] }), 'routes[0].destinations'], [form({ routes: [route('CT', null, OTHER)] }), 'routes[0].destinations'],
     [form({ routes: [{ ...route('CT', null, 'kin'), order: 1 }] }), 'routes[0]'],
-    [form({ retentionDays: 0 }), 'body'],
+    [form({ retentionDays: 0 }), 'retentionDays'], [form({ retentionDays: 3651 }), 'retentionDays'],
+    [form({ retentionDays: 1.5 }), 'retentionDays'], [form({ retentionDays: '7' }), 'retentionDays'],
+    [form({ retentionDays: true }), 'retentionDays'], [form({ retentionDays: -1 }), 'retentionDays'],
     [form({ compression: 'jpeg' }), 'compression'], [form({ compression: undefined }), 'compression'],
   ];
   for (const [body, name] of bad)
@@ -84,7 +86,7 @@ test('the form is closed: conditions, destinations, overlap and compression', ()
 test('nothing stored is the empty settings, for the administrator and for the Gateway', async () => {
   const h = harness();
   const read = await h.service.adminRead(ADMIN);
-  assert.deepEqual(read.settings, { revision: 0, routes: [], compression: 'none' });
+  assert.deepEqual(read.settings, { revision: 0, routes: [], compression: 'none', retentionDays: null });
   assert.deepEqual(read.peers.map(p => p.id), [P1, P2], 'store peers of the own institution only, never a printer');
   const answer = await h.service.gatewayRead(GW);
   assert.deepEqual(answer, { revision: 0, routes: [], compression: 'none', destinations: [
@@ -97,10 +99,11 @@ test('a save: revision check, one audit row with no address, the same settings w
   const h = harness();
   const first = await h.service.adminSave(form(), ADMIN);
   assert.equal(first.changed, true);
-  assert.deepEqual(first.settings, { revision: 1, routes: [route('CT', null, 'kin', P1)], compression: 'lossless' });
+  assert.deepEqual(first.settings, { revision: 1, routes: [route('CT', null, 'kin', P1)], compression: 'lossless',
+    retentionDays: null });
   assert.deepEqual(h.locks, ['inst-a'], 'the institution row is locked first');
   assert.deepEqual(h.audits.map(a => [a.action, a.target, JSON.parse(a.detail)]), [['institution.gateway-settings.save', 'inst-a',
-    { institution: 'inst-a', revision: 1, routes: 1, destinations: [P1, 'kin'], compression: 'lossless' }]]);
+    { institution: 'inst-a', revision: 1, routes: 1, destinations: [P1, 'kin'], compression: 'lossless', retentionDays: null }]]);
   assert.doesNotMatch(h.audits[0].detail, /synthetic\.test|10\.0\.0/);
   const again = await h.service.adminSave(form({ revision: 1 }), ADMIN);
   assert.deepEqual([again.changed, again.settings.revision, h.audits.length], [false, 1, 1]);
@@ -149,7 +152,38 @@ test('a scope that changed between the admission and the write refuses the save,
 test('stored values are read defensively and the routed peers are the ones the routes name', () => {
   for (const odd of [null, 'x', [], { revision: 'x', routes: [] }, { revision: 1 }])
     assert.deepEqual(S.storedGatewaySettings(odd), S.NO_GATEWAY_SETTINGS);
-  const stored = { revision: 3, routes: [route('CT', null, 'kin', P1), route('MG', null, P2)], compression: 'lossless' };
+  const stored = { revision: 3, routes: [route('CT', null, 'kin', P1), route('MG', null, P2)], compression: 'lossless',
+    retentionDays: 30 };
   assert.deepEqual(S.storedGatewaySettings(stored), stored);
   assert.deepEqual([...S.routedPeers(stored)].sort(), [P1, P2]);
+  for (const odd of [0, 3651, 1.5, '30', undefined])
+    assert.equal(S.storedGatewaySettings({ ...stored, retentionDays: odd }).retentionDays, null, 'an unreadable period is never delete');
+});
+
+test('the retention period: set, kept by a form without it, cleared, audited, and given only to a Gateway that asks', async () => {
+  const h = harness();
+  const peers = new Set([P1, P2]);
+  for (const days of [1, 3650, null])
+    assert.equal(S.parseGatewaySettingsInput(form({ retentionDays: days }), peers).settings.retentionDays, days);
+  assert.equal(S.parseGatewaySettingsInput(form(), peers, 14).settings.retentionDays, 14, 'a form without the key keeps it');
+  const set = await h.service.adminSave(form({ retentionDays: 30 }), ADMIN);
+  assert.deepEqual([set.changed, set.settings.revision, set.settings.retentionDays], [true, 1, 30]);
+  assert.equal(JSON.parse(h.audits[0].detail).retentionDays, 30);
+  // Only the period changes: one more revision and one more audit row; the same again writes nothing.
+  const longer = await h.service.adminSave(form({ revision: 1, retentionDays: 60 }), ADMIN);
+  assert.deepEqual([longer.changed, longer.settings.revision, h.audits.length], [true, 2, 2]);
+  const same = await h.service.adminSave(form({ revision: 2, retentionDays: 60 }), ADMIN);
+  assert.deepEqual([same.changed, same.settings.revision, h.audits.length], [false, 2, 2]);
+  const older = await h.service.adminSave(form({ revision: 2 }), ADMIN);
+  assert.deepEqual([older.changed, older.settings.retentionDays], [false, 60], 'an older page keeps the period');
+  await assert.rejects(h.service.adminSave(form({ revision: 2, retentionDays: 0 }), ADMIN),
+    error => status(error) === 400 && field(error) === 'retentionDays');
+  // An older Gateway asks without it and gets the closed shape it reads; a Gateway that asks gets the period.
+  const plain = await h.service.gatewayRead(GW);
+  assert.deepEqual(Object.keys(plain).sort(), ['compression', 'destinations', 'revision', 'routes']);
+  assert.equal((await h.service.gatewayRead(GW, true)).retentionDays, 60);
+  const cleared = await h.service.adminSave(form({ revision: 2, retentionDays: null }), ADMIN);
+  assert.deepEqual([cleared.changed, cleared.settings.retentionDays, h.audits.length], [true, null, 3]);
+  const asked = await h.service.gatewayRead(GW, true);
+  assert.deepEqual([Object.keys(asked).includes('retentionDays'), asked.retentionDays], [true, null]);
 });

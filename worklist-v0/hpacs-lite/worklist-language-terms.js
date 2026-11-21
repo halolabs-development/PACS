@@ -479,7 +479,7 @@ window.KinLanguageTerms = {
     ["From {0} · Sent {1}", "보낸 사람 {0} · 보낸 시각 {1}", "l"],
     ["From: {0} · To: {1} · {2}", "보낸 사람: {0} · 받는 사람: {1} · {2}", "l"],
     ["Gateway 보고 형식을 확인할 수 없습니다", "Cannot verify the Gateway report format", "l"],
-    ["Gateway 보고({0}): 병원 보유 {1}건 중 {2}건 전송", "Gateway report ({0}): {2} of {1} held by the hospital sent", "l"],
+    ["Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송", "Gateway report ({0}): {2} of {1} counted by the Gateway sent", "l"],
     ["Gateway 자동 재시도 대기", "Waiting for Gateway auto-retry", "l"],
     ["Gateway:", "게이트웨이:", "l"],
     ["General", "일반", "l"],

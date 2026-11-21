@@ -764,12 +764,14 @@ class Queue:
           ORDER BY updated_at, uid LIMIT ?
         """, (limit,))]
 
-    def reported(self, uid: str, seq: int, confirmed: bool = False) -> None:
-        """KIN gave its final answer for this receipt; `confirmed` when it answered stored or duplicate (Agent.report)."""
+    def reported(self, uid: str, seq: int) -> None:
         with self.db:
             self.db.execute("UPDATE studies SET reported_seq=? WHERE uid=? AND reported_seq < ?", (seq, uid, seq))
-            if confirmed:
-                self.db.execute("UPDATE studies SET confirmed_seq=? WHERE uid=? AND confirmed_seq < ?", (seq, uid, seq))
+
+    def confirmed(self, uid: str, seq: int) -> None:
+        """KIN answered stored or duplicate to the receipt of this seq (Agent.report): the only basis retention reads."""
+        with self.db:
+            self.db.execute("UPDATE studies SET confirmed_seq=? WHERE uid=? AND confirmed_seq < ?", (seq, uid, seq))
 
     def waiting(self, uid: str, seq: int, now: float) -> bool:
         """This exact retry state is still waiting out its backoff (the retry_now condition, read only)."""
@@ -1949,7 +1951,7 @@ class Agent:
             if str(error) != "local study lookup count=0":
                 raise
             self.queue.nothing_to_purge(uid)
-            log("study.purged", uid=uid, sops=0, left=0)
+            log("study.purged", uid=uid, sops=0, failed=0)
             return
         delivered = self.queue.delivered_sops(uid)
         waiting = [item for item in instances if item["sop"] not in delivered]
@@ -1980,7 +1982,7 @@ class Agent:
         if orthanc_id is None:
             return
         gone, left = self.queue.settle_purge(uid, self.orthanc.instance_ids(orthanc_id))
-        log("study.purged", uid=uid, sops=gone, left=left)
+        log("study.purged", uid=uid, sops=gone, failed=left)
 
     def report(self, uid: str) -> bool:
         """Send this study's current receipt. Never raises: a receipt must not change the transfer.
@@ -1994,8 +1996,10 @@ class Agent:
                 return True
             response = self.cloud.receipt(body)
             if response.ok or response.status_code in RECEIPT_FINAL_REFUSALS:
+                self.queue.reported(uid, body["seq"])
                 # Retention deletes only on a receipt KIN stored or already held as is, never on stale or a refusal.
-                self.queue.reported(uid, body["seq"], response.ok and receipt_confirmed(response, uid))
+                if response.ok and receipt_confirmed(response, uid):
+                    self.queue.confirmed(uid, body["seq"])
                 if not response.ok:
                     try:
                         code = response.json().get("code")

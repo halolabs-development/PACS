@@ -164,7 +164,7 @@ RETRY_REASON = "Gateway 자동 재시도 대기 · 시도 1회 · 오류 코드 
 
 
 def reported(minute, success, local):
-    return "Gateway 보고(%s): 병원 보유 %d건 중 %d건 전송" % (shown(minute), local, success)
+    return "Gateway 보고(%s): Gateway가 집계한 %d건 중 %d건 전송" % (shown(minute), local, success)
 
 
 # (uid, status, chip, study line, detail, Now Retry shown, note), in the order the page lists them.
