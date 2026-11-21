@@ -35,7 +35,7 @@ out = os.environ.get("STAND_IN_LOG")
 if out:
     with open(out, "a") as handle:
         handle.write(json.dumps({{"pid": os.getpid(), "version": os.environ.get("KIN_AGENT_RUN_VERSION", AGENT_VERSION),
-                                 "behaviour": BEHAVIOUR}}) + "\\n")
+                                 "behaviour": BEHAVIOUR, "builtin": os.environ.get("KIN_AGENT_BUILTIN_VERSION")}}) + "\\n")
 if BEHAVIOUR == "crash":
     sys.exit(3)
 if BEHAVIOUR == "restart_once" and not os.path.exists(out + ".restarted"):
@@ -231,6 +231,16 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(launcher.running_version, BUILTIN)
         self.assertEqual(self.children()[-1]["version"], "2026.11.2")
         self.assertEqual(json.loads(launcher.paths.state.read_text())["running"], BUILTIN)
+
+    def test_every_child_is_told_the_image_agent_version_and_never_an_inherited_one(self):
+        launcher = self.launcher()
+        launcher.env["KIN_AGENT_BUILTIN_VERSION"] = "9999.1"   # an inherited value is not the image's
+        self.start(launcher)
+        self.assertEqual(self.children()[-1]["builtin"], "2026.11.2")
+        self.install(launcher, make_bundle(SEED, "2026.12.1", {"agent.py": stand_in("good")}),
+                     {"requestId": "11111111-1111-4111-8111-111111111111", "version": "2026.12.1"})
+        self.drive(launcher, lambda: launcher.state["last"] and last_result(launcher) == "installed")
+        self.assertEqual((self.children()[-1]["version"], self.children()[-1]["builtin"]), ("2026.12.1", "2026.11.2"))
 
     def test_a_good_signed_release_replaces_the_child_and_is_kept_after_its_ready(self):
         launcher = self.launcher()
