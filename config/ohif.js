@@ -8708,12 +8708,31 @@ window.KinLanguageTerms = {
   function markup(root) {
     if (!root?.ownerDocument) return root;
     flush();
+    // A dialog with no screen of its own (no region marked on it or around it) takes the screen it is opened from.
+    const dialog = root.closest?.('dialog');
+    if (dialog && !opensWhere.has(dialog) && !dialog.closest('[data-kin-lang-region]')) opensWhere.add(dialog);
     registerMarkup(root, true);
-    if (active()) {
-      const walk = root.ownerDocument.createTreeWalker(root, 5);
-      for (let node = root; node; node = walk.nextNode()) if (records.has(node)) refresh(node);
-    }
+    if (active()) refreshAll(root);
     return root;
+  }
+  function refreshAll(root) {
+    const walk = root.ownerDocument.createTreeWalker(root, 5);
+    for (let node = root; node; node = walk.nextNode()) if (records.has(node)) refresh(node);
+  }
+  // The one way such a dialog opens (show / showModal): it is marked with the screen last used — the one its opener is on, as
+  // the pointer or key that opened it was recorded first — and its registered words are painted in that screen's language.
+  const opensWhere = new WeakSet();
+  for (const name of ['show', 'showModal']) {
+    const proto = typeof HTMLDialogElement === 'function' ? HTMLDialogElement.prototype : null, native = proto?.[name];
+    if (typeof native !== 'function') continue;
+    proto[name] = function (...args) {
+      if (opensWhere.has(this)) {
+        flush();
+        this.setAttribute('data-kin-lang-region', lastRegion);
+        if (active()) refreshAll(this);
+      }
+      return native.apply(this, args);
+    };
   }
   const docs = new Map();
   const active = () => REGIONS.some(r => state[r]);
@@ -8821,24 +8840,36 @@ window.KinLanguageTerms = {
       v.version === 1 && valid(v.worklist) && valid(v.reading) ? { version: 1, worklist: v.worklist, reading: v.reading } : null;
   }
   const value = () => ({ version: 1, worklist: state.worklist, reading: state.reading });
-  // The other documents (clinician, administration, audit and sign-in pages) keep no choice of their own: they follow the
-  // choice the work page last applied in this browser, English only (a reader who chose Korean keeps them as they are).
+  // The other documents (clinician, administration, audit pages and the viewer) keep no choice of their own: they follow the
+  // choice the work page last applied in this browser, English only (a reader who chose Korean keeps them as they are). The
+  // work page keeps it with the sign-in it was applied in (the session's identifier — not a secret), and a document follows
+  // it only for that same sign-in: never the choice another account left in this browser.
   const BROWSER = 'kin-language:v1';
   const follows = document.documentElement.hasAttribute('data-kin-lang-browser');
+  // auth.js declares KinAuth as a global binding of the page (not a window property), after this file.
+  const auth = () => (typeof KinAuth !== 'undefined' ? KinAuth : null);
+  const signedIn = () => { try { return auth()?.sessionId?.() || null; } catch (_) { return null; } };
+  /** The kept choice, when it was applied in this same sign-in; otherwise none. */
+  function kept(session) {
+    if (typeof session !== 'string' || !session) return null;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(BROWSER)); } catch (_) { return null; }
+    if (!stored || typeof stored !== 'object' || stored.session !== session) return null;
+    return normalize({ version: stored.version, worklist: stored.worklist, reading: stored.reading });
+  }
   function set(next) {
     const clean = normalize(next);
     if (!clean) return false;
     generation += 1;
     const changed = REGIONS.some(r => state[r] !== clean[r]);
     state.worklist = clean.worklist; state.reading = clean.reading;
-    if (!follows) try { localStorage.setItem(BROWSER, JSON.stringify(clean)); } catch (_) { /* the other documents keep their words */ }
+    if (!follows) try { localStorage.setItem(BROWSER, JSON.stringify({ ...clean, session: signedIn() })); } catch (_) { /* the other documents keep their words */ }
     if (changed) { repaint(); paintDialog(); }
     return true;
   }
-  function followBrowser() {
-    let stored = null;
-    try { stored = normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { stored = null; }
-    if (stored?.worklist === 'en') set({ version: 1, worklist: 'en', reading: null });
+  function followBrowser(session) {
+    const next = kept(session)?.worklist === 'en' ? 'en' : null;
+    if (state.worklist !== next) set({ version: 1, worklist: next, reading: null });
   }
 
   // The header mark: what the account chose (EN / KO, both when the screens differ); an account that never chose keeps
@@ -9048,20 +9079,28 @@ window.KinLanguageTerms = {
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
-    if (follows) followBrowser();
-    // The choice kept for the viewer and the other documents is the account's: this page writes it again once the account's
-    // choice is applied, so one another account left in this browser is not followed meanwhile.
-    else try { localStorage.removeItem(BROWSER); } catch (_) { /* nothing kept */ }
+    // The sign-in is known once the page's sign-in check has answered (auth.js, loaded after this file): the kept choice is
+    // followed from then on, for that sign-in only, and dropped when it ends.
+    if (follows) {
+      const follow = () => auth()?.onLifecycle?.(e => followBrowser(e.state === 'active' ? e.session : null));
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', follow, { once: true }); else follow();
+    }
     if (active()) repaint(); else showLabel();
   }
   // The viewer document (config/ohif.js sets KinLanguageDocument before this file runs): OHIF's page, so its markup is
   // never registered and nothing is stored. It is the image half of the reading screen: the words our viewer code writes
-  // follow the reading-screen choice the work page last applied in this browser, English only, as the viewer opens.
+  // follow the reading-screen choice kept for the sign-in the viewer was handed (the window name the opening page set, or
+  // on a reload the entry the viewer recorded), English only, as the viewer opens.
+  function viewerSession() {
+    const prefix = 'kin-viewer-entry:';
+    try {
+      if (window.name?.startsWith(prefix)) return JSON.parse(window.name.slice(prefix.length)).session || null;
+      return history.state?.kinViewerSession?.expected || null;
+    } catch (_) { return null; }
+  }
   function startViewer() {
     lastRegion = 'reading';
-    let stored = null;
-    try { stored = normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { stored = null; }
-    if (stored?.reading === 'en') state.reading = 'en';
+    if (kept(viewerSession())?.reading === 'en') state.reading = 'en';
   }
   if (window.KinLanguageDocument === 'viewer') startViewer(); else start();
 

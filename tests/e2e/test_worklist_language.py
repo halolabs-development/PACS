@@ -109,9 +109,14 @@ class WorklistLanguageE2E(base.WorklistE2E):
             page.unroute(history)
 
     def open_viewer(self, page, fixture):
-        """The viewer of the study in this browser, which keeps the choice the work page last applied."""
-        viewer = page.context.new_page()
-        viewer.goto(self.stack.proxy + "/ohif/viewer?StudyInstanceUIDs=" + fixture.uid)
+        """The viewer of the study, opened as the work page opens it (viewer-launch.js): a named window handed this
+        sign-in in its name, then sent to the viewer. It follows the choice the work page applied in this sign-in."""
+        url = self.stack.proxy + "/ohif/viewer?StudyInstanceUIDs=" + fixture.uid
+        with page.expect_popup() as opened:
+            page.evaluate("""url => { const name = 'syn-language-viewer', w = window.open('', name);
+                w.name = 'kin-viewer-entry:' + JSON.stringify({ session: KinAuth.sessionId(), name });
+                w.location.href = url; }""", url)
+        viewer = opened.value
         zoom = viewer.locator('#root button[data-cy="Zoom"]')
         # The toolbar labels are ours (config/ohif toolbar-labels): the English name and our description in the title.
         expect(zoom).to_have_attribute("data-kin-tool-label", "Zoom", timeout=60000)

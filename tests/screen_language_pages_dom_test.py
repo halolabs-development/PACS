@@ -1,8 +1,9 @@
 """The other documents and the screen language.
 
 The clinician, administration, audit and sign-in pages load the glossary and translator and follow the choice the work
-page last applied in this browser, English only: with English their own fixed words read in English, with Korean or no
-choice they stay exactly as they are. The viewer document does not load the translator.
+page last applied in this browser, English only, for that same sign-in: with English their own fixed words read in English,
+with Korean, no choice, a choice another sign-in left or no sign-in (the sign-in page) they stay exactly as they are. The
+viewer document carries the translator in config/ohif.js and follows the reading-screen choice of the sign-in it is handed.
 """
 import unittest
 from pathlib import Path
@@ -36,7 +37,7 @@ class ScreenLanguagePages(unittest.TestCase):
         cls.browser.close()
         cls.pw.stop()
 
-    def open(self, name, role, stored):
+    def open(self, name, role, stored, session="S1"):
         context = self.browser.new_context()
         self.addCleanup(context.close)
         reads = []
@@ -64,7 +65,11 @@ class ScreenLanguagePages(unittest.TestCase):
         self.addCleanup(lambda: self.assertEqual([], errors))
         if stored:
             page.add_init_script("localStorage.setItem('kin-language:v1', JSON.stringify("
-                                 "{version:1, worklist:'%s', reading:'%s'}))" % (stored, stored))
+                                 "{version:1, worklist:'%s', reading:'%s', session:'%s'}))" % (stored, stored, session))
+        if name == "viewer":
+            # The opening page hands the viewer its sign-in in the window name (viewer-launch.js / clinician.js).
+            page.add_init_script("if (location.pathname === '/viewer' && !window.name) window.name = 'kin-viewer-entry:'"
+                                 " + JSON.stringify({session: 'S1', name: ''})")
         page.goto(BASE + ("/viewer" if name == "viewer" else "/worklist/hpacs-lite/" + name))
         if name == "viewer":
             page.wait_for_function("window.started")
@@ -81,7 +86,10 @@ class ScreenLanguagePages(unittest.TestCase):
         self.assertEqual("viewer", page.evaluate("window.KinLanguageDocument"))
         self.assertEqual("en", page.evaluate("window.KinLanguage.lang(document.body)"))
         self.assertFalse(page.evaluate("document.documentElement.hasAttribute('data-kin-lang-worklist') || document.documentElement.hasAttribute('data-kin-lang-reading')"))
-        self.assertEqual('{"version":1,"worklist":"en","reading":"en"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
+        self.assertEqual('{"version":1,"worklist":"en","reading":"en","session":"S1"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
+        # English another sign-in left in this browser: the viewer keeps its words as written.
+        page, _ = self.open("viewer", "radiologist", "en", session="S0")
+        self.assertIsNone(page.evaluate("window.KinLanguage.lang(document.body)"))
 
     def test_pages_follow_english_and_stay_as_they_are_otherwise(self):
         for name, role in PAGES:
@@ -90,15 +98,21 @@ class ScreenLanguagePages(unittest.TestCase):
                 self.assertTrue(LANGUAGE.issubset(reads))
                 plain = page.evaluate(SNAPSHOT)
                 self.assertGreater(plain["korean"], 0)
-                # Korean, or no choice: the page exactly as it is.
-                page, _ = self.open(name, role, "ko")
-                self.assertEqual(plain["all"], page.evaluate(SNAPSHOT)["all"])
-                # English: fewer Korean words; the page never writes the choice.
+                # Korean, no choice, or English another sign-in left: the page exactly as it is.
+                for stored, session in (("ko", "S1"), ("en", "S0")):
+                    page, _ = self.open(name, role, stored, session)
+                    self.assertEqual(plain["all"], page.evaluate(SNAPSHOT)["all"])
+                    self.assertIsNone(page.evaluate("KinLanguage.lang(document.body)"))
+                # English of this sign-in: fewer Korean words; the page never writes the choice. The sign-in page has no
+                # sign-in, so it follows nothing.
                 page, _ = self.open(name, role, "en")
+                if role is None:
+                    self.assertEqual(plain["all"], page.evaluate(SNAPSHOT)["all"])
+                    continue
                 self.assertLess(page.evaluate(SNAPSHOT)["korean"], plain["korean"])
                 self.assertEqual("en", page.evaluate("KinLanguage.lang(document.body)"))
                 page.evaluate("KinLanguage.restore({version:1, worklist:null, reading:null})")
-                self.assertEqual('{"version":1,"worklist":"en","reading":"en"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
+                self.assertEqual('{"version":1,"worklist":"en","reading":"en","session":"S1"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
 
     def test_an_administration_sentence_reads_in_english(self):
         page, _ = self.open("admin.html", "admin", "en")

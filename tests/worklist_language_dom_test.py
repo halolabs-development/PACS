@@ -216,15 +216,48 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertEqual({"version": 1, "worklist": None, "reading": "ko"}, self.site.appearance["language"])
         self.assertEqual("— · KO", self.page.locator("#language-label").inner_text().strip())
 
+    def test_a_dialog_opened_from_either_screen_reads_in_the_language_of_that_screen(self):
+        """Tech Note opens from the list (its row chip) and from the reading screen: its words follow the screen it was
+        opened from, whichever language the other screen has."""
+        self.boot()
+        page = self.page
+        page.route("**/api/studies/*/tech-note", lambda r: r.fulfill(json={"uid": auth.UID, "writable": True, "note": None}))
+        guidance = page.locator("#tech-note-dialog > p").first
+        words = {"en": "Stored separately from the report and original images.", "ko": "판독문·원본 영상과 별도로 저장됩니다."}
+
+        def from_reading():
+            button = page.locator("#tech-note-open")
+            button.dispatch_event("pointerdown")
+            button.dispatch_event("click")
+
+        def from_list():
+            page.locator('[data-tab="Technician"]').click()
+            chip = page.locator("#rows [data-tech-note]").first
+            chip.click()
+            page.locator('[data-tab="Radiology"]').dispatch_event("click")
+
+        for worklist, reading in (("en", "ko"), ("ko", "en")):
+            page.evaluate("([w, r]) => KinLanguage.restore({version: 1, worklist: w, reading: r})", [worklist, reading])
+            for opened, lang in ((from_reading, reading), (from_list, worklist)):
+                with self.subTest(worklist=worklist, reading=reading, opened=opened.__name__):
+                    opened()
+                    expect(page.locator("#tech-note-dialog")).to_be_visible()
+                    expect(guidance).to_contain_text(words[lang])
+                    page.locator("#tech-note-close").click()
+                    expect(page.locator("#tech-note-dialog")).to_be_hidden()
+
     def test_the_applied_choice_is_kept_in_the_browser_for_the_other_pages(self):
         self.boot()
         stored = "localStorage.getItem('kin-language:v1')"
-        self.assertIsNone(self.page.evaluate(stored))
+        session = self.page.evaluate("KinAuth.sessionId()")
+        self.assertTrue(session)
+        # Kept with the sign-in it was applied in, so another account's documents never follow it.
+        self.assertIn(json.loads(self.page.evaluate(stored) or "null"), (None, {**NONE, "session": session}))
         self.apply("en")
-        self.assertEqual({"version": 1, "worklist": "en", "reading": "en"}, json.loads(self.page.evaluate(stored)))
+        self.assertEqual({"version": 1, "worklist": "en", "reading": "en", "session": session}, json.loads(self.page.evaluate(stored)))
         self.page.locator("#language-revert").click()
         expect(self.page.locator("#language-applied")).to_be_hidden()
-        self.assertEqual(NONE, json.loads(self.page.evaluate(stored)))
+        self.assertEqual({**NONE, "session": session}, json.loads(self.page.evaluate(stored)))
 
     def test_the_account_choice_comes_back_on_another_start(self):
         self.boot()
