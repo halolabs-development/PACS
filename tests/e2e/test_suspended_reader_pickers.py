@@ -158,6 +158,13 @@ class SuspendedReaderPickersE2E(WorklistE2E):
         cleared = self.stack.request('POST', f'/studies/{f.uid}/reader-assignment', 'tech', self.assign_body(f, None))
         self.assertEqual(cleared.status, 201, cleared.text)
         self.assertIsNone(cleared.body['reader'])
+        # The requester can still cancel the consultation sent to the suspended reader.
+        me = self.stack.request('GET', '/me', 'doctor')
+        cancel = dict(expectedOwner=[me.body['institution'], me.body['sub']], revision=item.body['item']['revision'],
+                      requestId=str(uuid.uuid4()), action='cancel', note='')
+        cancelled = self.stack.request('POST', '/consultations/' + sent.body['item']['id'], 'doctor', cancel)
+        self.assertEqual(cancelled.status, 201, cancelled.text)
+        self.assertEqual(cancelled.body['item']['state'], 'Cancelled')
 
 
 def load_tests(loader, tests, pattern):

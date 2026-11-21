@@ -46,6 +46,22 @@ export function rightsUser(row: any) {
     groups: row.institution ? [row.institution] : [], roles: row.approved ? row.roles : [] };
 }
 
+/**
+ * The colleague a picker offers (Assign Reader, Consultation) and a new save names, read from the member table: the
+ * authority an administrator's Suspend, Revoke Approval, role and institution changes write. The provider roster is not
+ * asked - those commands leave it as it was. No row is no member. Callers judge the person with their own rule over
+ * this shape (enabled = rightsAllow, the one institution, the roles of an approved member).
+ */
+export async function memberUser(db: any, sub: string) {
+  return rightsUser(await db.memberRights.findUnique({ where: { sub } })) ?? null;
+}
+
+/** Every member row of one institution in that shape, by name; the caller's rule keeps whom it may offer. */
+export async function institutionMembers(db: any, institution: string) {
+  const rows: any[] = await db.memberRights.findMany({ where: { institution } });
+  return rows.map(rightsUser).sort((a, b) => a.firstName.localeCompare(b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /** An older ordinary publication may have landed after the latest intent was created. */
 export function rosterOverlap(records: { state: string; createdAt: Date; settledAt: Date | null }[]): boolean {
   const latest = records[0];
