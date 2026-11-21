@@ -2192,6 +2192,9 @@
           return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}"></td></tr>`;
+      // The words the rows' own cells write (states, their help, chips) follow the worklist's language, as the page's markup
+      // does; the cells and parts that hold a study's data are marked translate="no" above and stay as written.
+      window.KinLanguage?.markup?.($("#rows"));
       const emptyCell = $("#rows td.empty");
       if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
