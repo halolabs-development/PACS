@@ -1,9 +1,9 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
-import { prepareExamRead, resolveExamScope, examScopeView } from './exam-merge.service';
+import { prepareExamRead, resolveExamScope, examScopeView, examOpenUids } from './exam-merge.service';
 import { CLINICIAN_ROLE } from './clinician-policy';
 import type { Caller } from './pacs.service';
 
@@ -24,6 +24,9 @@ const IMAGE_REQUEST_ACTIONS: readonly string[] = Object.freeze(['accept', 'close
 const IMAGE_REQUEST_TEXT_MAX = 2000;
 const IMAGE_REQUEST_COUNTERPARTY_MAX = 256;
 const IMAGE_REQUEST_PAGE = 50;
+// In-app unread: the receipts of another subject's state change that the requester waits for, and a page of unread items.
+const UNREAD_ACTIONS: readonly string[] = Object.freeze(['accept', 'close', 'decline', 'cancel']);
+const UNREAD_PAGE = 100;
 const RADIOLOGIST = 'radiologist';
 const TECHNICIAN = 'technician';
 const ADMIN = 'admin';
@@ -211,6 +214,33 @@ export class ImageRequestService {
       createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) };
   }
 
+  /**
+   * The one visibility filter of the queue and own lists (#7) and of the unread counts: this institution's requests on
+   * studies it owns **now** (the immutable creating institution joined with the current owner below), within the access
+   * policy, and for `mine` the caller's own. `revision` is the policy revision a page cursor carries.
+   */
+  private async visible(c: Caller, mine: boolean, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? this.prisma;
+    const accessPolicy = await this.studyAccess.snapshot(c, transaction);
+    const restricted = accessPolicy.policy.restricted;
+    const scope = restricted ? [...await this.studyAccess.allowed(c, (await db.studyState.findMany({
+      where: { institutionId: c.institution }, select: { uid: true } })).map(s => s.uid))] : [];
+    return { revision: accessPolicy.revision, where: Prisma.sql`r."institutionId"=${c.institution} AND (NOT ${restricted} OR r."studyUid"=ANY(${scope}::text[]))
+        AND (NOT ${mine} OR r."requesterSub"=${c.sub})` };
+  }
+
+  /** A page cursor of #7 or of the unread items: the last row's creation time and id under the same policy revision. */
+  private cursor(value: string | undefined, revision: number, message: string) {
+    if (value === undefined) return null;
+    try {
+      if (value.length > 256 || !CURSOR.test(value)) throw Error();
+      const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+      if (!object(cursor) || Object.keys(cursor).sort().join() !== 'at,id,r' || cursor.r !== revision || !uuid(cursor.id)
+        || typeof cursor.at !== 'string' || new Date(cursor.at).toISOString() !== cursor.at) throw Error();
+      return cursor;
+    } catch (_) { throw invalid(message); }
+  }
+
   /** #7 목록. view=mine은 clinician 역할의 자기 요청, view=queue는 판독의·방사선사·관리자의 기관 대기열. 총개수는 싣지 않는다. */
   async list(c: RequestCaller, q: ListQuery, transaction?: Prisma.TransactionClient) {
     const db = transaction ?? this.prisma;
@@ -225,33 +255,80 @@ export class ImageRequestService {
     if (query.kind !== undefined && !IMAGE_REQUEST_KINDS.includes(query.kind)) throw invalid('요청 종류를 확인하세요');
     const states = state === 'active' ? [...ACTIVE] : state === 'all' ? [...STATES] : [state[0].toUpperCase() + state.slice(1)];
     const kind = query.kind ?? 'all';
-    const accessPolicy = await this.studyAccess.snapshot(c, transaction);
-    const restricted = accessPolicy.policy.restricted;
-    const scope = restricted ? [...await this.studyAccess.allowed(c, (await db.studyState.findMany({
-      where: { institutionId: c.institution }, select: { uid: true } })).map(s => s.uid))] : [];
-    let cursor: any = null;
-    if (query.cursor !== undefined) {
-      try {
-        if (query.cursor.length > 256 || !CURSOR.test(query.cursor)) throw Error();
-        cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'));
-        if (!object(cursor) || Object.keys(cursor).sort().join() !== 'at,id,r' || cursor.r !== accessPolicy.revision || !uuid(cursor.id)
-          || typeof cursor.at !== 'string' || new Date(cursor.at).toISOString() !== cursor.at) throw Error();
-      } catch (_) { throw invalid('요청 목록 페이지를 확인하세요'); }
-    }
+    const { revision: policy, where } = await this.visible(c, mine, transaction);
+    const cursor = this.cursor(query.cursor, policy, '요청 목록 페이지를 확인하세요');
     // 불변인 생성 기관과 **현재** 소유 기관을 함께 JOIN한다 — 옮겨 간 검사의 요청은 어느 쪽 목록에도 나오지 않는다.
     // 한 문장이라 한 스냅샷이다. 여러 문장을 조합하는 #8·#9만 읽기 트랜잭션을 쓴다.
     const before = cursor?.at ?? '9999-12-31T00:00:00.000Z', beforeId = cursor?.id ?? 'ffffffff-ffff-ffff-ffff-ffffffffffff';
     const rows: any[] = await db.$queryRaw`SELECT r.*
       FROM "StudyImageRequest" r JOIN "StudyState" s ON s.uid=r."studyUid" AND s."institutionId"=r."institutionId"
-      WHERE r."institutionId"=${c.institution} AND (NOT ${restricted} OR r."studyUid"=ANY(${scope}::text[]))
-        AND (NOT ${mine} OR r."requesterSub"=${c.sub}) AND r.state::text=ANY(${states}::text[])
+      WHERE ${where} AND r.state::text=ANY(${states}::text[])
         AND (${kind}::text='all' OR r.kind::text=${kind}::text)
         AND (r."createdAt",r.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
       ORDER BY r."createdAt" DESC,r.id DESC LIMIT 51`;
     const items = rows.slice(0, IMAGE_REQUEST_PAGE), last = items[items.length - 1];
     return { owner: this.owner(c), items: items.map(row => this.dto(row)),
       nextCursor: rows.length > IMAGE_REQUEST_PAGE
-        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: accessPolicy.revision })).toString('base64url') : null };
+        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
+  }
+
+  /**
+   * In-app unread (the rule of clinician-question.service.ts unread()): the requester's own request is unread when a
+   * receipt of another subject's state change (accept, close, decline, an administrator's cancel) is above the revision
+   * the requester's seen mark records (none = 0), and the request is visible by the list's own filter. Any state. One row
+   * per request: `count` exact, `items` newest first, 100 a page; no reason, note or handler. A session without the
+   * clinician role gets `available: false` (staff are not waiting for a processing result).
+   */
+  async unread(c: RequestCaller, q: any, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? this.prisma;
+    this.member(c);
+    const query = object(q) ? q : {};
+    if (Object.keys(query).some(k => !['view', 'cursor'].includes(k)) || Object.values(query).some(v => typeof v !== 'string')
+      || query.view !== 'image-request-mine') throw invalid('안 읽음 구분(view)을 확인하세요');
+    const base = { owner: this.owner(c), view: query.view };
+    if (!holds(c, CLINICIAN_ROLE)) return { ...base, available: false, count: 0, items: [], nextCursor: null };
+    const { revision: policy, where } = await this.visible(c, true, transaction);
+    const cursor = this.cursor(query.cursor, policy, '안 읽음 목록 페이지를 확인하세요');
+    const waiting = Prisma.sql`${where} AND EXISTS (SELECT 1 FROM "StudyImageRequestReceipt" x
+        WHERE x."imageRequestId"=r.id AND x.action::text=ANY(${UNREAD_ACTIONS}::text[]) AND x."subjectSub"<>${c.sub}
+          AND x."appliedRevision" > COALESCE((SELECT v."revision" FROM "StudyImageRequestSeen" v WHERE v."imageRequestId"=r.id AND v."subjectSub"=${c.sub}), 0))`;
+    const counted: any[] = await db.$queryRaw`SELECT count(*)::int AS n
+      FROM "StudyImageRequest" r JOIN "StudyState" s ON s.uid=r."studyUid" AND s."institutionId"=r."institutionId" WHERE ${waiting}`;
+    const before = cursor?.at ?? '9999-12-31T00:00:00.000Z', beforeId = cursor?.id ?? 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    const rows: any[] = await db.$queryRaw`SELECT r.id, r."studyUid", r.revision, r."createdAt"
+      FROM "StudyImageRequest" r JOIN "StudyState" s ON s.uid=r."studyUid" AND s."institutionId"=r."institutionId"
+      WHERE ${waiting} AND (r."createdAt",r.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
+      ORDER BY r."createdAt" DESC,r.id DESC LIMIT ${UNREAD_PAGE + 1}`;
+    const items = rows.slice(0, UNREAD_PAGE), last = items[items.length - 1];
+    const open = await examOpenUids(db, this.prisma, this.studyAccess, c, items.map(row => row.studyUid));
+    return { ...base, available: true, count: Number(counted[0]?.n ?? 0),
+      items: items.map(row => ({ id: row.id, studyUid: row.studyUid, revision: row.revision, openUid: open.get(row.studyUid) ?? null })),
+      nextCursor: rows.length > UNREAD_PAGE
+        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
+  }
+
+  /**
+   * The requester's screen showed this request at `revision`: the seen mark rises to it (never above the request's own
+   * revision, never down). Only the requester with the clinician role, while the request is visible to them (404 as a
+   * read otherwise). No receipt, no audit row: the person's own reading state.
+   */
+  async seen(id: string, c: RequestCaller, b: any) {
+    this.member(c);
+    const scope = this.scope(c);
+    if (!exactKeys(b, ['expectedOwner', 'revision']) || !revision(b.revision)) throw invalid('기준 revision을 확인하세요');
+    this.expectOwner(c, b);
+    if (!uuid(id)) throw requestMissing();
+    await this.studyAccess.prepare(c);
+    return this.run(c, async tx => {
+      const row = await this.request(tx, id.toLowerCase(), c, scope, false);
+      if (row.requesterSub !== c.sub || !holds(c, CLINICIAN_ROLE)) throw actionForbidden();
+      const kept: any[] = await tx.$queryRaw`INSERT INTO "StudyImageRequestSeen" ("imageRequestId","subjectSub","revision","at")
+        VALUES (${row.id}::uuid, ${c.sub}, ${Math.min(b.revision, row.revision)}, CURRENT_TIMESTAMP)
+        ON CONFLICT ("imageRequestId","subjectSub") DO UPDATE SET "revision"=GREATEST("StudyImageRequestSeen"."revision", EXCLUDED."revision"),
+          "at"=CASE WHEN EXCLUDED."revision" > "StudyImageRequestSeen"."revision" THEN EXCLUDED."at" ELSE "StudyImageRequestSeen"."at" END
+        RETURNING "revision"`;
+      return { owner: this.owner(c), seen: { id: row.id, revision: Number(kept[0].revision) } };
+    });
   }
 
   /** #8 요청 한 건. */

@@ -323,6 +323,8 @@ export const MODEL_CLASSIFICATION: Readonly<Record<string, readonly RecordKind[]
   // Auto Save View: one reader's own last view of a study (image references, cameras, windows, cell display rules), written
   // over by each save; no clinical text, mark or title, and never a Job.
   ViewerAutoView: ['preferences'],
+  // In-app unread marks: the revision of a thread or request one person's screen last showed them; no text, no patient field.
+  StudyQuestionSeen: ['preferences'], StudyImageRequestSeen: ['preferences'],
   // S9-U4b: import rows are per-file delivery results, download rows the copy record of a fixed manifest, and the gate's
   // Study/SOP reservations hold study metadata from the DICOM producer (their lifetime follows the study's originals).
   ImportOperation: ['delivery-receipt', 'download', 'study-metadata'],

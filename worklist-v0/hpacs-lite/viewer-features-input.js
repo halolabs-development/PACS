@@ -336,7 +336,9 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
   }
   // Keys reach the panel before the toolbar's tool keys (viewer-ux-shortcuts.js): while it is open every key is its own,
   // so no tool key runs underneath; while it is closed only Space (when turned on, outside text fields and dialogs) opens it.
-  const unlead = window.KinViewerUXShortcuts?.lead((event, refused) => {
+  const unlead = window.KinViewerUXShortcuts?.lead((event, refused, asking) => {
+    // Asked about a key not being pressed (the viewer's own hotkey table): whether Space would open the closed panel.
+    if (asking) return event.key === ' ' && spaceOn && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
     if (!leader) {
       if (event.key !== ' ' || !spaceOn || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || refused()) return false;
       openLeader(); return true;

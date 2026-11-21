@@ -232,6 +232,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "studies/:uid/image-requests"): Route(Kind.TENANT),
     ("POST", "studies/:uid/image-requests"): Route(Kind.TENANT),
     ("POST", "image-requests/:id"): Route(Kind.TENANT),
+    # In-app unread: a view's unread count and items, and the seen mark of the person's own thread or request.
+    ("GET", "unread"): Route(Kind.TENANT),
+    ("POST", "questions/:id/seen"): Route(Kind.TENANT),
+    ("POST", "image-requests/:id/seen"): Route(Kind.TENANT),
     # S7-U1a — 중요 결과 전달·명시적 수신 확인(consultation·질문과 별도 모델·서비스). 기관·StudyAccess·참여자·원문 권한 경계는 critical-result.service.ts.
     ("GET", "studies/:uid/critical-result-recipients"): Route(Kind.TENANT),
     ("POST", "studies/:uid/critical-results"): Route(Kind.TENANT),

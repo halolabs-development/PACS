@@ -31,10 +31,10 @@ MUTANTS = [
         "    kinViewerSession.decide().then(() => { connect(ticket); }).catch(e => {")]),
     ('gate-as-before','unconfirmed','config',[("          if (response.ok) note(await response.json());",
         "          if (response.ok) note(await response.json()); else note({kind:'member',sub:'SYN-CLIN-SUB',institution:'SYN-INST-A',roles:['radiologist']});")]),
-    ('no-version-pin','version','config',[("(version !== null && page.reportVersion !== version) ||",'')]),
+    ('no-source-verdict','verdict','config',[("const listKey = heads => JSON.stringify(heads.map(h => [h.id, h.revision, h.referenceStatus ?? null]).sort());","const listKey = heads => JSON.stringify(heads.map(h => [h.id, h.revision]).sort());")]),
     ('uid-only','aba','config',[(VALID,"    const valid = ticket => !ended;\n"),(ASKED,"    const asked = () => !ended;\n")]),
     ('no-boundary','boundary','config',[("      if (next === 'read-only') clinicianBoundary(own);\n",'')]),
-    ('no-final-check','final','config',[("\n        .then(page => confirmShown(ticket, seq, study, page, null), error => confirmShown(ticket, seq, study, null, error))",'')]),
+    ('no-final-check','final','config',[("\n        .then(heads => confirmShown(ticket, seq, study, heads, null), error => confirmShown(ticket, seq, study, null, error))",'')]),
     ('frame-bound-check','frameless','config',[(FRAME,FRAME.replace("      if (readOnly()) { frameMatch(r); recheckShown(); }\n",'')+"      if (readOnly()) { frameMatch(r); recheckShown(); }\n")]),
 ]
 
@@ -67,11 +67,14 @@ class Probe(h.ClinicianViewerDOMTest):
         self.wait_until(lambda:self.me_requests>=3,'failed member checks');self.settle()
         self.assertEqual(('unconfirmed',[]),(self.session(),self.page.evaluate('synMounted')),'CV-NC-unconfirmed')
 
-    def test_version(self):
-        self.open_viewer(study=h.VQ)
-        self.wait_until(lambda:len([r for r in self.reads() if r[0]==h.VQ])==2,'both source pages')
-        self.settle()
-        self.assertEqual(('failed',[]),(self.panel()['state'],self.panel()['rows']),'CV-NC-version')
+    def test_verdict(self):
+        # The same revision of a length whose source the server could not confirm this time: its mark is withdrawn.
+        self.items[h.VA]={'pages':[[h.mark_item(2,'length','SYN-A length',revision=2)]]}
+        self.open_viewer();self.wait_panel('ready',h.VA);before=self.probes()
+        self.assertEqual([['Length','SYN-A length',True]],self.page.evaluate('synDrawn()'))
+        self.items[h.VA]={'pages':[[h.mark_item(2,'length','SYN-A length',status='unverified',revision=2)]]};self.focus()
+        self.wait_until(lambda:self.probes()>before,'the list recheck');self.settle()
+        self.assertEqual([],self.page.evaluate('synDrawn()'),'CV-NC-verdict')
 
     def test_aba(self):
         self.hold_items={h.VA};self.open_viewer(uncancellable=True)
@@ -79,7 +82,7 @@ class Probe(h.ClinicianViewerDOMTest):
         old=self.held_items.pop()[1];self.hold_items=set()
         self.page.evaluate('study=>synSwitch(study)',h.VP);self.wait_panel('ready',h.VP)
         self.page.evaluate('study=>synSwitch(study)',h.VA);self.wait_panel('ready',h.VA)
-        self.release(old,{'uid':h.VA,'final':True,'reportVersion':4,'items':[h.key_item(61,'SYN-OLD-A')],'nextCursor':None})
+        self.release(old,{'items':[h.key_item(61,'SYN-OLD-A')],'nextCursor':None})
         self.assertNotIn('SYN-OLD-A',str(self.panel()['rows']),'CV-NC-aba')
 
     def test_boundary(self):
@@ -91,9 +94,9 @@ class Probe(h.ClinicianViewerDOMTest):
 
     def test_final(self):
         self.open_viewer();self.wait_panel('ready',h.VA);before=self.probes()
-        self.items[h.VA]='withheld';self.focus()
-        self.wait_until(lambda:self.probes()>before,'the final report recheck');self.settle()
-        self.assertEqual(('withheld',[]),(self.panel()['state'],self.panel()['rows']),'CV-NC-final')
+        self.items[h.VA]={'pages':[[]]};self.focus()
+        self.wait_until(lambda:self.probes()>before,'the list recheck');self.settle()
+        self.assertEqual(('empty',[]),(self.panel()['state'],self.panel()['rows']),'CV-NC-final')
 
     def test_frameless(self):
         self.open_viewer();self.wait_panel('ready',h.VA);self.frameless(True);self.settle()

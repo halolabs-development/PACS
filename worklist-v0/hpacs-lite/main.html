@@ -666,6 +666,10 @@
        233px and Stay went below the line. Their words are short and whole in their tooltips; two of them keep their
        4em minimum each (and their gap), so neither leaves the band at the column's narrowest. */
     #report-notices:has(> #report-notice[style*="flex"]) > #report-alerts { max-width: max(25cqw, 8em + 4px); }
+    /* In-app unread: the band's count of the reader's unread inbox questions stands after the two notices above, so they keep
+       their room, and steps aside while that move/insert notice stands (the two keep the quarter it leaves them; the count
+       comes back with the band, and the Inbox stays one click away in the questions row). */
+    #report-notices:has(> #report-notice[style*="flex"]) > #report-alerts > #question-unread { display: none; }
     /* W4 숨긴 Recommendation의 읽기 전용 띠 — 안내줄과 같은 등급, 펼쳐도 판독문 칸을 밀어내지 않게 글은 짧게 스크롤한다. */
     .recnote { flex: none; padding: 3px 10px; background: #1f2530; border-top: 1px solid #3a4356; color: #c3cad6; font-size: 11px; }
     #recnote { white-space: nowrap; overflow-x: auto; }
@@ -2070,6 +2074,8 @@
         <div id="report-alerts">
           <button type="button" id="question-notice" aria-controls="question-pane" hidden></button>
           <button type="button" id="image-request-notice" aria-controls="image-request-pane" hidden></button>
+          <!-- In-app unread (unread-badges.js): the server's count of the pool's Open questions this reader has not opened; opens the Inbox. -->
+          <button type="button" id="question-unread" aria-controls="question-pane" hidden></button>
         </div>
         <!-- W4: 검사를 옮기지 않았을 때만 보인다(쓰던 글의 저장 거절·결과 모름·충돌·글자 조합). 무엇을 누르면 되는지 함께 말한다. -->
         <div class="draftbar" id="report-notice" role="status" aria-live="polite" style="display:none">
@@ -2692,6 +2698,7 @@
   <script src="report-preview.js"></script>
   <script src="film-print.js"></script>
   <script src="viewer-workspace-dock.js"></script>
+  <script src="viewer-ux-shortcuts.js"></script>
   <script src="workspace-shortcuts.js"></script>
   <script src="reading-workspace.js"></script>
   <script src="finding-link-model.js"></script>
@@ -2740,6 +2747,7 @@
   <script src="report-popout.js"></script>
   <script src="clinical-info-actions.js"></script>
   <script src="work-mode.js"></script>
+  <script src="unread-badges.js"></script>
 <script src="main-split.bundle.js"></script>
 </body>
 </html>

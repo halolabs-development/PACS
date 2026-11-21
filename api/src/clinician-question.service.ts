@@ -1,9 +1,9 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
-import { prepareExamRead, resolveExamScope, examScopeView, withGroupedExam, reportExamReference } from './exam-merge.service';
+import { prepareExamRead, resolveExamScope, examScopeView, withGroupedExam, reportExamReference, examOpenUids } from './exam-merge.service';
 import { CLINICIAN_ROLE } from './clinician-policy';
 import type { Caller } from './pacs.service';
 
@@ -18,6 +18,10 @@ import type { Caller } from './pacs.service';
  */
 export const QUESTION_AUDIT_ACTION = 'study.question';
 const QUESTION_PAGE = 50;
+// In-app unread: the entry kinds each view waits for (written by someone else), and a page of unread items.
+const UNREAD_INBOX: readonly string[] = Object.freeze(['question', 'followup']);
+const UNREAD_MINE: readonly string[] = Object.freeze(['answer', 'close']);
+const UNREAD_PAGE = 100;
 const RADIOLOGIST = 'radiologist';
 const ADMIN = 'admin';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -224,6 +228,33 @@ export class ClinicianQuestionService {
       current };
   }
 
+  /**
+   * The one visibility filter of the pool and own lists (#1) and of the unread counts: this institution's questions on
+   * studies it owns **now** (the immutable creating institution joined with the current owner below), within the access
+   * policy, and for `mine` the caller's own. `revision` is the policy revision a page cursor carries.
+   */
+  private async visible(c: Caller, mine: boolean, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? this.prisma;
+    const accessPolicy = await this.studyAccess.snapshot(c, transaction);
+    const restricted = accessPolicy.policy.restricted;
+    const scope = restricted ? [...await this.studyAccess.allowed(c, (await db.studyState.findMany({
+      where: { institutionId: c.institution }, select: { uid: true } })).map(s => s.uid))] : [];
+    return { revision: accessPolicy.revision, where: Prisma.sql`q."institutionId"=${c.institution} AND (NOT ${restricted} OR q."studyUid"=ANY(${scope}::text[]))
+        AND (NOT ${mine} OR q."authorSub"=${c.sub})` };
+  }
+
+  /** A page cursor of #1 or of the unread items: the last row's creation time and id under the same policy revision. */
+  private cursor(value: string | undefined, revision: number, message: string) {
+    if (value === undefined) return null;
+    try {
+      if (value.length > 256 || !CURSOR.test(value)) throw Error();
+      const cursor = JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
+      if (!object(cursor) || Object.keys(cursor).sort().join() !== 'at,id,r' || cursor.r !== revision || !uuid(cursor.id)
+        || typeof cursor.at !== 'string' || new Date(cursor.at).toISOString() !== cursor.at) throw Error();
+      return cursor;
+    } catch (_) { throw invalid(message); }
+  }
+
   /** #1 목록. view=mine은 clinician 역할의 자기 질문, view=inbox는 판독의·관리자의 기관 풀. 총개수는 싣지 않는다. */
   async list(c: QuestionCaller, q: any, transaction?: Prisma.TransactionClient) {
     const db = transaction ?? this.prisma;
@@ -236,33 +267,85 @@ export class ClinicianQuestionService {
     const state = query.state ?? 'all';
     if (!['open', 'answered', 'closed', 'all'].includes(state)) throw invalid('질문 상태 필터를 확인하세요');
     const stateValue = state === 'all' ? 'all' : state[0].toUpperCase() + state.slice(1);
-    const accessPolicy = await this.studyAccess.snapshot(c, transaction);
-    const restricted = accessPolicy.policy.restricted;
-    const scope = restricted ? [...await this.studyAccess.allowed(c, (await db.studyState.findMany({
-      where: { institutionId: c.institution }, select: { uid: true } })).map(s => s.uid))] : [];
-    let cursor: any = null;
-    if (query.cursor !== undefined) {
-      try {
-        if (query.cursor.length > 256 || !CURSOR.test(query.cursor)) throw Error();
-        cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'));
-        if (!object(cursor) || Object.keys(cursor).sort().join() !== 'at,id,r' || cursor.r !== accessPolicy.revision || !uuid(cursor.id)
-          || typeof cursor.at !== 'string' || new Date(cursor.at).toISOString() !== cursor.at) throw Error();
-      } catch (_) { throw invalid('질문 목록 페이지를 확인하세요'); }
-    }
+    const { revision: policy, where } = await this.visible(c, mine, transaction);
+    const cursor = this.cursor(query.cursor, policy, '질문 목록 페이지를 확인하세요');
     // 불변인 생성 기관과 **현재** 소유 기관을 함께 JOIN한다 — 옮겨 간 검사의 질문은 어느 쪽 목록에도 나오지 않는다.
     // 항목 요약·lastEntryAt·소유 기관이 한 문장이라 한 스냅샷이다. 여러 문장을 조합하는 #2·#3만 읽기 트랜잭션을 쓴다.
     const before = cursor?.at ?? '9999-12-31T00:00:00.000Z', beforeId = cursor?.id ?? 'ffffffff-ffff-ffff-ffff-ffffffffffff';
     const rows: any[] = await db.$queryRaw`SELECT q.*,
         (SELECT max(e.at) FROM "StudyQuestionEntry" e WHERE e."questionId"=q.id) AS "lastEntryAt"
       FROM "StudyQuestion" q JOIN "StudyState" s ON s.uid=q."studyUid" AND s."institutionId"=q."institutionId"
-      WHERE q."institutionId"=${c.institution} AND (NOT ${restricted} OR q."studyUid"=ANY(${scope}::text[]))
-        AND (NOT ${mine} OR q."authorSub"=${c.sub}) AND (${stateValue}::text='all' OR q.state::text=${stateValue}::text)
+      WHERE ${where} AND (${stateValue}::text='all' OR q.state::text=${stateValue}::text)
         AND (q."createdAt",q.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
       ORDER BY q."createdAt" DESC,q.id DESC LIMIT 51`;
     const items = rows.slice(0, QUESTION_PAGE), last = items[items.length - 1];
-    return { owner: this.owner(c), items: items.map(row => this.summary(row, row.lastEntryAt)),
+    const open = await examOpenUids(db, this.prisma, this.studyAccess, c, items.map(row => row.studyUid));
+    return { owner: this.owner(c), items: items.map(row => ({ ...this.summary(row, row.lastEntryAt), openUid: open.get(row.studyUid) ?? null })),
       nextCursor: rows.length > QUESTION_PAGE
-        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: accessPolicy.revision })).toString('base64url') : null };
+        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
+  }
+
+  /**
+   * In-app unread: a thread is unread for the caller when it has an entry written by someone else, of the kinds the
+   * caller's view waits for, whose sequence is above the revision the caller's own seen mark records (none = 0), and the
+   * caller may see the thread by the list's own filter (visible). `question-inbox` is a radiologist's: the pool's Open
+   * threads (question, follow-up); `question-mine` a clinician's: the own threads in any state (answer, a reasoned close).
+   * One row per thread: `count` is exact, `items` the newest first, 100 a page; no body, author or report. A session
+   * without the view's role gets `available: false` and nothing else.
+   */
+  async unread(c: QuestionCaller, q: any, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? this.prisma;
+    this.member(c);
+    const query = object(q) ? q : {};
+    if (Object.keys(query).some(k => !['view', 'cursor'].includes(k)) || Object.values(query).some(v => typeof v !== 'string')
+      || !['question-inbox', 'question-mine'].includes(query.view)) throw invalid('안 읽음 구분(view)을 확인하세요');
+    const mine = query.view === 'question-mine';
+    const base = { owner: this.owner(c), view: query.view };
+    if (!holds(c, mine ? CLINICIAN_ROLE : RADIOLOGIST)) return { ...base, available: false, count: 0, items: [], nextCursor: null };
+    const { revision: policy, where } = await this.visible(c, mine, transaction);
+    const cursor = this.cursor(query.cursor, policy, '안 읽음 목록 페이지를 확인하세요');
+    const kinds = mine ? UNREAD_MINE : UNREAD_INBOX;
+    const waiting = Prisma.sql`${where} AND (${mine} OR q.state::text='Open') AND EXISTS (SELECT 1 FROM "StudyQuestionEntry" e
+        WHERE e."questionId"=q.id AND e.kind::text=ANY(${kinds}::text[]) AND e."authorSub"<>${c.sub}
+          AND e.seq > COALESCE((SELECT v."revision" FROM "StudyQuestionSeen" v WHERE v."questionId"=q.id AND v."subjectSub"=${c.sub}), 0))`;
+    const counted: any[] = await db.$queryRaw`SELECT count(*)::int AS n
+      FROM "StudyQuestion" q JOIN "StudyState" s ON s.uid=q."studyUid" AND s."institutionId"=q."institutionId" WHERE ${waiting}`;
+    const before = cursor?.at ?? '9999-12-31T00:00:00.000Z', beforeId = cursor?.id ?? 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+    const rows: any[] = await db.$queryRaw`SELECT q.id, q."studyUid", q.revision, q."createdAt"
+      FROM "StudyQuestion" q JOIN "StudyState" s ON s.uid=q."studyUid" AND s."institutionId"=q."institutionId"
+      WHERE ${waiting} AND (q."createdAt",q.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
+      ORDER BY q."createdAt" DESC,q.id DESC LIMIT ${UNREAD_PAGE + 1}`;
+    const items = rows.slice(0, UNREAD_PAGE), last = items[items.length - 1];
+    const open = await examOpenUids(db, this.prisma, this.studyAccess, c, items.map(row => row.studyUid));
+    return { ...base, available: true, count: Number(counted[0]?.n ?? 0),
+      items: items.map(row => ({ id: row.id, studyUid: row.studyUid, revision: row.revision, openUid: open.get(row.studyUid) ?? null })),
+      nextCursor: rows.length > UNREAD_PAGE
+        ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
+  }
+
+  /**
+   * The caller's screen showed this thread at `revision`: the seen mark rises to it (never above the thread's own
+   * revision, never down). Who may: whoever the thread's unread waits for and who may read it now — its author with the
+   * clinician role, or a radiologist of the pool; anyone else 403, an unseen thread 404 as a read. No receipt, no audit
+   * row: it is the person's own reading state, and repeating it changes nothing.
+   */
+  async seen(id: string, c: QuestionCaller, b: any) {
+    this.member(c);
+    const scope = this.scope(c);
+    if (!exactKeys(b, ['expectedOwner', 'revision']) || !revision(b.revision)) throw invalid('기준 revision을 확인하세요');
+    this.expectOwner(c, b);
+    if (!uuid(id)) throw questionMissing();
+    await this.prepareQuestion(id, c);
+    return this.run(c, async tx => {
+      const { row } = await this.question(tx, id.toLowerCase(), c, scope, false);
+      if (!holds(c, row.authorSub === c.sub ? CLINICIAN_ROLE : RADIOLOGIST)) throw actionForbidden();
+      const kept: any[] = await tx.$queryRaw`INSERT INTO "StudyQuestionSeen" ("questionId","subjectSub","revision","at")
+        VALUES (${row.id}::uuid, ${c.sub}, ${Math.min(b.revision, row.revision)}, CURRENT_TIMESTAMP)
+        ON CONFLICT ("questionId","subjectSub") DO UPDATE SET "revision"=GREATEST("StudyQuestionSeen"."revision", EXCLUDED."revision"),
+          "at"=CASE WHEN EXCLUDED."revision" > "StudyQuestionSeen"."revision" THEN EXCLUDED."at" ELSE "StudyQuestionSeen"."at" END
+        RETURNING "revision"`;
+      return { owner: this.owner(c), seen: { id: row.id, revision: Number(kept[0].revision) } };
+    });
   }
 
   private async prepareQuestion(id:string,c:Caller) {

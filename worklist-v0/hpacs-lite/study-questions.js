@@ -23,6 +23,8 @@
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
+      // In-app unread (unread-badges.js): the band's count of the pool's Open questions this reader has not opened.
+      const unreadButton = $('#question-unread');
       const TEXT = {
         unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
         // 끊긴 동안(online() — 화면의 한 연결 규칙)은 읽은 것을 그대로 보이고, 답변·닫기·Retry는 보내지 않는다(쓰던 글은 남는다).
@@ -56,6 +58,9 @@
         inboxFailed: '받은 질문을 불러오지 못했습니다.',
         inboxEmpty: '이 조건의 질문이 없습니다.',
         inboxReady: (n, more) => `질문 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
+        unreadTip: '서버가 센 안 읽은 질문입니다(소속 기관의 Open 질문 중 이 계정이 아직 열어 보지 않은 것). 누르면 Inbox를 엽니다. 이메일·문자로 보내지 않습니다.',
+        unreadStale: '안 읽은 질문 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
+        unreadOutside: '최신 50건 목록 밖의 질문입니다. 새 질문이 있습니다.',
         notListed: '이 검사는 지금 워크리스트에 없어 열 수 없습니다. 목록을 새로고침하거나 검색 조건을 바꾸세요.',
         unlisted: '워크리스트에 없는 검사',
         noText: '내용을 입력하세요.',
@@ -215,17 +220,37 @@
         }
       }
 
+      /**
+       * The originals one per-study read covers: the target, and when the server answered for its exam (a merged or split
+       * exam whose report study is the target: the answer's scope names it as reportUid) every original that scope lists.
+       * A thread of one of those originals is this target's; anything else is another study's. The thread read (no scope)
+       * is checked against the last list read of the same target (listUids).
+       */
+      const examUids = (target, data) => {
+        const out = new Set([target]), scope = data && data.scope;
+        if (scope && typeof scope === 'object' && scope.reportUid === target && Array.isArray(scope.sources))
+          for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+        return out;
+      };
+      let listUids = null;
+      const targetUids = target => listUids && listUids.target === target ? listUids.uids : new Set([target]);
+      /** A pane is drawn only when the browser lays it out (not in a folded row, not under another work tab). */
+      const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
       /** #3·#1 응답의 모양 검사. target이 있으면 모든 행이 그 검사의 것이어야 한다. 하나라도 틀리면 답 전체를 그리지 않는다. */
       function readSummaries(data, target) {
-        const rows = data && data.items;
+        const rows = data && data.items, uids = target === null ? null : examUids(target, data);
         if (!Array.isArray(rows) || rows.length > 50) throw new Error(TEXT.malformed);
         for (const row of rows) {
           if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !ID.test(row.id) || typeof row.studyUid !== 'string'
-              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : row.studyUid !== target)
+              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : !uids.has(row.studyUid))
+              // An Inbox row names the row it opens on (openUid: a study UID, or null when none answers for this reader).
+              || (target === null && !(row.openUid === null || typeof row.openUid === 'string' && row.openUid.length <= 64 && STUDY.test(row.openUid)))
               || !STATES.includes(row.state) || !Number.isSafeInteger(row.revision) || row.revision < 1
               || !Number.isSafeInteger(row.entryCount) || row.entryCount < 1 || !row.author || typeof row.author !== 'object')
             throw new Error(TEXT.malformed);
         }
+        if (target !== null) listUids = { target, uids };
         return rows;
       }
 
@@ -239,7 +264,7 @@
           && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
         if (!item || typeof item !== 'object' || item.id !== id) throw new Error(TEXT.malformed);
         // 다른 검사의 질문이면 판독 대상 곁에 열지 않고 그 이유를 보인다(Inbox에서 고른 질문도 이 단건 읽기로 확인한다).
-        if (item.studyUid !== target) throw new Error(TEXT.otherStudy);
+        if (!targetUids(target).has(item.studyUid)) throw new Error(TEXT.otherStudy);
         if (!STATES.includes(item.state) || !who(item.author) || !Array.isArray(item.entries) || !item.entries.length
             || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
             || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -265,7 +290,7 @@
             || !ACTIONS[attempt.action].includes(applied.action)) return false;
         const step = STEPS[applied.action], entry = applied.entry, base = attempt.base;
         const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-        return mine(applied.requestId) && applied.studyUid === attempt.uid && applied.id === attempt.threadId
+        return mine(applied.requestId) && applied.studyUid === (base.studyUid || attempt.uid) && applied.id === attempt.threadId
           && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
           && applied.revision === base.revision + 1 && step.from.includes(applied.from) && applied.from === base.state
           && applied.to === step.to && typeof applied.at === 'string' && !Number.isNaN(Date.parse(applied.at));
@@ -316,7 +341,58 @@
       inboxMore.id = 'question-inbox-more';
       inboxView.append(make('p', 'question-muted', kinSay(TEXT.inboxHint)), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
-
+      // The server's unread count of this reader's inbox view (question-inbox). Its reads and seen writes go through call()
+      // like every request of this row, wait while offline or locked, and stop with the row.
+      const UNREAD = 'question-inbox';
+      let unread = null, unreadAsked = false;
+      try {
+        if (window.KinUnread) unread = window.KinUnread.mount({ send: (method, path, body) => call(method, path, body).then(sent => ({ status: sent.status, body: sent.data })),
+          views: [UNREAD], owner, allowed: () => !ended && lock === null && allowed() && online(), onChange: () => paintUnread(),
+          onAccount: () => accountChanged('') });
+      } catch (_) { unread = null; }
+      const unreadTag = () => { const tag = make('span', 'question-status', kinSay('New')); tag.dataset.unread = ''; kinWrite(tag, kinSay(TEXT.unreadTip), 'title'); return tag; };
+      /** A row of the study list or the Inbox: its `New` tag follows the server's unread items. */
+      const paintRowUnread = li => {
+        const old = li.querySelector(':scope > [data-unread]'), want = !!unread && unread.unread(UNREAD, li.dataset.id);
+        if (want && !old) li.prepend(unreadTag(), ' ');
+        else if (!want && old) { if (old.nextSibling && old.nextSibling.nodeType === 3) old.nextSibling.remove(); old.remove(); }
+      };
+      /** The band's button and the rows' tags. Shown only when the server answered a count above 0 for this reader. */
+      function paintUnread() {
+        const known = unread && unread.view(UNREAD);
+        const count = !ended && lock === null && known && known.available ? known.count : 0;
+        if (unreadButton) {
+          unreadButton.hidden = count === 0;
+          if (count) {
+            kinWrite(unreadButton, kinSay('New Questions {0}', count));
+            kinWrite(unreadButton, kinSay(known.failed ? TEXT.unreadStale : TEXT.unreadTip), 'title');
+          }
+        }
+        for (const li of list.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        for (const li of inboxList.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        if (mode === 'study' && items !== null && !listFailure && !listLoading) renderOutside();
+      }
+      /** Unread questions of the reading target that its latest-50 list does not hold: a row each that opens the thread. */
+      function renderOutside() {
+        for (const li of list.querySelectorAll(':scope > li[data-unread-outside]')) li.remove();
+        const known = unread && unread.view(UNREAD);
+        if (!known || !known.available || uid === null || items === null) return;
+        const listed = new Set(items.map(item => item.id));
+        for (const [id, item] of known.items) {
+          // The server names the row each unread question opens on (openUid); only that row's list shows it.
+          if (item.openUid !== uid || listed.has(id)) continue;
+          const li = make('li');
+          li.dataset.id = id;
+          li.dataset.unreadOutside = '';
+          if (id === threadId) li.setAttribute('aria-current', 'true');
+          const open = button(kinSay('Open Thread'), () => openThread(id));
+          open.dataset.openThread = '';
+          li.append(make('span', 'question-muted', kinSay(TEXT.unreadOutside)), ' ', open);
+          list.append(li);
+          paintRowUnread(li);
+        }
+        list.hidden = !list.children.length;
+      }
       /**
        * 줄과 창의 겉모습. 줄은 읽는 사람이 연 동안(mode)만 선다 — 답이 줄을 만들거나 없애지 않는다. 질문·실패·잠금은 줄이 접혀
        * 있는 동안 안내 띠의 알림이 말한다. 읽는 중(아직 모름)에는 알림을 그대로 두고, 성공한 빈 답이면 내린다.
@@ -356,6 +432,9 @@
         lockBox.querySelector('.question-detail').textContent = lock ? lock.detail : '';
         studyView.hidden = lock !== null || mode !== 'study';
         inboxView.hidden = lock !== null || mode !== 'inbox';
+        // A thread is seen only while the study pane shows it.
+        if (unread && (mode !== 'study' || lock !== null || ended)) unread.hidden(UNREAD);
+        paintUnread();
       }
 
       function renderList() {
@@ -364,6 +443,7 @@
           || TEXT.ready(items.length), listFailure ? readDetail(listFailure) : '');
         listRetry.hidden = !listFailure;
         list.replaceChildren(...(listFailure || !items ? [] : items).map(listItem));
+        if (!listFailure && items) renderOutside();
         list.hidden = !list.children.length;
       }
 
@@ -375,6 +455,7 @@
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
           TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -421,6 +502,7 @@
 
       function renderThread() {
         if (uid === null || threadId === null || listFailure !== null) {
+          if (unread) unread.hidden(UNREAD);
           clearThreadBox();
           return;
         }
@@ -438,6 +520,11 @@
         part('retry').hidden = !threadFailure;
         part('entries').replaceChildren(...(loaded ? loaded.entries.map(item => entryItem(item, loaded.current, loaded.emr)) : []));
         part('closed').hidden = !loaded || loaded.state !== 'Closed';
+        // A thread drawn in the open pane is seen by this reader: its seen mark goes to the server (unread-badges.js decides).
+        if (unread) {
+          unread.hidden(UNREAD);
+          if (loaded && mode === 'study' && !ended && lock === null && drawnNow(threadBox)) unread.shown(UNREAD, loaded.id, loaded.revision);
+        }
         for (const wrap of threadBox.querySelectorAll('.question-compose')) {
           paintComposer(wrap);
           // 닫힌 스레드에는 쓰는 칸을 두지 않는다. 쓰던 글이나 결과를 모르는 요청이 남은 칸만 그대로 둔다.
@@ -574,7 +661,7 @@
         }
         const path = `/questions/${encodeURIComponent(id)}/${action === 'close' ? 'close' : 'entries'}`;
         const attempt = { requestId, owner: who, uid: target, threadId: id, action, noteKey, path, text: value, busy: false, unknown: false,
-          base: { revision: loaded.revision, state: loaded.state },
+          base: { revision: loaded.revision, state: loaded.state, studyUid: loaded.studyUid },
           payload: { revision: loaded.revision, [action === 'close' ? 'note' : 'body']: value } };
         drafts.set(key, value);
         attempts.set(key, attempt);
@@ -640,6 +727,8 @@
         drafts.delete(key);
         setNote(attempt.noteKey, 'saved', sent.data.replayed ? TEXT.replayed : TEXT.saved);
         repaintComposer(key);
+        // An answer or a close ends what this reader's inbox waited for: the count is read again.
+        if (unread) unread.refresh();
         // 화면의 스레드는 쓰기 응답(적용 결과)이 아니라 읽기 route로 다시 읽은 현재 상태로만 그린다.
         if (lock === null && attempt.uid === uid) loadList();
       }
@@ -688,6 +777,7 @@
       function lockPanel(text, detail, account = false) {
         if (ended || (lock !== null && (lock.account || !account))) return;
         lock = { text, detail: detail || '', account };
+        if (unread) unread.hidden(UNREAD);
         epoch++;
         listSeq++;
         threadSeq++;
@@ -881,7 +971,7 @@
         const li = make('li');
         li.dataset.id = item.id;
         li.dataset.uid = item.studyUid;
-        const row = study(item.studyUid);
+        const row = inboxRow(item);
         const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
         const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
@@ -891,6 +981,7 @@
         }
         li.append(badge(item.state), ' ', make('span', null, label), ' ',
           make('span', 'question-muted', TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -898,18 +989,24 @@
        * Inbox의 질문을 연다: 그 검사를 판독 대상으로 고르고(select) 그 검사의 목록을 읽은 뒤 이 스레드를 단건 읽기(#2)로 연다.
        * 스레드는 그 검사의 목록(최신 50)에 있는지와 무관하게 연다(sync·loadList).
        */
+      /** The worklist row an Inbox question opens on: the row the server answers its study on now (openUid), when it is listed. */
+      function inboxRow(item) {
+        return typeof item.openUid === 'string' ? study(item.openUid) || null : null;
+      }
+
       function openFromInbox(item) {
-        if (ended || lock !== null || !study(item.studyUid)) return;
+        const row = inboxRow(item);
+        if (ended || lock !== null || !row) return;
         inboxSeq++;
         mode = 'study';
-        if (item.studyUid === uid) {
+        if (row.uid === uid) {
           paint();
           openThread(item.id);
           return;
         }
-        pendingThread = { uid: item.studyUid, id: item.id };
+        pendingThread = { uid: row.uid, id: item.id };
         paint();
-        openStudy(item.studyUid);
+        openStudy(row.uid);
       }
 
       /**
@@ -918,6 +1015,8 @@
        */
       function sync() {
         if (ended) return;
+        // The first time this reader may read: the inbox count once now, then with the list polling (refresh).
+        if (unread && !unreadAsked && lock === null && allowed() && online()) { unreadAsked = true; unread.refresh(); }
         const shown = current(), selectedUid = allowed() ? shown : null;
         const row = selectedUid ? study(selectedUid) : null;
         const next = row && row.tele !== true ? selectedUid : null;
@@ -990,6 +1089,7 @@
         clearThreadBox();
         list.replaceChildren();
         inboxList.replaceChildren();
+        if (unread) unread.end();
         paint();
       }
 
@@ -1010,12 +1110,15 @@
         paint();
         if (uid !== null && online()) loadList();
         if (mode === 'inbox') loadInbox(false);
+        if (unread) unread.refresh();
       }
       /**
        * 목록 폴링이 부른다(worklist-polling.js): 같은 판독 대상의 질문을 다시 읽는다 — 판독 칸을 연 뒤에 온 질문도 알게 된다.
        * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
        */
       function refresh() {
+        // The inbox count is the reader's, not the reading target's: read with every poll, a study chosen or not.
+        if (unread && !ended && lock === null && allowed() && online()) unread.refresh();
         if (ended || lock !== null || uid === null || listLoading || !online()) return;
         loadList();
       }
@@ -1043,6 +1146,14 @@
       });
       // 안내 띠의 알림: 읽는 사람이 누르면 이 검사의 줄과 창을 제자리에 연다(Show Questions와 같다). 알림은 줄이 서면
       // 내려가므로 초점은 그 줄의 Hide Questions로 옮긴다.
+      // The band's unread count opens the Inbox on the Open questions (whatever state it last showed).
+      unreadButton?.addEventListener('click', () => {
+        if (ended) return;
+        inboxState = 'open';
+        mode = 'inbox';
+        paint();
+        if (lock === null) loadInbox(false);
+      });
       notice?.addEventListener('click', () => {
         if (ended) return;
         inboxSeq++;
