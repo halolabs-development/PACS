@@ -255,10 +255,10 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         panel = self.studies(page)
         self.row(panel, 'report Y').get_by_role('button', name='Report', exact=True).click()
         expect(report).to_contain_text('Body Y')
-        # An Addendum adds to the approved text: the new line is written after 'Body X'.
+        # An Addendum adds to the approved text: the new line is written after 'Body X' (and the seeded conclusion stays).
         result = self.stack.request('POST', f'/studies/{x.uid}/report/commit', 'doctor',
             {'action': 'addendum', 'baseVersion': 1, 'findings': 'Body X\nUpdated body X',
-             'conclusion': '', 'recommendation': ''})
+             'conclusion': 'E2E conclusion', 'recommendation': ''})
         self.assertEqual(result.status, 201)
         panel = self.studies(page)
         self.row(panel, 'report X').get_by_role('button', name='Report', exact=True).click()
