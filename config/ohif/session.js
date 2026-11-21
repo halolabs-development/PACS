@@ -1,4 +1,27 @@
 
+// the original image a Physician-mode hand-off asks this document to open first (a key image or a cited line of the
+// report): its study, series, SOP, frame and the saved item, as the server gave them to Clinician Home. Only the document
+// that read the hand-off has it - a reload has none and opens as the viewer always does. From the hand-off until
+// history.js has moved there or given up, the opening is held as a restore the address chose holds it (viewer-jobs.js
+// holdOpening), so Auto Save View does not put a saved view over it.
+let KIN_VIEWER_ENTRY_TARGET = null, KIN_VIEWER_ENTRY_HOLD = null;
+function kinViewerEntryTarget(value) {
+  const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)+$/.test(s);
+  if (!value || typeof value !== 'object' || !uid(value.studyUid) || !uid(value.seriesUid) || !uid(value.sopUid) ||
+      !Number.isSafeInteger(value.frame) || value.frame < 1 || !(value.itemId === undefined || typeof value.itemId === 'string' && /^[0-9a-f-]{36}$/.test(value.itemId))) return null;
+  return Object.freeze({ studyUid: value.studyUid, seriesUid: value.seriesUid, sopUid: value.sopUid, frame: value.frame,
+    ...(value.itemId ? { itemId: value.itemId } : {}) });
+}
+// The target is opened once in this document: the first panel that takes it has it, a later mode entry gets none.
+function kinViewerEntryTake() {
+  const target = KIN_VIEWER_ENTRY_TARGET; KIN_VIEWER_ENTRY_TARGET = null; return target;
+}
+function kinViewerEntryRelease() {
+  const hold = KIN_VIEWER_ENTRY_HOLD, openings = window.kinViewerOpeningRestore; KIN_VIEWER_ENTRY_HOLD = null;
+  if (hold && openings?.holds?.delete(hold)) {
+    try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase: 'end', hold } })); } catch (_) {}
+  }
+}
 // Consume the opener-less handoff before loading any other script. Neither the address nor
 // a later document's window.name retains the expected session; the boundary records it locally.
 const KIN_VIEWER_EXPECTED_SESSION = (() => {
@@ -12,6 +35,15 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
     // B14: the screen that opened this window. Opened from Clinician Home (the Physician mode) it is read-only for every
     // account (kinViewerClinicianOnly); every hand-off says it again and a reload of this tab keeps the last one.
     try { sessionStorage.setItem('kin-viewer-mode', entry.mode === 'physician' ? 'physician' : ''); } catch (_) {}
+    KIN_VIEWER_ENTRY_TARGET = entry.mode === 'physician' ? kinViewerEntryTarget(entry.target) : null;
+    if (KIN_VIEWER_ENTRY_TARGET) {
+      const openings = window.kinViewerOpeningRestore ||= { screen: 0, holds: new Set() };
+      const hold = Object.freeze({ screen: openings.screen });
+      try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase: 'begin', hold } })); } catch (_) {}
+      openings.holds.add(hold); openings.held = hold.screen; KIN_VIEWER_ENTRY_HOLD = hold;
+      // A document that never draws its list (no answer at all) does not hold the view for ever.
+      setTimeout(kinViewerEntryRelease, 60000);
+    }
     // A fresh list action may reuse the named window and its URL. It starts a new
     // verification; a reload has no handoff and retains the previous entry instead.
     history.replaceState({ ...history.state, kinViewerSession: {

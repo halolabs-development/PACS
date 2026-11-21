@@ -1,8 +1,27 @@
 
 function kinCreateViewerTechNote() {
   let ready, current, prepare, epoch=0, active=false, state='stopped';
-  let identity, identityReady, prepareIdentity, identityServices;
+  let identity, identityReady, prepareIdentity, identityServices, loadFile, dockReady;
   function stopIdentity(){identity?.dispose();identity=null;}
+  // Secondary panels stay available without obstructing the images: the read-only viewer's two panels
+  // (Measurements & Key Images, Viewer Status) go into the same dock as a writer's, which reserves its row instead of
+  // floating over the image cells. The writer's dock comes with the Tech Note bridge; here it is mounted on its own, for this
+  // document's account (the same owner key as the writer's, so the dock settings are the user's own), once both panels are
+  // there - and again at a mode re-entry, which adopts the panels mounted anew.
+  function connectDock(){
+    if(!active||!kinViewerSession.readOnly()||window.top!==window||!loadFile)return;
+    const ticket=epoch;
+    (typeof window.KinViewerWorkspaceDock==='function'?Promise.resolve():dockReady||(dockReady=loadFile('viewer-workspace-dock.js').catch(error=>{dockReady=null;throw error;}))).then(()=>{
+      const owner=()=>{const o=kinViewerSession.owner();return o?JSON.stringify(o):null;};
+      const mount=tries=>{
+        if(!active||ticket!==epoch||!kinViewerSession.readOnly())return;
+        if(document.getElementById('kin-viewer-history')&&document.getElementById('kin-viewer-layout'))
+          window.KinViewerWorkspaceDock(window,{owner,allowed:()=>active&&kinViewerSession.readOnly()});
+        else if(tries<100)setTimeout(()=>mount(tries+1),100);
+      };
+      mount(0);
+    }).catch(()=>{});
+  }
   function connectIdentity(){
     if(!active||!kinViewerSession.readOnly()||identity||!prepareIdentity)return;
     const ticket=epoch;
@@ -20,7 +39,7 @@ function kinCreateViewerTechNote() {
     });
   }
   // The bridge follows the verified role; document disposal belongs to the page boundary.
-  kinViewerSession.onChange(next=>{if(next==='writer'){stopIdentity();connect();return;}epoch++;if(active)state=next;if(next==='read-only'){current?.stop();current=null;connectIdentity();}else stopIdentity();});
+  kinViewerSession.onChange(next=>{if(next==='writer'){stopIdentity();connect();return;}epoch++;if(active)state=next;if(next==='read-only'){current?.stop();current=null;connectIdentity();connectDock();}else stopIdentity();});
   function connect() {
     if(!active||state==='loading'||state==='ready'||!kinViewerSession.writer())return;
     kinToolRetry('kin-note-retry');
@@ -43,7 +62,7 @@ function kinCreateViewerTechNote() {
       const timer=setTimeout(fail,20000);
       script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=fail;document.head.append(script);
     });
-    identityServices=servicesManager.services;
+    identityServices=servicesManager.services;loadFile=load;
     prepareIdentity=()=>window.KinViewerIdentity?Promise.resolve(window.KinViewerIdentity):
       identityReady||(identityReady=load('viewer-identity.js').then(()=>window.KinViewerIdentity).catch(error=>{identityReady=null;throw error;}));
     const standalone=window.top===window;
@@ -81,6 +100,6 @@ function kinCreateViewerTechNote() {
   },onModeEnter(){if(!prepare)return;epoch++;active=true;state='unconfirmed';const ticket=epoch;
     // S5-U2b: Tech notes are a technician record the clinician allowlist neither reads nor writes. The bridge connects only
     // after a /me answered writer; until an answer it stays 'unconfirmed', and 'read-only'/'refused' never connect.
-    kinViewerSession.decide().then(session=>{if(!active||ticket!==epoch)return;if(session==='writer')connect();else{state=session;if(session==='read-only')connectIdentity();}});
+    kinViewerSession.decide().then(session=>{if(!active||ticket!==epoch)return;if(session==='writer')connect();else{state=session;if(session==='read-only'){connectIdentity();connectDock();}}});
   },onModeExit(){kinToolRetry('kin-note-retry');epoch++;active=false;state='stopped';stopIdentity();current?.stop();current=null;}};
 }
