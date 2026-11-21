@@ -160,19 +160,40 @@ class PriorSelectionE2E(base.WorklistE2E):
             page.wait_for_function("() => { const p = document.querySelector('#clinical-context'), s = document.querySelector("
                                    "'#clinical-context-status'); return !p || p.hidden || (!!s && s.textContent !== 'Loading…'); }",
                                    timeout=15000)
-            # The worklist's critical-result inbox reads its received list on a 60 s timer, which may fall inside the window
-            # below. Its own Refresh read is started first and held: while one list read is out the timer starts no other,
-            # so every request in the window is still counted and must be none. (Refresh is disabled, or the inbox hidden,
-            # exactly when its timer reads nothing either.)
-            inbox, received = [], re.compile(r"/api/critical-results\?view=received")
-            page.route(received, lambda route: inbox.append(route))
+            # The worklist's critical-result inbox reads its received list by itself: once when its 1 s watch first sees the
+            # session can receive (just after login, so it can fall inside the window below) and then on a 60 s timer. This
+            # radiologist's inbox stands and reads, so the window waits until that first read has been answered - the panel
+            # stands, Refresh is on and no list read is out - letting its reads through meanwhile. Then the route is armed
+            # and, in one task that sees the inbox still quiet, its own Refresh read is started and held: while one list read
+            # is out the timer starts no other and the watch starts one only when the session's admission changes, so every
+            # request in the window is still counted and must be none. What was waited is logged.
+            inbox, received, armed = [], re.compile(r"/api/critical-results\?view=received"), [False]
+            page.route(received, lambda route: inbox.append(route) if armed[0] else route.continue_())
             page.route("**" + BARRIER, lambda route: route.abort())
             try:
-                if page.evaluate("""() => { const p = document.getElementById('cvr-inbox-p'), b = document.getElementById('cvr-inbox-refresh');
-                                       if (!p || p.hidden || !b || b.disabled) return false; b.click(); return true; }"""):
-                    deadline = time.monotonic() + 10
-                    while not inbox and time.monotonic() < deadline: page.wait_for_timeout(100)
-                    self.assertTrue(inbox, "the inbox's own list read is out")
+                quiet_js = """() => { const p = document.getElementById('cvr-inbox-p'), b = document.getElementById('cvr-inbox-refresh');
+                    return !p || p.hidden ? ['hidden'] : !b || b.disabled ? ['refresh-off']
+                        : !['ready', 'failed'].includes(p.dataset.state) ? ['list-' + (p.dataset.state || 'none')] : []; }"""
+                waited, clicked, until = set(), False, time.monotonic() + 20
+                while not clicked and time.monotonic() < until:
+                    now = page.evaluate(quiet_js)
+                    if now:
+                        waited.update(now)
+                        page.wait_for_timeout(50)
+                        continue
+                    armed[0] = True
+                    clicked = page.evaluate("q => { if ((" + quiet_js + ")().length) return false;"
+                                            " document.getElementById('cvr-inbox-refresh').click(); return true; }", None)
+                    if not clicked:
+                        # A read went out between the look and the click: let it through and wait again.
+                        armed[0] = False
+                        waited.add("raced")
+                        while inbox: inbox.pop().continue_()
+                print("D03A INBOX", selected.secret.rsplit("-", 1)[-1], {"waited": sorted(waited), "clicked": clicked}, flush=True)
+                self.assertTrue(clicked, ("the inbox never became quiet", sorted(waited)))
+                deadline = time.monotonic() + 10
+                while not inbox and time.monotonic() < deadline: page.wait_for_timeout(100)
+                self.assertTrue(inbox, "the inbox's own list read is out")
                 requests = []
                 listener = lambda request: requests.append(request.url)
                 page.on("request", listener)
