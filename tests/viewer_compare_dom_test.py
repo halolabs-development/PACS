@@ -645,6 +645,29 @@ class ViewerCompareDOMTest(unittest.TestCase):
         # 1.5 px per mm on the reference; the third showed 3 px per mm, so it halves.
         self.assertAlmostEqual(0.5, page.evaluate("synViews.get('third').zoom"), places=9)
 
+    def test_09_the_match_ratio_key_matches_at_once_as_the_panel_button_does(self):
+        # 05-8 "(Match Ratio, shortcut key)": a key given in the account's viewer settings; no key by default.
+        page = self.open()
+        self.assertIsNone(page.evaluate("synToolbar.bindings().compareMatchRatioNow ?? null"))
+        page = self.open({'version': 2, 'bar': ['Zoom'], 'shortcuts': {'Zoom': 'z', 'compareMatchRatioNow': 'shift+m'}})
+        page.evaluate("() => { for (const v of synViews.values()) v.zoom = 1; synNotes.length = 0; }")
+        page.mouse.click(100, 140); page.keyboard.press('Shift+M')
+        page.wait_for_function("() => synNotes.some(n => n.message.startsWith('Match Ratio: 2 other images'))")
+        # The same zoom and labels as the panel's button (test_07), without opening the panel.
+        self.assertAlmostEqual(4 / 3, page.evaluate("synViews.get('right').zoom"), places=9)
+        self.assertEqual(1, page.evaluate("synViews.get('left').zoom"))
+        expect(page.locator('#pane-right .kin-compare-badge[data-compare-badge=ratio]')).to_have_text('Match Ratio (same mm on screen)')
+        expect(page.get_by_role('dialog', name='Match Ratio')).to_have_count(0)
+        # The menu item still opens the panel.
+        self.menu(page, 'Match Ratio…')
+        expect(page.get_by_role('dialog', name='Match Ratio')).to_be_visible()
+        page.get_by_role('dialog', name='Match Ratio').get_by_role('button', name='Close').click()
+        # A reference whose spacing is not known: nothing is matched and the reason is said.
+        page.evaluate("() => { delete synTags['syn-set-1'].PixelSpacing; for (const v of synViews.values()) v.zoom = 1; synNotes.length = 0; synActive = 'left'; }")
+        page.mouse.click(100, 140); page.keyboard.press('Shift+M')
+        page.wait_for_function("() => synNotes.some(n => n.message.includes('기준 칸'))")
+        self.assertEqual([1, 1, 1], page.evaluate("['left', 'right', 'third'].map(id => synViews.get(id).zoom)"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
