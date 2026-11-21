@@ -7666,7 +7666,7 @@ window.KinLanguageTerms = {
     "대통령령 제36502호 스냅샷; 부칙 제34821호 2024-08-14 시행",
     "법률 제21500호 2026-10-01 시행; 시행령 제36735호 스냅샷",
     "P26⑧→P34②+PD39의2·39의3",
-    "body{font:16px/1.5 sans-serif;margin:2rem;color:#17212b;max-width:52rem}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:8rem 1fr;gap:.3rem}dt{font-weight:bold}dd{margin:0;overflow-wrap:anywhere}h3{font-size:1rem;margin-bottom:0}section{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem}@media print{details{display:none}section{break-inside:avoid}}",
+    "body{font:16px/1.5 sans-serif;margin:2rem;color:#17212b;max-width:52rem}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:8rem 1fr;gap:.3rem}dt{font-weight:bold}dd{margin:0;overflow-wrap:anywhere}h3{font-size:1rem;margin-bottom:0}section{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem}@media print{section{break-inside:avoid}}",
     "legalize-kr/kr/의료법/법률.md",
     "legalize-kr/kr/의료법/시행규칙.md",
     "legalize-kr/kr/개인정보보호법/법률.md",
