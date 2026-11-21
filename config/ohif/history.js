@@ -81,13 +81,12 @@ function kinCreateViewerHistory() {
     // 쓰기 쪽 검사(writable·SR·도구·captureAnnotations)는 recovery.has(scope)를 그대로 읽는다.
     const held = () => recovery.has(scope) && !readOnly();
     const READ_ONLY = {
-      note: '읽기 전용 · 확정 판독문에 저장된 측정·키 이미지만 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다.',
-      withheld: '확정 판독문이 아니어서 저장된 측정·키 이미지를 표시하지 않습니다 · 읽기 전용',
+      note: '읽기 전용 · 이 검사에 저장된 측정·키 이미지를 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다.',
       tool: '읽기 전용 화면입니다. 측정을 만들지 않습니다.',
       edit: '읽기 전용 화면입니다. 측정·표식을 편집하지 않습니다.',
       sr: '읽기 전용 화면에서는 SR을 만들거나 저장하지 않습니다.',
       denied: '이 검사의 저장 항목을 읽을 수 없습니다(HTTP 403). 서버가 거절했습니다.',
-      unmatched: '현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 확정 여부는 계속 다시 확인합니다.',
+      unmatched: '현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 저장 항목은 계속 다시 확인합니다.',
     };
     const UNCONFIRMED = {
       tool: '계정이 확인되기 전에는 영상 조작만 할 수 있습니다. 측정·표식을 만들지 않습니다.',
@@ -788,7 +787,7 @@ function kinCreateViewerHistory() {
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
     // 이유로 돌지 못했어도(settle은 감시자의 실패를 삼킨다) 전환 뒤에 도착한 작성자 목록은 그려지지 않는다.
-    const readPolicy = () => readOnly() ? 'final' : 'author';
+    const readPolicy = () => readOnly() ? 'shared' : 'author';
     const asked = (ticket, seq, policy) => valid(ticket) && seq === readSequence && readPolicy() === policy;
     const writable = entry => window.KinViewerSessionBoundary?.active() && writer() && !suspended && !recovery.has(scope) && me?.kind === 'member' && me.roles?.includes('radiologist') &&
       (!entry.head || entry.head.authorSub === subject);
@@ -846,11 +845,13 @@ function kinCreateViewerHistory() {
         if (measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
       }
       reset(readOnly() ? READ_ONLY.denied : '이 검사에 접근할 수 없습니다. 보관 작업은 접근 확인 후 재개할 수 있습니다.'); me = null;
+      kinViewerEntryRelease();
       if (readOnly()) { panel.dataset.readOnly = 'denied'; panel.dataset.studyUid = scope; }
       button(actions, 'Recheck Access', () => load());
     }
     function end(modeExit = false) {
       if (ended) return;
+      kinViewerEntryRelease();
       recovery.clear(); reset('로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'); ended = true; me = null; subject = ''; actions.replaceChildren();
       // Mode exit keeps this document and its login; the Findings section holds its drafts for the
       // next mode entry instead of destroying them as it must for a real logout or 401.
@@ -934,7 +935,7 @@ function kinCreateViewerHistory() {
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
-        if (readPolicy() === 'final') return await readOnlyLoad(ticket, seq);
+        if (readPolicy() === 'shared') return await readOnlyLoad(ticket, seq);
         const heads = []; let cursor = null;
         do {
           const page = await api(path() + '?includeHidden=true&limit=100' + (recheck ? '&recheck=' + encodeURIComponent(recheck) : '') + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), {}, ticket);
@@ -992,40 +993,45 @@ function kinCreateViewerHistory() {
       } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
       finally { if (ticket === generation) loading = false; }
     }
-    // S5-U2b 읽기 전용 목록. 서버는 clinician-only에게 확정본일 때만 좁힌 쪽({uid, final, reportVersion, items, nextCursor})을
-    // 주고, 숨긴 항목 요청은 400으로 거절한다. 이어받기 값은 받은 그대로 넘기고, 모든 쪽이 같은 검사·같은 확정 판이어야
-    // 한다 — 판이 다른 쪽을 이어 붙이면 어느 확정 시점에도 없던 목록이 된다(S5-U1b-F04). 읽는 동안 이전 목록을 내려 두고,
-    // 실패하면 받은 쪽도 버린다. 확정 전(items null)은 빈 목록(항목 없음)과 다르게 알린다.
+    // S5-U2b 읽기 전용 목록. 서버는 판독의와 같은 지금 목록({items, nextCursor} — 숨긴 항목 빼고)을 누구에게나 주고, 누가
+    // 무엇을 보는가는 서버 한 곳(viewer.service)이 정한다(2026-11-02 결정 뒤 판독 확정 여부로 좁히지 않는다). 이 화면은 답의
+    // 모양만 보고 끝 쪽까지 읽는다. 읽는 동안 이전 목록을 내려 두고, 실패하면 받은 쪽도 버린다.
     const dropRows = () => {
       for (const e of entries.values()) removeAnnotation(e);
       entries.clear(); list.replaceChildren(); shown = null; unmatched = false; delete panel.dataset.frame;
     };
+    // One page of the shared list, or a throw: an items array of known kinds, a next cursor that is null or a new string.
+    function readOnlyPage(page, cursor) {
+      const next = page?.nextCursor;
+      if (!page || typeof page !== 'object' || !Array.isArray(page.items) || page.items.length > 100 ||
+          !page.items.every(h => h && typeof h === 'object' && typeof h.id === 'string' && h.id && Number.isSafeInteger(h.revision) &&
+            h.item && typeof h.item === 'object' && Object.hasOwn(names, h.item.kind)) ||
+          !(next === null || typeof next === 'string' && next.length > 0 && next.length <= 512 && next !== cursor)) throw Object.assign(new Error('Invalid page'), { invalid: true });
+      return next;
+    }
+    async function readOnlyHeads(ticket, seq) {
+      const heads = []; let cursor = null;
+      do {
+        const page = await api(path() + '?limit=100' + (cursor === null ? '' : '&cursor=' + encodeURIComponent(cursor)), {}, ticket);
+        if (!asked(ticket, seq, 'shared')) throw { stale: true };
+        const next = readOnlyPage(page, cursor);
+        heads.push(...page.items); cursor = next;
+      } while (cursor !== null);
+      return heads;
+    }
+    // What the periodic check compares: each item's id, revision and the server's source verdict of this read (a measurement's
+    // verified/unverified can change without a new revision).
+    const listKey = heads => JSON.stringify(heads.map(h => [h.id, h.revision, h.referenceStatus ?? null]).sort());
     async function readOnlyLoad(ticket, seq) {
       if (!valid(ticket) || seq !== readSequence) return;
-      const study = scope, heads = [];
-      let cursor = null, version = null, withheld = false;
+      const study = scope;
       dropRows(); panel.dataset.readOnly = 'loading'; toolbar();
       try {
-        do {
-          const page = await api(path() + '?limit=100' + (cursor === null ? '' : '&cursor=' + encodeURIComponent(cursor)), {}, ticket);
-          if (!asked(ticket, seq, 'final')) return;
-          if (!page || page.uid !== study || typeof page.final !== 'boolean') throw new Error('Invalid page');
-          if (!page.final) {
-            if (cursor !== null || page.items !== null || page.nextCursor !== null) throw new Error('Invalid page');
-            withheld = true; break;
-          }
-          const next = page.nextCursor;
-          if (!Number.isSafeInteger(page.reportVersion) || page.reportVersion < 1 || (version !== null && page.reportVersion !== version) ||
-              !Array.isArray(page.items) || page.items.length > 100 ||
-              !page.items.every(h => h && typeof h === 'object' && typeof h.id === 'string' && h.id && Number.isSafeInteger(h.revision) &&
-                h.item && typeof h.item === 'object' && Object.hasOwn(names, h.item.kind)) ||
-              !(next === null || typeof next === 'string' && next.length > 0 && next.length <= 512 && next !== cursor)) throw new Error('Invalid page');
-          version = page.reportVersion; heads.push(...page.items); cursor = next;
-        } while (cursor !== null);
-        if (!asked(ticket, seq, 'final')) return;
-        readOnlyShow(study, withheld ? null : version, heads);
+        const heads = await readOnlyHeads(ticket, seq);
+        if (!asked(ticket, seq, 'shared')) return;
+        readOnlyShow(study, heads);
       } catch (error) {
-        if (error?.stale || !asked(ticket, seq, 'final')) return;
+        if (error?.stale || !asked(ticket, seq, 'shared')) return;
         readOnlyFailed(error);
       }
     }
@@ -1039,21 +1045,79 @@ function kinCreateViewerHistory() {
       reset('저장 항목 확인 중…'); toolbar();
       load(false, null, own);
     }
-    // 끝까지 검증한 한 판(확정 판 번호, 확정 전이면 null)만 그리고, 그 판을 뒤따르는 주기·포커스 확인의 기준(shown)으로 남긴다.
-    function readOnlyShow(study, version, heads) {
-      suspended = false; shown = { study, version }; unmatched = false;
+    // 끝까지 읽은 목록만 그리고, 그 목록(listKey)을 뒤따르는 주기·포커스 확인의 기준(shown)으로 남긴다.
+    function readOnlyShow(study, heads) {
+      suspended = false; shown = { study, key: listKey(heads) }; unmatched = false;
       for (const head of heads) {
         const e = { id: head.id, head, draft: itemOnly(head), editing: false, latest: null, message: '' };
         entries.set(e.id, e); row(e);
       }
-      shownStatus = version === null ? READ_ONLY.withheld : heads.length ? '확정 판독문 r' + version + '의 저장 항목 ' + heads.length + '개 · 읽기 전용'
-        : '확정 판독문 r' + version + '에 저장된 측정·키 이미지가 없습니다 · 읽기 전용';
+      shownStatus = heads.length ? '저장 항목 ' + heads.length + '개 · 읽기 전용' : '이 검사에 저장된 측정·키 이미지가 없습니다 · 읽기 전용';
       status.textContent = shownStatus;
-      panel.dataset.studyUid = study; panel.dataset.readOnly = version === null ? 'withheld' : heads.length ? 'ready' : 'empty';
+      panel.dataset.studyUid = study; panel.dataset.readOnly = heads.length ? 'ready' : 'empty';
       toolbar(); hydrate(); frameMatch(current());
+      openEntryTarget(study);
+    }
+    // the original image this document was opened at (session.js KIN_VIEWER_ENTRY_TARGET: a key image or a cited line in
+    // Clinician Home), opened once, after the first read-only list is drawn. The study the target names is shown in the one
+    // viewport that shows it, else the active viewport takes the target's series; then the exact frame (kinViewerNavigateTo,
+    // which proves arrival on the frame shown) and the saved item highlighted. A user who changes the active viewport meanwhile
+    // stops it. Whatever the end, the opening hold is let go (Auto Save View may then save the view as the user leaves it).
+    let entryTried = false;
+    const ENTRY_REASON = { 'series-missing': '이 창에서 원본 시리즈를 찾을 수 없습니다.', 'frame-missing': '원본 프레임을 열지 못했습니다.',
+      'viewport-unsupported': '현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다.', 'viewport-missing': '그 검사를 보이는 영상 칸이 없습니다.',
+      'viewport-ambiguous': '그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다.', timeout: '15초 안에 영상이 준비되지 않았습니다.',
+      superseded: '다른 영상 칸을 골라 이동을 멈췄습니다.', ended: '로그인이 종료되었습니다.' };
+    const ENTRY_MARK = { shown: '표식을 강조했습니다.', key: '키 이미지입니다.', missing: '그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제).',
+      hidden: '그 표식은 숨겨져 있습니다.', unverified: '그 측정은 원본을 확인하지 못해 그리지 않았습니다.', none: '표식을 그리지 않았습니다.' };
+    // The panel keeps one status (other modules and tests read it); the outcome of the opening is its own polite line, made
+    // only in a document that has a target.
+    let entryNote = null;
+    function entrySay(text) {
+      if (!entryNote) { entryNote = document.createElement('p'); entryNote.id = 'kin-viewer-entry-note'; entryNote.setAttribute('aria-live', 'polite'); status.after(entryNote); }
+      entryNote.textContent = text; entryNote.hidden = false;
+      // A folded dock still shows its own status row: the reason is readable there too.
+      const row = document.getElementById('kin-dock-preference-status'); if (row) row.textContent = text;
+    }
+    function entrySeries(target) {
+      try {
+        const sets = services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === target.studyUid &&
+          d.SeriesInstanceUID === target.seriesUid && kinSeriesSplitHolds(d, target.sopUid, target.frame));
+        if (sets.length !== 1) return false;
+        services.viewportGridService.setDisplaySetsForViewport({ viewportId: services.viewportGridService.getActiveViewportId(), displaySetInstanceUIDs: [sets[0].displaySetInstanceUID] });
+        return true;
+      } catch (_) { return false; }
+    }
+    async function entryNavigate(target) {
+      const deadline = Date.now() + 15000, wait = () => new Promise(resolve => setTimeout(resolve, 100));
+      const activeId = () => { try { return services.viewportGridService.getActiveViewportId(); } catch (_) { return null; } };
+      if (scope !== target.studyUid) {
+        const activation = activateStudy(target.studyUid);
+        if (!activation.ok && !entrySeries(target)) return { ok: false, reason: activation.reason };
+      }
+      const viewportId = activeId();
+      while (!(scope === target.studyUid && !suspended && !loading && shown?.study === scope)) {
+        if (ended) return { ok: false, reason: 'ended' };
+        if (activeId() !== viewportId) return { ok: false, reason: 'superseded' };
+        if (Date.now() > deadline) return { ok: false, reason: 'timeout' };
+        await wait();
+      }
+      return navigateTo(target);
+    }
+    function openEntryTarget() {
+      if (entryTried) return;
+      const target = kinViewerEntryTake();
+      if (!target) return;
+      entryTried = true;
+      entryNavigate(target).then(outcome => {
+        if (ended) return;
+        if (outcome.ok) entrySay('요청한 원본 영상(프레임 ' + target.frame + ')으로 이동했습니다. ' + (target.itemId ? ENTRY_MARK[outcome.annotation] || ENTRY_MARK.none : ''));
+        else entrySay('요청한 원본 영상으로 이동하지 못했습니다. ' + (ENTRY_REASON[outcome.reason] || '이동하지 못했습니다.'));
+      }, () => { if (!ended) entrySay('요청한 원본 영상으로 이동하지 못했습니다.'); }).finally(kinViewerEntryRelease);
     }
     function readOnlyFailed(error) {
-      dropRows();
+      // A list that could not be read lets the opening go: Refresh may still open the target, without holding the view.
+      dropRows(); kinViewerEntryRelease();
       const said = Array.isArray(error?.said) ? error.said.filter(x => typeof x === 'string').join(' ') : typeof error?.said === 'string' ? error.said : '';
       status.textContent = '저장 항목을 불러오지 못했습니다. ' + (Number.isInteger(error?.status)
         ? (said ? said + ' ' : '') + '(HTTP ' + error.status + (typeof error.code === 'string' ? ' · ' + error.code : '') + ')'
@@ -1061,30 +1125,24 @@ function kinCreateViewerHistory() {
       panel.dataset.studyUid = scope; panel.dataset.readOnly = 'failed';
       toolbar();
     }
-    // S5-U2b-R-001 F03. 주기·포커스 확인의 답도 지금 그려 둔 확정 판(shown)과 대조한다. 같은 검사·같은 읽기 세대의 답만 본다 —
-    // 다른 검사로 옮겼다 돌아온 A→B→A의 늦은 답이나 그 사이 새로 시작한 읽기가 있으면 이 답은 아무것도 바꾸지 않는다. 확정이
-    // 풀리면(final:false) 행과 표식을 바로 내리고 withheld로, 판이 바뀌면 내린 뒤 새 판 전체를 처음부터 다시 검증해 그린다.
-    // 전송 실패·5xx는 확인하지 못한 것이라 다음 확인까지 검증한 판을 두고, 4xx·형식 오류는 서버가 지금 내주지 않는 목록이라 내린다.
-    function confirmShown(ticket, seq, study, page, error) {
-      if (error?.stale || !asked(ticket, seq, 'final') || loading || scope !== study || shown?.study !== study) return;
-      if (error) { if (Number.isInteger(error.status) && error.status >= 400 && error.status < 500) readOnlyFailed(error); return; }
-      if (!page || page.uid !== study || typeof page.final !== 'boolean' || (page.final
-        ? !Number.isSafeInteger(page.reportVersion) || page.reportVersion < 1 || !Array.isArray(page.items)
-        : page.items !== null || page.nextCursor !== null)) return readOnlyFailed(new Error('Invalid page'));
-      const version = page.final ? page.reportVersion : null;
-      if (version === shown.version) return;
-      dropRows();
-      if (version === null) return readOnlyShow(study, null, []);
-      panel.dataset.readOnly = 'loading'; toolbar(); load();
+    // S5-U2b-R-001 F03. 주기·포커스 확인의 답(끝 쪽까지 읽은 목록)도 지금 그려 둔 목록(shown)과 대조한다. 같은 검사·같은 읽기
+    // 세대의 답만 본다 — 다른 검사로 옮겼다 돌아온 A→B→A의 늦은 답이나 그 사이 새로 시작한 읽기가 있으면 이 답은 아무것도 바꾸지
+    // 않는다. 항목·판·원본 확인이 하나라도 바뀌면(숨긴 항목이 빠짐 포함) 행과 표식을 내리고 새 목록으로 다시 그린다.
+    // 전송 실패·5xx는 확인하지 못한 것이라 다음 확인까지 그린 목록을 두고, 4xx·형식 오류는 서버가 지금 내주지 않는 목록이라 내린다.
+    function confirmShown(ticket, seq, study, heads, error) {
+      if (error?.stale || !asked(ticket, seq, 'shared') || loading || scope !== study || shown?.study !== study) return;
+      if (error) { if (error.invalid || Number.isInteger(error.status) && error.status >= 400 && error.status < 500) readOnlyFailed(error); return; }
+      if (listKey(heads) === shown.key) return;
+      dropRows(); readOnlyShow(study, heads);
     }
     // S5-U2b-R-002 F02. 이 확인은 활성 화면의 원본 프레임 식별과 떼어 둔다: 그려 둔 검사(scope)와 읽기 세대를 기준으로 주기(15초)·
     // 포커스마다 확인하고, 답은 위 confirmShown의 UID·세대 방어를 그대로 거친다. 프레임이 없는 화면(MPR·볼륨·로딩 실패)에
-    // 머물러도 취소·교체된 판이 확인 없이 남지 않는다.
+    // 머물러도 지워지거나 숨겨진 항목이 확인 없이 남지 않는다.
     function recheckShown() {
       if (!scope || !subject || suspended || loading || checking || Date.now() - lastAuth <= 15000) return;
       checking = true; const ticket = generation, seq = readSequence, study = scope;
-      authenticate(ticket).then(() => api(path() + '?limit=1', {}, ticket))
-        .then(page => confirmShown(ticket, seq, study, page, null), error => confirmShown(ticket, seq, study, null, error))
+      authenticate(ticket).then(() => readOnlyHeads(ticket, seq))
+        .then(heads => confirmShown(ticket, seq, study, heads, null), error => confirmShown(ticket, seq, study, null, error))
         .catch(() => {}).finally(() => { checking = false; });
     }
     // 목록은 식별된 원본 프레임으로만 화면 영상과 이어진다. 활성 화면에서 그 검사의 원본 프레임을 찾지 못하면 목록을 영상과 맞추지
