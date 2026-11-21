@@ -47,7 +47,7 @@ class ScreenLanguagePages(unittest.TestCase):
             file = Path(path).name
             reads.append(file)
             if path == "/viewer":
-                return route.fulfill(content_type="text/html", body='<script src="/config.js"></script>'
+                return route.fulfill(content_type="text/html", body='<meta charset="utf-8"><script src="/config.js"></script>'
                     '<script>config.extensions.find(e=>e.id==="kin.session-boundary")'
                     '.preRegistration().then(()=>window.started=true)</script>')
             if path == "/frame":
@@ -55,7 +55,7 @@ class ScreenLanguagePages(unittest.TestCase):
                 return route.fulfill(content_type="text/html", body='<script>window.KinWorkContext={session:()=>"S1",'
                                      'state:()=>"active"}</script><iframe id="viewer" src="/viewer"></iframe>')
             if path == "/config.js":
-                return route.fulfill(path=ROOT / "config/ohif.js", content_type="application/javascript")
+                return route.fulfill(path=ROOT / "config/ohif.js", content_type="application/javascript; charset=utf-8")
             if path.startswith("/worklist/hpacs-lite/") and (ASSETS / file).is_file():
                 return route.fulfill(path=ASSETS / file)
             if path == "/api/me" and role:
@@ -101,6 +101,47 @@ class ScreenLanguagePages(unittest.TestCase):
         # English another sign-in left in this browser: the viewer keeps its words as written.
         page, _ = self.open("viewer", "radiologist", "en", session="S0")
         self.assertIsNone(page.evaluate("window.KinLanguage.lang(document.body)"))
+
+    def test_a_measurement_basis_is_the_same_value_in_every_language_and_drawn_in_the_screen_language(self):
+        # The basis name is a value of the measurement: the exported report's "Measurement basis" carries it as written, on
+        # every screen (planar and mammography geometry alike); only where it is drawn does it read in the screen's language.
+        probe = r"""() => {
+          const base = {StudyInstanceUID: '2.25.1', SeriesInstanceUID: '2.25.2', SOPInstanceUID: '2.25.3', Rows: 64, Columns: 64};
+          const mg = {...base, Modality: 'MG', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1.2'};
+          const dx = {...base, Modality: 'DX', SOPClassUID: '1.2.840.10008.5.1.4.1.1.1.1'};
+          const spacing = [{PixelSpacing: [.1, .1]}, {ImagerPixelSpacing: [.2, .2]},
+                           {ImagerPixelSpacing: [.2, .2], EstimatedRadiographicMagnificationFactor: 2}];
+          const labels = [];
+          for (const s of spacing) {
+            labels.push(kinMgGeometry({...mg, ...s}, 1).label, kinPlanarGeometry({...mg, ...s}, 1).label);
+            labels.push(kinPlanarGeometry({...dx, ...s}, 1).label);
+          }
+          return {labels, drawn: labels.map(l => kinText(l))}; }"""
+        seen = {}
+        for stored, session in ((None, "S1"), ("ko", "S1"), ("en", "S0"), ("en", "S1")):
+            page, _ = self.open("viewer", "radiologist", stored, session)
+            seen[(stored, session)] = page.evaluate(probe)
+        plain = seen[(None, "S1")]
+        self.assertEqual(9, len(plain["labels"]))
+        self.assertTrue(all("·" in label for label in plain["labels"]))
+        for key, got in seen.items():
+            with self.subTest(choice=key):
+                self.assertEqual(plain["labels"], got["labels"])
+                if key == ("en", "S1"):
+                    self.assertFalse([t for t in got["drawn"] if any("가" <= c <= "힣" for c in t)])
+                    self.assertNotEqual(got["labels"], got["drawn"])
+                else:
+                    self.assertEqual(got["labels"], got["drawn"])
+        # The places that put the basis in the report and on the screen (history.js): the report takes the value as it is,
+        # the panel row and the image text draw it through the write path.
+        history = (ROOT / "config/ohif/history.js").read_text(encoding="utf-8")
+        report = [line for line in history.splitlines() if "'Measurement basis'" in line]
+        self.assertTrue(report)
+        self.assertFalse([line for line in report if "kinText(" in line])
+        self.assertTrue(all("mg.label" in line or "geometry.label" in line for line in report))
+        drawn = [line for line in history.splitlines() if ("mg.label" in line or "geometry.label" in line) and "'Measurement basis'" not in line]
+        self.assertEqual(4, len(drawn))
+        self.assertTrue(all("kinText(mg.label)" in line or "kinText(geometry.label)" in line for line in drawn))
 
     def test_the_integrated_viewer_follows_the_sign_in_of_the_reading_screen_around_it(self):
         # No hand-off and no recorded entry: the viewer frame inside the reading screen takes that page's sign-in.

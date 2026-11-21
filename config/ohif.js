@@ -10483,8 +10483,10 @@ function kinMgGeometry(tags, frame) {
     const a = imagePoint(points[0]), b = imagePoint(points[1]);
     return Math.hypot((b[0] - a[0]) * spacing[1], (b[1] - a[1]) * spacing[0]);
   };
-  const label = { dbt: 'DBT PixelSpacing', pixel: kinText("PixelSpacing · 원본 기준면"),
-    ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정"), detector: kinText("ImagerPixelSpacing · 검출기 기준") }[basis];
+  // The basis name is a value of the measurement (the exported report carries it): kept as written, never in the screen's
+  // language. The panel and the marks translate it where they draw it (history.js).
+  const label = { dbt: 'DBT PixelSpacing', pixel: 'PixelSpacing · 원본 기준면',
+    ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', detector: 'ImagerPixelSpacing · 검출기 기준' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, length, basis, label,
     frameOfReferenceUid: tags.FrameOfReferenceUID || null, calculator: 'kin-mg-length-v1:' + basis };
 }
@@ -10991,14 +10993,15 @@ function kinCreateViewerHistory() {
           ...a.data, cachedStats: { [target]: { ...a.data.cachedStats[target], ...(mg ? { length: mg.length(a.data.handles.points) } : {}) } },
         } } });
         if (mg) {
-          checked.displayText = { ...checked.displayText, primary: [...(checked.displayText?.primary || []), mg.label] };
+          // The basis name is drawn in the screen's language; the report keeps it as written.
+          checked.displayText = { ...checked.displayText, primary: [...(checked.displayText?.primary || []), kinText(mg.label)] };
           const report = checked.getReport;
           checked.getReport = () => { const r = report(); return { ...r, columns: [...r.columns, 'Measurement basis'], values: [...r.values, mg.label] }; };
         }
         const kind = kinds[a.metadata.toolName], geometry = planar(a.metadata.referencedImageId, kind);
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
-          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, geometry.label], secondary: [] };
+          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, kinText(geometry.label)], secondary: [] };
           // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
           const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
           checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
@@ -12031,7 +12034,7 @@ function kinCreateViewerHistory() {
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
-            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
+            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...kinText(geometry.label).split(' · ')];
           }
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);
@@ -12039,7 +12042,7 @@ function kinCreateViewerHistory() {
           if (!Number.isFinite(value) || value <= 0) return ['측정을 완료하세요'];
           const number = (Math.round(value * 10) / 10).toFixed(1) + (kind === 'length' ? ' mm' : '°');
           // Keep the scale basis readable in the four-view mammography layout.
-          return mg ? [number, ...mg.label.split(' · ')] : [number];
+          return mg ? [number, ...kinText(mg.label).split(' · ')] : [number];
         } };
         restores.push(() => { tool.configuration = config; tool.addNewAnnotation = add; });
       }

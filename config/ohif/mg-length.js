@@ -64,8 +64,10 @@ function kinMgGeometry(tags, frame) {
     const a = imagePoint(points[0]), b = imagePoint(points[1]);
     return Math.hypot((b[0] - a[0]) * spacing[1], (b[1] - a[1]) * spacing[0]);
   };
-  const label = { dbt: 'DBT PixelSpacing', pixel: kinText("PixelSpacing · 원본 기준면"),
-    ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정"), detector: kinText("ImagerPixelSpacing · 검출기 기준") }[basis];
+  // The basis name is a value of the measurement (the exported report carries it): kept as written, never in the screen's
+  // language. The panel and the marks translate it where they draw it (history.js).
+  const label = { dbt: 'DBT PixelSpacing', pixel: 'PixelSpacing · 원본 기준면',
+    ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', detector: 'ImagerPixelSpacing · 검출기 기준' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, length, basis, label,
     frameOfReferenceUid: tags.FrameOfReferenceUID || null, calculator: 'kin-mg-length-v1:' + basis };
 }

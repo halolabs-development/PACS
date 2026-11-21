@@ -329,14 +329,15 @@ function kinCreateViewerHistory() {
           ...a.data, cachedStats: { [target]: { ...a.data.cachedStats[target], ...(mg ? { length: mg.length(a.data.handles.points) } : {}) } },
         } } });
         if (mg) {
-          checked.displayText = { ...checked.displayText, primary: [...(checked.displayText?.primary || []), mg.label] };
+          // The basis name is drawn in the screen's language; the report keeps it as written.
+          checked.displayText = { ...checked.displayText, primary: [...(checked.displayText?.primary || []), kinText(mg.label)] };
           const report = checked.getReport;
           checked.getReport = () => { const r = report(); return { ...r, columns: [...r.columns, 'Measurement basis'], values: [...r.values, mg.label] }; };
         }
         const kind = kinds[a.metadata.toolName], geometry = planar(a.metadata.referencedImageId, kind);
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
-          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, geometry.label], secondary: [] };
+          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, kinText(geometry.label)], secondary: [] };
           // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
           const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
           checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
@@ -1369,7 +1370,7 @@ function kinCreateViewerHistory() {
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
-            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
+            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...kinText(geometry.label).split(' · ')];
           }
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);
@@ -1377,7 +1378,7 @@ function kinCreateViewerHistory() {
           if (!Number.isFinite(value) || value <= 0) return ['측정을 완료하세요'];
           const number = (Math.round(value * 10) / 10).toFixed(1) + (kind === 'length' ? ' mm' : '°');
           // Keep the scale basis readable in the four-view mammography layout.
-          return mg ? [number, ...mg.label.split(' · ')] : [number];
+          return mg ? [number, ...kinText(mg.label).split(' · ')] : [number];
         } };
         restores.push(() => { tool.configuration = config; tool.addNewAnnotation = add; });
       }
