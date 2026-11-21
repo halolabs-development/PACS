@@ -1333,7 +1333,7 @@ async function rightsIdentity() {
     await witness.$executeRawUnsafe('DROP TRIGGER b2r_fail_identity ON public."AuditLog"');
     const row2=await target();
     assert.deepEqual([row2.version,row2.name],[2,'Synthetic target'],'nothing committed');
-    assert.deepEqual(writes.slice(1),[['target',{firstName:'Rolled',lastName:'Back'}],['target',{firstName:'target',lastName:'Synthetic'}]]);
+    assert.deepEqual(writes.slice(1),[['target',{firstName:'Back',lastName:'Rolled'}],['target',{firstName:'target',lastName:'Synthetic'}]]);
     assert.deepEqual([accounts.get('target').firstName,accounts.get('target').lastName],['target','Synthetic'],'the provider is put back');
     assert.equal(await witness.auditLog.count({where:{action:'admin.user.patch.failed',target:'target'}}),1);
     // 3. A lost commit answer over a real commit: the own audit row settles it — the change stands, nothing put back.

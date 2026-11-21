@@ -3921,7 +3921,7 @@ test('CORE_R9_LIST_ONE_SCAN page selection never multiplies realm admin requests
 });
 
 for(const command of ['Approve','Change','Suspend','Activate','ResetTemp','ResetEmail'])
-test(`CORE_R9_IDENTITY_COMMAND ${command}: only a command refreshes current provider identity`,async t=>{
+test(`CORE_R9_IDENTITY_COMMAND ${command}: a member command keeps the row's email and name (only Change Name / Email takes them); a command refreshes the username`,async t=>{
   const w=await world(t),m='syn-r9-identity',setup=await coreSetup(w,m,command),provider=new KeycloakService();
   const {AdminService}=require('/app/dist/admin.service');provider.resetPassword=async()=>{};
   const admin=makeAdmin(w.I1,provider);
@@ -3929,11 +3929,13 @@ test(`CORE_R9_IDENTITY_COMMAND ${command}: only a command refreshes current prov
   Object.assign(kc.members[m],{username:'renamed',email:'renamed@synthetic.test',firstName:'Given',lastName:'Family',emailVerified:command==='Approve'});
   assert.equal((await coreRoster(w,m)).email,before.email,'GET cannot refresh a registered row');
   assert.deepEqual(await w.base.memberRights.findUnique({where:{sub:m}}),before);
-  if(command.startsWith('Reset'))await admin.resetPassword(m,{mode:command==='ResetTemp'?'temp':'email'},R10_CALLER);
+  // The reset mail goes to the login account's address: while it differs from the row's, nothing is sent (the list marks it).
+  if(command==='ResetEmail')await assert.rejects(admin.resetPassword(m,{mode:'email'},R10_CALLER),e=>e?.getResponse?.().code==='RESET_MAIL_ADDRESS_UNCONFIRMED');
+  else if(command==='ResetTemp')await admin.resetPassword(m,{mode:'temp'},R10_CALLER);
   else assert.equal((await r10Patch(admin,m,{...coreBody(command),verificationOverride:command==='Change'?true:undefined})).status,200);
   const row=await coreRoster(w,m);
   assert.deepEqual([row.username,row.email,row.name,row.emailVerified],command.startsWith('Reset')
-    ? [before.username,before.email,before.name,before.emailVerified] : ['renamed','renamed@synthetic.test','Family Given',command==='Approve']);
+    ? [before.username,before.email,before.name,before.emailVerified] : ['renamed',before.email,before.name,before.emailVerified]);
   if(command.startsWith('Reset'))assert.deepEqual([row.version,row.roles,row.enabled],[before.version,before.roles,!before.suspended]);
   await w.finish('CORE_R9_IDENTITY_COMMAND '+command);
 });
@@ -3945,13 +3947,15 @@ test('CORE_R9_IDENTITY_FORWARD: an older pre-read loses CAS and cannot rewind a 
   t.after(()=>release.resolve());
   provider.getUser=async(...args)=>{const result=await original(...args);if(++reads===1){arrived.resolve();await release.promise;}return result;};
   const admin=inst=>makeAdmin(inst,provider);
+  const kept=await w.base.memberRights.findUnique({where:{sub:m}});
   const first=r10Patch(admin(w.I1),m,coreBody('Change'));await within(arrived.promise,'older identity captured');
   Object.assign(kc.members[m],{email:'newest@synthetic.test',firstName:'Newest',lastName:'Identity'});
   let second;
   try { second=await within(r10Patch(admin(w.I2),m,coreBody('Change')),'newer command never waits on remote I/O under lock'); }
   finally { release.resolve(); }
   const older=await first;assert.equal(second.status,200);assert.equal(older.status,409);assert.equal(older.body.code,'MEMBER_VERSION_CONFLICT');
-  const row=await coreRoster(w,m);assert.deepEqual([row.email,row.name],['newest@synthetic.test','Identity Newest']);
+  // A member command never writes a differing login email or name (Change Name / Email does): nothing to rewind.
+  const row=await coreRoster(w,m);assert.deepEqual([row.email,row.name],[kept.email,kept.name]);
   assert.equal(await w.base.providerChange.count({where:{sub:m}}),1);
   await quiet(w);await w.finish('CORE_R9_IDENTITY_FORWARD');
 });
@@ -4127,7 +4131,7 @@ test('CORE_R10_RESET_FORWARD a delayed reset pre-read cannot hold a member lock 
   finally{release.resolve();}
   assert.equal((await reset).status,200);assert.equal(change.status,200);
   assert.deepEqual(await w.base.memberRights.findUnique({where:{sub:m}}),before,'reset never rewrites identity, version, rights, or boundary');
-  assert.equal(before.email,'after-reset-read@synthetic.test');await quiet(w);await w.finish('CORE_R10_RESET_FORWARD');
+  assert.equal(before.email,'syn-r10-reset-forward@synthetic.test','a member command keeps the row\'s email (only Change Name / Email takes a new one)');await quiet(w);await w.finish('CORE_R10_RESET_FORWARD');
 });
 
 for(const command of ['Suspend','Cancel','Activate'])test(`CORE_R10_KC_HANG ${command} does not wait for a provider answer`,async t=>{
