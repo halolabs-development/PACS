@@ -123,13 +123,41 @@ test('paper names every version by the author member name with Korean time; the 
   assert.equal((await f.controller.issuance({}, paper.issuance.issuanceId)).artifact, paper.artifact);
 });
 
-test('paper prints the identifier alone when the account has no member name, and its times stay readable', async () => {
+test('a report version on paper names the member name it was signed under, not the account name after a rename', async () => {
+  const f = fixture();
+  f.members.push({ sub: ACCOUNT, name: '김서명' });
+  f.commit(UID, 'save', '저장 소견'); f.commit(UID, 'approve', '승인 소견');
+  f.members[0].name = '이름 바뀜';
+  f.commit(UID, 'addendum', '추가 소견');
+  const paper = async (id, format = 'paper-print') => {
+    const prepared = await f.controller.prepare({}, copyIntake(id, all('report'), format));
+    return (await f.controller.issue({}, prepared.issuanceId)).artifact;
+  };
+  const html = Buffer.from(await paper('SYN-RENAMED-PAPER'), 'base64').toString('utf8');
+  // The same name the report's history shows for each version (member-rights.ts versionWriterName).
+  assert.deepEqual([...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]),
+    ['김서명 (synthetic-doctor@example.test)', '김서명 (SYN-DOCTOR)', '이름 바뀜 (SYN-DOCTOR)']);
+  // The electronic copy's signed originals are as stored, the kept names nowhere in them.
+  const electronic = Buffer.from(await paper('SYN-RENAMED-ELECTRONIC', 'signed-electronic'), 'base64').toString('utf8');
+  assert.deepEqual(JSON.parse(electronic).originals.slice(1).map(o => JSON.parse(o.original)),
+    f.signed.get(UID).map(s => JSON.parse(JSON.stringify(s))));
+  for (const name of ['김서명', '이름 바뀜', 'authorName']) assert.ok(!electronic.includes(name), name);
+});
+
+test('paper prints the identifier alone for a version written before its name was kept, and its times stay readable', async () => {
   const f = fixture();
   f.members.push({ sub: ACCOUNT, name: '   ' });
   f.commit(UID, 'save', '저장'); f.commit(UID, 'approve', '승인');
-  const prepared = await f.controller.prepare({}, copyIntake('SYN-UNNAMED', all('report'), 'paper-print'));
-  const html = Buffer.from((await f.controller.issue({}, prepared.issuanceId)).artifact, 'base64').toString('utf8');
-  assert.deepEqual([...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]), ['synthetic-doctor@example.test', 'SYN-DOCTOR']);
+  const authors = async id => {
+    const prepared = await f.controller.prepare({}, copyIntake(id, all('report'), 'paper-print'));
+    const html = Buffer.from((await f.controller.issue({}, prepared.issuanceId)).artifact, 'base64').toString('utf8');
+    return [...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]);
+  };
+  // An account without a name was kept under its login before the @ (report-commit.ts), as the report's history shows it.
+  assert.deepEqual(await authors('SYN-UNNAMED'), ['synthetic-doctor (synthetic-doctor@example.test)', 'synthetic-doctor (SYN-DOCTOR)']);
+  // A version written before the name was kept names none: the paper does not invent one from the account now.
+  f.members[0].name = '지금 이름'; f.writerNames.clear();
+  assert.deepEqual(await authors('SYN-UNKEPT'), ['synthetic-doctor@example.test', 'SYN-DOCTOR']);
   const { paperTime } = require('../../../api/src/emr-audit/fixed-document.ts');
   assert.equal(paperTime('2026-10-01T15:00:01.000Z'), '2026-10-02 00:00:01 KST (UTC+09:00)', 'the day turns at KST midnight');
   assert.equal(paperTime('2026-10-02T00:00:01+09:00'), '2026-10-02 00:00:01 KST (UTC+09:00)');

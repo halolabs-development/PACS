@@ -2,7 +2,7 @@ import { KST_OFFSET_MS } from './contract';
 import type { DisclosureManifest } from './contract';
 import { storedClinicalPlan } from './fixed-listing';
 import { nativeReportContent } from '../emr-report/native-snapshot';
-import { memberNames } from '../member-rights';
+import { memberNames, versionWriterName } from '../member-rights';
 
 type Original = { recordId: string; versionId: string; original: string };
 /** The member name of each version's author, by `versionKey`, read when the copy is generated. */
@@ -37,29 +37,30 @@ function source(item: Original): Source {
 }
 
 /**
- * The paper names each version's author by the member's name on the account (member-rights.ts memberNames, the one place
- * the report screens' signer name comes from), read now and kept in the issued bytes. The account is the one the server
- * holds for the version: a native report version's stored row (`ReportVersion.authorSub`, as report-evidence.ts reads it),
- * a clinical record version's stored author subject. A version whose account has no name is left out; the paper then
- * prints its identifier alone, as before.
+ * The paper names each version's author, read now and kept in the issued bytes. A native report version: the member name it
+ * was written under, from its stored row (member-rights.ts versionWriterName, the one rule the report's history uses), so a
+ * later rename does not change who a signed version names; a version without one names none. A clinical record version:
+ * the member's name on the account of its stored author subject (member-rights.ts memberNames). A version without a name
+ * is left out; the paper then prints its identifier alone, as before.
  */
 export async function fixedAuthorNames(tx: any, originals: readonly Original[]): Promise<AuthorNames> {
-  const accounts = new Map<string, string>(), reports = new Set<string>();
+  const accounts = new Map<string, string>(), reports = new Set<string>(), named = new Map<string, string>();
   for (const item of originals) {
     const read = source(item);
     if (read.kind === 'report') reports.add(item.recordId);
     else if (typeof read.content.author?.subject === 'string') accounts.set(versionKey(item), read.content.author.subject);
   }
   for (const uid of reports) {
-    const rows: { version: number; authorSub: string | null }[] = await tx.reportVersion.findMany({ where: { uid },
-      orderBy: { version: 'asc' }, select: { version: true, authorSub: true } });
+    const rows: { version: number; authorName: string | null }[] = await tx.reportVersion.findMany({ where: { uid },
+      orderBy: { version: 'asc' }, select: { version: true, authorName: true } });
     for (const row of rows) {
-      const key = versionKey({ recordId: uid, versionId: String(row.version) });
-      if (row.authorSub && originals.some(o => versionKey(o) === key && source(o).kind === 'report')) accounts.set(key, row.authorSub);
+      const key = versionKey({ recordId: uid, versionId: String(row.version) }), name = versionWriterName(row);
+      if (name && originals.some(o => versionKey(o) === key && source(o).kind === 'report')) named.set(key, name);
     }
   }
   const names = await memberNames(tx, [...accounts.values()]);
-  return new Map([...accounts].flatMap(([key, sub]) => names.has(sub) ? [[key, names.get(sub) as string] as [string, string]] : []));
+  for (const [key, sub] of accounts) if (names.has(sub)) named.set(key, names.get(sub) as string);
+  return named;
 }
 
 /** Every time on the paper is shown in Korea Standard Time (Asia/Seoul, UTC+09:00, no daylight saving), the zone written

@@ -19,6 +19,14 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
   const doctor = { identity: actor, identityRegistrationId: 'SYN-DOCTOR', institutionId: 'SYN-SITE', canSign: true };
   const registration = { kid, publicKey: key.publicKey, doctor, registeredAt: '2026-01-01T00:00:00.000Z', status: 'active', endedAt: null };
   const rows = [], reports = new Map(), signed = new Map(), clinical = new Map();
+  /** The member name each row was written under (ReportVersion.authorName), by row id: report-commit.ts keeps memberNames
+   * of the writer's account when the version is written, or the login before the @ for an account without a name. Kept
+   * beside the row like authorSub; signing and copies strip it (signedReportRow). Clear it for versions written before. */
+  const writerNames = new Map();
+  const writerName = () => {
+    const name = f.members.find(m => m.sub === ACCOUNT)?.name;
+    return typeof name === 'string' && name.trim() ? name.trim() : 'synthetic-doctor';
+  };
   let id = 0, clock = Date.parse('2026-10-01T00:00:00.000Z');
   const row = (uid, version, action, text, reason = null) => ({ id: ++id, uid, version, action, findings: text, conclusion: text ? '합성 결론' : '',
     recommendation: '', reason, author: 'synthetic-doctor@example.test', citations: [], structured: null, at: new Date(clock += 1000) });
@@ -43,7 +51,7 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
     }
     const saved = row(uid, version, action, action === 'reset' ? '' : text, reason);
     if (action === 'reset') saved.conclusion = '';
-    rows.push(saved); reports.set(uid, { version });
+    rows.push(saved); reports.set(uid, { version }); writerNames.set(saved.id, writerName());
     const signature = ['approve', 'amend', 'addendum'].includes(action) || (action === 'reset' && cur) ? sign(saved, head) : null;
     return { row: saved, signature };
   }
@@ -76,7 +84,8 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
   f.tx.reportVersion = { findMany: async ({ where, orderBy }) => {
     if (orderBy?.version !== 'asc') throw Error('Unexpected synthetic ReportVersion order');
     // A stored row carries its author's account (authorSub, report-commit.ts c.sub); signing and copies strip it (signedReportRow).
-    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, authorSub: r.authorSub ?? ACCOUNT, at: new Date(r.at) }));
+    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, authorSub: r.authorSub ?? ACCOUNT,
+      authorName: writerNames.get(r.id) ?? null, at: new Date(r.at) }));
   } };
   f.tx.report = { findUnique: async ({ where }) => reports.has(where.uid) ? { ...reports.get(where.uid) } : null };
   f.tx.$queryRaw = async (parts, ...values) => {
@@ -85,7 +94,7 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
     if (sql.includes('FROM emr_clinical.online_version') && clinical.has(values[0])) return clinical.get(values[0]);
     return baseQuery(parts, ...values);
   };
-  return { ...f, rows, reports, signed, clinical, commit, discard, techNote, legacyIssuances, sign, registration };
+  return { ...f, rows, reports, signed, clinical, writerNames, commit, discard, techNote, legacyIssuances, sign, registration };
 }
 function copyIntake(id, scope, format = 'signed-electronic') {
   const at = new Date(Date.now() - 1000).toISOString();
