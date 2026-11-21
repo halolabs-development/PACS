@@ -134,6 +134,7 @@ async function main() {
   if (process.env.KIN_B2R_CASE === 'rights') return rightsProducer();
   if (process.env.KIN_B2R_CASE === 'rights-import') return rightsImport();
   if (process.env.KIN_B2R_CASE === 'rights-replace') return rightsReplace();
+  if (process.env.KIN_B2R_CASE === 'rights-identity') return rightsIdentity();
   const db = new EmrLedgerClient(process.env.DATABASE_URL);
   const witness = new PrismaClient({ datasources: { db: { url: process.env.KIN_B2R_WITNESS_URL } } });
   const journal = new FailureJournal(db, new FailureSpool(process.env.KIN_B2R_SPOOL));
@@ -1235,6 +1236,130 @@ Module._resolveFilename=function(request,parent,...rest){
   }finally{
     await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_replace ON public."AuditLog"');
     await runtime.stop(Date.now()+15000);await otherJournal.close();await otherDb.$disconnect();await db.$disconnect();await witness.$disconnect();
+  }
+}
+// Change Name / Email (AdminService.changeIdentity through the real AdminController gate), on a real PostgreSQL: two
+// administrators changing one member at once take the institution and member locks before the provider is written, so
+// one commits and the other writes nothing to the provider; a confirmed non-commit puts the provider back and records the
+// failure; a lost commit answer is settled by this request's own audit row (present: the change stands; absent:
+// unconfirmed, nothing put back). The provider is a store of its own (not the member row).
+async function rightsIdentity() {
+  require('reflect-metadata');
+  const { OperatorRuntime } = require(path.join(build, 'emr-runtime/operator-runtime.js'));
+  const { AdminService } = require(path.join(build, 'admin.service.js'));
+  const { AdminController } = require(path.join(build, 'admin.controller.js'));
+  const { AuthService } = require(path.join(build, 'auth.service.js'));
+  const { PrismaService } = require(path.join(build, 'prisma.service.js'));
+  const { LedgerFailure } = require(path.join(build, 'emr-runtime/store.js'));
+  const { IncomingMessage, ServerResponse } = require('node:http'), { Socket } = require('node:net');
+  process.env.KC_ISSUER='https://synthetic.invalid/realms/identity';
+  const X='synthetic-hospital-x';
+  const witness=new PrismaClient({datasources:{db:{url:process.env.KIN_B2R_WITNESS_URL}}});
+  const db=new PrismaService();
+  const runtime=new OperatorRuntime(process.env.DATABASE_URL,process.env.KIN_B2R_SPOOL);
+  // The login accounts, apart from the member rows.
+  const accounts=new Map();
+  const account=sub=>({id:sub,username:sub,email:sub+'@synthetic.invalid',emailVerified:true,firstName:sub,lastName:'Synthetic',
+    enabled:true,serviceAccountClientId:null,groups:[X],roles:[]});
+  const writes=[];let gate=null;
+  const provider={institutions:async()=>[X],
+    getUser:async id=>{if(gate)await gate();const a=accounts.get(id);return a&&{...a,groups:[...a.groups]};},
+    accountsWithEmail:async email=>[...accounts.values()].filter(a=>a.email.toLowerCase()===email.toLowerCase()).map(a=>a.id),
+    updateIdentity:async(id,fields,within,beforeSend)=>{await beforeSend();writes.push([id,{...fields}]);Object.assign(accounts.get(id),fields);
+      return {state:'done',outcome:'http_204'};}};
+  const auth=new AuthService(db,null,null,null,null);
+  const service=new AdminService(db,provider,null,{publishCredentials(){}});
+  let wrap=null;
+  // The request work of the screen's PATCH, optionally with a commit outcome replaced (a lost commit answer).
+  const port={begin:(...a)=>{const work=runtime.port.begin(...a);if(!wrap)return work;
+    const own=Object.create(work);own.transactionWithRecords=(...b)=>wrap(work,b);return own;}};
+  const admit=async adminSub=>{const row=await witness.memberRights.findUnique({where:{sub:adminSub}});
+    return {payload:{iss:process.env.KC_ISSUER,sub:adminSub,auth_time:Math.floor(Date.now()/1000)+1,
+      realm_access:{roles:['admin']},amr:['otp']},rights:{version:row.version,institution:row.institution,roles:row.roles}};};
+  const change=async(adminSub,sub,identity,version)=>{
+    const admitted=await admit(adminSub);
+    const requests=createRequestContext(createRequestIngress({proxyPeers:[]}),port);
+    const controller=new AdminController(service,null,requests.source,null);
+    const req=Object.assign(new IncomingMessage(new Socket()),{sub:adminSub,actor:adminSub+'@synthetic.invalid',
+      roles:admitted.rights.roles,institution:X,kind:'member'}),res=new ServerResponse(req);
+    await requests.capture.capture(req,res,{issuer:process.env.KC_ISSUER,subject:adminSub,roles:admitted.rights.roles,
+      rightsVersion:admitted.rights.version,institution:X,binding:{method:'bearer',sessionRef:null}},
+      {method:'PATCH',route:'admin/users/:id',purpose:'clinical'},auth.bindCurrentAuthorization(admitted.payload,'synthetic-bearer',null,admitted.rights));
+    try{return await controller.patch(sub,{identity,version},req);}finally{res.emit('finish');}
+  };
+  const code=(...codes)=>e=>{assert.ok(codes.includes(e?.getResponse?.().code),String(e?.message));return true;};
+  const target=()=>witness.memberRights.findUnique({where:{sub:'target'}});
+  const identityRows=()=>witness.auditLog.findMany({where:{action:'admin.user.identity',target:'target'},orderBy:{id:'asc'}});
+  try{
+    await witness.$connect();await db.$connect();await runtime.start();
+    await witness.memberRightsImport.upsert({where:{id:'realm-v1'},create:{id:'realm-v1'},update:{}});
+    const member=(sub,roles)=>witness.memberRights.create({data:{sub,username:sub,email:sub+'@synthetic.invalid',
+      name:'Synthetic '+sub,emailVerified:true,approved:true,suspended:false,institution:X,roles}});
+    for(const [sub,roles] of [['admin-1',['admin']],['admin-2',['admin']],['target',['radiologist']]]){await member(sub,roles);accounts.set(sub,account(sub));}
+    await witness.authSession.create({data:{sid:randomUUID(),sub:'target',accessToken:'synthetic-unused',refreshToken:randomUUID(),
+      atExpiresAt:new Date(Date.now()+600000),lastSeenAt:new Date(),rightsVersion:1,institution:X}});
+    // The member's records written before any change, under the old email: a draft, a signed version, an audit trail.
+    const UID='1.2.826.0.1.3680043.10.999.2';
+    await witness.studyState.create({data:{uid:UID,institutionId:X}});
+    await witness.reportDraft.create({data:{uid:UID,author:'target@synthetic.invalid',authorSub:'target',revision:1,present:true,
+      findings:'synthetic draft written before the change',conclusion:'',recommendation:'',baseVersion:0,
+      workUnit:'disposal:'+randomUUID(),workSince:new Date(),workIntent:'approve'}});
+    await witness.reportVersion.create({data:{uid:UID,version:1,action:'commit',findings:'synthetic signed text',author:'target@synthetic.invalid'}});
+    await witness.auditLog.create({data:{actor:'target@synthetic.invalid',action:'report.synthetic-history',target:UID,detail:'{}'}});
+    const history=async()=>JSON.stringify([await witness.reportDraft.findMany({orderBy:{uid:'asc'}}),
+      await witness.reportVersion.findMany({orderBy:{id:'asc'}}),await witness.auditLog.findMany({where:{action:'report.synthetic-history'}})]);
+    const kept=await history();
+    // 1. Two administrators, the same opened version, both past their reads before either takes the locks.
+    let arrived=0,release;const together=new Promise(resolve=>{release=resolve;});
+    gate=async()=>{if(++arrived===2){release();}if(arrived<=2)await together;};
+    const outcomes=await Promise.allSettled([change('admin-1','target',{email:'first@synthetic.invalid'},1),
+      change('admin-2','target',{email:'second@synthetic.invalid'},1)]);
+    gate=null;
+    const won=outcomes.filter(o=>o.status==='fulfilled'),lost=outcomes.filter(o=>o.status==='rejected');
+    assert.equal(won.length,1,JSON.stringify(outcomes.map(o=>o.reason?.message)));
+    code('MEMBER_VERSION_CONFLICT','MEMBER_BUSY')(lost[0].reason);
+    assert.equal(writes.length,1,'the loser wrote nothing to the provider');
+    const winner=won[0].value.email,row1=await target();
+    assert.deepEqual([row1.email,accounts.get('target').email,row1.version,row1.emailVerified],[winner,winner,2,false]);
+    assert.equal((await identityRows()).length,1,'one audit row: the winner\'s');
+    assert.deepEqual(JSON.parse((await identityRows())[0].detail).identity,{email:{from:'target@synthetic.invalid',to:winner}});
+    assert.equal(await witness.authSession.count({where:{sub:'target'}}),0,'the member signs in again');
+    assert.equal(await witness.auditLog.count({where:{action:'admin.user.patch.failed'}}),0,'a refused loser records no failure');
+    // 2. The database refuses the commit (a real rollback): the provider is put back, the failure recorded, nothing kept.
+    await witness.$executeRawUnsafe(`CREATE FUNCTION public.b2r_fail_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.action = 'admin.user.identity' THEN RAISE EXCEPTION 'Synthetic identity failure'; END IF; RETURN NEW; END $$`);
+    await witness.$executeRawUnsafe('CREATE TRIGGER b2r_fail_identity BEFORE INSERT ON public."AuditLog" FOR EACH ROW EXECUTE FUNCTION public.b2r_fail_identity()');
+    await assert.rejects(change('admin-1','target',{lastName:'Rolled',firstName:'Back'},2));
+    await witness.$executeRawUnsafe('DROP TRIGGER b2r_fail_identity ON public."AuditLog"');
+    const row2=await target();
+    assert.deepEqual([row2.version,row2.name],[2,'Synthetic target'],'nothing committed');
+    assert.deepEqual(writes.slice(1),[['target',{firstName:'Back',lastName:'Rolled'}],['target',{firstName:'target',lastName:'Synthetic'}]]);
+    assert.deepEqual([accounts.get('target').firstName,accounts.get('target').lastName],['target','Synthetic'],'the provider is put back');
+    assert.equal(await witness.auditLog.count({where:{action:'admin.user.patch.failed',target:'target'}}),1);
+    // 3. A lost commit answer over a real commit: the own audit row settles it — the change stands, nothing put back.
+    wrap=async(work,args)=>{await work.transactionWithRecords(...args);throw new LedgerFailure('CommitUnknown');};
+    const stood=await change('admin-1','target',{email:'stood@synthetic.invalid'},2);
+    assert.equal(stood.email,'stood@synthetic.invalid');
+    assert.deepEqual([(await target()).email,(await target()).version,writes.length],['stood@synthetic.invalid',3,4]);
+    // 4. A lost commit answer over a real rollback: no own audit row — unconfirmed, nothing put back, no failure row.
+    await witness.$executeRawUnsafe('CREATE TRIGGER b2r_fail_identity BEFORE INSERT ON public."AuditLog" FOR EACH ROW EXECUTE FUNCTION public.b2r_fail_identity()');
+    wrap=async(work,args)=>{try{await work.transactionWithRecords(...args);}catch{}throw new LedgerFailure('CommitUnknown');};
+    await assert.rejects(change('admin-1','target',{email:'lost@synthetic.invalid'},3),code('MEMBER_IDENTITY_UNCONFIRMED'));
+    wrap=null;
+    await witness.$executeRawUnsafe('DROP TRIGGER b2r_fail_identity ON public."AuditLog"');
+    assert.deepEqual([(await target()).email,(await target()).version],['stood@synthetic.invalid',3]);
+    assert.equal(writes.length,5,'nothing put back while the commit is unknown');
+    assert.equal(accounts.get('target').email,'lost@synthetic.invalid','the provider keeps the unconfirmed write: the list marks it');
+    assert.equal(await witness.auditLog.count({where:{action:'admin.user.patch.failed',target:'target'}}),1);
+    // 5. Reopened after every change: the draft, the signed version and the audit trail keep the old email and their text.
+    assert.equal(await history(),kept,'no stored record is rewritten');
+    assert.equal((await witness.reportDraft.findFirst({where:{uid:UID,authorSub:'target'}})).findings,'synthetic draft written before the change');
+    console.log(JSON.stringify({status:'PASS',boundary:'actual AdminController + AdminService.changeIdentity + request work + PG locks and rollback',
+      green:['two administrators: one commit, loser writes nothing to the provider','real rollback puts the provider back and records the failure',
+        'lost commit answer over a commit stands','lost commit answer over a rollback is unconfirmed, nothing put back']}));
+  }finally{
+    await witness.$executeRawUnsafe('DROP TRIGGER IF EXISTS b2r_fail_identity ON public."AuditLog"');
+    await runtime.stop(Date.now()+15000);await db.$disconnect();await witness.$disconnect();
   }
 }
 async function pgBoundary(body) {

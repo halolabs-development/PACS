@@ -273,8 +273,9 @@ function assertAttribution(event, surface) {
 test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is committed before the first byte and is the returned row', async () => {
   const uid = await study();
   const sentinel = 'SYN-REPORT-BODY-' + randomUUID();
-  const rows = [await version(uid, 1, { action: 'save', findings: sentinel + ' v1' }),
-    await version(uid, 2, { action: 'approve', findings: sentinel + ' v2', conclusion: 'SYN conclusion' }),
+  // v1 and v2 keep the member name they were written under (as the product writes it); v4 was written before names were kept.
+  const rows = [await version(uid, 1, { action: 'save', findings: sentinel + ' v1', authorName: 'SYN Signed Name' }),
+    await version(uid, 2, { action: 'approve', findings: sentinel + ' v2', conclusion: 'SYN conclusion', authorName: 'SYN Signed Name' }),
     await version(uid, 3, { action: 'discarded', author: 'synthetic-other@example.test', findings: sentinel + ' other draft' }),
     await version(uid, 4, { action: 'addendum', findings: sentinel + ' v4', reason: 'SYN addendum reason' })];
   const hold = holdLedger();
@@ -296,10 +297,11 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
   assert.match(answer.headers['content-type'], /^application\/json/);
   // The array contract: newest first, the same ten fields, whether the version is the caller's own account's (`mine`,
   // judged on the server), plus each row's opaque accessRef; a row whose writer is shown also names the writer by the
-  // member name on that account (no name on a hidden writer's row). This study keeps no approval time, so no kept time.
+  // member name kept on that version (no name on a hidden writer's row, and none on a version that kept none - never the
+  // account's current name). This study keeps no approval time, so no kept time.
   assert.deepEqual(answer.body.map(r => r.version), [4, 3, 2, 1]);
   const memberName = (await ctx.witness.memberRights.findUnique({ where: { sub } }))?.name?.trim();
-  assert.ok(memberName, 'the synthetic reader has a member row with a name');
+  assert.ok(memberName && memberName !== 'SYN Signed Name', 'the synthetic reader has a member row with another name');
   for (const row of answer.body) {
     const stored = rows.find(r => r.version === row.version);
     const { accessRef, ...fields } = row;
@@ -312,7 +314,7 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
       recommendation: withheld ? '' : stored.recommendation,
       reason: withheld ? '관리자 강제 초안 해제' : stored.reason,
       author: withheld ? '작성자 비공개' : stored.author,
-      at: stored.at.toISOString(), ...(withheld ? { bodyHidden: 'in-progress' } : { authorName: memberName }) });
+      at: stored.at.toISOString(), ...(withheld ? { bodyHidden: 'in-progress' } : stored.authorName ? { authorName: stored.authorName } : {}) });
   }
   const recorded = await settled(uid, rows.length);
   const opened = recorded.filter(e => e.event.action === 'provide-prepared');
