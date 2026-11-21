@@ -25,14 +25,15 @@ import { sameAccount, shownActor, draftOf, PRIVATE_WRITER } from '../owner-ident
 
 /**
  * The approved head a stale-draft answer shows names its writer by the name that head version was written under
- * (member-rights.ts versionWriterName) - only when that writer is shown as is (shownActor). Nothing else changes.
+ * (member-rights.ts versionWriterName), else by the login that version stored - never the writer's login now (a writer whose
+ * email changed since). Only when that writer is shown as is (shownActor). Nothing else changes.
  */
 async function signerName(tx: any, uid: string, cur: { version?: number; updatedBy?: string | null; updatedBySub?: string | null },
   c: Caller): Promise<{ updatedByName?: string }> {
   if (!cur.updatedBy || !cur.updatedBySub || shownActor(cur.updatedBy, cur.updatedBySub, c) === PRIVATE_WRITER) return {};
   const head = typeof cur.version === 'number' ? await tx.reportVersion.findUnique({
-    where: { uid_version: { uid, version: cur.version } }, select: { authorName: true } }) : null;
-  const name = versionWriterName(head);
+    where: { uid_version: { uid, version: cur.version } }, select: { author: true, authorName: true } }) : null;
+  const name = versionWriterName(head) || (typeof head?.author === 'string' ? head.author : '');
   return name ? { updatedByName: name } : {};
 }
 export class PacsReportCommit {
@@ -486,8 +487,9 @@ export class PacsReportCommit {
         // 인용은 **`ReportVersion` 행에만** 쓴다. `Report`에는 칸이 없다 — 거울을 두면
         // 같은 사실이 두 곳에서 엇갈릴 수 있고, 그 순간 어느 쪽이 기록인지 말할 수 없다.
         // The member name this version is written under stays with it (member-rights.ts versionWriterName), so a later rename
-        // does not change who a signed version names. Not signed (image-report.ts signedReportRow).
-        const authorName = (await memberNames(tx, [c.sub])).get(c.sub) ?? null;
+        // does not change who a signed version names; an account without a name: its login before the @ then, as repDoc.
+        // Not signed (image-report.ts signedReportRow).
+        const authorName = (await memberNames(tx, [c.sub])).get(c.sub) ?? (c.actor.split('@')[0] || null);
         const savedVersion = await tx.reportVersion.create({ data: {
           uid, version, action, ...content, citations,
           ...(structured.length ? { structured } : {}),

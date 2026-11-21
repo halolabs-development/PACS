@@ -12,6 +12,7 @@ import { consumerSource, viewerSources } from './emr-viewing/consumer-read';
 import { prepareExamRead, resolveExamScope, scopeIncludesSeries, examScopeView, examScopeChanged, examParentAccess } from './exam-merge.service';
 import { versionDrawings, draftDrawings, effectiveDrawingIds, drawingEntries } from './image-report';
 import { draftOf } from './owner-identity';
+import { versionWriterName } from './member-rights';
 import { draftDeliveries } from './emr-retention/draft-purpose';
 
 const member = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: req.roles ?? [],
@@ -115,6 +116,8 @@ export class ReportPreviewController {
         // reading as an ordinary approved save. It comes from the row already
         // read above, so this adds no query, no gate and no history field.
         report: { scope:examScopeView(scope), version: report?.version ?? 0, rs: state.rs, action: version?.action ?? null, author: version?.author ?? null,
+          // The member name the shown version was signed under (member-rights.ts versionWriterName); none on an older version.
+          ...(versionWriterName(version) ? { authorName: versionWriterName(version) } : {}),
           repDoc: state.repDoc ?? null, confirm: state.confirm ?? null,
           // The approval instant the worklist Confirm column shows; the paper prints it in the reader's local time.
           approvedAt: state.rs === 'A' && state.approvedAt ? new Date(state.approvedAt).toISOString() : null,

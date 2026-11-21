@@ -67,7 +67,8 @@ export async function memberNames(db: any, subs: readonly (string | null | undef
 
 /**
  * The one rule for the name a report version shows for its writer: the member name it was written under
- * (`ReportVersion.authorName`, kept by report-commit.ts from memberNames when the version is written), so renaming the member
+ * (`ReportVersion.authorName`, kept by report-commit.ts from memberNames when the version is written - the login before the @
+ * for an account without a name), so renaming the member
  * later does not change who a signed version names. A version without one (written before the name was kept, or a copy kept
  * by Reset or a forced discard) names none, and the screen shows its stored login as before - the account's current name and
  * the time of a rename never stand in for it.

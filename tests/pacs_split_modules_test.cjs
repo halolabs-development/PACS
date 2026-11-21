@@ -1579,6 +1579,18 @@ test('SPLIT-16c after the member is renamed, a version already signed keeps the 
   assert.deepEqual([old.author, old.authorName], [RAD_A.actor, undefined]);
   assert.equal(w.db.rows('reportVersion').find(v => v.uid === s.uid && v.version === 1).authorName, 'SYN Kim Reader',
     'the name is kept on the version row itself');
+  // Its writer's stale draft after an email change: the head is named by the login that version stored, not the new one.
+  const moved = { ...RAD_A, actor: 'syn-rad-a-new@example.test' };
+  w.db.seed('reportDraft', { uid: legacy.uid, author: moved.actor, authorSub: RAD_A.sub, findings: 'SYN stale', conclusion: '',
+    recommendation: '', baseVersion: 0, revision: 1, present: true });
+  const old409 = await w.commit.commitReport(legacy.uid, commitBody(moved, 'addendum', legacy.draftEpoch, 1, 1, { findings: 'SYN stale' }), moved, null)
+    .then(() => null, error => error);
+  assert.equal(old409?.getResponse?.().code, 'REPORT_DRAFT_STALE', String(old409?.message));
+  assert.equal(old409.getResponse().head.updatedByName, RAD_A.actor);
+  // An account without a member name keeps its login before the @ as the name it signed under.
+  const plain = w.study({ institutionId: INST_B });
+  await w.commit.commitReport(plain.uid, commitBody(RAD_B, 'approve', plain.draftEpoch, 0, 0, { findings: 'SYN b' }), RAD_B, null);
+  assert.equal(w.db.rows('reportVersion').find(v => v.uid === plain.uid).authorName, RAD_B.actor.split('@')[0]);
 });
 
 // ── SPLIT-17 Tech Note attempts (M19, M20) ──
