@@ -7313,6 +7313,16 @@ function kinCreateViewerUX() {
       shortcuts = window.KinViewerUXShortcuts.mount({
         getBindings: () => toolbar?.bindings() || {}, invoke: id => toolbar?.invoke(id),
         allowed: () => !kinViewerSession.ended(),
+        // The work page's chords this Viewer window acts on (viewer-tech-note.js: patient ID copy, the comparison tools,
+        // and the image, report, note and tool-panel keys of the account's map in this browser).
+        workspace: ({ ctrlKey, altKey, code }) => {
+          if (!ctrlKey || !altKey || !code) return false;
+          if (code === 'KeyC' || code === 'Digit8') return true;
+          const api = window.KinWorkspaceShortcuts, owner = kinViewerSession.owner();
+          if (!api || !owner) return false;
+          let map = null; try { map = (api.readV2 || api.read)(window.localStorage, JSON.stringify(owner)); } catch (_) { return false; }
+          return ['image', 'report', 'note', 'tools', 'nativeTools'].includes(api.action(map, { ctrlKey: true, altKey: true, code }));
+        },
       });
       kinViewerOnEnd(() => { shortcuts?.dispose(); window.KinViewerUXToolbar.clear(); });
     },
