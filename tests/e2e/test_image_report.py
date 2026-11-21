@@ -161,7 +161,8 @@ class ImageReportE2E(TemplatePreservationE2E):
                 delattr(ds, tag)
         ds.ImageType = ["ORIGINAL", "PRIMARY"]
         ds.ImagerPixelSpacing, ds.PresentationIntentType = [0.1, 0.1], "FOR PRESENTATION"
-        # 128 × 128 stored pixels: grey tissue with a white landmark in the upper left of the stored image.
+        # 128 × 128 stored pixels: grey tissue with a white landmark in the upper left of the stored image and a black spot in
+        # its lower right (the preview stretches the stored range: 0 black, 300 grey, 1000 white).
         import numpy as np
         from pydicom.uid import ExplicitVRLittleEndian
         for tag in ("RescaleSlope", "RescaleIntercept", "RescaleType", "VOILUTFunction", "SmallestImagePixelValue", "LargestImagePixelValue",
@@ -170,6 +171,7 @@ class ImageReportE2E(TemplatePreservationE2E):
                 delattr(ds, tag)
         pixels = np.full((128, 128), 300, dtype="<u2")
         pixels[10:40, 10:40] = 1000
+        pixels[100:110, 100:110] = 0
         ds.Rows = ds.Columns = 128
         ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
         ds.BitsAllocated = ds.BitsStored = 16
@@ -191,6 +193,8 @@ class ImageReportE2E(TemplatePreservationE2E):
         patient = "IMGMG-" + uuid.uuid4().hex[:12]
         fixture = self.fixture(patient_id=patient)
         mg = self.mammogram(fixture)
+        from invariants_live import drop_viewer_rows
+        self.addCleanup(drop_viewer_rows, fixture.uid)
         # The reader's Key Image on the mammogram, through the viewer's own API (the viewer's Add Key Image on breast images
         # is tests/e2e/test_viewer_mg.py): the server reads the stored original and keeps it.
         body = {"requestId": str(uuid.uuid4()), "item": dict(schemaVersion=1, kind="key", seriesUid=str(mg.SeriesInstanceUID),

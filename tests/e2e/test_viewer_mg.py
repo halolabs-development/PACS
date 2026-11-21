@@ -13,7 +13,7 @@ from playwright.sync_api import expect
 from test_viewer_ux_priors import ViewerUXPriorsE2E
 from test_mammography_hanging import MammographyHangingE2E as MG
 from test_prior_selection import canvas_ready
-from invariants_live import Fixture
+from invariants_live import Fixture, drop_viewer_rows
 
 # Per-cell state read from the viewer: identity from the image's metadata, the zoom and the focal point in image indices.
 CELLS = '''() => [...services.viewportGridService.getState().viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x).map(g=>{
@@ -273,6 +273,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         # flips the R MLO on the screen only. Either way the Key Image names the stored original and its frame.
         patient = 'MGKEY-' + uuid.uuid4().hex[:12]
         prior = MG.phantom(self, patient, prior=True)
+        self.addCleanup(drop_viewer_rows, prior.uid)
         page = self.login()
         MG.open_mg(self, page, [prior], 4)
         MG.image_state(self, page)
@@ -290,7 +291,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         stored = self.keys(prior.uid)
         for title, shown in before.items():
             # Only the image is kept: its series, SOP and frame, never the screen's flips.
-            self.assertEqual(set(stored[title]), {'schemaVersion', 'kind', 'seriesUid', 'sopUid', 'frame', 'title', 'description'})
+            self.assertLessEqual(set(stored[title]), {'schemaVersion', 'kind', 'seriesUid', 'sopUid', 'frame', 'title', 'description', 'hidden'}, stored[title])
             self.assertEqual((stored[title]['seriesUid'], stored[title]['sopUid'], stored[title]['frame']), (shown['series'], shown['sop'], 1))
 
         # Opened again: the same rows, and Go to Image, pressed with a cell showing another image active, brings that stored
@@ -303,6 +304,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
 
         # A tomosynthesis object: the Key Image names the frame shown (frame 3 of 5).
         dbt = self.dbt('MGKEYD-' + uuid.uuid4().hex[:12])
+        self.addCleanup(drop_viewer_rows, dbt.uid)
         MG.open_mg(self, page, [dbt], 4)
         self.history_panel(page)
         cell = self.cell(page, dbt.uid, 'L', 'CC')['id']

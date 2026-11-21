@@ -11,7 +11,7 @@ from urllib.request import Request
 from urllib.error import HTTPError
 from pydicom import dcmread
 from pydicom.uid import generate_uid
-from invariants_live import LiveStack, ROOT, psql
+from invariants_live import LiveStack, ROOT, drop_viewer_rows, psql
 
 def literal(value):
     return "'" + value.replace("'", "''") + "'"
@@ -20,17 +20,7 @@ class ViewerStack(LiveStack):
     def cleanup_fixture(self, uid):
         if uid not in self.active or not re.fullmatch(r'[0-9.]+', uid):
             raise RuntimeError('Viewer cleanup requires this run-owned synthetic study')
-        # RESTRICT is deliberately bypassed only in the owned fixture teardown,
-        # deleting children in dependency order. Product routes have no DELETE.
-        # Findings reference StudyState (and their revisions the finding), so they go before the parent too.
-        psql('BEGIN; '+
-             f'DELETE FROM "FindingRevision" WHERE "findingId" IN (SELECT id FROM "Finding" WHERE "studyUid"={literal(uid)}); '+
-             f'DELETE FROM "Finding" WHERE "studyUid"={literal(uid)}; '+
-             f'DELETE FROM "ManualSr" WHERE "studyUid"={literal(uid)}; '+
-             f'DELETE FROM "ViewerRequest" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={literal(uid)}); '+
-             f'DELETE FROM "ViewerRevision" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={literal(uid)}); '+
-             f'DELETE FROM "ViewerItem" WHERE "studyUid"={literal(uid)}; '+
-             f'DELETE FROM "ViewerStorageBudget" WHERE "studyUid"={literal(uid)}; COMMIT;')
+        drop_viewer_rows(uid)
         super().cleanup_fixture(uid)
 
 class ViewerAPI(unittest.TestCase):
