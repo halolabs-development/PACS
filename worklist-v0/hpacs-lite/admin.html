@@ -1177,7 +1177,8 @@
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
       const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
-      const ROW_KEYS = ["contact", "gateway", "lastContactAt", "lastStowAt", "localOrthanc", "queue", "queueInstance", "startedAt", "version"];
+      const ROW_KEYS = ["contact", "dicomListener", "gateway", "lastContactAt", "lastStowAt", "localOrthanc", "queue", "queueInstance", "startedAt", "version"];
+      const LISTENER_RESULTS = ["accepted", "rejected", "no_answer"];
       const ANSWER_KEYS = ["gateways", "generatedAt", "institutionId", "noContactAfterSeconds", "serverStartedAt"];
       const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
       const closed = (value, keys) => { const own = Object.keys(value).sort(); return own.length === keys.length && own.every((key, i) => key === keys[i]); };
@@ -1199,10 +1200,14 @@
         const local = raw.localOrthanc;
         if (local !== null && (!plain(local) || !closed(local, ["answered", "observedAt"]) || typeof local.answered !== "boolean"
           || !time(local.observedAt))) return null;
+        const dicom = raw.dicomListener;
+        if (dicom !== null && (!plain(dicom) || !closed(dicom, ["observedAt", "result"]) || !LISTENER_RESULTS.includes(dicom.result)
+          || !time(dicom.observedAt))) return null;
         return { gateway: raw.gateway, queueInstance: raw.queueInstance, contact: raw.contact, lastContactAt: raw.lastContactAt,
           startedAt: raw.startedAt, version: raw.version, lastStowAt: raw.lastStowAt,
           queue: raw.queue && { waiting: raw.queue.waiting, retry: raw.queue.retry, failed: raw.queue.failed },
-          localOrthanc: local && { answered: local.answered, observedAt: local.observedAt } };
+          localOrthanc: local && { answered: local.answered, observedAt: local.observedAt },
+          dicomListener: dicom && { result: dicom.result, observedAt: dicom.observedAt } };
       }
 
       /** The whole answer, or null when any part of it cannot be read. */
@@ -1215,6 +1220,15 @@
         return { institutionId: answer.institutionId, generatedAt: answer.generatedAt, serverStartedAt: answer.serverStartedAt,
           noContactAfterSeconds: answer.noContactAfterSeconds, gateways };
       }
+
+      // The DICOM receive self-check: what was tested is said with the result; it is never worded as "receiving works".
+      const LISTENER_TEXT = Object.freeze({ accepted: "C-ECHO Accepted", rejected: "C-ECHO Rejected", no_answer: "No Answer" });
+      const LISTENER_TITLE = Object.freeze({
+        accepted: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 직접 DICOM 연결을 열어 C-ECHO(연결 시험)를 보냈고 성공(Status 0000) 응답을 받았습니다.",
+        rejected: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 C-ECHO를 보냈지만 연결 또는 C-ECHO가 거절되었습니다.",
+        no_answer: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 연결하지 못했거나 제한 시간(5초) 안에 C-ECHO 응답을 받지 못했습니다.",
+      });
+      const LISTENER_SCOPE = "장비 쪽 네트워크·방화벽·장비별 저장 허용은 이 시험에 들어가지 않습니다. 실제 수신은 도착한 검사로 확인합니다.";
 
       /** Words for one Gateway line: its contact first, then each fact with what it is and where its time comes from. */
       function display(row, noContactAfterSeconds, format = localTime) {
@@ -1231,6 +1245,11 @@
             : `Local Orthanc API ${row.localOrthanc.answered ? "Answered" : "No Answer"} ${format(row.localOrthanc.observedAt)}`,
             title: "Gateway 안의 Orthanc REST API가 마지막 요청에 응답했는지입니다. 장비가 보내는 DICOM 포트를 직접 시험한 값은 아닙니다." +
               (row.localOrthanc ? ` ${derived}` : "") },
+          { key: "dicom", data: false, text: !row.dicomListener ? "DICOM Listener Not Checked"
+            : `DICOM Listener ${LISTENER_TEXT[row.dicomListener.result]} ${format(row.dicomListener.observedAt)}`,
+            title: !row.dicomListener
+              ? "Gateway가 병원 쪽 DICOM 수신 포트를 직접 시험한 결과가 아직 없습니다. 이 점검이 없는 이전 Gateway 버전이거나 막 시작했습니다. 연락·REST 응답으로 채우지 않습니다."
+              : `${LISTENER_TITLE[row.dicomListener.result]} ${LISTENER_SCOPE} ${derived}` },
           { key: "version", data: true, text: `Version ${row.version}`, title: "Gateway 프로그램의 버전입니다." },
           { key: "started", data: false, text: `Running Since ${format(row.startedAt)}`, title: `Gateway 프로그램이 이번에 시작한 때입니다. ${derived}` },
           { key: "instance", data: true, text: `Queue Instance ${row.queueInstance.slice(0, 8)}`,

@@ -11,7 +11,9 @@ import json
 import os
 import re
 import signal
+import socket
 import sqlite3
+import struct
 import sys
 import time
 import math
@@ -54,6 +56,8 @@ GATEWAY_ERROR_CODES = {
     "invalid KIN base address": "configuration",
     "KIN destination no longer allowed": "other",
     "BYTE_BUDGET_MIB must be finite and > 0": "configuration",
+    "LOCAL_DICOM_PORT must be a port number": "configuration",
+    "LOCAL_DICOM_AET must be 1-16 printable characters": "configuration",
     "local Orthanc {}": "local_orthanc_unreachable",
     "local Orthanc HTTP {}": "local_orthanc_http",
     "local study lookup count={}": "local_study_lookup",
@@ -127,6 +131,21 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
 AGENT_VERSION = "2026.11.1"
 HEARTBEAT_SECONDS = 30.0
+# DICOM receive self-check: before each beat the heartbeat thread opens one DICOM association to the local Orthanc's
+# listener (the port the hospital's devices send to) and sends C-ECHO. Only a C-ECHO-RSP with Status 0x0000 to this
+# request on the accepted Verification context is "accepted"; an explicit association or context rejection, or a
+# valid failure Status, is "rejected"; anything else (no connection, the deadline, a close or abort without a valid
+# answer, an answer this code cannot read) is "no_answer". One deadline covers connecting through reading the answer.
+# The REST answers and the beat itself never fill this result.
+DICOM_ECHO_SECONDS = 5.0
+DICOM_AE = re.compile(r"[ -\[\]-~]{0,15}[!-\[\]-~]")   # 1-16 printable ASCII, no backslash, not only spaces
+DICOM_CALLING_AE = "KINGW-CHECK"
+VERIFICATION_SOP = "1.2.840.10008.1.1"
+IMPLICIT_LITTLE_ENDIAN = "1.2.840.10008.1.2"
+APPLICATION_CONTEXT = "1.2.840.10008.3.1.1.1"
+# This agent's DICOM implementation class (a UUID-derived UID, PS3.5 B.2) and version name.
+IMPLEMENTATION_CLASS_UID = "2.25.226347301929370163734862106327352741513"
+IMPLEMENTATION_VERSION = "KINGW-" + AGENT_VERSION
 # Gateway settings (routing rules and lossless compression) are set by the institution's
 # administrator in KIN and read by the heartbeat thread every SETTINGS_EVERY beats (the first right after start). No
 # settings = KIN only, nothing deleted, nothing transcoded: exactly the behaviour before settings existed.
@@ -319,12 +338,23 @@ class Config:
     stow_timeout: float
     backoff_base: float
     backoff_max: float
+    # The local Orthanc's DICOM listener, the one the hospital's devices send to, checked with C-ECHO by the heartbeat.
+    # An empty host means the host of orthanc_url (the same container).
+    dicom_host: str = ""
+    dicom_port: int = 4242
+    dicom_aet: str = "KINGW"
 
     @classmethod
     def from_env(cls) -> "Config":
         budget_mib = float(os.environ.get("BYTE_BUDGET_MIB", "24"))
         if not math.isfinite(budget_mib) or budget_mib <= 0:
             raise GatewayError("BYTE_BUDGET_MIB must be finite and > 0")
+        port = os.environ.get("LOCAL_DICOM_PORT", "4242").strip()
+        if not port.isdigit() or not 1 <= int(port) <= 65535:
+            raise GatewayError("LOCAL_DICOM_PORT must be a port number")
+        aet = os.environ.get("LOCAL_DICOM_AET", "KINGW").strip()
+        if not DICOM_AE.fullmatch(aet):
+            raise GatewayError("LOCAL_DICOM_AET must be 1-16 printable characters")
         return cls(
             orthanc_url=required("LOCAL_ORTHANC_URL").rstrip("/"),
             orthanc_user=required("LOCAL_ORTHANC_USER"),
@@ -340,7 +370,14 @@ class Config:
             stow_timeout=max(1, float(os.environ.get("STOW_TIMEOUT_SECONDS", "300"))),
             backoff_base=max(0.2, float(os.environ.get("BACKOFF_BASE_SECONDS", "5"))),
             backoff_max=max(1, float(os.environ.get("BACKOFF_MAX_SECONDS", "300"))),
+            dicom_host=os.environ.get("LOCAL_DICOM_HOST", "").strip(),
+            dicom_port=int(port),
+            dicom_aet=aet,
         )
+
+    def listener(self) -> tuple[str, int, str]:
+        """Where the C-ECHO goes: (host, port, called AE title)."""
+        return (self.dicom_host or urlsplit(self.orthanc_url).hostname or "", self.dicom_port, self.dicom_aet)
 
 
 class Queue:
@@ -946,6 +983,149 @@ class Cloud:
         return failures
 
 
+def _uid_bytes(uid: str) -> bytes:
+    raw = uid.encode("ascii")
+    return raw + b"\x00" if len(raw) % 2 else raw
+
+
+def _item(kind: int, value: bytes) -> bytes:
+    return struct.pack(">BBH", kind, 0, len(value)) + value
+
+
+def _pdu(kind: int, value: bytes) -> bytes:
+    return struct.pack(">BBI", kind, 0, len(value)) + value
+
+
+def _element(group: int, element: int, value: bytes) -> bytes:
+    return struct.pack("<HHI", group, element, len(value)) + value
+
+
+def _echo_command(message_id: int) -> bytes:
+    """C-ECHO-RQ command set (PS3.7 9.3.5.1), Implicit VR Little Endian, with its group length first."""
+    rest = (_element(0x0000, 0x0002, _uid_bytes(VERIFICATION_SOP))
+            + _element(0x0000, 0x0100, struct.pack("<H", 0x0030))
+            + _element(0x0000, 0x0110, struct.pack("<H", message_id))
+            + _element(0x0000, 0x0800, struct.pack("<H", 0x0101)))
+    return _element(0x0000, 0x0000, struct.pack("<I", len(rest))) + rest
+
+
+def _associate_request(called: str, calling: str) -> bytes:
+    """A-ASSOCIATE-RQ (PS3.8 9.3.2): one presentation context, Verification in Implicit VR Little Endian."""
+    context = struct.pack(">BBBB", 1, 0, 0, 0) + _item(0x30, VERIFICATION_SOP.encode()) + _item(0x40, IMPLICIT_LITTLE_ENDIAN.encode())
+    user = (_item(0x51, struct.pack(">I", 16384)) + _item(0x52, IMPLEMENTATION_CLASS_UID.encode())
+            + _item(0x55, IMPLEMENTATION_VERSION.encode()))
+    body = (struct.pack(">HH", 1, 0) + called.ljust(16).encode("ascii") + calling.ljust(16).encode("ascii") + bytes(32)
+            + _item(0x10, APPLICATION_CONTEXT.encode()) + _item(0x20, context) + _item(0x50, user))
+    return _pdu(0x01, body)
+
+
+class _EchoEnded(Exception):
+    """The listener's side ended the exchange before a readable answer: no_answer."""
+
+
+def _read_pdu(sock: socket.socket, deadline: float) -> tuple[int, bytes]:
+    def exactly(count: int) -> bytes:
+        data = b""
+        while len(data) < count:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise socket.timeout()
+            sock.settimeout(left)
+            part = sock.recv(count - len(data))
+            if not part:
+                raise _EchoEnded()
+            data += part
+        return data
+    kind, _reserved, length = struct.unpack(">BBI", exactly(6))
+    if length > 1 << 20:
+        raise _EchoEnded()
+    return kind, exactly(length)
+
+
+def _accepted_context(body: bytes) -> bool:
+    """Whether the A-ASSOCIATE-AC accepts presentation context 1 (result 0) in Implicit VR Little Endian."""
+    at = 68   # protocol version, reserved, the two echoed AE titles and the reserved 32 bytes
+    while at + 4 <= len(body):
+        kind, _reserved, length = struct.unpack(">BBH", body[at:at + 4])
+        value = body[at + 4:at + 4 + length]
+        at += 4 + length
+        if kind == 0x21 and len(value) >= 4 and value[0] == 1:
+            if value[2] != 0:
+                return False
+            sub = value[4:]
+            return len(sub) >= 4 and sub[0] == 0x40 and sub[4:4 + struct.unpack(">H", sub[2:4])[0]].rstrip(b"\x00 ") \
+                == IMPLICIT_LITTLE_ENDIAN.encode()
+    return False
+
+
+def _command_elements(data: bytes) -> dict[tuple[int, int], bytes]:
+    elements, at = {}, 0
+    while at + 8 <= len(data):
+        group, element, length = struct.unpack("<HHI", data[at:at + 8])
+        elements[(group, element)] = data[at + 8:at + 8 + length]
+        at += 8 + length
+    return elements
+
+
+def dicom_echo(host: str, port: int, called: str, calling: str = DICOM_CALLING_AE,
+               timeout: float = DICOM_ECHO_SECONDS, message_id: int = 1) -> str:
+    """One C-ECHO to the DICOM listener at host:port: "accepted", "rejected" or "no_answer" (see DICOM_ECHO_SECONDS).
+
+    No DICOM library: the agent's dependencies stay as they are. Never raises.
+    """
+    deadline = time.monotonic() + timeout
+    sock: socket.socket | None = None
+    try:
+        sock = socket.create_connection((host, port), timeout=timeout)
+        sock.settimeout(max(0.01, deadline - time.monotonic()))
+        sock.sendall(_associate_request(called, calling))
+        kind, body = _read_pdu(sock, deadline)
+        if kind == 0x03:
+            return "rejected"          # A-ASSOCIATE-RJ
+        if kind != 0x02:
+            return "no_answer"         # A-ABORT or anything else
+        if not _accepted_context(body):
+            return "rejected"          # Verification refused by the listener
+        command = _echo_command(message_id)
+        sock.sendall(_pdu(0x04, struct.pack(">IBB", len(command) + 2, 1, 0x03) + command))
+        received = b""
+        while True:
+            kind, body = _read_pdu(sock, deadline)
+            if kind != 0x04:
+                return "no_answer"
+            at, last = 0, False
+            while at + 6 <= len(body):
+                length, context, header = struct.unpack(">IBB", body[at:at + 6])
+                fragment = body[at + 6:at + 4 + length]
+                at += 4 + length
+                if context == 1 and header & 0x01:
+                    received += fragment
+                    last = last or bool(header & 0x02)
+            if last:
+                break
+        elements = _command_elements(received)
+        field, answering, status = (elements.get((0x0000, 0x0100)), elements.get((0x0000, 0x0120)),
+                                    elements.get((0x0000, 0x0900)))
+        if field != struct.pack("<H", 0x8030) or answering != struct.pack("<H", message_id) \
+                or status is None or len(status) != 2:
+            return "no_answer"
+        result = "accepted" if status == b"\x00\x00" else "rejected"
+        try:   # A-RELEASE-RQ; the result is already known, a missing A-RELEASE-RP changes nothing
+            sock.sendall(_pdu(0x05, bytes(4)))
+            _read_pdu(sock, min(deadline, time.monotonic() + 1))
+        except (OSError, _EchoEnded, struct.error):
+            pass
+        return result
+    except (OSError, _EchoEnded, struct.error, UnicodeError):
+        return "no_answer"
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+
 def failed_sops(payload: Any) -> set[str]:
     if isinstance(payload, list):
         payload = payload[0] if payload else {}
@@ -1085,12 +1265,22 @@ class Heartbeat:
         self.started = started
         self.stopped = threading.Event()
         self.thread: threading.Thread | None = None
+        # The last DICOM receive self-check as (result, monotonic time it ended), or None before the first one.
+        self.listener: tuple[str, float] | None = None
+
+    def check_listener(self) -> str:
+        """One C-ECHO to the local DICOM listener (DICOM_ECHO_SECONDS at most). Never raises."""
+        host, port, called = self.config.listener()
+        result = dicom_echo(host, port, called) if host else "no_answer"
+        self.listener = (result, time.monotonic())
+        return result
 
     def body(self) -> dict[str, Any]:
         self.seq += 1
         now = time.monotonic()
         last = self.stow.last_stow_at
         observed = self.orthanc.observed
+        listener = self.listener
         try:
             queue: dict[str, int] | None = queue_counts(self.config.queue_db)
         except Exception as error:
@@ -1106,6 +1296,8 @@ class Heartbeat:
             "lastStowAgeSeconds": None if last is None else max(0, int(now - last)),
             "localOrthanc": None if observed is None
             else {"answered": bool(observed[0]), "ageSeconds": max(0, int(now - observed[1]))},
+            "dicomListener": None if listener is None
+            else {"result": listener[0], "ageSeconds": max(0, int(now - listener[1]))},
         }
 
     def beat(self) -> bool:
@@ -1136,6 +1328,7 @@ class Heartbeat:
 
     def run(self) -> None:
         while not self.stopped.is_set():
+            self.check_listener()   # a failed check is a result too; the beat carries it and still goes out
             self.beat()
             if self.beats % SETTINGS_EVERY == 0:
                 self.refresh_settings()
