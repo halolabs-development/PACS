@@ -616,7 +616,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
                 return /\\/frames\\/2$/.test(v?.getCurrentImageId?.()||'');}''', timeout=15000)
         except Exception:
             self.fail('The SR cell is not on frame 2: ' + str(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
-                return [v?.getCurrentImageId?.(), sourceDS.measurements.map(m=>m.imageId)];}''')))
+                return [v?.getCurrentImageId?.(), (v?.getImageIds?.()||[]).slice(0,3), sourceDS.measurements.map(m=>m.imageId)];}''')))
         expect(p.locator('svg.svg-layer')).to_contain_text(' mm')
         p.close()
         # A region without deltas: the rule it had.

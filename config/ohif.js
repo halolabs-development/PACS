@@ -1267,27 +1267,25 @@ function kinCreateSRProvenance() {
       // its selected tracking IDs without repainting that unchanged image.
       services.cornerstoneViewportService.getCornerstoneViewport(grid.activeViewportId)?.render();
     };
-    const timer = setInterval(refresh, 250);
     // The pinned SR viewport opens its source stack at the image its measurement names, looked up among the source's
-    // instances: a frame after the first of a multi-frame source is no instance there, and the stack opens away from the
-    // mark. Once, as an SR cell's stack is set: if no measurement of the SR is on the shown image but one is in the stack,
-    // the stack goes to the first such measurement's frame (as the native next / previous measurement already finds it).
-    const newStack = event => {
+    // instances: a frame after the first of a multi-frame source is no instance there, and the stack is set at no image
+    // (index -1). An SR cell whose stack shows none of its images goes to the frame of the first measurement of the SR in
+    // that stack (as the native next / previous measurement already finds frames). A cell showing an image is left as it is.
+    const key = id => String(id || '').replace(/^.*?\/studies\//, '/studies/');
+    const atMeasurementFrame = () => {
       if (ended) return;
-      let viewport; try { viewport = window.cornerstone.getEnabledElement(event.detail?.element || event.target)?.viewport; } catch (_) { viewport = null; }
-      const view = viewport && services.viewportGridService.getState().viewports.get(viewport.id);
-      const ds = view?.displaySetInstanceUIDs?.map(uid => displaySets.getDisplaySetByUID(uid)).find(d => d?.Modality === 'SR' && guarded.has(d));
-      if (!ds || typeof viewport.getImageIds !== 'function') return;
-      setTimeout(() => {
-        if (ended) return;
-        let ids, current; try { ids = viewport.getImageIds(); current = viewport.getCurrentImageId(); } catch (_) { return; }
-        const marks = (ds.measurements || []).filter(m => ids.includes(m.imageId));
-        if (marks.length && !marks.some(m => m.imageId === current)) viewport.setImageIdIndex(ids.indexOf(marks[0].imageId));
-      });
+      for (const [viewportId, view] of services.viewportGridService.getState().viewports) {
+        const ds = view.displaySetInstanceUIDs?.map(uid => displaySets.getDisplaySetByUID(uid)).find(d => d?.Modality === 'SR' && guarded.has(d));
+        if (!ds?.measurements?.length) continue;
+        let viewport, ids, current;
+        try { viewport = services.cornerstoneViewportService.getCornerstoneViewport(viewportId); ids = viewport?.getImageIds?.() || []; current = viewport?.getCurrentImageId?.(); } catch (_) { continue; }
+        const keys = ids.map(key);
+        if (!ids.length || current && keys.includes(key(current))) continue;
+        const index = ds.measurements.map(m => keys.indexOf(key(m.imageId))).find(i => i >= 0);
+        if (index !== undefined) { try { viewport.setImageIdIndex(index); } catch (_) {} }
+      }
     };
-    const stackEvent = window.cornerstone?.Enums?.Events?.STACK_VIEWPORT_NEW_STACK || 'CORNERSTONE_STACK_VIEWPORT_NEW_STACK';
-    document.addEventListener(stackEvent, newStack, true);
-    restores.push(() => document.removeEventListener(stackEvent, newStack, true));
+    const timer = setInterval(() => { try { atMeasurementFrame(); } catch (_) {} refresh(); }, 250);
     const end = () => {
       if (ended) return;
       ended = true; panel.hidden = true; panel.replaceChildren();
