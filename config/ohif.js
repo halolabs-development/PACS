@@ -10630,11 +10630,13 @@ function kinUsRegionGeometry(tags) {
 // (the pinned OHIF combineFrameInstance) — with the deltas of the region that holds both points. Regions of different
 // deltas that both hold them, or none, give no length. Everything else is kinPlanarGeometry's.
 function kinManualGeometry(tags, frame, kind) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
   const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
   if (!us) return kinPlanarGeometry(tags, frame);
-  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
-  const outside = () => { throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); };
+  const fail = () => { throw kinError("원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
+  const outside = () => { throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); };
   const numbers = (v, n) => {
     const a = typeof v === 'string' ? v.split('\\') : v;
     if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();

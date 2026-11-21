@@ -5,13 +5,16 @@
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // The viewer document's write path (viewer-language.js): there the product words read in the reader's screen language;
+  // on the work page and under Node they stay as written.
+  const kinText = (t, ...p) => { const l = root.KinLanguageDocument === 'viewer' && root.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); };
   const LINK_STATES = ['current', 'revised', 'hidden', 'missing'];
   const LINK_LABELS = { current: 'Current', revised: 'Revised', hidden: 'Hidden', missing: 'Missing' };
   const LINK_TEXT = {
-    current: '저장 당시 판과 같습니다.',
-    revised: '표식이 저장 이후 수정되었습니다. 소견의 수치는 저장 당시 값이며 Refresh Link로 최신판을 다시 복사할 수 있습니다.',
-    hidden: '표식이 숨겨졌습니다. 소견의 사본은 유지됩니다.',
-    missing: '표식을 이 검사에서 찾을 수 없습니다. 소견의 사본은 유지됩니다.',
+    current: kinText("저장 당시 판과 같습니다."),
+    revised: kinText("표식이 저장 이후 수정되었습니다. 소견의 수치는 저장 당시 값이며 Refresh Link로 최신판을 다시 복사할 수 있습니다."),
+    hidden: kinText("표식이 숨겨졌습니다. 소견의 사본은 유지됩니다."),
+    missing: kinText("표식을 이 검사에서 찾을 수 없습니다. 소견의 사본은 유지됩니다."),
   };
   const REFERENCE_TEXT = { verified: 'Verified', unverified: 'Unverified' };
   const NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'frame-missing', 'superseded', 'tool-missing'];
@@ -20,32 +23,32 @@
   const ACTIVATION_REASONS = ['invalid', 'ended', 'viewport-missing', 'viewport-ambiguous', 'viewport-unsupported', 'tool-missing'];
   const CROSS_REASONS = [...NAVIGATION_REASONS, 'viewport-missing', 'viewport-ambiguous', 'timeout'];
   const REASONS = {
-    invalid: '이동할 영상 식별이 올바르지 않습니다.',
-    ended: '로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.',
-    scope: '이 소견의 검사가 현재 화면의 검사가 아닙니다. 해당 검사를 연 창에서 이동하세요.',
-    busy: '현재 검사 접근과 보관 작업을 확인한 후 이동하세요.',
-    'series-missing': '현재 검사에서 원본 시리즈를 찾을 수 없습니다.',
-    'viewport-unsupported': '현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요.',
-    'frame-missing': '원본 프레임을 열지 못했습니다.',
-    superseded: '이동 중 화면이 바뀌어 이 이동을 취소했습니다. 다시 시도하세요.',
-    'tool-missing': '영상 이동 도구가 준비되지 않았습니다. 뷰어를 다시 여세요.',
-    'viewport-missing': '이 원본의 검사를 표시하는 영상 칸이 이 화면에 없습니다. 그 검사를 영상 칸에 표시한 뒤 다시 누르세요.',
-    'viewport-ambiguous': '이 원본의 검사를 표시하는 영상 칸이 여러 개라 이동할 칸을 정하지 않았습니다. 그 검사의 영상 칸을 하나만 남긴 뒤 다시 누르세요.',
-    timeout: '제한 시간 안에 원본 영상으로의 이동을 확인하지 못했습니다. 현재 영상을 확인한 뒤 다시 누르세요.',
+    invalid: kinText("이동할 영상 식별이 올바르지 않습니다."),
+    ended: kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요."),
+    scope: kinText("이 소견의 검사가 현재 화면의 검사가 아닙니다. 해당 검사를 연 창에서 이동하세요."),
+    busy: kinText("현재 검사 접근과 보관 작업을 확인한 후 이동하세요."),
+    'series-missing': kinText("현재 검사에서 원본 시리즈를 찾을 수 없습니다."),
+    'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요."),
+    'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
+    superseded: kinText("이동 중 화면이 바뀌어 이 이동을 취소했습니다. 다시 시도하세요."),
+    'tool-missing': kinText("영상 이동 도구가 준비되지 않았습니다. 뷰어를 다시 여세요."),
+    'viewport-missing': kinText("이 원본의 검사를 표시하는 영상 칸이 이 화면에 없습니다. 그 검사를 영상 칸에 표시한 뒤 다시 누르세요."),
+    'viewport-ambiguous': kinText("이 원본의 검사를 표시하는 영상 칸이 여러 개라 이동할 칸을 정하지 않았습니다. 그 검사의 영상 칸을 하나만 남긴 뒤 다시 누르세요."),
+    timeout: kinText("제한 시간 안에 원본 영상으로의 이동을 확인하지 못했습니다. 현재 영상을 확인한 뒤 다시 누르세요."),
   };
   // A comparison Go to Image that stopped after the active viewport moved never claims an unchanged display.
   const PHASE_TEXT = {
-    activated: ' 원본 검사의 영상 칸이 선택되었을 수 있지만 원본 프레임으로는 이동하지 않았습니다. 이전 영상 칸 선택은 자동으로 되돌리지 않습니다.',
-    navigating: ' 영상 화면은 이미 이동했을 수 있으니 현재 영상을 확인하세요.',
+    activated: kinText(" 원본 검사의 영상 칸이 선택되었을 수 있지만 원본 프레임으로는 이동하지 않았습니다. 이전 영상 칸 선택은 자동으로 되돌리지 않습니다."),
+    navigating: kinText(" 영상 화면은 이미 이동했을 수 있으니 현재 영상을 확인하세요."),
   };
-  const ANCHOR_SCOPE_TEXT = '현재 검사의 영상 칸이 선택되어 있지 않아 이동하지 않았습니다. 현재 검사의 영상 칸을 선택한 뒤 다시 누르세요.';
-  const COMPARISON_ARRIVAL = '비교 검사 영상 칸에서 원본 프레임으로 이동했습니다.';
-  const COMPARISON_DENIED = '비교 검사에 접근할 수 없어 이 소견을 저장·수정하지 않았습니다. 비교 검사 표식 연결을 해제하거나 접근을 확인한 뒤 다시 시도하세요.';
+  const ANCHOR_SCOPE_TEXT = kinText("현재 검사의 영상 칸이 선택되어 있지 않아 이동하지 않았습니다. 현재 검사의 영상 칸을 선택한 뒤 다시 누르세요.");
+  const COMPARISON_ARRIVAL = kinText("비교 검사 영상 칸에서 원본 프레임으로 이동했습니다.");
+  const COMPARISON_DENIED = kinText("비교 검사에 접근할 수 없어 이 소견을 저장·수정하지 않았습니다. 비교 검사 표식 연결을 해제하거나 접근을 확인한 뒤 다시 시도하세요.");
   const ANNOTATION_TEXT = {
-    shown: '', none: '', key: '키 이미지 프레임으로 이동했습니다.',
-    hidden: '이동했습니다. 표식이 숨겨져 있어 그리지 않습니다.',
-    unverified: '이동했습니다. 원본을 확인하지 못해 표식을 그리지 않습니다(재확인 필요).',
-    missing: '이동했습니다. 표식이 현재 목록에 없어 그리지 않습니다.',
+    shown: '', none: '', key: kinText("키 이미지 프레임으로 이동했습니다."),
+    hidden: kinText("이동했습니다. 표식이 숨겨져 있어 그리지 않습니다."),
+    unverified: kinText("이동했습니다. 원본을 확인하지 못해 표식을 그리지 않습니다(재확인 필요)."),
+    missing: kinText("이동했습니다. 표식이 현재 목록에 없어 그리지 않습니다."),
   };
   const LIMITS = Object.freeze({ title: 200, text: 4000 });
   const uuid = s => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
@@ -117,35 +120,35 @@
   const JOB_LINK_STATES = ['current', 'metadata-changed', 'hidden', 'missing'];
   const JOB_LINK_LABELS = { current: 'Current', 'metadata-changed': 'Details Changed', hidden: 'Hidden', missing: 'Missing' };
   const JOB_LINK_TEXT = {
-    current: '연결 당시 판과 같습니다.',
-    'metadata-changed': '저장 작업의 제목·설명만 연결 이후 바뀌었습니다. 영상 상태는 연결 당시와 같습니다.',
-    hidden: '저장 작업이 숨겨졌습니다. 소견의 사본은 유지됩니다.',
-    missing: '저장 작업을 이 검사에서 찾을 수 없습니다. 소견의 사본은 유지됩니다.',
+    current: kinText("연결 당시 판과 같습니다."),
+    'metadata-changed': kinText("저장 작업의 제목·설명만 연결 이후 바뀌었습니다. 영상 상태는 연결 당시와 같습니다."),
+    hidden: kinText("저장 작업이 숨겨졌습니다. 소견의 사본은 유지됩니다."),
+    missing: kinText("저장 작업을 이 검사에서 찾을 수 없습니다. 소견의 사본은 유지됩니다."),
   };
-  const OLD_API_TEXT = '서버가 이 화면 판을 지원하지 않아 소견을 저장하지 않습니다. 저장된 소견만 표시합니다.';
-  const MODULE_MISMATCH_TEXT = '화면 구성 요소 판이 다릅니다. 새로고침하세요.';
-  const CONTINUE_REFUSED_TEXT = '요청한 소견 위치를 자동으로 열지 않았습니다. 소견의 위치 버튼을 다시 누르세요.';
+  const OLD_API_TEXT = kinText("서버가 이 화면 판을 지원하지 않아 소견을 저장하지 않습니다. 저장된 소견만 표시합니다.");
+  const MODULE_MISMATCH_TEXT = kinText("화면 구성 요소 판이 다릅니다. 새로고침하세요.");
+  const CONTINUE_REFUSED_TEXT = kinText("요청한 소견 위치를 자동으로 열지 않았습니다. 소견의 위치 버튼을 다시 누르세요.");
   // Outcomes of kinViewerJobLocation.restore (viewer-jobs.js) and the texts this store shows for them.
   const RESTORE_STATES = ['restored', 'refused', 'rolled-back', 'screen-unknown', 'continuing'];
   const RESTORE_REASONS = ['ended', 'owner', 'busy', 'unsaved', 'findings-unsaved', 'layout-merged', 'job-studies', 'job-hidden', 'job-unavailable',
     'job-conflict', 'timeout', 'source-changed', 'apply-failed', 'point-mismatch', 'point-failed', 'tool-missing'];
   const POINTS = ['none', 'all-planes', 'source-plane', 'failed'];
   const LOCATION_TEXT = {
-    pending: '저장 작업 복원 중…',
-    waiting: '이전 저장 위치 복원의 결과를 기다리는 중입니다. 끝난 뒤 다시 누르세요.',
-    backstop: '결과를 확인하지 못했습니다. Saved Comparison Jobs 상태를 확인하세요.',
-    superseded: '저장 위치를 여는 동안 화면이나 소견이 바뀌어 결과를 확인하지 못했습니다. 영상 화면이 바뀌었을 수 있습니다.',
-    view: '저장 화면을 복원했습니다(병변 위치 표식 없음).',
-    point: '3D 표식 위치로 이동했습니다.',
-    sourcePlane: '3D 표식 위치로 이동했습니다. 기준 평면만 이동했습니다.',
-    pointFailed: '저장 화면은 복원했지만 3D 표식 위치로는 이동하지 않았습니다.',
-    rolledBack: '저장 화면을 적용하지 못해 이전 화면으로 되돌렸습니다.',
-    unknown: '복원 결과를 확인하지 못했습니다. 현재 영상을 확인하세요.',
-    continuing: '저장 작업의 검사 조합으로 새 화면을 엽니다. 결과는 새 화면의 이 소견에 표시됩니다.',
-    denied: '비교 검사에 접근할 수 없어 이 저장 위치를 열지 않았습니다.',
-    'tool-missing': '저장 작업 복원 도구가 준비되지 않았습니다. 뷰어를 다시 여세요.',
-    invalid: '저장 위치의 사본을 확인할 수 없습니다.',
-    metadata: revision => '저장 작업의 제목·설명만 연결 이후 바뀌었고(현재 r' + revision + ') 복원한 영상 상태는 연결 당시와 같습니다.',
+    pending: kinText("저장 작업 복원 중…"),
+    waiting: kinText("이전 저장 위치 복원의 결과를 기다리는 중입니다. 끝난 뒤 다시 누르세요."),
+    backstop: kinText("결과를 확인하지 못했습니다. Saved Comparison Jobs 상태를 확인하세요."),
+    superseded: kinText("저장 위치를 여는 동안 화면이나 소견이 바뀌어 결과를 확인하지 못했습니다. 영상 화면이 바뀌었을 수 있습니다."),
+    view: kinText("저장 화면을 복원했습니다(병변 위치 표식 없음)."),
+    point: kinText("3D 표식 위치로 이동했습니다."),
+    sourcePlane: kinText("3D 표식 위치로 이동했습니다. 기준 평면만 이동했습니다."),
+    pointFailed: kinText("저장 화면은 복원했지만 3D 표식 위치로는 이동하지 않았습니다."),
+    rolledBack: kinText("저장 화면을 적용하지 못해 이전 화면으로 되돌렸습니다."),
+    unknown: kinText("복원 결과를 확인하지 못했습니다. 현재 영상을 확인하세요."),
+    continuing: kinText("저장 작업의 검사 조합으로 새 화면을 엽니다. 결과는 새 화면의 이 소견에 표시됩니다."),
+    denied: kinText("비교 검사에 접근할 수 없어 이 저장 위치를 열지 않았습니다."),
+    'tool-missing': kinText("저장 작업 복원 도구가 준비되지 않았습니다. 뷰어를 다시 여세요."),
+    invalid: kinText("저장 위치의 사본을 확인할 수 없습니다."),
+    metadata: revision => kinText("저장 작업의 제목·설명만 연결 이후 바뀌었고(현재 r{n0}) 복원한 영상 상태는 연결 당시와 같습니다.", revision),
   };
   const joined = (...parts) => parts.filter(Boolean).join(' ');
   const isJob = source => !!source && typeof source === 'object' && source.kind === 'job';
@@ -193,7 +196,7 @@
   }
   const jobName = source => {
     const mark = source.mark || null;
-    return (mark ? '3D Point · ' + mark.label + ' · ' : 'Saved View · ') + (source.title || '(제목 없음)') + ' · v' + source.snapshotVersion + ' · r' + source.revision;
+    return (mark ? '3D Point · ' + mark.label + ' · ' : 'Saved View · ') + (source.title || kinText("(제목 없음)")) + ' · v' + source.snapshotVersion + ' · r' + source.revision;
   };
   // S2-C: the viewer's own entry of a linked 2D item at arrival (config/ohif.js highlight), copied as primitives.
   function liveOf(value) {
@@ -204,9 +207,9 @@
     return { present: true, revision: revision(current) ? current : null, hidden: hidden === true, working: working === true };
   }
   const LIVE_TEXT = {
-    working: '편집 중인 미저장 위치일 수 있습니다.',
-    unknown: '연결 당시 판인지 확인하지 못했습니다.',
-    revised: (current, frozen) => '표시한 표식은 현재판 r' + current + '이며 소견의 수치는 연결 당시 r' + frozen + '의 사본입니다(위치·수치가 다를 수 있음).',
+    working: kinText("편집 중인 미저장 위치일 수 있습니다."),
+    unknown: kinText("연결 당시 판인지 확인하지 못했습니다."),
+    revised: (current, frozen) => kinText("표시한 표식은 현재판 r{0}이며 소견의 수치는 연결 당시 r{1}의 사본입니다(위치·수치가 다를 수 있음).", current, frozen),
   };
   // Notes for an arrival, from the viewer's live entry only; hidden and missing entries keep the "not drawn" arrival texts.
   function liveText(result, frozenRevision) {
@@ -249,7 +252,7 @@
     if (result.state === 'continuing') return LOCATION_TEXT.continuing;
     if (result.state === 'rolled-back') return withView(LOCATION_TEXT.rolledBack);
     if (result.state === 'screen-unknown') return withView(LOCATION_TEXT.unknown);
-    return result.message || '저장 위치를 열지 않았습니다. 영상은 바꾸지 않았습니다.';
+    return result.message || kinText("저장 위치를 열지 않았습니다. 영상은 바꾸지 않았습니다.");
   }
 
   // Same rule as the server (finding-input.ts linkState): a database fact about the head,
@@ -514,19 +517,19 @@
   const validPair = s => !!s && (isJobPair(s) ? uuid(s.jobId) && revision(s.revision) && (s.markId === undefined || uuid(s.markId))
     : uuid(s.itemId) && revision(s.revision));
   function draftProblem(draft) {
-    if (!draft) return '작성 내용이 없습니다.';
-    if (!Array.isArray(draft.sources) || draft.sources.length < 1) return '저장한 표식을 하나 이상 연결하세요.';
-    if (draft.sources.some(s => !validPair(s))) return '연결한 표식의 저장 정보를 확인하세요.';
-    if (new Set(draft.sources.map(pairIdentity)).size !== draft.sources.length) return '같은 표식을 두 번 연결할 수 없습니다.';
-    if ([...String(draft.title ?? '')].length > LIMITS.title) return '제목은 ' + LIMITS.title + '자 이하여야 합니다.';
-    if ([...String(draft.text ?? '')].length > LIMITS.text) return '본문은 ' + LIMITS.text + '자 이하여야 합니다.';
+    if (!draft) return kinText("작성 내용이 없습니다.");
+    if (!Array.isArray(draft.sources) || draft.sources.length < 1) return kinText("저장한 표식을 하나 이상 연결하세요.");
+    if (draft.sources.some(s => !validPair(s))) return kinText("연결한 표식의 저장 정보를 확인하세요.");
+    if (new Set(draft.sources.map(pairIdentity)).size !== draft.sources.length) return kinText("같은 표식을 두 번 연결할 수 없습니다.");
+    if ([...String(draft.title ?? '')].length > LIMITS.title) return kinText("제목은 {0}자 이하여야 합니다.", LIMITS.title);
+    if ([...String(draft.text ?? '')].length > LIMITS.text) return kinText("본문은 {0}자 이하여야 합니다.", LIMITS.text);
     if (draft.characteristics !== undefined) {
-      if (typeof draft.characteristics !== 'string' || [...draft.characteristics].length > CHARACTERISTICS) return '병변 특성은 ' + CHARACTERISTICS + '자 이하여야 합니다.';
-      if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !draft.characteristics.trim()) return '제목, 본문 또는 병변 특성을 입력하세요.';
+      if (typeof draft.characteristics !== 'string' || [...draft.characteristics].length > CHARACTERISTICS) return kinText("병변 특성은 {0}자 이하여야 합니다.", CHARACTERISTICS);
+      if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !draft.characteristics.trim()) return kinText("제목, 본문 또는 병변 특성을 입력하세요.");
     }
-    if (draft.lesionLocation !== undefined && (typeof draft.lesionLocation !== 'string' || [...draft.lesionLocation].length > LESION_LOCATION)) return '병변 위치는 ' + LESION_LOCATION + '자 이하여야 합니다.';
-    if (draft.size !== undefined && (typeof draft.size !== 'string' || [...draft.size].length > SIZE)) return '병변 크기는 ' + SIZE + '자 이하여야 합니다.';
-    if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !String(draft.characteristics ?? '').trim()) return '제목 또는 본문을 입력하세요.';
+    if (draft.lesionLocation !== undefined && (typeof draft.lesionLocation !== 'string' || [...draft.lesionLocation].length > LESION_LOCATION)) return kinText("병변 위치는 {0}자 이하여야 합니다.", LESION_LOCATION);
+    if (draft.size !== undefined && (typeof draft.size !== 'string' || [...draft.size].length > SIZE)) return kinText("병변 크기는 {0}자 이하여야 합니다.", SIZE);
+    if (!String(draft.title ?? '').trim() && !String(draft.text ?? '').trim() && !String(draft.characteristics ?? '').trim()) return kinText("제목 또는 본문을 입력하세요.");
     return null;
   }
   // A pair copied from the comparison study keeps that study in the draft for display only; commandBody never sends it. A version 2
@@ -549,26 +552,26 @@
   // `context.comparison`: the command named a comparison study, so 400/403/404 may be about that study.
   function errorMessage(error, context) {
     const comparison = !!(context && context.comparison);
-    if (error.code === 'FINDING_STORAGE_LIMIT') return '소견 저장 한도입니다. 한도에는 이 화면에 표시되지 않는 소견도 포함됩니다. 숨김으로 공간이 회수되지는 않습니다. 작성 내용은 미저장 상태로 남아 있습니다.';
-    if (error.code === 'FINDING_COMPARISON_STUDY') return '이 소견에는 이미 다른 비교 검사가 연결된 적이 있어 이 비교 검사의 표식을 연결할 수 없습니다. 이 비교 검사의 소견은 새 소견으로 기록하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.code === 'FINDING_SOURCE_STALE' && error.jobId) return error.headHidden ? '연결하려는 저장 작업이 숨겨졌습니다. 연결을 해제하거나 작업 숨김을 해제한 뒤 다시 저장하세요.'
-      : '연결하려는 저장 작업의 제목·설명이 바뀌었습니다(현재 r' + error.headRevision + '). Refresh Link로 최신판을 확인한 뒤 다시 저장하세요.';
-    if (error.code === 'FINDING_SOURCE_STALE') return error.headHidden ? '연결하려는 표식이 숨겨졌습니다. 연결을 해제하거나 표식을 복원한 뒤 다시 저장하세요.'
-      : '연결하려는 표식에 더 새로운 판(r' + error.headRevision + ')이 있습니다. Refresh Link로 최신판을 확인한 뒤 다시 저장하세요.';
-    if (error.code === 'FINDING_SCHEMA_VERSION') return '이 소견은 다른 판 형식으로 바뀌었습니다. 화면을 새로고침해 최신판을 확인하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.code === 'FINDING_CLIENT_OUTDATED') return '이 화면 판은 새 소견 형식을 표시하지 못합니다. 새로고침하세요.';
-    if (error.code === 'FINDING_JOB_MARK') return '저장 작업의 3D 표식과 볼륨 원본을 확인할 수 없어 연결하지 않았습니다. 작업을 다시 저장한 뒤 연결하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.code === 'FINDING_JOB_VERSION') return '이 판의 저장 작업은 소견에 연결할 수 없습니다. 작성 내용은 저장되지 않았습니다.';
-    if (error.status === 404 && context && context.job) return '연결한 저장 작업이나 소견을 찾을 수 없거나 그 검사에 더 이상 접근할 수 없습니다. 비교 검사를 판독 대상으로 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.status === 409) return '다른 판 또는 저장 조건과 충돌했습니다. 최신판을 확인한 뒤 다시 저장하세요.';
-    if (error.status === 404) return comparison ? '소견이나 연결한 표식을 찾을 수 없거나 그 검사에 더 이상 접근할 수 없습니다. 작성 내용은 저장되지 않았습니다.'
-      : '연결한 표식이 이 검사에 없습니다. 작성 내용은 저장되지 않았습니다.';
+    if (error.code === 'FINDING_STORAGE_LIMIT') return kinText("소견 저장 한도입니다. 한도에는 이 화면에 표시되지 않는 소견도 포함됩니다. 숨김으로 공간이 회수되지는 않습니다. 작성 내용은 미저장 상태로 남아 있습니다.");
+    if (error.code === 'FINDING_COMPARISON_STUDY') return kinText("이 소견에는 이미 다른 비교 검사가 연결된 적이 있어 이 비교 검사의 표식을 연결할 수 없습니다. 이 비교 검사의 소견은 새 소견으로 기록하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.code === 'FINDING_SOURCE_STALE' && error.jobId) return error.headHidden ? kinText("연결하려는 저장 작업이 숨겨졌습니다. 연결을 해제하거나 작업 숨김을 해제한 뒤 다시 저장하세요.")
+      : kinText("연결하려는 저장 작업의 제목·설명이 바뀌었습니다(현재 r{0}). Refresh Link로 최신판을 확인한 뒤 다시 저장하세요.", error.headRevision);
+    if (error.code === 'FINDING_SOURCE_STALE') return error.headHidden ? kinText("연결하려는 표식이 숨겨졌습니다. 연결을 해제하거나 표식을 복원한 뒤 다시 저장하세요.")
+      : kinText("연결하려는 표식에 더 새로운 판(r{0})이 있습니다. Refresh Link로 최신판을 확인한 뒤 다시 저장하세요.", error.headRevision);
+    if (error.code === 'FINDING_SCHEMA_VERSION') return kinText("이 소견은 다른 판 형식으로 바뀌었습니다. 화면을 새로고침해 최신판을 확인하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.code === 'FINDING_CLIENT_OUTDATED') return kinText("이 화면 판은 새 소견 형식을 표시하지 못합니다. 새로고침하세요.");
+    if (error.code === 'FINDING_JOB_MARK') return kinText("저장 작업의 3D 표식과 볼륨 원본을 확인할 수 없어 연결하지 않았습니다. 작업을 다시 저장한 뒤 연결하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.code === 'FINDING_JOB_VERSION') return kinText("이 판의 저장 작업은 소견에 연결할 수 없습니다. 작성 내용은 저장되지 않았습니다.");
+    if (error.status === 404 && context && context.job) return kinText("연결한 저장 작업이나 소견을 찾을 수 없거나 그 검사에 더 이상 접근할 수 없습니다. 비교 검사를 판독 대상으로 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.status === 409) return kinText("다른 판 또는 저장 조건과 충돌했습니다. 최신판을 확인한 뒤 다시 저장하세요.");
+    if (error.status === 404) return comparison ? kinText("소견이나 연결한 표식을 찾을 수 없거나 그 검사에 더 이상 접근할 수 없습니다. 작성 내용은 저장되지 않았습니다.")
+      : kinText("연결한 표식이 이 검사에 없습니다. 작성 내용은 저장되지 않았습니다.");
     const located = comparison || !!(context && context.job);
-    if (error.status === 403 && located && !String(error.code || '').startsWith('AUTH_')) return '비교 검사가 이 검사와 다른 기관 소속이거나 접근할 수 없어 연결하지 않았습니다. 작성 내용은 저장되지 않았습니다.';
-    if (error.status === 400 && located) return '같은 환자의 비교 검사 하나만 연결할 수 있습니다. 비교 검사와 입력 내용을 확인하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.status === 400 || error.status === 413) return '입력 길이와 연결 표식을 확인하세요. 작성 내용은 저장되지 않았습니다.';
-    if (error.code === 'AppendNotCommitted') return '저장되지 않았습니다. 작성 내용은 유지됩니다. Save를 누르면 새 요청으로 다시 저장합니다.';
-    return '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.';
+    if (error.status === 403 && located && !String(error.code || '').startsWith('AUTH_')) return kinText("비교 검사가 이 검사와 다른 기관 소속이거나 접근할 수 없어 연결하지 않았습니다. 작성 내용은 저장되지 않았습니다.");
+    if (error.status === 400 && located) return kinText("같은 환자의 비교 검사 하나만 연결할 수 있습니다. 비교 검사와 입력 내용을 확인하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.status === 400 || error.status === 413) return kinText("입력 길이와 연결 표식을 확인하세요. 작성 내용은 저장되지 않았습니다.");
+    if (error.code === 'AppendNotCommitted') return kinText("저장되지 않았습니다. 작성 내용은 유지됩니다. Save를 누르면 새 요청으로 다시 저장합니다.");
+    return kinText("저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.");
   }
   // One viewer-items head of the comparison study, in the shape of kinViewerHistoryState().heads plus its
   // calculator, which only valueText reads.
@@ -681,7 +684,7 @@
         const current = s.entries.get(copy.id);
         if (current && hasWork(current)) continue;
         const e = heldCopy(copy);
-        e.message = e.pending ? '보관했던 저장 요청을 복원했습니다. Retry Request로 저장 결과를 확인하세요.' : '보관했던 작성 내용을 복원했습니다. 저장 전 내용을 확인하세요.';
+        e.message = e.pending ? kinText("보관했던 저장 요청을 복원했습니다. Retry Request로 저장 결과를 확인하세요.") : kinText("보관했던 작성 내용을 복원했습니다. 저장 전 내용을 확인하세요.");
         s.entries.set(e.id, e);
       }
     }
@@ -706,7 +709,7 @@
     function end() {
       if (s.ended) return;
       s.parked.clear();
-      reset('로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'); s.ended = true; s.me = null; s.subject = ''; notify();
+      reset(kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.")); s.ended = true; s.me = null; s.subject = ''; notify();
     }
     // The document's end reaches this store while it is attached (a mode exit detaches it first).
     let resume = false;
@@ -730,7 +733,7 @@
       s.parked.clear(); reset(''); s.ended = true; s.me = null; notify();
       return records;
     }
-    function deny() { park(); reset('이 검사에 접근할 수 없습니다. 접근 확인 후 Refresh로 다시 불러오세요.'); s.me = null; }
+    function deny() { park(); reset(kinText("이 검사에 접근할 수 없습니다. 접근 확인 후 Refresh로 다시 불러오세요.")); s.me = null; }
     // `foreign`: a 403 may concern the comparison study, so it is returned to the caller instead of
     // holding this study's drafts; the caller re-reads the anchor list, which denies if the anchor is gone.
     async function api(path, options, ticket, foreign, at) {
@@ -768,7 +771,7 @@
     function setScope(scope) {
       if (s.ended || scope === s.scope) return;
       park();
-      reset(scope ? '소견 확인 중…' : '');
+      reset(scope ? kinText("소견 확인 중…") : '');
       s.scope = uid(scope) ? scope : '';
       clearPair();
       if (s.scope) load();
@@ -800,7 +803,7 @@
       if (!work.admits(workAt)) return;
       if (!s.scope || s.ended || s.loading) return;
       const ticket = s.generation, seq = ++s.readSequence; s.loading = true;
-      s.status = '소견 확인 중…'; notify();
+      s.status = kinText("소견 확인 중…"); notify();
       try {
         await authenticate(ticket, workAt);
         const heads = []; let cursor = null, unrecorded = '';
@@ -820,7 +823,7 @@
           seen.add(head.id);
           let e = s.entries.get(head.id);
           if (e && hasWork(e)) {
-            if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; }
+            if (head.revision !== e.head?.revision) { e.latest = head; e.message = kinText("서버에 다른 판이 있습니다. 작성 내용은 유지됩니다."); }
             else { e.head = head; e.links = head.links || []; }
             continue;
           }
@@ -834,12 +837,12 @@
           else if (!lose(e)) dropped++;
         }
       s.status = kinSay('{n0}개 소견 · 소견 저장은 판독 확정과 별개입니다.{t1}{t2}{t3}', heads.length,
-        { t: dropped ? ' · 결과를 확인하지 못한 숨김·복원 요청이 있던 소견을 더 이상 볼 수 없어 목록에서 뺐습니다.' : '' },
+        { t: dropped ? kinText(" · 결과를 확인하지 못한 숨김·복원 요청이 있던 소견을 더 이상 볼 수 없어 목록에서 뺐습니다.") : '' },
         { t: s.compat === 'old-api' ? kinSay(' · {t0}', { t: OLD_API_TEXT }) : '' }, { t: unrecorded ? kinSay(' · {t0}', { t: unrecorded }) : '' });
         if (pairOf()) loadPair();
         if (s.continuation && !s.continuation.done) { s.continuation.done = true; Promise.resolve().then(() => { work.commit(workAt, () => { void continueLocation(); }); }); }
         });
-      } catch (e) { work.commit(workAt, () => { if (!e.stale && valid(ticket)) s.status = '소견 목록을 확인하지 못했습니다. Refresh로 다시 확인하세요.'; }); }
+      } catch (e) { work.commit(workAt, () => { if (!e.stale && valid(ticket)) s.status = kinText("소견 목록을 확인하지 못했습니다. Refresh로 다시 확인하세요."); }); }
       finally {
         // A comparison refusal seen during this read asks for one more read of the anchor list.
         work.commit(workAt, () => {
@@ -861,7 +864,7 @@
           typeof e.draft.characteristics === 'string' ? { characteristics: e.draft.characteristics } : {},
           typeof e.draft.lesionLocation === 'string' ? { lesionLocation: e.draft.lesionLocation } : {},
           typeof e.draft.size === 'string' ? { size: e.draft.size } : {}, { sources: own, primary: 0 }),
-        message: '이 소견을 더 이상 볼 수 없어 저장하지 않았습니다. 작성한 제목과 본문만 이 검사의 새 소견 초안으로 남겼고 비교 검사 연결은 뺐습니다. 저장 전 내용과 연결 표식을 확인하세요.' });
+        message: kinText("이 소견을 더 이상 볼 수 없어 저장하지 않았습니다. 작성한 제목과 본문만 이 검사의 새 소견 초안으로 남겼고 비교 검사 연결은 뺐습니다. 저장 전 내용과 연결 표식을 확인하세요.") });
       s.entries.set(e.id, e);
       return true;
     }
@@ -1018,7 +1021,7 @@
       if (!pair || !target || target.hidden || target.revision === pair.revision) return false;
       pair.revision = target.revision; e.staleSource = null;
       if (!e.editing) return save(e, 'edit');
-      e.message = '최신판을 연결했습니다. 저장을 눌러야 새 사본이 기록됩니다.'; notify(); return true;
+      e.message = kinText("최신판을 연결했습니다. 저장을 눌러야 새 사본이 기록됩니다."); notify(); return true;
     }
     // A saved location whose Job title or description changed: the pair takes the Job's current metadata revision. The image state
     // it names is immutable, and the server refuses a refresh that would name another one.
@@ -1030,13 +1033,13 @@
       if (!pair || !target || target.hidden || target.revision === pair.revision) return false;
       pair.revision = target.revision; e.staleSource = null;
       if (!e.editing) return save(e, 'edit');
-      e.message = '저장 작업의 최신판을 연결했습니다. 저장을 눌러야 새 사본이 기록됩니다.'; notify(); return true;
+      e.message = kinText("저장 작업의 최신판을 연결했습니다. 저장을 눌러야 새 사본이 기록됩니다."); notify(); return true;
     }
     function useLatest(e) {
       if (s.entries.get(e.id) !== e || !e.latest || e.busy || e.pending) return;
       e.head = e.latest; e.latest = null; e.links = e.head.links || e.links;
       if (!e.editing) e.draft = itemOnly(e.head);
-      e.message = e.editing ? '최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다.' : '최신 서버판을 반영했습니다.'; notify();
+      e.message = e.editing ? kinText("최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다.") : kinText("최신 서버판을 반영했습니다."); notify();
     }
     function discard(e) {
       if (s.entries.get(e.id) !== e || e.busy || e.pending) return;
@@ -1051,7 +1054,7 @@
       const workAt = work.capture('document');
       if (!work.admits(workAt)) return;
       if (s.compat === 'old-api' && !s.ended && s.entries.get(e.id) === e && !e.busy) {
-        e.message = OLD_API_TEXT + ' 작성 내용은 저장되지 않았습니다.'; notify(); return false;
+        e.message = kinText("{0} 작성 내용은 저장되지 않았습니다.", OLD_API_TEXT); notify(); return false;
       }
       if (!valid(s.generation) || s.entries.get(e.id) !== e || !writable(e) || e.busy || s.ended) return false;
       // Computed before the request: a pending retry keeps the context of the body it replays.
@@ -1084,12 +1087,12 @@
         work.commit(workAt, () => {
         const duplicate = s.entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
-          s.entries.delete(e.id); duplicate.message = '같은 요청의 저장 결과를 확인했습니다. 이 항목의 작성 내용은 유지됩니다.'; reused = true; return;
+          s.entries.delete(e.id); duplicate.message = kinText("같은 요청의 저장 결과를 확인했습니다. 이 항목의 작성 내용은 유지됩니다."); reused = true; return;
         }
         if (duplicate && duplicate !== e) s.entries.delete(duplicate.id);
         s.entries.delete(e.id); e.id = head.id; s.entries.set(e.id, e);
         Object.assign(e, { head, draft: itemOnly(head), links: e.links, pending: null, latest: null, editing: false, staleSource: null,
-          message: '저장 완료' + (accessNotice(head) ? ' · ' + accessNotice(head) : '') });
+          message: kinText("저장 완료{0}", (accessNotice(head) ? ' · ' + accessNotice(head) : '')) });
         notify();
         });
         if (reused) return true;
@@ -1098,7 +1101,7 @@
         return true;
       } catch (error) {
         if (error.stale || !valid(ticket) || !work.admits(workAt)) return false;
-        if (error.oldApi) { work.commit(workAt, () => { e.message = OLD_API_TEXT + ' 작성 내용은 저장되지 않았습니다.'; }); return false; }
+        if (error.oldApi) { work.commit(workAt, () => { e.message = kinText("{0} 작성 내용은 저장되지 않았습니다.", OLD_API_TEXT); }); return false; }
         work.commit(workAt, () => {
         e.message = errorMessage(error, { comparison, job });
         // AppendNotCommitted is the server's settled answer that this request ID never committed and never will:
