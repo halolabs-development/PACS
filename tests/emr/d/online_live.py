@@ -85,7 +85,7 @@ class ImageReportPg(ReportCommitPg):
 class OwnerKeysPg(ReportCommitPg):
     # Each history case installs every predecessor into its own database before upgrading.
     disk_storage = True
-    node_timeout = 300
+    node_timeout = 420
     script = 'owner_keys_pg_test.cjs'
 
 

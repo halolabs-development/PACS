@@ -43,6 +43,9 @@ STRUCTURE_PATH = Path(os.environ.get("KIN_STRUCT_STRUCTURE_JS",
 MAIN = read_page_source(MAIN_PATH)
 STRUCTURE_JS = STRUCTURE_PATH.read_text(encoding="utf-8")
 CITATION_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-citation.js").read_text(encoding="utf-8")
+# The page loads the report screens' one time rule (report-preview.js, KinReportPaper) beside report-citation.js; the
+# sliced region calls it.
+PREVIEW_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-preview.js").read_text(encoding="utf-8")
 VECTORS = json.loads((ROOT / "tests" / "report_structure_vectors.json").read_text(encoding="utf-8"))
 
 UID = "1.2.3"
@@ -256,7 +259,7 @@ def harness(state, catalog=CATALOG):
             .replace("PANEHTML", PANE_HTML)
             .replace("CITEHTML", CITE_HTML)
             .replace("STRUCTHTML", STRUCT_HTML)
-            .replace("CITATIONJS", CITATION_JS)
+            .replace("CITATIONJS", CITATION_JS + "\n" + PREVIEW_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
             .replace("CATALOGJSON", json.dumps(catalog, ensure_ascii=False))
             .replace("APIFN", API_FN)

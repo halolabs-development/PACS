@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { RECORD_CLASSIFICATION, RecordKind, resolveStoredRecord, ResolvedRecord, verifiedRecord, parseOrderFacts } from './classification';
 import { newAccessRetentionRecord } from './lawful-defaults';
-import { routeContract, EXTERNAL_SURFACES, INTERNAL_SURFACES, ROUTE_CONTRACTS } from './routes';
+import { routeContract, EXTERNAL_SURFACES, INTERNAL_SURFACES, ROUTE_CONTRACTS, SERVICE_ISOLATION_SURFACES } from './routes';
 import { choice, freeze, integer, object, sha256, string, utc, refuse } from './validation';
 
 export const ACCESS_ACTIONS = freeze({
@@ -412,7 +412,8 @@ function authSurfaces(action: AuthAction, endCause: AuthEndCause | null): readon
   // before starting the next login. Record that actual route and cause.
   if (endCause === 'logout') return ['POST auth/logout', 'POST auth/login'];
   if (endCause === 'account-switch' || endCause === 'reauthentication') return authRoutes().filter(r => r !== 'POST auth/entry');
-  if (endCause === 'isolation') return Object.keys(ROUTE_CONTRACTS).filter(r => ROUTE_CONTRACTS[r].operation === 'write' && ROUTE_CONTRACTS[r].kinds.includes('identity-access'));
+  if (endCause === 'isolation') return [...Object.keys(ROUTE_CONTRACTS).filter(r => ROUTE_CONTRACTS[r].operation === 'write' && ROUTE_CONTRACTS[r].kinds.includes('identity-access')),
+    ...SERVICE_ISOLATION_SURFACES];
   if (endCause === 'sweep') return Object.keys(INTERNAL_SURFACES).filter(s => INTERNAL_SURFACES[s].kinds.includes('authentication-session'));
   return Object.keys(ROUTE_CONTRACTS); // idle / refresh-failed: the request that observed the end
 }
@@ -532,14 +533,18 @@ function parseAuthEventV2(input: unknown): Readonly<AuthAccessEventV2> {
   const unresolvedEnd = endCause !== null && session.status === 'known' &&
     affectedIdentity.status === 'unresolved' && affectedIdentity.reason === 'not-resolved';
   // The executor's own facts, then the affected member. A sweep's service is never the member it ended; an
-  // administrator's isolation ends another member; every other end and login is the executor's own.
+  // administrator's isolation ends another member, and so does an operator's administrator replacement (a service
+  // isolation, only on SERVICE_ISOLATION_SURFACES and only of a known member); every other end and login is the
+  // executor's own.
   let consistent: boolean;
   if (executor === 'unauthenticated') {
     consistent = action === 'auth.login' && !succeeded && cause !== 'service-job' &&
       userId.status === 'unresolved' && affectedIdentity.status === 'unresolved' &&
       [rolesAtTime, rightsVersion, actingInstitution].every(f => f.status === 'unresolved' && f.reason === 'not-authenticated');
   } else if (executor === 'service') {
-    consistent = cause === 'service-job' && endCause === 'sweep' && userId.status === 'known' && (affectedIdentity.status === 'known' || unresolvedEnd) &&
+    const serviceIsolation = endCause === 'isolation' && SERVICE_ISOLATION_SURFACES.includes(surface) && affectedIdentity.status === 'known';
+    consistent = cause === 'service-job' && (serviceIsolation || (endCause === 'sweep' && (affectedIdentity.status === 'known' || unresolvedEnd))) &&
+      userId.status === 'known' &&
       !sameIdentity(userId, affectedIdentity) && trustedProxyIp.status === 'not-applicable' && rightsVersion.status === 'not-applicable' &&
       rolesAtTime.status === 'known' && (actingInstitution.status === 'known' ||
         (actingInstitution.status === 'not-applicable' && actingInstitution.reason === 'in-process-service'));

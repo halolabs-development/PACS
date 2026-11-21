@@ -92,12 +92,12 @@ test('P3: the pure record the viewer reads is the same object the node tests rec
   // preview factory; a second copy of this wording is how two papers start
   // disagreeing about one citation.
   assert.ok(globalThis.KinReportPaper, 'report-preview.js must publish globalThis.KinReportPaper');
-  for (const name of ['savedLabel', 'citationSection', 'citationAnswerOk', 'paperStamp', 'approvalText', 'paperDate']) {
+  for (const name of ['savedLabel', 'citationSection', 'citationAnswerOk', 'paperStamp', 'approvalText', 'versionStamp', 'paperDate']) {
     assert.equal(typeof paper[name], 'function', name);
     assert.equal(globalThis.KinReportPaper[name], paper[name], name + ' must be the same function');
   }
   assert.deepEqual(Object.keys(globalThis.KinReportPaper).sort(),
-    ['approvalText', 'citationAnswerOk', 'citationSection', 'paperDate', 'paperStamp', 'savedLabel']);
+    ['approvalText', 'citationAnswerOk', 'citationSection', 'paperDate', 'paperStamp', 'savedLabel', 'versionStamp']);
 });
 
 test('P4: the identity helper keeps every name it published and adds the two new pure decisions', () => {

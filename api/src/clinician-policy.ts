@@ -29,7 +29,9 @@ export const CLINICIAN_SESSION_ROUTES: readonly string[] = Object.freeze(['GET m
  * REQ-S5-U1b-CLINICIAN-READ / RISK-S5-U1b-NONFINAL-BODY.
  * D-S5-NONFINAL-VIEW decided 2026-11-02 by the owner on the clinical lead's request:
  * worklist/report reads follow radiologist rules, including W/T/H bodies; P remains restricted
- * to its designated author/reviewer. Clinical writes remain outside this allowlist.
+ * to its designated author/reviewer. The rules are those of a radiologist who did not write the text
+ * (report-visibility.ts): another physician's unsigned Save or Defer stays with its writer.
+ * Clinical writes remain outside this allowlist.
  * Own screen settings are writable. Institution and resource checks still run in the services.
  */
 export const CLINICIAN_BUSINESS_ROUTES: readonly string[] = Object.freeze([

@@ -117,7 +117,7 @@ test('clinician ordinary openings keep the native URL and request count while st
  const plain={...scope(A,[source(A)]),groupId:null,kind:'single',part:null},calls=[],opened=[],note={};
  const popup={location:{replace:url=>opened.push(url)},focus(){}};
  const context={root:{KinExamScope:model,open:url=>{if(url)opened.push(url);return popup;}},KinAuth:{sessionId:()=> 'session'},
-  byUid:new Map([[A,{uid:A}],[P,{uid:P}]]),selected:A,leaving:false,reportSeq:1,viewerSequence:0,
+  byUid:new Map([[A,{uid:A}],[P,{uid:P}]]),selected:A,selectedReportTarget:null,leaving:false,reportSeq:1,viewerSequence:0,
   displayedExam:plain,displayedReport:{uid:A,version:4},STUDY_UID:/^\d+(?:\.\d+)+$/,VIEWER_WINDOW:'viewer',
   $:()=>note,TEXT:{},patientKey:()=> 'patient',describe:e=>e.message,
   request:async path=>{calls.push(path);return context.displayedExam;}};

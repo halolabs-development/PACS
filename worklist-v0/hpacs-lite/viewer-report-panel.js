@@ -38,10 +38,10 @@
     const row = studies.find(study => study && typeof study === 'object' && study.uid === uid);
     return row && row.sourcePatientKey === key && row.state && typeof row.state === 'object' ? row : null;
   }
+  // Times by the one rule of the report screens (report-preview.js: this screen's time zone, YYYY-MM-DD HH:mm); the approval
+  // time is the worklist Confirm cell's (approvalText: the kept approval time, else the stored date of an older approval).
   function clock(at) {
-    const date = new Date(at);
-    if (typeof at !== 'string' || Number.isNaN(date.getTime())) return '';
-    return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0');
+    return typeof at === 'string' ? root.KinReportPaper.paperStamp(at) : '';
   }
   // Which text is shown and what the source line says. Hiding comes first; then Live > My Draft > saved.
   function choose({ uid, row, live }) {
@@ -58,7 +58,7 @@
     }
     if (state.reportReadable === false) return {kind:'hidden',source:'Hidden — 저장 판독의 영상 범위를 볼 수 없습니다',fields:{...EMPTY}};
     if (Number.isInteger(state.version) && state.version > 0) {
-      if (state.rs === 'A') return { kind: 'approved', source: 'Approved — ' + (state.repDoc || '-') + ' · ' + (state.confirm || '-'), fields: pick(state) };
+      if (state.rs === 'A') return { kind: 'approved', source: 'Approved — ' + (state.repDoc || '-') + ' · ' + (root.KinReportPaper.approvalText(state) || '-'), fields: pick(state) };
       return { kind: 'saved', source: 'Saved — v' + state.version, fields: pick(state) };
     }
     return { kind: 'none', source: SOURCES.none, fields: { ...EMPTY } };

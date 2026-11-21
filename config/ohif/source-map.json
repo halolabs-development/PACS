@@ -1121,6 +1121,7 @@
         }
       ],
       "loader_assets": [
+        "/worklist/hpacs-lite/report-preview.js",
         "/worklist/hpacs-lite/viewer-prior-controller.js",
         "/worklist/hpacs-lite/viewer-prior-panel.js"
       ],

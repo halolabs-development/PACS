@@ -51,8 +51,45 @@
     .session-details dt { color: var(--muted); font-size: 12px; }
     .session-details dd { margin: 0 0 6px; overflow-wrap: anywhere; }
     .session-details dd:last-child { margin-bottom: 0; }
-    main { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 18px; padding: 18px 20px; }
-    @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
+    /* B14: the reading window's form without the report editor — Folders | Studies on top, the picked study's boxes in one
+       row underneath (the editor's place holds the read-only Report). DOM order is reading order; only the grid places. */
+    main { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr);
+      grid-template-areas: "critical critical" "folders list" "detail detail"; gap: 12px 14px; padding: 12px 16px; }
+    #critical-results { grid-area: critical; }
+    #folders { grid-area: folders; align-self: start; }
+    #studies-panel { grid-area: list; }
+    #detail { grid-area: detail; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px 14px; align-items: start; }
+    #detail > :is(.panel-head, #detail-empty, #identity, #access-record-note) { grid-column: 1 / -1; }
+    #detail > :is(section, .viewer-slot) { min-width: 0; margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+    #detail > .viewer-slot { align-content: start; }
+    @media (max-width: 1100px) {
+      main { grid-template-columns: minmax(0, 1fr); grid-template-areas: "critical" "folders" "list" "detail"; }
+    }
+    /* Folders: the worklist's folder tree (worklist-folder-tree.js) in this page's sizes. */
+    #folders h2 { margin: 0 0 6px; }
+    .folder-hint { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+    .worklist-folder-tree ul { list-style: none; margin: 0; padding: 0; }
+    .worklist-folder-tree ul ul { padding-inline-start: 10px; }
+    .worklist-folder-tree li { margin-block: 2px; }
+    .worklist-folder-tree li > button { width: 100%; text-align: start; overflow-wrap: anywhere; white-space: normal; }
+    .worklist-folder-tree button[aria-current="true"], .worklist-folder-tree button[aria-pressed="true"] { background: #8ab4c833; border-color: var(--accent); font-weight: 650; }
+    .worklist-folder-tree details { margin-inline-start: 4px; }
+    .worklist-folder-tree label { display: block; font-size: 13px; }
+    .worklist-folder-tree input { font: inherit; max-width: 100%; }
+    .worklist-folder-tree [role="status"] { margin: 4px 0 0; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+    .worklist-folder-tree [role="status"]:empty { display: none; }
+    /* The work mode menu (work-mode.js). */
+    .work-mode { position: relative; }
+    .work-mode-menu { position: fixed; inset: auto; margin: 0; min-width: 220px; max-width: min(28em, calc(100vw - 16px)); padding: 6px;
+      color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; }
+    .work-mode-item { display: block; width: 100%; text-align: start; }
+    .work-mode-item[aria-checked="true"] { border-color: var(--accent); font-weight: 650; }
+    .work-mode-item[aria-checked="true"]::before { content: "✓ "; }
+    .work-mode-item[aria-disabled="true"] { color: var(--muted); cursor: not-allowed; }
+    .work-mode-reason { margin: 2px 4px 8px; color: var(--muted); font-size: 12px; }
+    .work-mode-leave { margin-top: 6px; padding: 8px; border: 1px solid var(--danger-line); border-radius: 6px; background: var(--danger-bg); color: var(--danger-text); }
+    .work-mode-leave p { margin: 0 0 6px; font-size: 13px; }
+    .work-mode-leave button { margin-right: 6px; }
     .panel { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 14px 16px; min-width: 0; }
     .panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .panel-head h2, .panel-head h3 { margin: 0; }
@@ -67,7 +104,7 @@
     .state button { margin-top: 8px; }
     .state[data-state="failed"] { border-color: var(--danger-line); background: var(--danger-bg); color: var(--danger-text); }
     .state[data-state="empty"] { border-style: dashed; }
-    .table-wrap { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--line); border-radius: 8px; }
+    .table-wrap { overflow: auto; max-height: max(220px, 38vh); border: 1px solid var(--line); border-radius: 8px; }
     @media (max-width: 1100px) { .table-wrap { max-height: none; } }
     table { width: 100%; border-collapse: collapse; }
     th, td { border-bottom: 1px solid #b4b4b426; padding: 7px 9px; text-align: left; vertical-align: middle; white-space: nowrap; }
@@ -139,6 +176,7 @@
 <body>
   <header>
     <div class="brand">HALO PACS</div>
+    <div class="work-mode" id="work-mode-host"></div>
     <h1>Clinician Home</h1>
     <div class="spacer"></div>
     <button type="button" class="session-who" id="session-who" popovertarget="session-details" hidden
@@ -175,13 +213,19 @@
       <button type="button" id="critical-results-more" hidden>More</button>
     </section>
 
-    <section class="panel" aria-labelledby="studies-title">
+    <aside class="panel" id="folders" aria-labelledby="folders-title">
+      <h2 id="folders-title">Folders</h2>
+      <p class="folder-hint" id="folders-hint">My Studies는 의뢰의(Requesting Physician)가 로그인한 계정의 이름과 같은 검사입니다. All Studies는 서버가 허용한 모든 검사입니다.</p>
+      <div id="folder-tree"></div>
+    </aside>
+
+    <section class="panel" id="studies-panel" aria-labelledby="studies-title">
       <div class="panel-head">
         <h2 id="studies-title">Studies</h2>
         <div class="spacer"></div>
         <button type="button" id="refresh">Refresh</button>
       </div>
-      <p class="hint">내 기관 검사와 원격판독으로 받은 검사 중 서버가 허용한 검사만 표시합니다. 행을 고르면 확정 판독문과 키 이미지를 먼저 보여 줍니다.</p>
+      <p class="hint">내 기관 검사와 원격판독으로 받은 검사 중 서버가 허용한 검사만 표시합니다. 행을 고르면 서버가 보낸 판독문과 키 이미지를 아래 칸에 보여 줍니다.</p>
       <div class="state" id="list-state" data-state="loading" role="status" aria-live="polite">
         <p class="state-text">검사 목록을 불러오는 중입니다…</p>
         <p class="state-detail"></p>
@@ -208,7 +252,7 @@
         <div class="spacer"></div>
         <button type="button" id="detail-close" aria-controls="detail" hidden>Close</button>
       </div>
-      <p class="muted" id="detail-empty">목록에서 검사를 고르면 확정 판독문과 키 이미지를 먼저 표시합니다.</p>
+      <p class="muted" id="detail-empty">목록에서 검사를 고르면 판독문과 키 이미지를 표시합니다.</p>
       <dl class="identity" id="identity" aria-label="Patient and study identifiers" hidden></dl>
 
       <section id="report" aria-labelledby="report-title" hidden>
@@ -248,6 +292,10 @@
   <script>KinWorkContext.follow(KinAuth);</script>
   <script src="critical-result-inbox.js"></script>
   <script src="clinical-signature.js"></script>
+  <script src="report-preview.js"></script>
+  <script src="physician-name.js"></script>
+  <script src="worklist-folder-tree.js"></script>
+  <script src="work-mode.js"></script>
   <script src="clinician.js"></script>
   <script>KinClinicianHome.boot();</script>
   <script src="product-info-data.js"></script>

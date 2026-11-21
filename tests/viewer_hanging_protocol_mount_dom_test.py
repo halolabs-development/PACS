@@ -88,7 +88,7 @@ class ViewerHangingProtocolMountDOMTest(unittest.TestCase):
         self.me_count = 0; self.change_owner_after = None
         # The institution library is unreachable unless a case publishes one, which is what the
         # other cases already assumed; every attempt is recorded either way.
-        self.site_value = None; self.site_requests = []
+        self.site_value = None; self.site_requests = []; self.studies = STUDIES
         self.page.route('https://mount.test/**', self.route)
         self.page.goto(f'https://mount.test/ohif/viewer?StudyInstanceUIDs={CURRENT},{RELATED}')
         install_viewer_session(self.page)
@@ -116,7 +116,7 @@ class ViewerHangingProtocolMountDOMTest(unittest.TestCase):
                                 'value': self.site_value, 'canManageSite': False, 'updatedAt': None}); return
         if path == '/api/studies':
             if self.delayed_studies is not None: self.delayed_studies.append(route); return
-            route.fulfill(json={'studies': STUDIES}); return
+            route.fulfill(json={'studies': self.studies}); return
         route.abort()
 
     def mount(self):
@@ -216,6 +216,25 @@ class ViewerHangingProtocolMountDOMTest(unittest.TestCase):
         self.assertEqual(1, result['calls'])
         self.assertEqual([['ds-current'], ['ds-related'], [], ['ds-current']], result['cells'])
         self.assertEqual('Personal MR Only', result['personal'], 'the account keeps its own library untouched')
+        self.assertEqual('KEEP REPORT', result['report'])
+
+    def test_a_ct_study_holding_a_presentation_state_and_a_report_still_hangs_by_the_ct_rule(self):
+        # The study list writes Modalities in Study joined by commas: a CT whose GSPS and SR were stored reads "CT,PR,SR".
+        self.studies = [{**STUDIES[0], 'modality': 'CT,PR,SR'}, STUDIES[1]]
+        value = library('Brain CT'); other = library('MR Only')['rules'][0]
+        other['id'] = '22222222-2222-4222-8222-222222222222'; other['match']['modality'] = 'MR'
+        value['rules'].insert(0, other); value['activeRuleId'] = other['id']
+        self.page.evaluate("value=>localStorage.setItem('kin-hanging-protocols:v1:'+JSON.stringify(['hospital','reader']),JSON.stringify(value))", value)
+        # The presentation state is a set of its own, numbered ahead of the images: the selector still picks the CT series.
+        self.page.evaluate("sets.push({...stack('ds-gsps',currentUID,'9.9.2.9','Presentation State'),SeriesNumber:0,Modality:'PR'})")
+        self.mount()
+        self.assertEqual(0, self.page.evaluate('setCalls.length'), 'opening the viewer keeps the layout until a rule is applied')
+        self.page.locator('#kin-hp-apply-first').click()
+        expect(self.page.locator('#kin-hp-applied')).to_contain_text('Brain CT')
+        result = self.page.evaluate("""()=>({calls:setCalls.length,cells:[...viewports.values()].map(v=>v.displaySetInstanceUIDs),
+          report:document.querySelector('#report').value})""")
+        self.assertEqual(1, result['calls'])
+        self.assertEqual([['ds-current'], ['ds-related'], [], ['ds-current']], result['cells'])
         self.assertEqual('KEEP REPORT', result['report'])
 
     def test_actual_mount_opens_plane_cells_of_one_eligible_volume(self):

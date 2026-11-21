@@ -97,6 +97,7 @@ const DEFAULTS = {
   studyState: () => ({ teleInstitutionId: null, rs: 'W', ss: 'Unverified', em: 'N', ts: 'none', matched: 'U', ward: null,
     reqHosp: null, holder: null, heldAt: null, holdReason: null, preDoc: null, preReviewer: null, preDocSub: null,
     preReviewerSub: null, repDoc: null, confirm: null, ov: null, orig: null, orderOid: null, origin: 'device',
+    qcReason: null, qcBy: null, qcAt: null, qcRevision: 0,
     // Referred: a row created without the two fields waits for its first Gateway announce (the database default).
     draftEpoch: randomUUID(), createdAt: new Date(), referredAt: null, referredOpen: true }),
   auditLog: () => ({ detail: null, at: new Date() }),
@@ -717,6 +718,11 @@ test('report state table: a Save of drawings alone belongs to its writer too - l
   assert.deepEqual([other.bodyLock, other.prelimHidden, other.savedBy], ['in-progress', true, RAD_A.actor]);
   const mine = (await w.worklist.bootstrap(RAD_A)).states[s.uid];
   assert.deepEqual([mine.bodyLock, mine.prelimHidden, mine.savedBy], [null, false, RAD_A.actor]);
+  // a clinician as another radiologist: locked, and the detail read carries no saved drawing
+  const clin = (await w.worklist.bootstrap(CLIN_A)).states[s.uid];
+  assert.deepEqual([clin.bodyLock, clin.prelimHidden, clin.savedBy], ['in-progress', true, RAD_A.actor]);
+  const clinRead = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([clinRead.report.rs, clinRead.drawings], ['T', undefined]);
   await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', s.draftEpoch, 0, 1, { findings: 'over it' }), RAD_A2, null), 403, 'REPORT_IN_PROGRESS');
   await refused(() => w.hold.hold(s.uid, RAD_A2), 403, 'REPORT_IN_PROGRESS');
   const reset = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'reset', s.draftEpoch, 0, 1), RAD_A2, null);
@@ -772,22 +778,83 @@ test('report state table: a tele request cancelled while bootstrap reads the hea
   assert.ok(!JSON.stringify(boot).includes('SYN APPROVED TEXT'));
   assert.equal((await w.worklist.bootstrap(RAD_A)).states[s.uid].findings, 'SYN APPROVED TEXT', 'the owner still reads it');
 });
-test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader keeps the 2026-11-02 reads', async () => {
+test('report state table: approved text and a preliminary reading keep their readers; a clinician-only reader reads as a radiologist who did not write the Save', async () => {
   const w = world();
   await w.boot();
   const s = w.study();
   w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
   const epoch = s.draftEpoch;
-  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', epoch, 0, 0, { findings: 'SYN DRAFT' }), RAD_A, null);
-  // the open question of the state table: left as the product has it
-  const clin = (await w.worklist.bootstrap(CLIN_A)).states[s.uid];
-  assert.deepEqual([clin.findings, clin.bodyLock], ['SYN DRAFT', null]);
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', epoch, 0, 0, { findings: 'SYN DRAFT', conclusion: 'SYN DRAFT C' }), RAD_A, null);
+  // A Save is read only by the physician who wrote it: the clinician gets the state and who is on it, never the text -
+  // in the lists, the clinician's own list, timeline and report read, the history, and the head's evidence reads.
+  const leaks = value => JSON.stringify(value).includes('SYN DRAFT');
+  for (const read of [async () => (await w.worklist.bootstrap(CLIN_A)).states[s.uid],
+    async () => (await w.worklist.listStudies(CLIN_A)).studies.find(r => r.uid === s.uid).state]) {
+    const clin = await read();
+    assert.deepEqual([clin.rs, clin.findings, clin.conclusion, clin.bodyLock, clin.prelimHidden, clin.savedBy], ['T', '', '', 'in-progress', true, RAD_A.actor]);
+  }
+  const list = readBody(await w.clinician.clinicianStudies(CLIN_A));
+  assert.deepEqual(list.studies.map(r => [r.uid, r.report.rs, r.report.findings, r.report.conclusion]), [[s.uid, 'T', '', '']]);
+  const timeline = readBody(await w.clinician.clinicianTimeline(s.uid, CLIN_A, { limit: '10' }));
+  assert.ok(!leaks(timeline), 'the timeline carries no saved text');
+  const detail = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([detail.report.rs, detail.report.final, detail.report.findings, detail.report.conclusion], ['T', false, '', '']);
+  assert.ok(!leaks(list) && !leaks(detail));
+  const clinHistory = readBody(await w.evidence.versions(s.uid, CLIN_A));
+  assert.deepEqual(clinHistory.map(v => [v.action, v.author, v.findings, v.bodyHidden]), [['save', RAD_A.actor, '', 'in-progress']]);
+  for (const read of [() => w.evidence.reportCitations(s.uid, CLIN_A), () => w.evidence.reportStructure(s.uid, CLIN_A)])
+    await refused(read, 403, 'REPORT_IN_PROGRESS');
+  // the writer still reads it
+  assert.equal(readBody(await w.evidence.versions(s.uid, RAD_A))[0].findings, 'SYN DRAFT');
   await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 1, 1, { findings: 'SYN FINAL' }), RAD_A, null);
   const other = (await w.worklist.bootstrap(RAD_A2)).states[s.uid];
   assert.deepEqual([other.rs, other.findings, other.bodyLock], ['A', 'SYN FINAL', null]);
   const history = readBody(await w.evidence.versions(s.uid, RAD_A2));
   assert.deepEqual(history.map(v => [v.action, v.findings, v.bodyHidden]), [['approve', 'SYN FINAL', undefined], ['save', '', 'in-progress']]);
-  assert.deepEqual(readBody(await w.evidence.versions(s.uid, CLIN_A)).map(v => v.findings), ['SYN FINAL', 'SYN DRAFT']);
+  // approved text is the clinician's to read, in every read; the earlier Save stays with its writer
+  assert.deepEqual(readBody(await w.evidence.versions(s.uid, CLIN_A)).map(v => [v.findings, v.bodyHidden]), [['SYN FINAL', undefined], ['', 'in-progress']]);
+  assert.deepEqual([(await w.worklist.bootstrap(CLIN_A)).states[s.uid].findings, readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report.findings,
+    readBody(await w.clinician.clinicianStudies(CLIN_A)).studies[0].report.findings], ['SYN FINAL', 'SYN FINAL', 'SYN FINAL']);
+});
+
+test('report state table: approved, Reset and Saved again by another radiologist - a clinician-only reader opens the approved version, never the new Save', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study();
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  const epoch = s.draftEpoch;
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 0, 0, { findings: 'SYN APPROVED' }), RAD_A, null);
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'reset', epoch, 1, 1, { reason: 'SYN reopen' }), RAD_A, null);
+  const again = w.db.rows('studyState').find(r => r.uid === s.uid).draftEpoch;
+  const saved = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', again, 0, 3, { findings: 'SYN SECOND SAVE' }), RAD_A2, null);
+  assert.equal(saved.state.rs, 'T');
+  const leaks = value => JSON.stringify(value).includes('SYN SECOND SAVE');
+  const detail = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A));
+  assert.deepEqual([detail.report.rs, detail.report.findings], ['T', '']);
+  const history = readBody(await w.evidence.versions(s.uid, CLIN_A));
+  assert.deepEqual(history.filter(v => v.action !== 'discarded').map(v => [v.version, v.action, v.findings, v.bodyHidden]),
+    [[4, 'save', '', 'in-progress'], [3, 'reset', '', undefined], [1, 'approve', 'SYN APPROVED', undefined]]);
+  // the version the screen opens from the history: the approved one is read, the new Save is not
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '1')).report.findings, 'SYN APPROVED');
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '4')).report.findings, '');
+  const lists = [(await w.worklist.bootstrap(CLIN_A)).states[s.uid], readBody(await w.clinician.clinicianStudies(CLIN_A)),
+    readBody(await w.clinician.clinicianTimeline(s.uid, CLIN_A, { limit: '10' }))];
+  assert.ok(![detail, history, ...lists].some(leaks), 'no clinician read carries the new Save');
+  // its writer still reads it
+  assert.equal((await w.worklist.bootstrap(RAD_A2)).states[s.uid].findings, 'SYN SECOND SAVE');
+});
+
+test('report state table: a Save inside a signed Preliminary stays shared; a Save or Defer outside one is its writer\'s alone, for a clinician too', () => {
+  // A Save written inside a Preliminary belongs to the preliminary reading; once it is signed it is shared history.
+  const { versionClasses, versionBodyReadable } = require('/app/dist/report-visibility');
+  const rows = [{ version: 1, action: 'preliminary', author: 'w' }, { version: 2, action: 'save', author: 'w', authorSub: 'sub-w' }, { version: 3, action: 'approve', author: 's' }];
+  const classes = versionClasses(rows);
+  assert.equal(versionBodyReadable(rows[1], classes.get(2), CLIN_A), true);
+  // A Save or a Defer outside a Preliminary is its writer's alone, for a clinician as for another radiologist.
+  for (const action of ['save', 'defer']) {
+    const own = [{ version: 1, action, author: 'w', authorSub: 'sub-w' }];
+    assert.deepEqual([CLIN_A, RAD_A2].map(c => versionBodyReadable(own[0], versionClasses(own).get(1), c)), [false, false], action);
+  }
 });
 
 test('report state table: a destroyed report is read-only for everyone and the clinician list names it', async () => {
@@ -836,7 +903,7 @@ test('report state table: version classes - a Save inside a Preliminary stays wi
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('w')), true);
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('w', 'w-renamed@synthetic.test')), true);
   assert.equal(versionBodyReadable(saved, 'unsigned', reader('o', 'w@synthetic.test')), false);
-  assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), true);
+  assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), false, 'a clinician reads as a radiologist who did not write it');
   assert.equal(versionBodyReadable({ action: 'discarded', author: 'x', authorSub: 'sub-x' }, 'private', { actor: 'c', sub: 'sub-c', roles: ['clinician'] }), false);
   assert.equal(versionBodyReadable(saved, 'unsigned', { actor: 'a', sub: 'sub-a', roles: ['admin', 'clinician'] }), false);
   assert.equal(senderReadsHead({ rs: 'T' }, saved, reader('o')), false);
@@ -1469,6 +1536,74 @@ test('SPLIT-16 the clinician list is the worklist narrowed; a report state that 
   await refused(() => w.clinician.clinicianReportRead(foreign.uid, CLIN_A), 404);
 });
 
+test('SPLIT-16b a signer is shown by the member name on the account; the approval that opened the cycle is shown at the time the study keeps', async () => {
+  const w = world();
+  await w.boot();
+  const rights = (c, name) => w.db.seed('memberRights', { sub: c.sub, username: c.actor.split('@')[0], email: c.actor, name,
+    emailVerified: true, approved: true, suspended: false, institution: c.institution, roles: c.roles, version: 1 });
+  rights(RAD_A, 'SYN Kim Reader'); rights(RAD_A2, 'SYN Lee Second');
+  const s = w.study();
+  const epoch = s.draftEpoch;
+  const approved = await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 0, 0, { findings: 'SYN approved' }), RAD_A, null);
+  assert.equal(approved.state.repDoc, 'SYN Kim Reader', 'a new approval writes the member name, not the login');
+  const approvedAt = new Date(w.db.rows('studyState').find(r => r.uid === s.uid).approvedAt).toISOString();
+  const addendum = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', epoch, 0, 1, { findings: 'SYN approved + more' }), RAD_A2, null);
+  assert.equal(addendum.state.repDoc, 'SYN Lee Second');
+  const addendumAt = new Date(w.db.rows('studyState').find(r => r.uid === s.uid).addendumAt).toISOString();
+  // The ledger keeps the login and the account of each version as they were.
+  assert.deepEqual(w.db.rows('reportVersion').filter(v => v.uid === s.uid).map(v => [v.version, v.action, v.author, v.authorSub]),
+    [[1, 'approve', RAD_A.actor, RAD_A.sub], [2, 'addendum', RAD_A2.actor, RAD_A2.sub]]);
+
+  const versions = readBody(await w.evidence.versions(s.uid, RAD_A2));
+  // The current cycle's kept events (the approval, the last addendum) are shown at the times the study keeps for them.
+  assert.deepEqual(versions.map(v => [v.version, v.author, v.authorName, v.keptAt, v.keptOn]),
+    [[2, RAD_A2.actor, 'SYN Lee Second', addendumAt, undefined], [1, RAD_A.actor, 'SYN Kim Reader', approvedAt, undefined]]);
+
+  // The clinician read names the signer and the time of the version it shows; a version opened by number names its own.
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  const head = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report;
+  assert.deepEqual([head.version, head.signedBy, head.keptAt], [2, 'SYN Lee Second', addendumAt]);
+  const first = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '1')).report;
+  assert.deepEqual([first.version, first.signedBy, first.keptAt], [1, 'SYN Kim Reader', approvedAt]);
+
+  // Two amendments: the last one is shown at the study's amendedAt (the editor's "수정됨"), the first at its own time.
+  const fixed = w.study();
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'approve', fixed.draftEpoch, 0, 0, { findings: 'SYN one' }), RAD_A, null);
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'amend', fixed.draftEpoch, 1, 1, { findings: 'SYN two' }), RAD_A, null);
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'amend', fixed.draftEpoch, 2, 2, { findings: 'SYN three' }), RAD_A, null);
+  const kept = w.db.rows('studyState').find(r => r.uid === fixed.uid);
+  const amended = readBody(await w.evidence.versions(fixed.uid, RAD_A)).map(v => [v.version, v.action, v.keptAt]);
+  assert.deepEqual(amended, [[3, 'amend', new Date(kept.amendedAt).toISOString()], [2, 'amend', undefined],
+    [1, 'approve', new Date(kept.approvedAt).toISOString()]]);
+
+  // An approval stored before its time was kept shows its stored date (no time added) while nothing follows it; with an
+  // addendum after it, the stored date belongs to the addendum and each version shows its own time.
+  const legacy = w.study({ rs: 'A', repDoc: 'syn-rad-a', confirm: '2026-11-17' });
+  w.db.seed('report', { uid: legacy.uid, findings: 'SYN old', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor, updatedBySub: RAD_A.sub });
+  w.db.seed('reportVersion', { uid: legacy.uid, version: 1, action: 'approve', findings: 'SYN old', conclusion: '', recommendation: '',
+    author: RAD_A.actor, authorSub: RAD_A.sub, at: new Date('2026-11-17T18:05:00.000Z') });
+  assert.deepEqual(readBody(await w.evidence.versions(legacy.uid, RAD_A)).map(v => [v.version, v.keptAt, v.keptOn]), [[1, undefined, '2026-11-17']]);
+  w.db.seed('reportVersion', { uid: legacy.uid, version: 2, action: 'addendum', findings: 'SYN old + more', conclusion: '', recommendation: '',
+    author: RAD_A.actor, authorSub: RAD_A.sub, at: new Date('2026-11-18T01:00:00.000Z') });
+  assert.deepEqual(readBody(await w.evidence.versions(legacy.uid, RAD_A)).map(v => [v.version, v.keptAt, v.keptOn]),
+    [[2, undefined, undefined], [1, undefined, undefined]]);
+
+  // An account without a member name keeps the login before the @, as before; a repDoc already written is not rewritten.
+  const other = w.study({ institutionId: INST_B });
+  const plain = await w.commit.commitReport(other.uid, commitBody(RAD_B, 'approve', other.draftEpoch, 0, 0, { findings: 'SYN b' }), RAD_B, null);
+  assert.equal(plain.state.repDoc, RAD_B.actor.split('@')[0]);
+  assert.equal(w.db.rows('studyState').find(r => r.uid === s.uid).repDoc, 'SYN Lee Second');
+
+  // A writer the history does not show (a discarded copy of someone's private draft) is not named either.
+  const hidden = w.study();
+  w.db.seed('reportVersion', { uid: hidden.uid, version: 1, action: 'discarded', findings: 'SYN private', conclusion: '', recommendation: '',
+    author: RAD_A2.actor, authorSub: RAD_A2.sub, reason: '관리자 강제 초안 해제' });
+  const [copy] = readBody(await w.evidence.versions(hidden.uid, RAD_A));
+  assert.notEqual(copy.author, RAD_A2.actor);
+  assert.equal(copy.authorName, undefined);
+  assert.equal(readBody(await w.evidence.versions(hidden.uid, RAD_A2))[0].authorName, 'SYN Lee Second');
+});
+
 // ── SPLIT-17 Tech Note attempts (M19, M20) ──
 
 test('SPLIT-17 a Tech Note attempt sent again answers its revision without a second revision or audit row; permission is judged before the attempt id', async () => {
@@ -1835,6 +1970,93 @@ test('SPLIT-27 the report preview of a destroyed report: the study access policy
   };
   assert.deepEqual(await read(false), { status: 404, code: null, policy: 1, orthanc: 0 });
   assert.deepEqual(await read(true), { status: 410, code: 'REPORT_DESTROYED', policy: 1, orthanc: 0 });
+});
+
+
+// ── SPLIT-28 QC Flag: one command on the listed row, its revision and generation, its gates and its audit row ──
+
+test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusals write nothing; the history keeps the row', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study();
+  const row = () => w.db.rows('studyState').find(r => r.uid === s.uid);
+  const cmd = (qc, extra = {}) => ({ qc, qcRevision: row().qcRevision, epoch: row().draftEpoch, ...extra });
+  // mark → change the reason → clear: 0 → 1 → 2 → 3; the server sets who and when
+  const marked = await w.workflow(workflow => w.studyState.patchState(s.uid, cmd({ reason: '  SYN motion on series 2 ' }), TECH_A, workflow));
+  assert.equal(marked.qc.reason, 'SYN motion on series 2');
+  assert.equal(marked.qc.by, TECH_A.actor);
+  assert.equal(marked.qc.revision, 1);
+  assert.ok(!Number.isNaN(Date.parse(marked.qc.at)));
+  const changed = await w.studyState.patchState(s.uid, cmd({ reason: 'SYN repeat requested' }), ADMIN_A);
+  assert.deepEqual([changed.qc.reason, changed.qc.by, changed.qc.revision], ['SYN repeat requested', ADMIN_A.actor, 2]);
+  const cleared = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
+  assert.deepEqual(cleared.qc, { reason: null, by: null, at: null, revision: 3 });
+  assert.deepEqual([row().qcReason, row().qcBy, row().qcAt, row().qcRevision], [null, null, null, 3]);
+  // every change is one state.patch row holding the revision it stored; the other study fields stay as they were
+  assert.deepEqual(w.audits('state.patch').map(a => JSON.parse(a.detail)), [
+    { qc: { reason: 'SYN motion on series 2' }, qcRevision: 1, by: INST_A }, { qc: { reason: 'SYN repeat requested' }, qcRevision: 2, by: INST_A },
+    { qc: null, qcRevision: 3, by: INST_A }]);
+  assert.deepEqual([row().ss, row().rs, row().em, row().matched], ['Verified', 'W', 'N', 'U']);
+  assert.equal(w.writes.length, 1, 'the workflow write recorded one 수정 record');
+  // clearing a row that is not flagged answers it as it is: same revision, nothing written
+  const audits = w.audits().length;
+  const again = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
+  assert.equal(again.qc.revision, 3);
+  assert.equal(w.audits().length, audits);
+
+  // malformed commands: 400 before anything is read or written
+  const before = w.db.writes.length;
+  for (const body of [cmd({ reason: '' }), cmd({ reason: '   ' }), cmd({ reason: 'x'.repeat(501) }), cmd({ reason: 'SYN\u0007bell' }),
+    cmd({ reason: 'SYN first\nsecond line' }), cmd({ reason: 'SYN\ttab' }), cmd({ reason: 'SYN trailing\u000b' }), cmd({ reason: 'SYN\u0085' }),
+    cmd({ reason: 1 }), cmd('SYN'), cmd({ reason: 'SYN', extra: 1 }), cmd({ reason: 'SYN' }, { em: 'E' }),
+    { qc: { reason: 'SYN' } }, cmd({ reason: 'SYN' }, { qcRevision: -1 }), cmd({ reason: 'SYN' }, { epoch: 'not-an-epoch' })])
+    await refused(() => w.studyState.patchState(s.uid, body, TECH_A), 400);
+  assert.deepEqual(w.db.writes.slice(before), []);
+  // 500 characters is accepted
+  const long = await w.studyState.patchState(s.uid, cmd({ reason: 'y'.repeat(500) }), TECH_A);
+  assert.equal(long.qc.reason.length, 500);
+
+  // two screens saw revision 4; one changes the reason, the other's clear is refused and the new reason stays
+  const seen = cmd(null);
+  await w.studyState.patchState(s.uid, cmd({ reason: 'SYN newer reason' }), TECH_A);
+  await refused(() => w.studyState.patchState(s.uid, seen, TECH_A), 409, 'QC_REVISION_CHANGED');
+  assert.equal(row().qcReason, 'SYN newer reason');
+  // a command made for an earlier generation of the row (a forced release, a merge or split since) is refused
+  await refused(() => w.studyState.patchState(s.uid, cmd(null, { epoch: randomUUID() }), TECH_A), 409, 'QC_STUDY_CHANGED');
+  // an audit row that cannot be written takes the change back with it
+  const boom = new Error('audit store down');
+  w.db.faults.push({ model: 'auditLog', op: 'create', client: 'tx', error: boom });
+  await assert.rejects(() => w.studyState.patchState(s.uid, cmd(null), TECH_A), error => error === boom);
+  assert.equal(row().qcReason, 'SYN newer reason');
+
+  // who may: a radiologist alone, the tele receiver's technician and administrator, an undesignated reader of a
+  // preliminary report, and a row this caller cannot see are refused, with nothing written
+  const writes = w.db.writes.length;
+  await refused(() => w.studyState.patchState(s.uid, cmd({ reason: 'SYN' }), RAD_A), 403);
+  const tele = w.study({ teleInstitutionId: INST_B, ts: 'sent' });
+  const teleCmd = { qc: { reason: 'SYN' }, qcRevision: 0, epoch: w.db.rows('studyState').find(r => r.uid === tele.uid).draftEpoch };
+  await refused(() => w.studyState.patchState(tele.uid, teleCmd, TECH_B), 403);
+  await refused(() => w.studyState.patchState(tele.uid, teleCmd, ADMIN_B), 403);
+  const prelim = w.study({ rs: 'P', preDoc: RAD_A.actor, preDocSub: RAD_A.sub, preReviewer: RAD_A2.actor, preReviewerSub: RAD_A2.sub });
+  await refused(() => w.studyState.patchState(prelim.uid, { qc: { reason: 'SYN' }, qcRevision: 0,
+    epoch: w.db.rows('studyState').find(r => r.uid === prelim.uid).draftEpoch }, TECH_A), 403);
+  const other = w.study({ institutionId: INST_B });
+  await refused(() => w.studyState.patchState(other.uid, { qc: { reason: 'SYN' }, qcRevision: 0,
+    epoch: w.db.rows('studyState').find(r => r.uid === other.uid).draftEpoch }, TECH_A), 404);
+  assert.deepEqual(w.db.writes.slice(writes), []);
+
+  // the tele receiver sees the mark and its reason, not who made it
+  await w.studyState.patchState(tele.uid, teleCmd, TECH_A);
+  const view = values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_B, null);
+  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.revision], ['SYN', null, 1]);
+  assert.equal(values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_A, null).qc.by, TECH_A.actor);
+  // a row the server has never marked answers the one shape, revision 0
+  assert.deepEqual(values.toClient(w.db.rows('studyState').find(r => r.uid === other.uid), null, RAD_A, null).qc,
+    { reason: null, by: null, at: null, revision: 0 });
+
+  // a study whose mark was ever set keeps its row (and its revision): deletion is refused, cleared or not
+  await refused(() => w.studyState.removeState(s.uid, TECH_A), 409, 'STUDY_HAS_QC_HISTORY');
+  assert.ok(row());
 });
 
 // ── owner keys: what is a person's own follows the account id (sub), never the email string ──

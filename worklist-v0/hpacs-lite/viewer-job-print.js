@@ -216,6 +216,10 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
   const refresh = el('button', '다시 확인', dialog), printButton = el('button', '인쇄 / PDF', dialog), closeButton = el('button', '닫기', dialog);
   reportSource.style.cssText='max-width:65%;padding:5px;margin-right:8px;color:#111;background:white';
   for(const button of [refresh,printButton,closeButton])button.style.cssText='padding:5px 10px;margin-right:8px;color:white;background:#263c57;border:1px solid #6884a6;border-radius:3px';
+  // The stock viewer's base rules make a field inherit the dialog's light text and keep the browser's white field,
+  // so every output adjustment field sets its own field and text together (one rule for all of them).
+  el('style', '#kin-job-print fieldset :is(input,select),#kin-job-print fieldset option{color:var(--kin-ux-text,#E3E3E3);background:var(--kin-panel,#2D2D2D);border:1px solid var(--kin-ux-secondary,#B4B4B4);border-radius:3px}' +
+    '#kin-job-print fieldset :is(input,select):disabled{color:var(--kin-ux-secondary,#B4B4B4);border-style:dashed;opacity:1}', dialog);
   const controls = el('fieldset', undefined, dialog); controls.style.cssText = 'margin-top:10px;display:flex;gap:8px;flex-wrap:wrap';
   el('legend', '출력용 영상 조절 · 현재 판독 화면과 저장 작업은 바뀌지 않습니다', controls);
   const selection = el('select', undefined, controls); selection.setAttribute('aria-label', '출력 조절 대상');

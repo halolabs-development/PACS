@@ -42,6 +42,7 @@ HOST_PATH = Path(os.environ.get("KIN_DICTATION_HOST_JS", LITE / "dictation.js"))
 MAIN = read_page_source(MAIN_PATH)
 ASSETS = {
     "report-citation.js": (LITE / "report-citation.js").read_text(encoding="utf-8"),
+    "report-preview.js": (LITE / "report-preview.js").read_text(encoding="utf-8"),
     "report-structure.js": (LITE / "report-structure.js").read_text(encoding="utf-8"),
     "dictation-session.js": (LITE / "dictation-session.js").read_text(encoding="utf-8"),
     "dictation-capture.js": (LITE / "dictation-capture.js").read_text(encoding="utf-8"),
@@ -200,6 +201,7 @@ PANEHTML
 CITEHTML
 STRUCTHTML
 <script src="report-citation.js"></script>
+<script src="report-preview.js"></script>
 <script>
 /* Stand-ins: media devices and nothing else of the browser. Installed before the product loads. */
 window.media = { mode: "grant", gumCalls: 0, contexts: [], tracks: [], commands: [], modules: [], grant: null };

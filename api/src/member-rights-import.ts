@@ -161,6 +161,42 @@ export function sendRecordedRoster(prisma: PrismaService, keycloak: KeycloakServ
   return sendMemberRoster(prisma, keycloak, change);
 }
 
+/** Under the member's lock: older unconfirmed intents superseded, and the latest generation's intent claimed for
+ * sending (a fresh one after a late older completion), or none when the latest is already done. */
+async function claimLatestRoster(prisma: PrismaService, sub: string) {
+  return prisma.$transaction(async tx => {
+    await lockMemberRights(tx, sub);
+    const records = await tx.providerChange.findMany({ where: { kind: 'credentials', sub, target: sub }, orderBy: { id: 'desc' } });
+    const latest = records[0];
+    if (!latest) return { send: null, latest: null, superseded: 0, overlap: false };
+    // An older failed publication must never overwrite an already confirmed newer generation.
+    const older = records.slice(1).filter(row => ['unknown', 'void'].includes(row.state) && row.outcome !== 'superseded');
+    const settled = await tx.providerChange.updateMany({ where: { id: { in: older.map(row => row.id) },
+      state: { in: ['unknown', 'void'] } }, data: { state: 'void', outcome: 'superseded', settledAt: new Date() } });
+    const overlap = rosterOverlap(records);
+    // A fresh intent preserves history and places the repair after every known late completion.
+    const send = overlap ? await tx.providerChange.create({ data: {
+      kind: 'credentials', target: sub, sub, generation: latest.generation,
+      state: 'unknown', createdAt: new Date(),
+    } }) : ['unknown', 'void'].includes(latest.state) ? latest : null;
+    if (send) await tx.providerChange.update({ where: { id: send.id }, data: { state: 'unknown', outcome: null, settledAt: null } });
+    return { send, latest, superseded: settled.count, overlap };
+  });
+}
+
+/**
+ * One member's latest roster, as --retry-roster does it for every member (operator replacement run again over its own
+ * saved result). `generation` is the member's current version: only that generation is confirmed or sent — 'done'
+ * when it is already confirmed or this send confirms it, else the send's answer ('unknown' when the latest recorded
+ * generation is another one).
+ */
+export async function recoverMemberRoster(prisma: PrismaService, keycloak: KeycloakService, sub: string, generation: number) {
+  const claimed = await claimLatestRoster(prisma, sub);
+  if (!claimed.latest || claimed.latest.generation !== generation) return 'unknown';
+  if (!claimed.send) return claimed.latest.state === 'done' ? 'done' : 'unknown';
+  return sendMemberRoster(prisma, keycloak, claimed.send);
+}
+
 /** Explicit CLI only: no lifecycle hook or login path calls this recovery. */
 export async function retryMemberRoster(prisma: PrismaService, keycloak: KeycloakService) {
   const changes = await prisma.providerChange.findMany({ where: { kind: 'credentials' }, orderBy: { id: 'asc' } });
@@ -171,25 +207,7 @@ export async function retryMemberRoster(prisma: PrismaService, keycloak: Keycloa
     if (change.target !== 'legacy-enable:' + change.sub && change.sub) {
       if (members.has(change.sub)) continue;
       members.add(change.sub);
-      const claimed = await prisma.$transaction(async tx => {
-        await lockMemberRights(tx, change.sub!);
-        const records = await tx.providerChange.findMany({ where: { kind: 'credentials', sub: change.sub,
-          target: change.sub! }, orderBy: { id: 'desc' } });
-        const latest = records[0];
-        if (!latest) return { send: null, superseded: 0, overlap: false };
-        // An older failed publication must never overwrite an already confirmed newer generation.
-        const older = records.slice(1).filter(row => ['unknown', 'void'].includes(row.state) && row.outcome !== 'superseded');
-        const settled = await tx.providerChange.updateMany({ where: { id: { in: older.map(row => row.id) },
-          state: { in: ['unknown', 'void'] } }, data: { state: 'void', outcome: 'superseded', settledAt: new Date() } });
-        const overlap = rosterOverlap(records);
-        // A fresh intent preserves history and places the repair after every known late completion.
-        const send = overlap ? await tx.providerChange.create({ data: {
-          kind: 'credentials', target: change.sub!, sub: change.sub, generation: latest.generation,
-          state: 'unknown', createdAt: new Date(),
-        } }) : ['unknown', 'void'].includes(latest.state) ? latest : null;
-        if (send) await tx.providerChange.update({ where: { id: send.id }, data: { state: 'unknown', outcome: null, settledAt: null } });
-        return { send, superseded: settled.count, overlap };
-      });
+      const claimed = await claimLatestRoster(prisma, change.sub);
       superseded += claimed.superseded;
       if (claimed.overlap) overlaps++;
       if (claimed.send) outcomes.push(await sendMemberRoster(prisma, keycloak, claimed.send));

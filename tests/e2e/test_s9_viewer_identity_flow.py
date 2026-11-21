@@ -11,6 +11,13 @@ from test_prior_selection import canvas_ready
 import admin_otp
 
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies (Requesting Physician = the account's name). These synthetic studies name no
+    requesting physician, so the case reads All Studies."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)", timeout=30000)
+    page.locator('#folder-tree button', has_text='All Studies').first.click()
+
+
 class S9ViewerIdentityFlowE2E(ServedViewerFlow, ViewerUXPriorsE2E):
     def test_identity_flow_01_same_name_dates_and_dynamic_comparison(self):
         patient = 'U7I-' + uuid.uuid4().hex[:12]
@@ -90,6 +97,7 @@ class S9ViewerIdentityFlowE2E(ServedViewerFlow, ViewerUXPriorsE2E):
         home.locator('#kc-login').click()
         admin_otp.answer_page(home, self.stack.username(actor))
         home.wait_for_url('**/worklist/hpacs-lite/clinician.html')
+        all_studies(home)
         home.locator('#studies tr[data-uid="' + current.uid + '"]').click()
         with context.expect_page() as opened: home.locator('#open-viewer').click()
         page = opened.value

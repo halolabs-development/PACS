@@ -29,9 +29,39 @@ export function rightsAccessEvent(facts: RightsRequestFacts, affected: Immutable
 }
 
 // The same member lock serializes commands, session admission, and proof/refresh writes.
+const memberLockKey = (sub: string) => createHash('sha256').update(`${process.env.KC_ISSUER}\n${sub}`).digest().readInt32BE(0);
+
 export async function lockMemberRights(tx: any, sub: string): Promise<void> {
-  const key = createHash('sha256').update(`${process.env.KC_ISSUER}\n${sub}`).digest().readInt32BE(0);
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e4d}::int4, ${key}::int4)`;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e4d}::int4, ${memberLockKey(sub)}::int4)`;
+}
+
+/** Several members in one transaction: always in the order of their lock keys, so two such transactions never wait on
+ * each other in a cycle. */
+export async function lockMembersInOrder(tx: any, subs: readonly string[]): Promise<void> {
+  const ordered = [...new Set(subs)].sort((a, b) => memberLockKey(a) - memberLockKey(b) || (a < b ? -1 : a > b ? 1 : 0));
+  for (const sub of ordered) await lockMemberRights(tx, sub);
+}
+
+/** An institution's administrators change only under its lock, taken before any member lock: the screen's member
+ * changes, the first-administrator command and the administrator replacement all take it, so "who administers X" is
+ * decided by one writer at a time. */
+export async function lockInstitution(tx: any, institution: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e46}::int4, hashtext(${institution})::int4)`;
+}
+
+/**
+ * The one place a report screen's signer name comes from: the member's name on the account row (the identity provider's
+ * family and given name, or the username when it has none), by account id. It is shown only - the stored login, the account
+ * id, the audit and the signed content stay as they are. An account without a row or with a blank name is left out, and the
+ * caller keeps what it showed before.
+ */
+export async function memberNames(db: any, subs: readonly (string | null | undefined)[]): Promise<Map<string, string>> {
+  const wanted = [...new Set(subs.filter((sub): sub is string => typeof sub === 'string' && sub.length > 0))];
+  if (!wanted.length) return new Map();
+  const rows: { sub: string; name: unknown }[] = await db.memberRights.findMany({ where: { sub: { in: wanted } },
+    select: { sub: true, name: true } });
+  return new Map(rows.filter(row => typeof row.name === 'string' && row.name.trim())
+    .map(row => [row.sub, (row.name as string).trim()] as [string, string]));
 }
 
 export function rightsAllow(row: any): boolean {

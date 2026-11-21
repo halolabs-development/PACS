@@ -452,11 +452,19 @@ mainTest('A-HTTP-OBSERVE: the new request takes the existing report-history acce
   assert.equal(clinicianPreliminary.status, preliminary.status, clinicianPreliminary.text);
   assert.deepEqual(clinicianPreliminary.body, preliminary.body);
   assert.equal(await allShown(), before);
-  // An own-institution non-final history row is readable and its own provision can be reported as displayed.
-  const own = await study({ rs: 'T' });
-  await version(own, 1, { action: 'save' });
-  const [ownRow] = await history(own, { member: members.clinician });
-  assert.equal(ownRow.findings, 'SYN findings 1');
+  // An own-institution non-final history row: another physician's Save outside a Preliminary is its writer's alone (the
+  // report state table), so the clinician gets the row without its text; a Save written inside a Preliminary that was then
+  // signed is shared history - readable, and its own provision can be reported as displayed.
+  const saved = await study({ rs: 'T' });
+  await version(saved, 1, { action: 'save' });
+  const [savedRow] = await history(saved, { member: members.clinician });
+  assert.deepEqual([savedRow.action, savedRow.findings, savedRow.bodyHidden], ['save', '', 'in-progress']);
+  const own = await study();
+  await version(own, 1, { action: 'preliminary' });
+  await version(own, 2, { action: 'save' });
+  await version(own, 3);
+  const ownRow = (await history(own, { member: members.clinician })).find(row => row.action === 'save');
+  assert.equal(ownRow.findings, 'SYN findings 2');
   const source = await prepared(ownRow.accessRef);
   const sent = report(ownRow.accessRef);
   const accepted = await observe(own, sent, { member: members.clinician }).done;

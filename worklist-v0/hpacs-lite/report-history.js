@@ -139,8 +139,8 @@
             <div class="vh">
               <b>v${v.version}</b>
               <span class="tag ${esc(v.action)}" title="${esc(HINT[v.action] ?? "")}">${esc(LABEL[v.action] ?? v.action)}</span>
-              <span translate="no">${esc(displayActor(v.author))}</span>
-              <span style="color:#b4b4b4">${esc(String(v.at).replace("T", " ").slice(0, 19))}</span>
+              <span translate="no">${esc(signerName(v))}</span>
+              <span style="color:#b4b4b4">${esc(KinReportPaper.versionStamp(v))}</span>
             </div>
 ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</span></div>` : ""}
             ${v.group ? `<div class="vr" data-exam-group="${esc(v.group.id)}"><b>Exam scope</b> — <span data-exam-scope-text></span></div>` : ""}
