@@ -49,7 +49,7 @@ function uniqueStrings(value: unknown, allowEmpty = false): string[] {
 function digest(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
-const KST_OFFSET_MS = 9 * 3_600_000;
+export const KST_OFFSET_MS = 9 * 3_600_000;
 function seoulDay(at: string): string { return new Date(Date.parse(at) + KST_OFFSET_MS).toISOString().slice(0, 10); }
 function seoulMonth(at: string): string { return seoulDay(at).slice(0, 7); }
 function monthKey(value: unknown): string {

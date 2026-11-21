@@ -9,6 +9,8 @@ const { generateServerKeyPair, signServerPayload } = require('../../../api/src/e
 const { planClinicalWrite } = require('../../../api/src/emr-clinical/records.ts');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const UID = '2.25.7001';
+/** The account the synthetic doctor writes with (ReportVersion.authorSub); the browser fixture gives it a member name. */
+const ACCOUNT = 'synthetic-doctor-account', DOCTOR_NAME = '김합성';
 const ACTIONS = { approve: 'approve-sign', amend: 'amend', addendum: 'addendum', reset: 'cancel' };
 
 function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
@@ -17,6 +19,14 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
   const doctor = { identity: actor, identityRegistrationId: 'SYN-DOCTOR', institutionId: 'SYN-SITE', canSign: true };
   const registration = { kid, publicKey: key.publicKey, doctor, registeredAt: '2026-01-01T00:00:00.000Z', status: 'active', endedAt: null };
   const rows = [], reports = new Map(), signed = new Map(), clinical = new Map();
+  /** The member name each row was written under (ReportVersion.authorName), by row id: report-commit.ts keeps memberNames
+   * of the writer's account when the version is written, or the login before the @ for an account without a name. Kept
+   * beside the row like authorSub; signing and copies strip it (signedReportRow). Clear it for versions written before. */
+  const writerNames = new Map();
+  const writerName = () => {
+    const name = f.members.find(m => m.sub === ACCOUNT)?.name;
+    return typeof name === 'string' && name.trim() ? name.trim() : 'synthetic-doctor';
+  };
   let id = 0, clock = Date.parse('2026-10-01T00:00:00.000Z');
   const row = (uid, version, action, text, reason = null) => ({ id: ++id, uid, version, action, findings: text, conclusion: text ? '합성 결론' : '',
     recommendation: '', reason, author: 'synthetic-doctor@example.test', citations: [], structured: null, at: new Date(clock += 1000) });
@@ -41,7 +51,7 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
     }
     const saved = row(uid, version, action, action === 'reset' ? '' : text, reason);
     if (action === 'reset') saved.conclusion = '';
-    rows.push(saved); reports.set(uid, { version });
+    rows.push(saved); reports.set(uid, { version }); writerNames.set(saved.id, writerName());
     const signature = ['approve', 'amend', 'addendum'].includes(action) || (action === 'reset' && cur) ? sign(saved, head) : null;
     return { row: saved, signature };
   }
@@ -73,7 +83,9 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
   }
   f.tx.reportVersion = { findMany: async ({ where, orderBy }) => {
     if (orderBy?.version !== 'asc') throw Error('Unexpected synthetic ReportVersion order');
-    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, at: new Date(r.at) }));
+    // A stored row carries its author's account (authorSub, report-commit.ts c.sub); signing and copies strip it (signedReportRow).
+    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, authorSub: r.authorSub ?? ACCOUNT,
+      authorName: writerNames.get(r.id) ?? null, at: new Date(r.at) }));
   } };
   f.tx.report = { findUnique: async ({ where }) => reports.has(where.uid) ? { ...reports.get(where.uid) } : null };
   f.tx.$queryRaw = async (parts, ...values) => {
@@ -82,7 +94,7 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
     if (sql.includes('FROM emr_clinical.online_version') && clinical.has(values[0])) return clinical.get(values[0]);
     return baseQuery(parts, ...values);
   };
-  return { ...f, rows, reports, signed, clinical, commit, discard, techNote, legacyIssuances, sign, registration };
+  return { ...f, rows, reports, signed, clinical, writerNames, commit, discard, techNote, legacyIssuances, sign, registration };
 }
 function copyIntake(id, scope, format = 'signed-electronic') {
   const at = new Date(Date.now() - 1000).toISOString();
@@ -96,13 +108,13 @@ function copyIntake(id, scope, format = 'signed-electronic') {
 function rightsIntake(requestId, recordIds, kind = 'correction') {
   return { requestId, kind, receivedAt: '2026-10-01T00:00:00.000Z', patient, recordIds, statement: '합성 정정 요구' };
 }
-module.exports = { fixture, copyIntake, rightsIntake, UID, digest, patient, actor, F };
+module.exports = { fixture, copyIntake, rightsIntake, UID, ACCOUNT, DOCTOR_NAME, digest, patient, actor, F };
 if (require.main === module) {
   // One Study UID holding a Tech Note and a saved-then-approved native report, for the browser tests. `reportOnly`
   // starts without the Tech Note, `saved` sets the saved version's findings; `techNote` adds it later and `legacy` gives the stored issuances their pre-recordKind
   // shape, so a request received unselected, or prepared before F, becomes ambiguous.
   const { EmrAuditController } = require('./inspection_harness.cjs');
-  const seeded = (reportOnly = false, saved = '저장 소견') => { const f = fixture(); if (!reportOnly) f.techNote(UID); f.commit(UID, 'save', saved); f.commit(UID, 'approve', '확정 소견'); return f; };
+  const seeded = (reportOnly = false, saved = '저장 소견') => { const f = fixture(); f.members.push({ sub: ACCOUNT, name: DOCTOR_NAME }); if (!reportOnly) f.techNote(UID); f.commit(UID, 'save', saved); f.commit(UID, 'approve', '확정 소견'); return f; };
   let f = seeded();
   const Filter = Reflect.getMetadata('__exceptionFilters__', EmrAuditController)[0];
   require('node:readline').createInterface({ input: process.stdin }).on('line', async line => {
