@@ -602,7 +602,12 @@ class Pure(unittest.TestCase):
         self.assertEqual(job['snapshot']['cells'][0]['sop'],UID+'.2')
         self.assertEqual(job['studies'],[UID]);self.assertTrue(job['hidden'])
         self.assertEqual([(r['jobId'],r['revision'],r['hidden']) for r in rows['ViewerJobRevision']],[(job['id'],1,False),(job['id'],2,True)])
-        basis,agreement,request=[rows[name][0] for name in ('TransferBasis','ProcessingAgreement','Transfer')]
+        agreement,request=[rows[name][0] for name in ('ProcessingAgreement','Transfer')]
+        [basis]=[r for r in rows['TransferBasis'] if r['studyUid'] is not None]
+        [consent]=[r for r in rows['TransferBasis'] if r['studyUid'] is None]
+        self.assertEqual((consent['patientId'],consent['purpose'],consent['kind'],consent['institutionId']),
+                         ('SYNTHETIC-patient','SYNTHETIC consent purpose','PATIENT_CONSENT','SYNTHETIC-hospital'))
+        self.assertIsNone(basis['patientId']);self.assertIsNone(basis['purpose'])
         self.assertEqual(request['basisId'],basis['id']);self.assertEqual(request['agreementId'],agreement['id'])
         self.assertEqual(request['studyUid'],UID);self.assertEqual(request['status'],'OPEN')
         self.assertEqual(request['fromInstitutionId'],basis['institutionId'])

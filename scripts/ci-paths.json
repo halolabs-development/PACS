@@ -1456,6 +1456,7 @@
       "tests/admin_audit_attribution_test.cjs",
       "tests/admin_member_policy_test.cjs",
       "tests/admin_member_scope_test.cjs",
+      "tests/patient_consent_service_test.cjs",
       "tests/auth_logout_dom_test.py",
       "tests/candidate_ci.py",
       "tests/ci_artifacts.py",

@@ -35,6 +35,9 @@ function page(query: any, outgoing = false) {
   if (query.limit !== undefined && (typeof query.limit !== 'string' || !/^[1-9][0-9]?$|^100$/.test(query.limit))) bad();
   return { take: query.limit === undefined ? 50 : Number(query.limit), cursor: query.cursor === undefined ? undefined : uuid(query.cursor) };
 }
+// The study transfer basis answers keep their own fields; a patient consent's columns are not part of them.
+const BASIS = { id: true, studyUid: true, institutionId: true, kind: true, reference: true, obtainedAt: true, expiresAt: true,
+  recordedBy: true, recordedAt: true, revokedBy: true, revokedAt: true, revokeReason: true } as const;
 function paged(rows: any[], take: number) { return { items: rows.slice(0, take), nextCursor: rows.length > take ? rows[take - 1].id : null }; }
 
 @Injectable()
@@ -90,7 +93,7 @@ export class ConnectService {
     member(c, 'admin'); uid(studyUid); const p = page(query);
     return this.transaction(c, async tx => {
       await this.owner(tx, studyUid, c, false);
-      return paged(await tx.transferBasis.findMany({ where: { studyUid, institutionId: c.institution, id: p.cursor ? { gt: p.cursor } : undefined }, orderBy: { id: 'asc' }, take: p.take + 1 }), p.take);
+      return paged(await tx.transferBasis.findMany({ where: { studyUid, institutionId: c.institution, id: p.cursor ? { gt: p.cursor } : undefined }, orderBy: { id: 'asc' }, take: p.take + 1, select: BASIS }), p.take);
     }, false);
   }
   async recordBasis(studyUid: string, body: any, c: Caller) { await this.studyAccess.prepare(c,[studyUid]);
@@ -99,7 +102,7 @@ export class ConnectService {
     const reference = text(body.reference), p = period(body.obtainedAt, body.expiresAt); if (p.from.getTime() > Date.now()) bad();
     return this.transaction(c, async tx => {
       await this.owner(tx, studyUid, c); const at = new Date();
-      const row = await tx.transferBasis.create({ data: { id: randomUUID(), studyUid, institutionId: c.institution, kind: body.kind, reference, obtainedAt: p.from, expiresAt: p.to, recordedBy: c.actor, recordedAt: at } });
+      const row = await tx.transferBasis.create({ data: { id: randomUUID(), studyUid, institutionId: c.institution, kind: body.kind, reference, obtainedAt: p.from, expiresAt: p.to, recordedBy: c.actor, recordedAt: at }, select: BASIS });
       await this.audit(tx, c, 'basis.record', studyUid, { basisId: row.id, kind: row.kind }, at); return row;
     });
   }
@@ -110,7 +113,7 @@ export class ConnectService {
       const before = await tx.transferBasis.findUnique({ where: { id } });
       if (!before || before.studyUid !== studyUid || before.institutionId !== c.institution) missing();
       if (before.revokedAt) conflict('BASIS_ALREADY_REVOKED'); const at = new Date();
-      const row = await tx.transferBasis.update({ where: { id }, data: { revokedAt: at, revokedBy: c.actor, revokeReason: reason } });
+      const row = await tx.transferBasis.update({ where: { id }, data: { revokedAt: at, revokedBy: c.actor, revokeReason: reason }, select: BASIS });
       await this.revokeLinked(tx, c, Prisma.sql`t."basisId"=${id}::uuid`, reason, at);
       await this.audit(tx, c, 'basis.revoke', studyUid, { basisId: id, before: 'active', after: 'revoked' }, at); return row;
     });

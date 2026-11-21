@@ -191,6 +191,7 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/dicom-peers-admin.js",
     "worklist-v0/hpacs-lite/gateway-rules-admin.js",
     "worklist-v0/hpacs-lite/gateway-support-admin.js",
+    "worklist-v0/hpacs-lite/patient-consent-admin.js",
     "worklist-v0/hpacs-lite/clinician.html",
     "worklist-v0/hpacs-lite/clinician.js",
     # CD-01: the shared Product Information panel of main, admin and Clinician Home.
