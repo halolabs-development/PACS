@@ -700,7 +700,9 @@ class ImageReportPage(unittest.TestCase):
         self.settle(300)
         newer = {"version": 2, "updatedBy": "syn-other", "findings": "SYN newer approved text", "conclusion": "", "recommendation": ""}
         self.site.commit_answers = [(409, {"code": "REPORT_DRAFT_STALE", "message": "SYN stale draft", "head": newer, "draftBaseVersion": 1})]
-        self.page.evaluate("() => { commitReport('addendum'); }")
+        # The approver's amendment (Approve on an approved report): an Addendum never removes an approved drawing, so the
+        # draft that only removes one is re-based on the amendment's way, which takes the draft as it is.
+        self.page.evaluate("() => { commitReport('approve'); }")
         expect(self.page.locator("#stalemodal")).to_have_class(re.compile(r"\bshow\b"))
         puts = len(self.site.flow_puts)
         self.page.locator("#stale-rebase").click()

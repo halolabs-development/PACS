@@ -403,11 +403,14 @@ class ClinicalContextLive(unittest.TestCase):
         body = self.context(anchor.uid, "doctor2").body
         self.assertEqual(self.section_uids(body, "priorReports"), [signed.uid])
         self.assertEqual(body["sections"]["priorReports"]["items"][0]["report"]["findings"], "CCTX-APPROVED-" + signed.secret)
-        version = self.commit(signed, "doctor2", "addendum", version, findings="CCTX-ADDENDUM-" + signed.secret)
+        # An Addendum adds to the approved text (it is written after it).
+        added = "CCTX-APPROVED-" + signed.secret + "\nCCTX-ADDENDUM-" + signed.secret
+        version = self.commit(signed, "doctor2", "addendum", version, findings=added)
         body = self.context(anchor.uid, "doctor2").body
-        report = body["sections"]["priorReports"]["items"][0]["report"]
-        self.assertEqual((report["version"], report["action"], report["findings"]), (version, "addendum", "CCTX-ADDENDUM-" + signed.secret))
-        self.assertNotIn("CCTX-APPROVED-", json.dumps(body, ensure_ascii=False), "the earlier approve row is not the head")
+        items = body["sections"]["priorReports"]["items"]
+        report = items[0]["report"]
+        self.assertEqual((report["version"], report["action"], report["findings"]), (version, "addendum", added))
+        self.assertEqual(len(items), 1, "the earlier approve row is not the head")
         self.commit(signed, "doctor", "reset", version, reason="SYN reset")
         body = self.context(anchor.uid, "doctor2").body
         self.assertEqual(body["sections"]["priorReports"]["state"], "absent", "a reset head is not signed")
