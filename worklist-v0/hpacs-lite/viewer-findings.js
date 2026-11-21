@@ -415,7 +415,7 @@ window.kinViewerFindings = function (services, model) {
      * the press checks the same again (newDraftFrom), so no draft is made with another mark or revision than the one picked. */
     const fromMark = document.createElement('span'); fromMark.dataset.kinFromMark = '';
     const markChoice = document.createElement('select'); markChoice.setAttribute('aria-label', 'From Saved Mark');
-    markChoice.style.cssText = 'margin:3px;max-width:100%;background:#0c1423;color:#fff;border:1px solid #657c9f';
+    markChoice.style.cssText = 'margin:3px;max-width:100%;background:var(--kin-panel);color:var(--kin-ux-text);border:1px solid var(--kin-ux-secondary)';
     const markNote = document.createElement('span'); markNote.setAttribute('aria-live', 'polite');
     fromMark.append(markChoice);
     // The mark and the revision the reader picked, as shown when they picked it.

@@ -620,11 +620,11 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         composed = self.compose(p, '특성 소견', '본문', 'Link Length', characteristics=traits)
         field = composed.get_by_label('Finding Characteristics', exact=True)
         help_id = field.get_attribute('aria-describedby')
-        expect(p.locator('#'+help_id)).to_have_text('사용자가 직접 입력하는 병변 특성입니다. 정해진 용어나 항목은 없으며 판독문에 자동 반영하지 않습니다.')
+        expect(p.locator('#'+help_id)).to_have_text('사용자가 직접 입력하는 병변 특성입니다. Pick Characteristics의 항목을 누르면 칸 끝에 이어 붙고, 붙인 글도 고칠 수 있습니다. 판독문에는 Insert into Report로 넣을 때만 들어갑니다.')
         self.assertEqual(field.get_attribute('maxlength'), '1000')
         composed.get_by_role('button', name='Save', exact=True).click(); expect(composed).to_contain_text('저장 완료')
         saved = self.findings(f)[0]
-        # The viewer writes version 3 (the lesion location is empty until written).
+        # The viewer writes version 4 (the lesion location and size are empty until written).
         self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation'], saved['item']['size']), (4, traits, '', ''))
         stored = base.psql(f'''SELECT snapshot->>'characteristics' FROM "FindingRevision" WHERE "findingId"={literal(saved['id'])}::uuid''')
         self.assertEqual(stored, [traits])
@@ -660,7 +660,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         saved_row.get_by_role('button', name='History', exact=True).click()
         expect(saved_row).to_contain_text('r1 · 생성 · ')
         expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('Characteristics (병변 특성): '+traits)
-        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v3')
+        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v4')
         # An API answer without the schema header: saved records stay visible, nothing can be written.
         def older(route):
             response = route.fetch()

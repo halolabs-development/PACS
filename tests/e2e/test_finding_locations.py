@@ -162,7 +162,7 @@ class FindingLocationsE2E(VolumeMarksE2E):
         [finding] = self.api_findings(a)
         source = finding['item']['sources'][0]
         frame = v.evaluate(ACTIVE_VOLUME)['frame']
-        # The viewer writes version 3 (the lesion location is empty until written).
+        # The viewer writes version 4 (the lesion location and size are empty until written).
         self.assertEqual((finding['item']['schemaVersion'], finding['item']['characteristics'], finding['item']['lesionLocation'], finding['item']['size']), (4, traits, '', ''))
         self.assertEqual({k: source[k] for k in ('kind', 'jobId', 'revision', 'jobStudyUid', 'studyUid', 'studies', 'snapshotVersion')},
                          dict(kind='job', jobId=job['id'], revision=1, jobStudyUid=a.uid, studyUid=b.uid, studies=[a.uid, b.uid], snapshotVersion=6))
