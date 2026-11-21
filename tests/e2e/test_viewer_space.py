@@ -41,6 +41,56 @@ BAND_OUTLINE = '''() => { const band = document.querySelector('[data-kin-studies
       Math.round(r.width), Math.round(r.height), s.display, s.flexDirection, s.overflowX + '/' + s.overflowY]);
     for (const child of [...node.children].slice(0, node.matches('svg, svg *') ? 0 : 5)) walk(child, depth + 1); };
   walk(band, 0); return out; }'''
+# The viewer chrome as drawn: colours outside the five (any alpha; near-black shadows are neutral), text under 4.5:1 on
+# its composited background (disabled controls aside), the image text's colours, and the Report Editor fields. A colour
+# the page sets on the element itself (the reader's image-text colour, a cell border) is listed apart, not judged.
+VIEWER_THEME = r'''() => {
+  const palette = ['33,33,33', '45,45,45', '227,227,227', '180,180,180', '138,180,200'];
+  const parse = s => [...String(s).matchAll(/rgba?\(([^)]+)\)/g)].map(m => { const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; });
+  const key = c => c.slice(0, 3).join(',');
+  const off = (s, neutralBlack) => parse(s).filter(c => c[3] !== 0 && !palette.includes(key(c)) && !(neutralBlack && c.slice(0, 3).every(n => n <= 24)));
+  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const mix = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const bgOf = el => { const layers = []; for (let n = el; n && n.nodeType === 1; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor)[0];
+      if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; } }
+    let base = parse(getComputedStyle(document.body).backgroundColor)[0] || [0, 0, 0, 1]; if (base[3] < 1) base = mix(base, [0, 0, 0, 1]);
+    for (const c of layers.reverse()) base = mix(c, base); return base; };
+  const shown = e => { const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+    return r.width >= 1 && r.height >= 1 && cs.visibility !== 'hidden' && cs.opacity !== '0' && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  const name = e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.dataset.cy ? '[' + e.dataset.cy + ']' : '') + [...e.classList].slice(0, 3).map(c => '.' + c).join('');
+  const where = e => { const a = []; for (let n = e; n && n !== document.body && a.length < 3; n = n.parentElement) a.unshift(name(n)); return a.join(' > '); };
+  const ownText = e => [...e.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim());
+  const IMAGE_TEXT = '[data-cy^="viewport-overlay-"], .kin-viewer-identity';
+  const onImage = e => e.closest('[data-cy="viewport-pane"]') && !e.closest('.kin-viewer-info-bar, [role=toolbar], [role=menu], [role=dialog]');
+  const out = {off: [], low: [], overlay: [], chosen: [], report: []};
+  for (const e of document.body.querySelectorAll('*')) {
+    if (e.closest('svg, canvas, img, video, iframe, option, script, style') || !shown(e)) continue;
+    const cs = getComputedStyle(e), own = e.getAttribute('style') || '';
+    if (e.closest(IMAGE_TEXT)) { if (ownText(e)) out.overlay.push([e.textContent.trim().slice(0, 30), cs.color, where(e)]); continue; }
+    if (/(^|;)\s*(color|border(-\w+)*-color|border|outline|background(-color)?)\s*:/.test(own) && onImage(e)) { out.chosen.push(where(e) + ' ' + own.slice(0, 80)); continue; }
+    const check = (prop, value, neutralBlack) => { if (off(value, neutralBlack).length) out.off.push(where(e) + ' ' + prop + ' ' + value); };
+    check('background', cs.backgroundColor);
+    const control = e.matches('input, select, textarea, button');
+    if (control || ownText(e)) check('color', cs.color);
+    for (const side of ['Top', 'Right', 'Bottom', 'Left'])
+      if (parseFloat(cs['border' + side + 'Width']) > 0 && cs['border' + side + 'Style'] !== 'none') check('border' + side, cs['border' + side + 'Color']);
+    if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) check('outline', cs.outlineColor);
+    if (cs.boxShadow !== 'none') check('boxShadow', cs.boxShadow, true);
+    if ((control || ownText(e)) && !onImage(e) && !e.closest(':disabled, [aria-disabled="true"]')) {
+      const fg = parse(cs.color)[0], bg = bgOf(e);
+      if (fg) { const r = ratio(fg[3] < 1 ? mix(fg, bg) : fg, bg);
+        if (r < 4.5) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
+    }
+  }
+  for (const t of document.querySelectorAll('#kin-viewer-report textarea')) {
+    const cs = getComputedStyle(t), around = bgOf(t.parentElement), edge = parse(cs.borderTopColor)[0];
+    out.report.push({id: t.id, background: cs.backgroundColor, border: cs.borderTopColor + ' ' + cs.borderTopStyle, around: 'rgb(' + around.slice(0, 3).map(Math.round) + ')',
+      edge: edge ? Math.round(ratio(edge[3] < 1 ? mix(edge, around) : edge, around) * 100) / 100 : 0, readOnly: t.readOnly});
+  }
+  return out; }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
     flip: !!v.getCamera().flipHorizontal}; }'''
@@ -223,6 +273,45 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=ids[0])
         self.assertEqual(page.evaluate(CELL, ids[1])['scale'] != start[1]['scale'], True, 'the second cell keeps its zoom')
         self.record(page, 'space-03-cell-tools')
+
+    def test_space_06_one_theme_and_readable_text(self):
+        """FA-153: the viewer's panels, header, tools and lists (the Studies band included) use the five colours; the
+        stock image text is not the light sky blue; text around the images reads at 4.5:1 or more on its own background
+        (a hovered and a selected row included); the Report Editor fields are panels (#2D2D2D) marked apart by their edge.
+        The reader's own colours (image text, marks, the selected cell's border) are theirs and are left as they are."""
+        fixture = self.multiple('VTHEME-' + uuid.uuid4().hex[:12], 'current', '20260801')
+        page = self.viewer(self.login(), fixture)
+        self.grid(page, 2)
+        page.wait_for_function('''() => [...services.viewportGridService.getState().viewports.values()]
+          .every(c => services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCurrentImageId?.())''')
+        self.panels_are(page, True, False)
+        page.wait_for_timeout(500)
+        report = page.locator('#kin-viewer-report')
+        if report.count():
+            # The mirror's fields as they are drawn, also where the window shows no patient tab yet.
+            report.evaluate('e => { e.hidden = false; e.open = true; }')
+        cards = page.get_by_role('region', name='Series', exact=True).locator('.kin-series-card')
+        cards.nth(1).hover()
+        seen = {'idle': page.evaluate(VIEWER_THEME)}
+        study = page.locator('[data-kin-studies-panel] [data-cy^="study-browser"], [data-kin-studies-panel] button').first
+        if study.count():
+            study.hover()
+            seen['studies hovered'] = page.evaluate(VIEWER_THEME)
+        self.record(page, 'space-06-theme')
+        print('VIEWER THEME ' + json.dumps(seen), flush=True)
+        for state, found in seen.items():
+            with self.subTest(contract='five colours in the viewer chrome', state=state):
+                self.assertEqual([], found['off'])
+            with self.subTest(contract='text reads at 4.5:1 or more around the images', state=state):
+                self.assertEqual([], found['low'])
+            with self.subTest(contract='the stock image text is not the light sky blue', state=state):
+                self.assertTrue(found['overlay'])
+                self.assertEqual([], [t for t in found['overlay'] if t[1] == 'rgb(90, 204, 230)'])
+        if seen['idle']['report']:
+            with self.subTest(contract='Report Editor fields are panels, apart by their edge'):
+                for field in seen['idle']['report']:
+                    self.assertEqual(field['background'], 'rgb(45, 45, 45)', field)
+                    self.assertGreaterEqual(field['edge'], 3, field)
 
     def test_space_04_tools_that_do_not_fit_keep_a_visible_control(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')
