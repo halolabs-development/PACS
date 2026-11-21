@@ -15,7 +15,7 @@ import { lockFixedRecords } from '../emr-runtime/fixed-record-lock';
 import * as F from './contract';
 import { loadFixedVersions, requireRecordKind } from './fixed-versions';
 import { fixedOriginals, onlineFixedListing } from './fixed-listing';
-import { fixedContentType, fixedDocument } from './fixed-document';
+import { fixedAuthorNames, fixedContentType, fixedDocument } from './fixed-document';
 import { rightsRecords } from './rights-records';
 import { RightsIntake, RightsState, rightsView } from './rights-state';
 import { IncidentState, IncidentStep, INCIDENT_FORMS, incidentDraft } from './incident-state';
@@ -868,7 +868,9 @@ export class EmrAuditService {
         const item = issuance.manifest.records.find(r => r.recordId === onlineFixedListing(l).recordId);
         return fixedOriginals(l, item.versions.map(v => v.versionId));
       });
-      const bytes = fixedDocument(issuance.manifest, originals);
+      // The paper names each version's author by the member name read now (fixed-document.ts fixedAuthorNames); the electronic copy carries the originals only.
+      const bytes = fixedDocument(issuance.manifest, originals,
+        issuance.manifest.delivery.format === 'paper-print' ? await fixedAuthorNames(tx, originals) : undefined);
       const sha256 = hash(bytes), next = F.issueDisclosure(authority, issuance, { at: now(), listings,
         artifact: { sha256, byteLength: bytes.length, format: issuance.manifest.delivery.format,
           generator: 'server', manifestSha256: issuance.manifestSha256 } });
