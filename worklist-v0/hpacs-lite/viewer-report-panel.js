@@ -4,30 +4,33 @@
  * reading screen's text being typed (viewer-editor-link.js). It keeps what it read in memory only.
  * "Open in Reading Screen" asks the list that linked this window to select the study (through its own
  * study-move gate) and put the caret in Findings; only that list document's answer is read. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   const FIELDS = ['findings', 'conclusion', 'recommendation'];
   const WORDS = { W: 'Unread', T: 'In Progress', P: 'Preliminary', H: 'On Hold', A: 'Approved', D: 'Destroyed' };
   const SOURCES = {
-    live: 'Live — 판독 화면에서 쓰는 중인 글',
-    none: 'No Report — 이 검사에는 아직 판독문이 없습니다',
-    hidden: 'Hidden — 다른 판독의의 예비 판독(RS: P)입니다',
+    live: kinText("Live — 판독 화면에서 쓰는 중인 글"),
+    none: kinText("No Report — 이 검사에는 아직 판독문이 없습니다"),
+    hidden: kinText("Hidden — 다른 판독의의 예비 판독(RS: P)입니다"),
     // The report state table (server: report-visibility.ts) - the reason the server gave with the hidden text.
-    'in-progress': 'Hidden — 다른 판독의가 Save해 둔 진행 중 판독입니다',
-    destroyed: 'Hidden — 보존 기간이 끝나 판독문을 파기한 검사입니다',
+    'in-progress': kinText("Hidden — 다른 판독의가 Save해 둔 진행 중 판독입니다"),
+    destroyed: kinText("Hidden — 보존 기간이 끝나 판독문을 파기한 검사입니다"),
   };
   const TEXT = {
-    loading: '판독문을 불러오는 중입니다.',
-    failed: '판독문을 불러오지 못했습니다. Refresh를 누르세요.',
-    asking: '판독 화면에 요청하는 중입니다.',
-    missing: '연결된 판독 화면이 없습니다. 목록 창에서 이 검사를 고르면 판독문을 쓸 수 있습니다.',
-    timeout: '판독 화면의 응답이 없습니다. 옮겨졌는지 판독 화면에서 확인하세요.',
+    loading: kinText("판독문을 불러오는 중입니다."),
+    failed: kinText("판독문을 불러오지 못했습니다. Refresh를 누르세요."),
+    asking: kinText("판독 화면에 요청하는 중입니다."),
+    missing: kinText("연결된 판독 화면이 없습니다. 목록 창에서 이 검사를 고르면 판독문을 쓸 수 있습니다."),
+    timeout: kinText("판독 화면의 응답이 없습니다. 옮겨졌는지 판독 화면에서 확인하세요."),
   };
   // Why the reading screen did not move (viewer-windows.js editorOpen reasons).
   const OPEN_REASONS = {
-    session: '로그인이 다름', unlisted: '목록에 없는 검사', modal: '대화상자가 열려 있음', busy: '이전 요청 처리 중',
-    composing: '글자 조합 중', saving: '쓰던 글 저장 대기·거절', stale: '다른 검사가 선택됨',
-    unresolved: '환자 식별 불일치', gone: '목록에서 빠진 검사', unavailable: '판독문 입력란을 쓸 수 없음',
+    session: kinText("로그인이 다름"), unlisted: kinText("목록에 없는 검사"), modal: kinText("대화상자가 열려 있음"), busy: kinText("이전 요청 처리 중"),
+    composing: kinText("글자 조합 중"), saving: kinText("쓰던 글 저장 대기·거절"), stale: kinText("다른 검사가 선택됨"),
+    unresolved: kinText("환자 식별 불일치"), gone: kinText("목록에서 빠진 검사"), unavailable: kinText("판독문 입력란을 쓸 수 없음"),
   };
   const EMPTY = Object.freeze({ findings: '', conclusion: '', recommendation: '' });
   const pick = body => Object.fromEntries(FIELDS.map(key => [key, typeof body?.[key] === 'string' ? body[key] : '']));
@@ -54,9 +57,9 @@
       return { kind: 'live', source: SOURCES.live, fields: pick(live.editor) };
     if (state.draft && typeof state.draft === 'object') {
       const at = clock(state.draft.at);
-      return { kind: 'draft', source: 'My Draft — 서버에 저장된 내 초안' + (at ? ' (저장 ' + at + ')' : ''), fields: pick(state.draft) };
+      return { kind: 'draft', source: kinText("My Draft — 서버에 저장된 내 초안{0}", (at ? kinText(" (저장 {0})", at) : '')), fields: pick(state.draft) };
     }
-    if (state.reportReadable === false) return {kind:'hidden',source:'Hidden — 저장 판독의 영상 범위를 볼 수 없습니다',fields:{...EMPTY}};
+    if (state.reportReadable === false) return {kind:'hidden',source:kinText("Hidden — 저장 판독의 영상 범위를 볼 수 없습니다"),fields:{...EMPTY}};
     if (Number.isInteger(state.version) && state.version > 0) {
       if (state.rs === 'A') return { kind: 'approved', source: 'Approved — ' + (state.repDoc || '-') + ' · ' + (root.KinReportPaper.approvalText(state) || '-'), fields: pick(state) };
       return { kind: 'saved', source: 'Saved — v' + state.version, fields: pick(state) };
@@ -77,13 +80,13 @@
   // answered late or refused only after moving), not this study, or not known.
   const reached = result => !!result && (result.ok === true || result.at === true);
   function openText(result, name) {
-    if (reached(result)) return '판독 화면이 ' + (name || '이 환자') + ' 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.';
+    if (reached(result)) return kinText("판독 화면이 {0} 검사로 옮겨졌습니다 — 판독 화면 창에서 입력하세요.", (name || kinText("이 환자")));
     const reason = result?.reason;
     if (reason === 'missing') return TEXT.missing;
-    const why = ' (' + (OPEN_REASONS[reason] || (reason === 'timeout' ? '응답 없음' : '확인할 수 없는 답')) + '). 판독 화면에서 확인하세요.';
-    if (result?.at === false) return '판독 화면의 대상이 이 검사로 바뀌지 않았습니다' + why;
+    const why = kinText(" ({0}). 판독 화면에서 확인하세요.", (OPEN_REASONS[reason] || (reason === 'timeout' ? kinText("응답 없음") : kinText("확인할 수 없는 답"))));
+    if (result?.at === false) return kinText("판독 화면의 대상이 이 검사로 바뀌지 않았습니다{0}", why);
     if (reason === 'timeout') return TEXT.timeout;
-    return '판독 화면이 검사를 옮겼는지 확인하지 못했습니다' + why;
+    return kinText("판독 화면이 검사를 옮겼는지 확인하지 못했습니다{0}", why);
   }
   const api = { FIELDS, WORDS, SOURCES, TEXT, OPEN_REASONS, scopedRow, choose, current, heading, word, clock, openText, reached };
   if (typeof module === 'object' && module.exports) module.exports = api;

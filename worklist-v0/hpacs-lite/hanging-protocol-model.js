@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root){
   'use strict';
   const VERSION=1,MAX_RULES=20,MAX_SELECTORS=4,PREFIX='kin-hanging-protocols:v1:',SITE_PREFIX='kin-hanging-protocols:v1:site:';
@@ -252,10 +256,10 @@
   const siteKey=value=>{const clean=siteOwner(value);return clean?SITE_PREFIX+JSON.stringify([clean.institution]):null;};
   const scopeKey=(scope,value)=>scope==='site'?siteKey(value):scope==='personal'?ownerKey(value):null;
   function read(storage,key){
-    if(!key)throw Error('계정 정보를 확인할 수 없습니다.');const raw=storage.getItem(key);if(raw===null)return null;
-    const clean=typeof raw==='string'&&raw.length<=65536?normalize(JSON.parse(raw)):null;if(!clean)throw Error('저장한 Hanging Protocol이 손상되었거나 지원하지 않는 형식입니다.');return clean;
+    if(!key)throw kinError("계정 정보를 확인할 수 없습니다.");const raw=storage.getItem(key);if(raw===null)return null;
+    const clean=typeof raw==='string'&&raw.length<=65536?normalize(JSON.parse(raw)):null;if(!clean)throw kinError("저장한 Hanging Protocol이 손상되었거나 지원하지 않는 형식입니다.");return clean;
   }
-  function write(storage,key,value){const clean=normalize(value);if(!key||!clean)throw Error('Hanging Protocol을 저장할 수 없습니다.');storage.setItem(key,JSON.stringify(clean));return clean;}
+  function write(storage,key,value){const clean=normalize(value);if(!key||!clean)throw kinError("Hanging Protocol을 저장할 수 없습니다.");storage.setItem(key,JSON.stringify(clean));return clean;}
   function date(value){
     if(typeof value!=='string')return null;const s=value.replaceAll('-','');if(!/^\d{8}$/.test(s))return null;
     const y=+s.slice(0,4),m=+s.slice(4,6),d=+s.slice(6,8),x=new Date(Date.UTC(y,m-1,d));return y>0&&x.getUTCFullYear()===y&&x.getUTCMonth()===m-1&&x.getUTCDate()===d?s:null;
@@ -304,16 +308,16 @@
       bodyPart:exactToken(study?.bodyPart??study?.BodyPartExamined,64)??common(metadata.map(value=>value.bodyPart)),description:String(study?.desc??study?.StudyDescription??'')};
   }
   function resolve(value,context,selectedRuleId=null){
-    const library=normalize(value);if(!library)throw Error('Hanging Protocol 형식이 잘못되었습니다.');
+    const library=normalize(value);if(!library)throw kinError("Hanging Protocol 형식이 잘못되었습니다.");
     const studies=context?.studies,sets=context?.displaySets;
-    if(!Array.isArray(studies)||studies.length<1||studies.length>2||!Array.isArray(sets))throw Error('현재 검사 정보를 확인할 수 없습니다.');
-    if(studies.some(s=>!uid(s?.uid??s?.StudyInstanceUID)))throw Error('현재 검사 식별자를 확인할 수 없습니다.');
+    if(!Array.isArray(studies)||studies.length<1||studies.length>2||!Array.isArray(sets))throw kinError("현재 검사 정보를 확인할 수 없습니다.");
+    if(studies.some(s=>!uid(s?.uid??s?.StudyInstanceUID)))throw kinError("현재 검사 식별자를 확인할 수 없습니다.");
     const source=studies[0]?.sourcePatientKey;
-    if(typeof source!=='string'||!source||studies.some(s=>s.sourcePatientKey!==source))throw Error('현재/관련 검사가 같은 원본 환자인지 확인할 수 없습니다.');
+    if(typeof source!=='string'||!source||studies.some(s=>s.sourcePatientKey!==source))throw kinError("현재/관련 검사가 같은 원본 환자인지 확인할 수 없습니다.");
     const current=studies[0],related=studies[1]||null,currentDate=date(current.date??current.StudyDate),relatedDate=date(related?.date??related?.StudyDate);
     const belongs=(study,set)=>Array.isArray(study.displaySetIds)?study.displaySetIds.includes(set?.displaySetInstanceUID):set?.StudyInstanceUID===(study.uid??study.StudyInstanceUID);
     const candidates=selectedRuleId===null?library.rules.filter(r=>r.enabled):library.rules.filter(r=>r.id===selectedRuleId&&r.enabled);
-    if(selectedRuleId!==null&&!uuid(selectedRuleId))throw Error('선택한 규칙을 확인할 수 없습니다.');
+    if(selectedRuleId!==null&&!uuid(selectedRuleId))throw kinError("선택한 규칙을 확인할 수 없습니다.");
     for(const rule of candidates){
       const currentUid=current.uid??current.StudyInstanceUID,currentSets=sets.filter(ds=>belongs(current,ds));
       if(!fieldsMatch(studyMetadata(current,currentSets),rule.match))continue;
@@ -338,9 +342,9 @@
     return {kind:'no-match'};
   }
   function navigate(value,context,cursor,direction){
-    const library=normalize(value);if(!library)throw Error('Hanging Protocol 형식이 잘못되었습니다.');
-    if(!['previous','next'].includes(direction))throw Error('Hanging Protocol 이동 방향을 확인할 수 없습니다.');
-    if(cursor!==null&&!uuid(cursor))throw Error('마지막 적용 규칙을 확인할 수 없습니다.');
+    const library=normalize(value);if(!library)throw kinError("Hanging Protocol 형식이 잘못되었습니다.");
+    if(!['previous','next'].includes(direction))throw kinError("Hanging Protocol 이동 방향을 확인할 수 없습니다.");
+    if(cursor!==null&&!uuid(cursor))throw kinError("마지막 적용 규칙을 확인할 수 없습니다.");
     const matches=[];
     for(const rule of library.rules)if(rule.enabled){const result=resolve(library,context,rule.id);if(result.kind==='match')matches.push(result);}
     if(!matches.length)return {kind:'no-match',reason:'none'};
@@ -356,11 +360,11 @@
     const value=libraries?.[scope];
     if(value===null||value===undefined)return null;
     const library=normalize(value);
-    if(!library&&strict)throw Error('Hanging Protocol 형식이 잘못되었습니다.');
+    if(!library&&strict)throw kinError("Hanging Protocol 형식이 잘못되었습니다.");
     return library;
   }
   function resolveScoped(libraries,context,selection=null){
-    if(selection!==null&&(!own(selection,['scope','ruleId'])||!SCOPES.includes(selection.scope)))throw Error('선택한 범위를 확인할 수 없습니다.');
+    if(selection!==null&&(!own(selection,['scope','ruleId'])||!SCOPES.includes(selection.scope)))throw kinError("선택한 범위를 확인할 수 없습니다.");
     for(const scope of selection===null?SCOPES:[selection.scope]){
       const library=libraryOf(libraries,scope,selection!==null);
       if(!library)continue;
@@ -370,8 +374,8 @@
     return {kind:'no-match'};
   }
   function navigateScoped(libraries,context,cursor,direction){
-    if(!['previous','next'].includes(direction))throw Error('Hanging Protocol 이동 방향을 확인할 수 없습니다.');
-    if(cursor!==null&&(!own(cursor,['scope','ruleId'])||!SCOPES.includes(cursor.scope)||!uuid(cursor.ruleId)))throw Error('마지막 적용 규칙을 확인할 수 없습니다.');
+    if(!['previous','next'].includes(direction))throw kinError("Hanging Protocol 이동 방향을 확인할 수 없습니다.");
+    if(cursor!==null&&(!own(cursor,['scope','ruleId'])||!SCOPES.includes(cursor.scope)||!uuid(cursor.ruleId)))throw kinError("마지막 적용 규칙을 확인할 수 없습니다.");
     const matches=[];
     for(const scope of SCOPES){
       const library=libraryOf(libraries,scope,false);if(!library)continue;

@@ -10273,7 +10273,9 @@ function kinViewerPlaneImage(tags) {
 
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
 function kinPlanarGeometry(tags, frame) {
-  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
+  const fail = () => { throw kinError("원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
   const numbers = (v, n) => {
     const a = typeof v === 'string' ? v.split('\\') : v;
     if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();
@@ -10338,7 +10340,7 @@ function kinPlanarGeometry(tags, frame) {
     if (kind !== 'ellipse' || Math.abs(cosine) > 1e-4 || size(p[0].map((n, i) => (n + p[1][i] - p[2][i] - p[3][i]) / 2)) > .001) return fail();
     return Math.PI * size(a) * size(b) / 4;
   };
-  const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
+  const label = mg?.label || { pixel: kinText("PixelSpacing · 원본 기준면"), detector: kinText("ImagerPixelSpacing · 검출기 기준"), ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정") }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
     calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
 }
@@ -10348,6 +10350,8 @@ function kinPlanarGeometry(tags, frame) {
 // image pixel coordinates [column, row]; all points of one measurement must lie in the same region, or there is no spacing.
 // Used by the Measure menu's tools only; the existing Length, Angle and Ellipse keep their own rules.
 function kinUsRegionGeometry(tags) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const regions = tags?.SequenceOfUltrasoundRegions;
   if (tags?.Modality !== 'US' || !Array.isArray(regions) || !regions.length) return null;
   const number = value => {
@@ -10370,7 +10374,7 @@ function kinUsRegionGeometry(tags) {
   const inside = (r, [x, y]) => x >= r.x0 - .5 && x <= r.x1 + .5 && y >= r.y0 - .5 && y <= r.y1 + .5;
   // The region that holds every point, or null.
   const region = points => usable.find(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p))) || null;
-  const spacing = points => { const r = region(points); if (!r) throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); return r.spacing; };
+  const spacing = points => { const r = region(points); if (!r) throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); return r.spacing; };
   const length = (a, b) => { const s = spacing([a, b]); return Math.hypot((b[0] - a[0]) * s[1], (b[1] - a[1]) * s[0]); };
   return { regions: usable, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
 }
@@ -16455,12 +16459,14 @@ function kinStackMouse(services) {
 // U3 consumes the U2 document/viewport context. The native data source still
 // owns DICOM loading and display-set creation; reports are API reads only.
 function kinCreateViewerPrior() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, generation = 0, ready, dispose, frame;
   const assets = ['viewer-prior-controller.js', 'viewer-prior-panel.js'];
   const asset = name => new Promise((resolve, reject) => {
     const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
     script.onload = () => { script.remove(); resolve(); };
-    script.onerror = () => { script.remove(); reject(new Error('이전 검사 모듈을 불러오지 못했습니다.')); };
+    script.onerror = () => { script.remove(); reject(kinError("이전 검사 모듈을 불러오지 못했습니다.")); };
     document.head.append(script);
   });
   // report-preview.js: the report screens' one rule for a version's time (KinReportPaper), which the panel shows with. It
@@ -16505,7 +16511,7 @@ function kinCreateViewerPrior() {
             const url=new URL(model.viewerUrl(next,options.seriesUid),location.origin);
             url.hash=location.hash;
             const opened=await window.kinViewerOpenPatient?.(url.href,{signal:options.signal});
-            if(!opened)throw Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+            if(!opened)throw kinError("저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.");
             return {reopened:true};
           }
         }
@@ -16583,6 +16589,8 @@ function kinCreateViewerPrior() {
 // like the patient tabs it follows, and survives a mode re-entry. Not in the reading screen's frame
 // (its Report Editor is already beside the images) and not in a read-only session.
 function kinCreateViewerReportPanel() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, panel = null, frame, generation = 0;
   const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
     ['report-preview.js', () => typeof window.KinReportPaper?.approvalText === 'function'],
@@ -16591,7 +16599,7 @@ function kinCreateViewerReportPanel() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = () => { script.remove(); resolve(); };
-      script.onerror = () => { script.remove(); reject(new Error('Report Editor 패널을 불러오지 못했습니다.')); };
+      script.onerror = () => { script.remove(); reject(kinError("Report Editor 패널을 불러오지 못했습니다.")); };
       document.head.append(script);
     })), Promise.resolve()).catch(error => { ready = null; throw error; });
   }

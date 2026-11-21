@@ -3,6 +3,8 @@
 // like the patient tabs it follows, and survives a mode re-entry. Not in the reading screen's frame
 // (its Report Editor is already beside the images) and not in a read-only session.
 function kinCreateViewerReportPanel() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, panel = null, frame, generation = 0;
   const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
     ['report-preview.js', () => typeof window.KinReportPaper?.approvalText === 'function'],
@@ -11,7 +13,7 @@ function kinCreateViewerReportPanel() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = () => { script.remove(); resolve(); };
-      script.onerror = () => { script.remove(); reject(new Error('Report Editor 패널을 불러오지 못했습니다.')); };
+      script.onerror = () => { script.remove(); reject(kinError("Report Editor 패널을 불러오지 못했습니다.")); };
       document.head.append(script);
     })), Promise.resolve()).catch(error => { ready = null; throw error; });
   }
