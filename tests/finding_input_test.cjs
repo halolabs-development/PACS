@@ -254,4 +254,21 @@ test('version 3 envelope: the worst version 2 snapshot plus 200 astral lesion lo
   const snapshot = JSON.parse(canonical({ schemaVersion: 3, title: emoji(200), text: emoji(4000), characteristics: emoji(1000), lesionLocation: emoji(200),
     hidden: false, primary: 7, sources: Array(8).fill(worst) }));
   assert.ok(Buffer.byteLength(jsonb(snapshot)) <= f.FINDING_LIMITS.snapshot, String(Buffer.byteLength(jsonb(snapshot))));
+  // Version 4 adds at most 40 astral code points of size to the same worst snapshot.
+  const four = JSON.parse(canonical({ ...snapshot, schemaVersion: 4, size: emoji(40) }));
+  assert.ok(Buffer.byteLength(jsonb(four)) <= f.FINDING_LIMITS.snapshot, String(Buffer.byteLength(jsonb(four))));
+});
+
+// TEST-B23-SIZE-INPUT: version 4 adds the required free-text lesion size; versions 1-3 keep their exact shapes.
+test('version 4: a required lesion size after the location, counted in code points, refused on older versions', () => {
+  const v4 = extra => Object.assign({ schemaVersion: 4, title: '폐결절', text: '', characteristics: 'solid', lesionLocation: 'RLL', size: '8mm', sources: [{ itemId: ID, revision: 2 }] }, extra);
+  assert.equal(f.FINDING_SIZE, 40);
+  assert.deepEqual(f.findingCommand(raw({ requestId: REQ, item: v4() }), true).item, { schemaVersion: 4, title: '폐결절', text: '', characteristics: 'solid',
+    lesionLocation: 'RLL', size: '8mm', sources: [{ itemId: ID, revision: 2 }], primary: 0 });
+  assert.equal(f.findingCommand(raw({ requestId: REQ, item: v4({ size: '' }) }), true).item.size, '', 'empty is a value');
+  const astral = '\u{1F600}'.repeat(40);
+  assert.equal(f.findingCommand(raw({ requestId: REQ, item: v4({ size: astral }) }), true).item.size, astral);
+  for (const bad of [v4({ size: astral + '\u{1F600}' }), v4({ size: 8 }), v4({ size: 'a\u0000' }), (({ size, ...rest }) => rest)(v4()),
+    (({ lesionLocation, ...rest }) => rest)(v4()), v4({ schemaVersion: 3 }), v4({ schemaVersion: 5 }), v4({ diameter: '8' })])
+    reject(() => f.findingCommand(raw({ requestId: REQ, item: bad }), true), 400);
 });

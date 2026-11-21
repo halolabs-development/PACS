@@ -74,7 +74,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
     def findings(self, f):
         # S2-L R5: a findings page holding a version 2 record is served only to a client that names that record format;
         # the viewer writes version 2 on every create and edit.
-        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '3'})
+        r = self.stack.bearer_request('GET', '/studies/'+f.uid+'/findings?includeHidden=true', self.stack.token('doctor'), headers={'X-KIN-Finding-Schema': '4'})
         self.assertEqual(r.status, 200, r.text); return r.body['items']
 
     def panel(self, p, reading=False):
@@ -224,7 +224,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         panel = self.panel(p); saved_row = self.saved_row(p, saved[0]['id'])
         saved_row.get_by_role('button', name='Edit', exact=True).click(); saved_row.get_by_label('Finding Text').fill('내 수정 보존')
         # S2-L version rule: the viewer saved a version 3 record, so the other window's edit is version 3 as well.
-        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='다른 창', text='', characteristics='', lesionLocation='', sources=[dict(itemId=head['id'], revision=1)]))
+        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=4, title='다른 창', text='', characteristics='', lesionLocation='', size='', sources=[dict(itemId=head['id'], revision=1)]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved[0]['id']+'/revisions', 'doctor', other).status, 200)
         saved_row.get_by_role('button', name='Save', exact=True).click(); expect(saved_row).to_contain_text('서버에 다른 판')
         expect(saved_row.get_by_label('Finding Text')).to_have_value('내 수정 보존'); expect(saved_row.get_by_role('button', name='Save', exact=True)).to_be_disabled()
@@ -265,7 +265,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
             if delayed: break
             p.wait_for_timeout(20)
         self.assertEqual(len(delayed), 1)
-        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='new A', text='', characteristics='', lesionLocation='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
+        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=4, title='new A', text='', characteristics='', lesionLocation='', size='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved['id']+'/revisions', 'doctor', edit).status, 200)
         # S2-B2: activating the other study of this comparison viewer keeps the first study's list as it is,
         # with its reload still unanswered (held above): the old rows stay and the status says it is reading.
@@ -620,12 +620,12 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         composed = self.compose(p, '특성 소견', '본문', 'Link Length', characteristics=traits)
         field = composed.get_by_label('Finding Characteristics', exact=True)
         help_id = field.get_attribute('aria-describedby')
-        expect(p.locator('#'+help_id)).to_have_text('사용자가 직접 입력하는 병변 특성입니다. 정해진 용어나 항목은 없으며 판독문에 자동 반영하지 않습니다.')
+        expect(p.locator('#'+help_id)).to_have_text('사용자가 직접 입력하는 병변 특성입니다. Pick Characteristics의 항목을 누르면 칸 끝에 이어 붙고, 붙인 글도 고칠 수 있습니다. 판독문에는 Insert into Report로 넣을 때만 들어갑니다.')
         self.assertEqual(field.get_attribute('maxlength'), '1000')
         composed.get_by_role('button', name='Save', exact=True).click(); expect(composed).to_contain_text('저장 완료')
         saved = self.findings(f)[0]
-        # The viewer writes version 3 (the lesion location is empty until written).
-        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation']), (3, traits, ''))
+        # The viewer writes version 4 (the lesion location and size are empty until written).
+        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation'], saved['item']['size']), (4, traits, '', ''))
         stored = base.psql(f'''SELECT snapshot->>'characteristics' FROM "FindingRevision" WHERE "findingId"={literal(saved['id'])}::uuid''')
         self.assertEqual(stored, [traits])
         saved_row = self.saved_row(p, saved['id'])
@@ -660,7 +660,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         saved_row.get_by_role('button', name='History', exact=True).click()
         expect(saved_row).to_contain_text('r1 · 생성 · ')
         expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('Characteristics (병변 특성): '+traits)
-        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v3')
+        expect(saved_row.locator('[data-kin-revision="1"]')).to_contain_text('연결: 2D 표식 1개 · Saved View 0개 · 3D Point 0개 · v4')
         # An API answer without the schema header: saved records stay visible, nothing can be written.
         def older(route):
             response = route.fetch()
