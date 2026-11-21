@@ -48,7 +48,10 @@ EXAM_OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("observeExamL
 # harness asserts that the selected study keeps its drawn version and its local draft, and that
 # claim is only worth anything if the product's own rule is what produced it.
 PRESERVE = extract_function(MAIN, "preservedLocal")
-MERGE = extract_function(MAIN, "mergeObservedReportState")
+# QC Flag: the list's answer says how each row is read now, and the merge keeps or takes the mark by that
+# (report-draft-sync.js); the poll and the list rebuild call these.
+MERGE = "\n".join(extract_function(MAIN, name) for name in ("qcMark", "qcScopes", "qcReading", "dropQc", "observeQcScope", "loseQc",
+                                                            "observeQcList", "qcScope", "newerQc", "mergeObservedReportState"))
 # S4-U1b: the poll now reports each observation to these; they are sliced, not re-described, so the
 # cases below judge the shipped labels and the shipped failure rule.
 OBSERVE = "\n".join(extract_function(MAIN, name) for name in ("kinWrite", "applyObservation", "markObservationUnavailable", "studyReceiptGap", "paintReceiptGap", "renderObservation"))
@@ -146,6 +149,8 @@ $('#receipt-retry').addEventListener('click',requestGatewayRetry);
 function syncStudy(uid){const study=studies.find(item=>item.uid===uid),state=appState[uid];if(!study||!state)return;for(const key of ['rs','ss','em','holder','version'])if(state[key]!==undefined)study[key]=state[key]}
 // The Count cell is the shipped CELL.count (it carries the missing-images mark); its text stays the count.
 function render(){renders++;rows.innerHTML=studies.map(s=>`<tr data-uid="${s.uid}"><td data-count>${CELL.count(s)}</td><td data-series>${s.series}</td></tr>`).join('')}
+// The page's QC and Info-panel redraws after a list answer are its own (tests/technician_qc_dose_dom_test.py): no-ops here.
+function qcHearsList(){}function viewedInfoFollowsList(){return false}
 function loadReport(){loadReports++}function updateReportButtons(){buttonUpdates++}function toast(message,type){toasts.push({message,type})}
 START
 window.runPoll=()=>pollCallback();window.start=startPolling;window.setReply=value=>{nextReply=value};window.holdRead=()=>{readResolver=true};

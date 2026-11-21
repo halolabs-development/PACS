@@ -10,6 +10,7 @@ import { draftDrawings, namedDrawings } from '../image-report';
 import type { NamedDrawings } from '../image-report';
 import { relatedInsertIdReused } from '../report-related-insert';
 import type { Caller } from './access';
+import { qcView } from './qc-flag';
 import { sameAccount, shownActor, PRIVATE_WRITER } from '../account-identity';
 import { draftRecordOf } from '../emr-viewing/consumer-read';
 
@@ -244,6 +245,8 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // 초안이 없어도 내 경계는 나간다(S7-U5): 다음 쓰기가 무엇을 보고 쓰는지 말할 수 있어야 한다.
     draftRevision: draftToken(s.draftEpoch, d?.revision ?? 0),
     draftEpoch: s.draftEpoch,
+    // QC Flag (pacs/qc-flag.ts): always one shape, the reason/by/at null when not flagged, with its revision.
+    qc: qcView(s, caller),
   };
 }
 

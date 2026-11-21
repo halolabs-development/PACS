@@ -34,7 +34,7 @@
         if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
-      ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
+      ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
         if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
@@ -359,6 +359,8 @@
       // FA-066 Export List: the search result in list order, the selection, and each cell's shown text (CELL markup read as text).
       worklistExport = window.KinWorklistExport?.mount?.({button:$('#worklist-export-open'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,
         selected:()=>multiSelection?.snapshot()?.studyUids||[],columns:()=>COLS[mode],shown:shownColumns,notify:m=>toast(m),
+        // At Export the file is written from the rows the list holds then (a study gone from it is not written).
+        current:s=>studies.find(x=>x.uid===s.uid)||null,
         cellText:(s,c,no)=>c.k==='no'?String(no):CELL[c.k]?new DOMParser().parseFromString(CELL[c.k](s),'text/html').body.textContent.replace(/\s+/g,' ').trim():String(s[c.k]??'')});
       // FC-070 More › Query/Retrieve (query-retrieve.js): search a registered peer PACS and pull studies; an arrival reloads the list.
       queryRetrieve = window.KinQueryRetrieve?.mount?.({button:$('#query-retrieve-open'),panel:$('#query-retrieve'),api:API,transport,

@@ -950,7 +950,7 @@ class ExecutionSelectionTests(unittest.TestCase):
             plan=runner.module_plan('tests/'+filename,unit,'live',timeout,class_name)
             self.assertEqual(runner.collect(plan).countTestCases(),len(plan['tests']))
             self.assertTrue(all(item['file']=='tests/'+filename for item in plan['tests']))
-            if index<2:self.assertEqual(len(plan['tests']),[108,19][index])  # 89 -> 95: CN-N01-A added the six OrderCorrectionInvariantTests; 95 -> 102: S9-U4b; worklist 15 -> 17: S9-U4b part (c); + 6 WORKLIST-SPLIT-UID = 108; worklist 17 -> 19: Download Selected Originals and the fixture cleanup's own case
+            if index<2:self.assertEqual(len(plan['tests']),[109,19][index])  # 89 -> 95: CN-N01-A added the six OrderCorrectionInvariantTests; 95 -> 102: S9-U4b; worklist 15 -> 17: S9-U4b part (c); + 6 WORKLIST-SPLIT-UID = 108; + 1 QC Flag audit = 109; worklist 17 -> 19: Download Selected Originals and the fixture cleanup's own case
             if class_name:
                 self.assertTrue(all(row['case'].startswith(class_name+'.')
                                     for row in plan['tests']))

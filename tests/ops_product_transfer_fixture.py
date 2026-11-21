@@ -152,6 +152,7 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261119120000_access_review_linear/migration.sql',
               'api/prisma/migrations/20261119160000_critical_result_send_roles/migration.sql',
               'api/prisma/migrations/20261120120000_study_referred_at/migration.sql',
+              'api/prisma/migrations/20261120130000_study_qc_flag/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
               'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
               'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql']
@@ -302,6 +303,8 @@ def expected_rows(uid):
         # FC-034: the approval round's lookup values travel as they are (two set, two NULL).
         approvedAt=STAMP, approvedBySub='SYNTHETIC-reader-sub', amendedAt=STAMP, addendumAt=None, preDoc=None, preReviewer=None, preDocSub="SYNTHETIC-author-sub", preReviewerSub="SYNTHETIC-reviewer-sub",
         ov=None, orig=None, orderOid=None, holder=None, holderSub=None, holderInstitutionId=None, heldAt=None,
+        # QC Flag: a marked row (reason, who, when, its revision) travels as it is; a restore never re-draws the revision.
+        qcReason='SYNTHETIC motion artefact on series 2', qcBy='SYNTHETIC-tech', qcAt=STAMP, qcRevision=2,
         # Worklist Referred: a study registered directly and then announced. The first Gateway announce time and the closed
         # mark are values of the row (written once, together), kept as they are: a restore never re-opens the row.
         referredAt=STAMP, referredOpen=False,

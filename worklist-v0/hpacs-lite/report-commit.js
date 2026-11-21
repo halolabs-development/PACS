@@ -881,4 +881,5 @@
       if (typeof a.ward === "string") s.ward = a.ward;
       if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
+      applyQcRow(s);
     }

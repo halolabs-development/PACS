@@ -936,6 +936,9 @@
       Technician: [
         { k: "assignedReader", t: "Assigned Reader", f: "text" },
         { k: "techNote", t: "Tech Note", f: ["Yes", "None", "Cleared", "Unknown"] },
+        // QC Flag: the technician's image quality mark (the server's, pacs/qc-flag.ts). Unknown is a row whose mark has not
+        // been received; it is neither Flagged nor None.
+        { k: "qc", t: "QC Flag", f: ["Flagged", "None", "Unknown"] },
         { k: "no", t: "No", num: 1 },
         { k: "count", t: "Count", num: 1 },
         { k: "series", t: "Series", num: 1 },
@@ -1058,9 +1061,16 @@
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
+    function qcCellHtml(s) {
+      return s.qc === "Flagged" ? `<span class="qc-flag">Flagged</span> <span class="qc-reason" translate="no" data-kin-keep="title" title="${esc(s.qcMark.reason)}">${esc(s.qcMark.reason)}</span>`
+        : s.qc === "Unknown" ? `<span class="qc-unknown">Unknown</span>` : "";
+    }
     const CELL = {
       assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
-      techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
+      techNote: s => { const chip = noteChip(s.uid, s.id); return `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(chip.aria)}" title="${esc(chip.title)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${esc(chip.label)}</button>`; },
+      // QC Flag: the word, and when flagged the reason (data: never translated or read as markup); the full reason is the title.
+      // The cell names its study so it can be drawn again by itself (qcFollowsList, worklist-data.js).
+      qc: s => `<span data-qc-uid="${esc(s.uid)}">${qcCellHtml(s)}</span>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
@@ -1566,6 +1576,7 @@
       // above always stay as the server sent them, whatever a stored overlay carries.
       for (const key of OVERLAY_KEYS) if (overlayValue(key, a.ov?.[key])) s[key] = a.ov[key];
       s.confirm = confirmText({ ...a, rs: s.rs });
+      applyQcRow(s);
       // Without a server the matched order of this list (demo) gives the request columns, as the server does for its rows.
       if (!serverMode) {
         const order = a.matched === "M" && a.oid ? orders.find(o => o.oid === a.oid) : null;
@@ -1575,6 +1586,47 @@
       return s;
     }
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
+
+    /**
+     * A QC command's own answer: only its mark is taken, by the rule every answer that is not the list's passes (newerQc,
+     * report-draft-sync.js: the reading the list says for the row now, and a newer revision), and only when the row is
+     * still read the way it was when the command was sent (`scope`). The rest of the state it carries is never taken: a
+     * list read that came back meanwhile may already show a later report state (RS, holder).
+     */
+    function takeQcAnswer(uid, st, scope) {
+      if (!scope || qcScope(uid) !== scope) return false;
+      const kept = newerQc(uid, appState[uid], st, false);
+      if (Object.hasOwn(kept, "qc")) return false;
+      appState[uid] = { ...appState[uid], qc: st.qc };
+      return true;
+    }
+    /**
+     * The surfaces that show a QC mark or a study's DICOM values are brought to the list at once, without waiting for the
+     * list's own redraw: the rows' QC fields (what Export List writes), the QC cells already drawn (a row the list no longer
+     * has shows nothing), the open QC window, and the Info panel's study, QC line and Protocol & Dose.
+     */
+    function qcFollowsList() {
+      for (const s of studies) applyQcRow(s);
+      for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
+        const s = studies.find(x => x.uid === cell.dataset.qcUid);
+        cell.innerHTML = s ? qcCellHtml(s) : "";
+      }
+      syncQcWindow();
+      if (!viewedInfoFollowsList()) { renderQcInfo(); renderAcquisition(); }
+    }
+    /**
+     * A list answer the moment it is in hand (a list read and the poll call this before they wait for anything else): what
+     * the answer no longer lists, or reads another way, leaves the screen now - not when the list is rebuilt.
+     */
+    function qcHearsList(rows) {
+      try { hearQcList(rows); qcFollowsList(); } catch (error) { console.error(error); }
+    }
+    /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
+    function applyQcRow(s) {
+      const mark = shownQc(s.uid);
+      s.qcMark = mark;
+      s.qc = !mark ? "Unknown" : mark.reason !== null ? "Flagged" : "None";
+    }
 
     /**
      * 검사 목록.
@@ -1597,6 +1649,15 @@
     const NOTE_HELP = { Unknown: '아직 Tech 메모 상태를 받지 못했습니다', Yes: 'Tech 메모가 있습니다',
       Cleared: '메모를 비웠고 이전 이력이 남아 있습니다', None: 'Tech 메모가 없습니다' };
     function noteHelp(uid) { return NOTE_HELP[noteLabel(uid)] || ''; }
+    /**
+     * The Tech Note chip's word, its hover help and its accessible name, from the one stored summary at once: the list's
+     * render (CELL.techNote) and the in-place update after a save or clear (updateNoteSummary) both take them from here, so
+     * the help never keeps an earlier state's sentence.
+     */
+    function noteChip(uid, id) {
+      const label = noteLabel(uid);
+      return { label, title: noteHelp(uid), aria: `${id ?? ''} Tech Note ${label}` };
+    }
     function updateNoteSummary(uid, value) {
       if (!value || !Number.isInteger(value.version) || value.version < 0 || typeof value.present !== 'boolean') return;
       // A list poll started before a local save must not roll the badge backward.
@@ -1604,7 +1665,10 @@
       noteSummaries.set(uid, value);
       const study = studies.find(s => s.uid === uid);
       const button = $('#rows').querySelector(`[data-tech-note="${CSS.escape(uid)}"]`);
-      if (button && study) { button.textContent = noteLabel(uid); button.setAttribute('aria-label', study.id + ' Tech 메모 ' + noteLabel(uid)); }
+      if (button && study) {
+        const chip = noteChip(uid, study.id);
+        button.textContent = chip.label; button.title = chip.title; button.setAttribute('aria-label', chip.aria);
+      }
     }
     const readerAssignments=new Map();
     function updateReaderAssignment(uid,value){
@@ -1615,6 +1679,7 @@
     function observeExamList(rows) {
       const present=new Set(rows.map(s=>s.uid));
       for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
+      observeQcList(rows);
     }
     function observeExamScope(s) {
       const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
@@ -1658,7 +1723,8 @@
        * 아직 서버에 보내지 못한 글을 담은 검사가 고른 검사가 아니면 그 글이 사라졌다.
        * 바로 아래 `applyState`가 `appState`를 읽으므로 목록 행의 판 번호도 여기서 맞는다.
        */
-      appState[s.uid] = mergeObservedReportState(s.uid, s.state);
+      observeQcScope(s);
+      appState[s.uid] = mergeObservedReportState(s.uid, s.state, true);
       return applyState({
         uid: s.uid, pf: "·", assignedReader:readerAssignments.get(s.uid)?.reader?[readerAssignments.get(s.uid).reader.name,readerAssignments.get(s.uid).reader.actor].filter(Boolean).join(" · "):"",
         // While matched, the order's own accession is shown (orderAccession, null without one); sourceAcc keeps the archive's.
@@ -1890,7 +1956,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'qc', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -2115,6 +2181,9 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
+      // What shows a study's QC mark or its DICOM follows the list (a poll, a Refresh, a tab change): the Info panel's QC
+      // line and Protocol & Dose (study-info-panel.js) and the open QC window (study-corrections.js).
+      renderQcInfo(); renderAcquisition(); syncQcWindow();
 
       const active = [];
       if (consultationFilter) {
@@ -2513,6 +2582,8 @@
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;
       // 이 읽기를 시작한 문맥. 목록·관측·안내를 쓰는 자리는 모두 이것을 지난다 — 준비·종료 뒤에 온 답은 목록을 바꾸지 않는다.
       const at = work.capture("document");
+      // A list read (Refresh, a correction, a reconnect) reads the viewed exam's protocol and dose again (study-info-panel.js).
+      forgetAcquisition();
       /**
        * **서버가 죽었다고 Orthanc를 직접 부르지 않는다.**
        *
@@ -2534,6 +2605,7 @@
         const r = await studyPageClient.read({ resume:!!options.resume, epoch, valid:() => !commitInFlight && epoch === commitEpoch });
         if (!work.admits(at) || loadSequence !== listLoadSequence || commitInFlight || epoch !== commitEpoch) return;
         assertStudyOwner(r);
+        qcHearsList(r.studies);
         await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
         let applied = false;
         work.commit(at, () => {
@@ -2557,6 +2629,9 @@
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
           $('#err').textContent = '';
           applied = true;
+          // The list is drawn below, after the storage read answers. What shows a QC mark or a study's DICOM does not wait
+          // for that: it follows this list now (a row it no longer has, a row that cannot be read now).
+          try { qcFollowsList(); } catch (e2) { console.error(e2); }
         });
         if (!applied) return;
         await refreshStorage(at);
@@ -3192,8 +3267,9 @@
       criticalResults?.sync();
       // S7-U4b: 보는 검사가 바뀐 때만 Clinical Context를 다시 읽는다(같은 검사면 요청도 그리기도 없다).
       clinicalContext?.sync();
+      // The block names its study (data-viewed): the lines under it are drawn for that same study (viewedInfoFollowsList).
       $("#clinical").innerHTML = s ? `
-        <div class="clinical-scope"></div>
+        <div class="clinical-scope" data-viewed="${esc(s.uid)}"></div>
         <table>
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
@@ -3208,7 +3284,509 @@
         </table>` : "No clinical information provided.";
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
+      renderQcInfo();
+      renderAcquisition();
       renderObservation();
+    }
+
+    /**
+     * The Info panel after a list answer (the poll's rebuild, a list read's application). The block that names the study
+     * and the two blocks under it are always of the same viewed() study: when another study is viewed now than the one the
+     * block names - a Related study left the list or came back to it, the selected study left it - the whole panel is drawn
+     * again (true), so the study named, the QC line and Protocol & Dose are of one study. A move to another study draws
+     * the whole panel itself and does not come here.
+     */
+    function viewedInfoFollowsList() {
+      const s = viewed(), named = $("#clinical .clinical-scope")?.dataset.viewed ?? "";
+      if (named === (s?.uid ?? "")) return false;
+      renderClinical();
+      return true;
+    }
+
+    /**
+     * QC Flag line (every tab; render() repaints it after each poll): the viewed study's mark as this page may show it now
+     * (shownQc: the row the server last listed, while it can be read). The reason and who are data and are never translated.
+     * It is its own line: SS, RS, the order match and the missing-images line are drawn apart and are not changed by it.
+     */
+    function renderQcInfo() {
+      const box = $("#study-qc");
+      if (!box) return;
+      const s = viewed();
+      box.hidden = !s;
+      if (!s) { box.replaceChildren(); return; }
+      const mark = shownQc(s.uid), parts = [kinWrite(document.createElement("span"), kinSay("QC Flag")), ": "];
+      const word = kinWrite(document.createElement("strong"), kinSay(!mark ? "Unknown" : mark.reason === null ? "None" : "Flagged"));
+      word.className = "qc-word";
+      parts.push(word);
+      if (mark?.reason) {
+        const data = text => Object.assign(document.createElement("span"), { translate: false, textContent: text });
+        const reason = data(mark.reason); reason.className = "qc-info-reason";
+        parts.push(" — ", reason);
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        if (who) parts.push(" (", data(who), ")");
+      }
+      box.dataset.qc = !mark ? "Unknown" : mark.reason === null ? "None" : "Flagged";
+      box.replaceChildren(...parts);
+    }
+
+    /**
+     * Protocol and dose (Technician tab only): what the viewed exam's own DICOM records, read in this tab for the originals
+     * and series of its scope (KinExamScope) and judged by KinAcquisition. Its rules:
+     *   - a value, an absence and a failed read each keep where they were read: the original study, the series, the object
+     *     (SOP Instance UID) and, in an enhanced object, the frame's own number. An object is named by its Instance Number only
+     *     when no other object of its series has that number, a series by its number only when no other series of that
+     *     original has it; otherwise the UID is shown. A value that is not a plain number is "Could not read", never converted.
+     *   - "Not in DICOM" is said only of what was read whole: every original of the scope, as many series as the list row
+     *     counts, every series a split part names, as many objects and frames as the archive and the object say there are,
+     *     and a dose report searched to its end. Anything less is said as not read. A tag whose value is kept elsewhere or
+     *     cannot be read as a value is "Could not read", never absent.
+     *   - an original that refuses a read (401/403) or is not found is out of reach from that moment: nothing read from it
+     *     is shown or kept, whichever read learned it.
+     * The block is drawn only for a study that is a readable row of the list the server last sent (the same judge as the
+     * QC mark: qcScope). Answers are kept per exam scope in this tab's memory only, while the list has that row unchanged.
+     */
+    const KinAcquisition = (() => {
+      const MAX_SERIES = 40, SERIES_LIMIT = 501, RDSR = "1.2.840.10008.5.1.4.1.1.88.67", MAX_VALUES = 4, MAX_EVENTS = 20,
+        MAX_DEPTH = 32, MAX_PLACES = 4, MAX_RUNS = 8, MAX_TITLE_PLACES = 60;
+      const SERIES_FIELDS = "0020000D,0020000E,00200011,0008103E,00080060,00201209";
+      // Enhanced X-Ray Radiation Dose SR: a dose report in another form, which this reader does not read. It is said as a
+      // dose report that could not be read, so the exam is never said to have none.
+      const OTHER_RDSR = "1.2.840.10008.5.1.4.1.1.88.76";
+      // Enhanced CT and Legacy Converted Enhanced CT: objects whose frames are described by functional groups.
+      const FRAMED = ["1.2.840.10008.5.1.4.1.1.2.1", "1.2.840.10008.5.1.4.1.1.2.2"];
+      const BAD = Symbol("unreadable");
+      const isItem = v => !!v && typeof v === "object" && !Array.isArray(v);
+      // An attribute whose value is not in this answer (kept elsewhere) or is not a list of values.
+      const elsewhere = a => a.BulkDataURI !== undefined || a.InlineBinary !== undefined;
+      /**
+       * The one value of an attribute as DICOM JSON carries it. undefined: the tag is not there, or is there with no value.
+       * BAD: it is there but its value cannot be read here - not an attribute object, a value kept elsewhere (BulkDataURI,
+       * InlineBinary), a Value that is not a list, or more values than the one it may have.
+       */
+      function one(ds, tag) {
+        const a = ds?.[tag];
+        if (a === undefined) return undefined;
+        if (!isItem(a) || elsewhere(a)) return BAD;
+        if (a.Value === undefined) return undefined;
+        if (!Array.isArray(a.Value) || a.Value.length > 1) return BAD;
+        return a.Value.length ? a.Value[0] : undefined;
+      }
+      const text = (ds, tag) => { const v = one(ds, tag); return typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : ""; };
+      // A sequence's items in their stored places: one that is not an item stays (as null), so the ones after it keep their numbers.
+      const entries = (ds, tag) => Array.isArray(ds?.[tag]?.Value) ? ds[tag].Value.map(v => isItem(v) ? v : null) : [];
+      // A sequence tag that is there but cannot be read as a list of items.
+      const broken = (ds, tag) => ds?.[tag] !== undefined && (!isItem(ds[tag]) || elsewhere(ds[tag]) || ds[tag].Value !== undefined && !Array.isArray(ds[tag].Value));
+      // A number as DICOM JSON carries it: a JSON number, or a decimal string (DS, IS). "0x10", "1e" or "" is not a number.
+      const DECIMAL = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
+      const number = raw => { const n = typeof raw === "number" ? raw : typeof raw === "string" && DECIMAL.test(raw.trim()) ? Number(raw.trim()) : NaN; return Number.isFinite(n) ? n : null; };
+      const count = raw => { const n = number(raw); return Number.isSafeInteger(n) && n >= 0 ? n : null; };
+      /**
+       * Where each recorded value, each absence and each failed read was found: `{ sop, frames }` - the object's SOP Instance
+       * UID and, for frames of an enhanced object, their own numbers in it ([first, last]). The original study and the
+       * series are the series entry's. Values are never added up.
+       */
+      function places() {
+        const values = new Map(), absent = [], unreadable = [];
+        return { absent, unreadable,
+          add(value, place) { if (!values.has(value)) values.set(value, []); values.get(value).push(place); },
+          miss(place) { absent.push(place); }, bad(place) { unreadable.push(place); },
+          list() { return [...values].map(([value, where]) => ({ value, where })); } };
+      }
+      const spans = pairs => { const out = [];
+        for (const [a, b] of [...pairs].sort((x, y) => x[0] - y[0] || x[1] - y[1])) {
+          const last = out[out.length - 1]; if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b); else out.push([a, b]); }
+        return out; };
+      const runs = (pairs, limit) => { const all = spans(pairs);
+        return all.slice(0, limit).map(([a, b]) => a === b ? String(a) : a + "–" + b).join(", ") + (all.length > limit ? ", …" : ""); };
+      const single = pairs => { const all = spans(pairs); return all.length === 1 && all[0][0] === all[0][1]; };
+      /**
+       * The places as words: "images 1–3, 7", "image 5: frames 1–2", "SOP 1.2.3". An object is named by its Instance Number
+       * only when it alone in its series has that number (numberOf answers null otherwise) - else by its SOP Instance UID,
+       * so two objects never share a name. `full` (the line's title) names every object by its SOP Instance UID.
+       */
+      function where(list, numberOf, full = false) {
+        const numbered = [], named = new Set(), framed = new Map();
+        for (const p of list) {
+          const n = numberOf(p.sop);
+          const name = full ? "SOP " + p.sop + (n === null ? "" : " (image " + n + ")") : n === null ? "SOP " + p.sop : null;
+          if (p.frames) { const key = name ?? "image " + n; if (!framed.has(key)) framed.set(key, []); framed.get(key).push(p.frames); }
+          else if (name) named.add(name); else numbered.push([n, n]);
+        }
+        const limit = full ? Infinity : MAX_RUNS, parts = [];
+        if (numbered.length) parts.push((single(numbered) ? "image " : "images ") + runs(numbered, limit));
+        parts.push(...named);
+        for (const [key, frames] of framed) parts.push(key + ": " + (single(frames) ? "frame " : "frames ") + runs(frames, limit));
+        const shown = parts.slice(0, full ? MAX_TITLE_PLACES : MAX_PLACES);
+        return shown.join("; ") + (parts.length > shown.length ? "; … +" + (parts.length - shown.length) : "");
+      }
+      /**
+       * The CTDIvol answers one holder of a CT Exposure Sequence (0018,9321) gives - a frame's group or the shared group:
+       * undefined when it has no such sequence (the next holder is asked), else one answer per item of it: the stored value,
+       * undefined (the item has none), or BAD (the sequence or the item cannot be read).
+       */
+      function exposures(holder) {
+        if (holder?.["00189321"] === undefined) return undefined;
+        if (broken(holder, "00189321")) return [BAD];
+        const list = entries(holder, "00189321");
+        return list.length ? list.map(item => item === null ? BAD : one(item, "00189345")) : undefined;
+      }
+      // CTDIvol (0018,9345) is recorded in mGy (PS3.3 CT Exposure Macro). A value that is not a plain number is unreadable.
+      function ctdiInto(answers, into, place) {
+        for (const raw of answers) {
+          if (raw === undefined) into.miss(place);
+          else { const n = raw === BAD ? null : number(raw); if (n === null) into.bad(place); else into.add(String(n), place); }
+        }
+      }
+      /**
+       * One series, every object the archive returned for it. Each must name this original, this series, a SOP Instance UID
+       * no other object of the answer has, and its SOP Class - or the series is not read (never "absent"). Protocol Name per
+       * object; CTDIvol per object, or per frame of an object with functional groups (an enhanced CT; any object carrying
+       * the shared or per-frame groups). Such an object says how many frames it has (0028,0008) and describes each: only
+       * those frames exist, each at its own number. A frame it counts and does not describe, or whose item cannot be read,
+       * is unreadable at that number; an item past the count belongs to no frame and gives no value; an object that does
+       * not say how many frames it has gives none. `cut` says an object was not described as it counts itself.
+       */
+      function judgeSeries(objects, expected) {
+        const protocol = places(), ctdi = places(), numbers = new Map(), seen = new Map();
+        let cut = false;
+        for (const ds of objects) {
+          const sop = isItem(ds) ? text(ds, "00080018") : "";
+          if (!sop || seen.has(sop) || text(ds, "0020000D") !== expected.study || text(ds, "0020000E") !== expected.series || !text(ds, "00080016"))
+            throw new Error("identity");
+          const n = number(one(ds, "00200013")), image = Number.isSafeInteger(n) ? n : null;
+          seen.set(sop, image);
+          if (image !== null) numbers.set(image, (numbers.get(image) ?? 0) + 1);
+          const name = one(ds, "00181030");
+          if (name === BAD || name !== undefined && typeof name !== "string" && typeof name !== "number") protocol.bad({ sop });
+          else if (String(name ?? "").trim()) protocol.add(String(name).trim(), { sop });
+          else protocol.miss({ sop });
+          const whole = [one(ds, "00189345")];
+          if (ds["52009229"] === undefined && ds["52009230"] === undefined && !FRAMED.includes(text(ds, "00080016"))) {
+            ctdiInto(whole, ctdi, { sop });
+            continue;
+          }
+          const shared = broken(ds, "52009229") || entries(ds, "52009229")[0] === null ? [BAD] : exposures(entries(ds, "52009229")[0]);
+          const frames = entries(ds, "52009230"), declared = count(one(ds, "00280008"));
+          if (broken(ds, "52009230") || declared === null || declared < 1) { cut = true; ctdi.bad({ sop }); continue; }
+          if (frames.length !== declared) cut = true;
+          for (let f = 1; f <= Math.min(declared, frames.length); f++)
+            ctdiInto(frames[f - 1] === null ? [BAD] : exposures(frames[f - 1]) ?? shared ?? whole, ctdi, { sop, frames: [f, f] });
+          if (declared > frames.length) ctdi.bad({ sop, frames: [frames.length + 1, declared] });
+        }
+        // An object's Instance Number names it only when no other object of this series has the same number.
+        const numberOf = sop => { const image = seen.get(sop); return image !== null && image !== undefined && numbers.get(image) === 1 ? image : null; };
+        return { protocol, ctdi, numberOf, cut };
+      }
+      // Dose SR content items are judged on their DCM concept code, their value type and their UCUM unit together.
+      // The concept code of an item: "" when it has none of DCM, null when its concept cannot be read.
+      const concept = item => { if (broken(item, "0040A043")) return null; const c = entries(item, "0040A043")[0];
+        if (c === null || one(c, "00080100") === BAD || one(c, "00080102") === BAD) return null;
+        return text(c, "00080102") === "DCM" ? text(c, "00080100") : ""; };
+      const typed = (item, type) => text(item, "0040A040") === type;
+      function measured(item, unit) {
+        const m = entries(item, "0040A300")[0], u = entries(m, "004008EA")[0], n = number(one(m, "0040A30A"));
+        return n !== null && text(u, "00080102") === "UCUM" && text(u, "00080100") === unit ? { value: String(n), unit } : { unreadable: true };
+      }
+      /**
+       * Every content item under `node` with this concept and value type. `cut` says the search did not reach everything:
+       * an item that cannot be read (it may be the one looked for) or content below the depth this reader follows.
+       */
+      function find(node, code, type, out = { items: [], cut: false }, depth = 0) {
+        if (broken(node, "0040A730")) out.cut = true;
+        for (const item of entries(node, "0040A730")) {
+          const named = item === null ? null : concept(item);
+          if (named === null || one(item, "0040A040") === BAD) { out.cut = true; if (item === null) continue; }
+          if (named === code && typed(item, type)) out.items.push(item);
+          if (depth >= MAX_DEPTH) { if (item["0040A730"] !== undefined) out.cut = true; continue; }
+          find(item, code, type, out, depth + 1);
+        }
+        return out;
+      }
+      /**
+       * An X-Ray Radiation Dose SR: each DLP total it records (TID 10012 CT Accumulated Dose Data 113811 → 113813, mGy.cm),
+       * as that report's own; only when it has none, each irradiation event's Mean CTDIvol (113830, mGy) and DLP
+       * (113838, mGy.cm) (TID 10013, CT Acquisition 113819). Nothing is added up across reports or events. `cut` (of the
+       * report or of one event's value) says the search stopped short, so nothing unseen is called absent.
+       */
+      function doseReport(ds) {
+        const containers = find(ds, "113811", "CONTAINER"), acquisitions = find(ds, "113819", "CONTAINER");
+        let cut = containers.cut || acquisitions.cut;
+        const totals = containers.items.flatMap(c => { const found = find(c, "113813", "NUM"); cut ||= found.cut; return found.items; })
+          .map(item => measured(item, "mGy.cm"));
+        const one = (event, code, unit) => { const found = find(event, code, "NUM");
+          return found.items.length ? measured(found.items[0], unit) : found.cut ? { unreadable: true } : null; };
+        const events = acquisitions.items.map(event => ({ ctdi: one(event, "113830", "mGy"), dlp: one(event, "113838", "mGy.cm") }));
+        return { totals, events: totals.length ? [] : events, cut };
+      }
+      const refusal = e => [401, 403].includes(e?.status);
+      const outOfReach = entry => ["refused", "gone"].includes(entry.state);
+      /**
+       * The one reading of an exam. Per original: its series list (read / failed / cut at the list limit / unidentified /
+       * refused / gone) and the series the scope names that the list did not have (`missing`). Per series of the scope: its
+       * objects (read whole, read in part, failed, or not read past the limit). And the dose reports found. `listed` is the
+       * number of series of the scope the archive listed and `expected` the number the list row counts, `objects` the
+       * number of objects read and `images` the number the list row counts (null: the row does not say).
+       * `complete` says every part of the scope was read whole; only then may the study be said to have no dose
+       * report. `live()` false ends the read early (its answer is not used). `unreachable(studyUid)` is told at once of an
+       * original that refuses a read or is not found - whatever becomes of this read.
+       */
+      async function read(row, request, live = () => true, unreachable = () => {}) {
+        const scope = KinExamScope.read(row);
+        if (!scope) return { state: "unavailable" };
+        const sources = [], all = [];
+        const counted = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+        const expected = counted(row?.series), images = counted(row?.count);
+        for (const source of scope.sources) {
+          const entry = { studyUid: source.studyUid, state: "read", missing: [] };
+          sources.push(entry);
+          let listed;
+          try { listed = await request("/dicom-web/studies/" + encodeURIComponent(source.studyUid) + "/series?includefield=" + SERIES_FIELDS + "&limit=" + SERIES_LIMIT); }
+          catch (e) {
+            entry.state = refusal(e) ? "refused" : [404, 410].includes(e?.status) ? "gone" : "failed";
+            if (outOfReach(entry)) unreachable(source.studyUid);
+            if (!live()) return { state: "stale" };
+            continue;
+          }
+          if (!live()) return { state: "stale" };
+          const own = listed.filter(ds => isItem(ds) && text(ds, "0020000D") === source.studyUid && text(ds, "0020000E"));
+          const uids = own.map(ds => text(ds, "0020000E"));
+          if (listed.length >= SERIES_LIMIT) entry.state = "cut";
+          else if (own.length !== listed.length || new Set(uids).size !== uids.length) entry.state = "unidentified";
+          // A split part names its series: one the list does not have was not read, whatever the others say.
+          if (source.series.mode === "include") entry.missing = [...new Set(source.series.uids)].filter(uid => !uids.includes(uid));
+          for (const ds of own) {
+            const seriesUid = text(ds, "0020000E");
+            if (KinExamScope.allows(source, seriesUid)) all.push({ sourceUid: source.studyUid, seriesUid, modality: text(ds, "00080060"),
+              number: text(ds, "00200011"), description: text(ds, "0008103E"), known: count(one(ds, "00201209")) });
+          }
+        }
+        all.sort((a, b) => a.sourceUid.localeCompare(b.sourceUid) || (Number(a.number) || 0) - (Number(b.number) || 0) || a.seriesUid.localeCompare(b.seriesUid));
+        const chosen = all.slice(0, MAX_SERIES), series = [], reports = [];
+        for (const s of chosen) {
+          const source = sources.find(x => x.studyUid === s.sourceUid);
+          if (outOfReach(source)) continue;
+          try {
+            const objects = await request("/dicom-web/studies/" + encodeURIComponent(s.sourceUid) + "/series/" + encodeURIComponent(s.seriesUid) + "/metadata");
+            if (!live()) return { state: "stale" };
+            if (!objects.length) throw new Error("empty");
+            const judged = judgeSeries(objects, { study: s.sourceUid, series: s.seriesUid });
+            const found = objects.filter(ds => [RDSR, OTHER_RDSR].includes(text(ds, "00080016"))).map(ds => (
+              { sourceUid: s.sourceUid, seriesUid: s.seriesUid, number: s.number, sop: text(ds, "00080018"),
+                ...(text(ds, "00080016") === RDSR ? doseReport(ds) : { totals: [], events: [], cut: true }) }));
+            // Whole: as many objects as the archive's series list says, each describing as many frames as it counts.
+            series.push({ ...s, state: "read", objects: objects.length, whole: s.known === objects.length && !judged.cut, ...judged });
+            reports.push(...found);
+          } catch (e) {
+            // A refusal is said even by a read no longer waited for; the rest of its answer is not used.
+            if (refusal(e)) { source.state = "refused"; unreachable(s.sourceUid); }
+            if (!live()) return { state: "stale" };
+            if (!refusal(e)) series.push({ ...s, state: "failed" });
+          }
+        }
+        // An original that refused a read - its series list or any series - or is not found is out of reach now: what was
+        // read from it before goes with it.
+        const refused = sources.filter(outOfReach).map(x => x.studyUid), reached = x => !refused.includes(x.sourceUid);
+        const kept = series.filter(reached), skipped = all.length - chosen.length;
+        const objects = kept.reduce((sum, x) => sum + (x.objects ?? 0), 0);
+        return { state: "done", sources, series: kept, reports: reports.filter(reached), skipped, refused, listed: all.length, expected,
+          objects, images, partial: scope.sources.some(source => source.series.mode !== "all"),
+          // Whole: every original's list read, as many series and objects as the list row counts, each series read whole,
+          // none past the limit.
+          complete: sources.every(x => x.state === "read" && !x.missing.length) && expected === all.length && images === objects
+            && kept.every(x => x.state === "read" && x.whole) && !skipped };
+      }
+      // The original study and the series of a line, for its title.
+      const origin = s => [{ say: "Study {0}", args: [s.sourceUid] }, { say: "Series {0}", args: [s.seriesUid] }];
+      /**
+       * One fact of a series: each recorded value with where it was read; where it is missing or unreadable, said apart.
+       * A series read whole, with one value everywhere, shows the value alone. The line's title names every place in full.
+       */
+      function factLine(kind, label, t, unit, s) {
+        const list = t.list(), placed = list.length > 1 || t.absent.length > 0 && list.length > 0 || t.unreadable.length > 0 || !s.whole;
+        const at = (places, full) => [{ t: where(places, s.numberOf, full) }], segments = [];
+        if (list.length) segments.push([...list.slice(0, MAX_VALUES).flatMap((v, i) => [...(i ? [{ say: ", " }] : []), { data: v.value + (unit ? " " + unit : "") },
+          ...(placed ? [{ say: " ({t0})", args: at(v.where, false) }] : [])]),
+          ...(list.length > MAX_VALUES ? [{ say: " … +{n0}", args: [list.length - MAX_VALUES] }] : [])]);
+        if (t.absent.length) segments.push([placed ? { say: "Not in DICOM ({t0})", args: at(t.absent, false) } : { say: "Not in DICOM" }]);
+        if (t.unreadable.length) segments.push([{ say: "Could not read ({t0})", args: at(t.unreadable, false) }]);
+        const full = [...list.map(v => ({ say: "{0}: {t1}", args: [v.value + (unit ? " " + unit : ""), ...at(v.where, true)] })),
+          ...(t.absent.length ? [{ say: "Not in DICOM: {t0}", args: at(t.absent, true) }] : []),
+          ...(t.unreadable.length ? [{ say: "Could not read: {t0}", args: at(t.unreadable, true) }] : [])];
+        return { kind, title: [...origin(s), ...full],
+          parts: [{ say: label }, { say: ": " }, ...segments.flatMap((segment, i) => [...(i ? [{ say: " · " }] : []), ...segment])] };
+      }
+      function lines(result) {
+        if (result.state === "reading") return [{ kind: "status", parts: [{ say: "Protocol & Dose: reading DICOM…" }] }];
+        if (result.state === "unavailable") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read (the exam's originals cannot all be read)" }] }];
+        if (result.state !== "done") return [{ kind: "status", parts: [{ say: "Protocol & Dose: Could not read" }] }];
+        const many = result.sources.length > 1, out = [{ kind: "head", parts: [{ say: "Protocol & Dose (recorded in DICOM)" }] }];
+        const from = uid => many ? [{ data: uid }, { say: " · " }] : [];
+        for (const source of result.sources) {
+          if (source.state !== "read") out.push({ kind: "status", parts: [...from(source.studyUid),
+            { say: source.state === "cut" ? "Series list cut at {n0}: some series not read"
+              : source.state === "refused" ? "This original cannot be read now (access refused)"
+              : source.state === "gone" ? "This original cannot be read now (not found)" : "Series list could not be read", args: [SERIES_LIMIT] }] });
+          if (!["refused", "gone"].includes(source.state) && source.missing.length) out.push({ kind: "status", parts: [...from(source.studyUid),
+            { say: "{n0} series of this exam not in the series list (not read):", args: [source.missing.length] }, { say: " " },
+            { data: source.missing.slice(0, 3).join(", ") + (source.missing.length > 3 ? ", …" : "") }] });
+        }
+        // The archive listed another number of series than the list row counts for the exam (or the row does not say how
+        // many): said, and the exam is not called without a dose report.
+        if (result.sources.every(source => source.state === "read") && result.expected !== result.listed)
+          out.push({ kind: "status", parts: [result.expected === null
+            ? { say: "Series found: {n0} (the list does not say how many the exam has)", args: [result.listed] }
+            : { say: "Series found: {n0} of the {n1} the list counts", args: [result.listed, result.expected] }] });
+        // The same for the exam's objects, once every listed series was read: the list row counts another number of them.
+        else if (result.sources.every(source => source.state === "read") && !result.skipped
+            && result.series.every(s => s.state === "read") && result.images !== result.objects)
+          out.push({ kind: "status", parts: [result.images === null
+            ? { say: "Objects read: {n0} (the list does not say how many the exam has)", args: [result.objects] }
+            : { say: "Objects read: {n0} of the {n1} the list counts", args: [result.objects, result.images] }] });
+        if (!result.series.length && result.sources.every(source => source.state === "read" && !source.missing.length))
+          out.push({ kind: "status", parts: [{ say: "No series found" }] });
+        // A series is named by its number only when no other series of that original has the same one; else its UID follows.
+        const sameName = s => result.series.filter(x => x.sourceUid === s.sourceUid && x.number === s.number).length > 1;
+        for (const s of result.series) {
+          const name = [s.number ? "Se " + s.number : "", s.modality, s.description].filter(Boolean).join(" · ");
+          const head = { kind: "series", title: origin(s),
+            parts: [...from(s.sourceUid), { data: !s.number || sameName(s) ? [name, s.seriesUid].filter(Boolean).join(" · ") : name }] };
+          if (s.state !== "read") { head.parts.push({ say: " — Could not read" }); out.push(head); continue; }
+          out.push(head);
+          // Not as many objects as the archive lists for the series (or it does not say how many): said, and nothing below
+          // is called absent without its place.
+          if (s.known !== s.objects) out.push({ kind: "status", parts: [s.known === null
+            ? { say: "Objects read: {n0} (the archive did not say how many there are)", args: [s.objects] }
+            : { say: "Objects read: {n0} of {n1}", args: [s.objects, s.known] }] });
+          out.push(factLine("protocol", "Protocol (0018,1030)", s.protocol, "", s), factLine("ctdi", "CTDIvol (0018,9345)", s.ctdi, "mGy", s));
+        }
+        // DLP comes only from an X-Ray Radiation Dose SR: each report on its own line (its series and SOP Instance UID), as that
+        // report records it, never added up and never computed for a split part.
+        if (!result.reports.length) out.push({ kind: "dlp", parts: [{ say: "DLP (Dose SR)" }, { say: ": " },
+          { say: result.complete ? "Not in DICOM" : "Not found in the series read" }] });
+        for (const r of result.reports) {
+          const head = [{ say: "DLP (Dose SR{t0})", args: [{ t: r.number ? " Se " + r.number : "" }] }, { say: " " },
+            { data: (many ? r.sourceUid + " · " : "") + r.sop }, ...(result.partial ? [{ say: " — not computed for this part" }] : []), { say: ": " }];
+          const title = [...origin(r), { say: "SOP {0}", args: [r.sop] }];
+          // What the search did not find is absent only when the search reached the end of the report.
+          const none = { say: r.cut ? "Could not read" : "Not in DICOM" };
+          const shown = v => v && !v.unreadable ? { data: v.value + " " + v.unit } : v ? { say: "Could not read" } : none;
+          if (r.totals.length) for (const total of r.totals) out.push({ kind: "dlp", title, parts: [...head, shown(total),
+            { say: " (total recorded in this Dose SR, 113813)" }] });
+          else if (!r.events.length) out.push({ kind: "dlp", title, parts: [...head, none] });
+          else {
+            r.events.slice(0, MAX_EVENTS).forEach((event, i) => out.push({ kind: "dlp-event", title, parts: [...head,
+              { say: "Event {n0}: ", args: [i + 1] }, { say: "CTDIvol " }, shown(event.ctdi), { say: " · DLP " }, shown(event.dlp)] }));
+            if (r.events.length > MAX_EVENTS) out.push({ kind: "status", parts: [{ say: "{n0} more events not shown", args: [r.events.length - MAX_EVENTS] }] });
+          }
+        }
+        if (result.skipped) out.push({ kind: "status", parts: [{ say: "{n0} more series not read (limit {n1})", args: [result.skipped, MAX_SERIES] }] });
+        return out;
+      }
+      return { read, lines, judgeSeries, doseReport };
+    })();
+    // key -> { uid, sources, result }: a whole answer, the list row it was read for and the originals it read.
+    const acquisitionCache = new Map();
+    let acquisitionSeq = 0;
+    /** Refresh (a list read the person asked for) or a session change: read the DICOM again next time. */
+    function forgetAcquisition() {
+      acquisitionCache.clear(); acquisitionSeq++;
+      const box = $("#study-acquisition"); if (box) box.dataset.key = "";
+    }
+    /**
+     * What one answer is of: a study that is a readable row of the list the server last sent (qcScope - a row the list no
+     * longer has, one that cannot be read now, and one a command was answered 404 for have none), read one way, with its
+     * exam scope and the counts the list row says. null: nothing of this study's DICOM may be drawn now.
+     */
+    function acquisitionKey(s) {
+      if (!s || s.examUnavailable || qcScope(s.uid) === null) return null;
+      let scope = null;
+      try { scope = KinExamScope.read(s); } catch (_) { scope = null; }
+      return scope ? s.uid + "|" + qcScope(s.uid) + "|" + KinExamScope.screenStamp(s) + "|" + (s.count ?? "") + "|" + (s.series ?? "") : null;
+    }
+    /**
+     * Kept answers follow the list the server last sent: an answer stays only while its row is listed with the scope, counts
+     * and series it was read for. A row that left the list, changed, or cannot be read now (a merged exam one of whose
+     * originals is out of reach) loses its answer, so it is read again when it comes back.
+     */
+    function acquisitionFollowsList() {
+      for (const [key, kept] of acquisitionCache)
+        if (acquisitionKey(studies.find(s => s.uid === kept.uid)) !== key) acquisitionCache.delete(key);
+    }
+    function renderAcquisition() {
+      const box = $("#study-acquisition");
+      if (!box) return;
+      acquisitionFollowsList();
+      const s = viewed(), show = !!s && mode === "Technician" && serverMode && !demoMode;
+      box.hidden = !show;
+      // A read belongs to the key the block showed when it began: whenever the block shows another key (another exam, a
+      // changed or unreadable scope, a hidden block), reads still on the way are no longer used (readAcquisition).
+      const showKey = key => { if ((box.dataset.key ?? "") !== key) { box.dataset.key = key; acquisitionSeq++; } };
+      if (!show) { box.replaceChildren(); acquisitionDrawn = []; showKey(""); return; }
+      const key = acquisitionKey(s);
+      if (!key) { showKey(""); drawAcquisition(box, { state: s.examUnavailable ? "unavailable" : "failed" }); return; }
+      // Drawn (or being read) for this key already: nothing to do. Refresh and a session change clear the key (forgetAcquisition).
+      if (box.dataset.key === key) return;
+      showKey(key);
+      const known = acquisitionCache.get(key);
+      if (known) { drawAcquisition(box, known.result); return; }
+      drawAcquisition(box, { state: "reading" });
+      if (offline) return;
+      readAcquisition(s, key);
+    }
+    // The originals the drawn answer read (drawAcquisition): what is drawn goes when one of them is out of reach.
+    let acquisitionDrawn = [];
+    function drawAcquisition(box, result) {
+      acquisitionDrawn = (result.sources ?? []).map(source => source.studyUid);
+      box.replaceChildren(...KinAcquisition.lines(result).map(acquisitionLine));
+    }
+    /** One drawn line: its fixed words through the screen language, its values (tags' contents, series names) as data. */
+    function acquisitionLine(line) {
+      const row = document.createElement("div");
+      row.className = "acq-line"; if (line.kind) row.dataset.kind = line.kind;
+      // The full places of what the line says (original study, series, SOP Instance UIDs, frames), one per title line.
+      if (line.title) {
+        const parts = line.title.map(part => kinSay(part.say, ...(part.args || [])));
+        kinWrite(row, kinSay(parts.map((_, i) => "{" + i + "}").join("\n"), ...parts), "title");
+      }
+      for (const part of line.parts) row.append(part.data
+        ? Object.assign(document.createElement("span"), { translate: false, textContent: part.data })
+        : kinWrite(document.createElement("span"), kinSay(part.say, ...(part.args || []))));
+      return row;
+    }
+    async function readAcquisition(s, key) {
+      // Each read has its own deadline (a study with many series is not cut off as a whole); the context drops a late answer.
+      const seq = ++acquisitionSeq, at = work.capture("document");
+      const request = async path => {
+        const res = await transport.request(path, { context: at, cache: "no-store",
+          headers: { Accept: "application/dicom+json" }, deadlineMs: 20000 });
+        if (!res.ok || !Array.isArray(res.body)) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
+        return res.body;
+      };
+      // An original that refuses a read or is not found is out of reach from that moment, whether or not this read is
+      // still the one the block waits for (a read left behind for another exam of the same original learns it too): every
+      // kept answer that read it goes, and an answer drawn from it is read again now.
+      const unreachable = uid => work.commit(at, () => {
+        for (const [k, kept] of acquisitionCache) if (kept.sources.includes(uid)) acquisitionCache.delete(k);
+        const box = $("#study-acquisition");
+        if (seq === acquisitionSeq || !box || !acquisitionDrawn.includes(uid)) return;
+        box.dataset.key = ""; acquisitionSeq++;
+        renderAcquisition();
+      });
+      let result;
+      try { result = await KinAcquisition.read(s, request, () => seq === acquisitionSeq && work.admits(at), unreachable); }
+      catch (e) { result = { state: "failed" }; }
+      work.commit(at, () => {
+        // Judged before anything is kept or drawn: this is still the read the block waits for (no newer read, Refresh,
+        // session change, other exam or changed scope since it began) and its exam is the one viewed now with the same key.
+        // An answer that fails this is dropped whole - it reaches neither the screen nor the kept answers.
+        const box = $("#study-acquisition");
+        if (seq !== acquisitionSeq || !box || box.hidden || box.dataset.key !== key || acquisitionKey(viewed()) !== key) return;
+        // A whole read is kept for its key (the exam scope, counts and series of the list row it was read for); a read with
+        // a failure or a part not read is not kept, so the next viewing reads again.
+        if (result.state === "done" && result.complete)
+          acquisitionCache.set(key, { uid: s.uid, sources: result.sources.map(source => source.studyUid), result });
+        drawAcquisition(box, result);
+      });
     }
 
     /**
@@ -5076,6 +5654,177 @@
     $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
     $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
 
+    /**
+     * ── QC Flag (Technician bar) ──
+     * One window on the selected study (the row the change is stored on, even while a Related study is viewed). It shows the
+     * mark this page may show for that row now (shownQc) and sends one command based on the mark's revision and the row's
+     * epoch as the person saw them when the window opened (api/src/pacs/qc-flag.ts); nothing is painted before the answer.
+     * The window follows the list (syncQcWindow): a study that is no longer a row this account reads as its owning
+     * institution closes it at once, emptied. A refusal, a lost answer or a timeout is said in the window and the list is
+     * read again; a mark that changed meanwhile is said before anything is sent. The bar button follows technicianWork()
+     * (applyRoleUi).
+     */
+    let qcWindow = null, qcSeq = 0;
+    function qcWindowNode() {
+      if (qcWindow) return qcWindow;
+      const d = document.createElement("dialog"); d.id = "qc-flag-window"; d.setAttribute("aria-labelledby", "qc-flag-title");
+      d.style.cssText = "width:min(520px,94vw);background:var(--kin-panel);color:var(--kin-text);border:1px solid var(--kin-muted);border-radius:8px;padding:14px";
+      const make = (tag, id, text) => { const el = document.createElement(tag); if (id) el.id = id; if (text) kinWrite(el, kinSay(text)); return el; };
+      const title = make("h3", "qc-flag-title", "QC Flag"); title.style.margin = "0 0 8px";
+      const study = make("div", "qc-flag-study"); study.translate = false;
+      const now = make("div", "qc-flag-now"); now.style.margin = "6px 0";
+      const label = make("label", null, "Reason"); label.htmlFor = "qc-flag-reason"; label.style.display = "block";
+      // One line (the server refuses line breaks and tabs): an input, not a text area.
+      const reason = make("input", "qc-flag-reason"); reason.type = "text"; reason.maxLength = 500; reason.translate = false;
+      reason.style.cssText = "width:100%;box-sizing:border-box";
+      const status = make("p", "qc-flag-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+      const flag = make("button", "qc-flag-save", "Flag"), clear = make("button", "qc-flag-clear", "Clear Flag"), cancel = make("button", "qc-flag-cancel", "Cancel");
+      for (const b of [flag, clear, cancel]) b.type = "button";
+      const actions = document.createElement("div"); actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap"; actions.append(flag, clear, cancel);
+      d.append(title, study, now, label, reason, status, actions);
+      flag.addEventListener("click", () => sendQc(false));
+      clear.addEventListener("click", () => sendQc(true));
+      cancel.addEventListener("click", () => closeQcWindow(d));
+      // However it closes (Cancel, Esc, the session's end), nothing of the study stays in it; a late answer still updates
+      // the row by its own rule (takeQcAnswer), never this window. (The event comes after the closing: a window opened
+      // again by then keeps what it shows.)
+      d.addEventListener("close", () => { if (!d.open) emptyQcWindow(d); });
+      document.body.append(d);
+      return qcWindow = d;
+    }
+    /** Drops the window's request token and everything it showed or held: the study, the mark, the author, the typed reason. */
+    function emptyQcWindow(d) {
+      qcSeq++;
+      Object.assign(d.dataset, { uid: "", revision: "", epoch: "", scope: "" }); delete d.dataset.request;
+      $("#qc-flag-study").textContent = ""; $("#qc-flag-now").replaceChildren(); $("#qc-flag-status").textContent = "";
+      $("#qc-flag-reason").value = "";
+    }
+    function closeQcWindow(d) { emptyQcWindow(d); if (d.open) d.close(); }
+    /**
+     * May the window show and send for its study now? Only while that study is a row of the list the server last sent, one
+     * this account can read (qcScope) and reads as its owning institution (not a row received for tele-reading).
+     */
+    function qcWindowStands(d) {
+      const uid = d.dataset.uid, row = uid ? studies.find(x => x.uid === uid) : null;
+      return !!row && !row.tele && qcScope(uid) !== null;
+    }
+    /**
+     * The window's picture of its study, drawn from the mark this page may show now. `rebase` (opening the window, and the
+     * moment the person is told the mark changed) also sets what the command will be sent against - the mark's revision,
+     * the row's epoch and the row's reading. Nothing else moves that base: a poll that shows a newer mark here leaves it, so
+     * the next press is answered "changed meanwhile" instead of silently writing over the other change.
+     */
+    function drawQcWindow(d, uid, rebase = false) {
+      const s = studies.find(x => x.uid === uid), mark = shownQc(uid);
+      if (rebase) Object.assign(d.dataset, { uid, revision: mark ? String(mark.revision) : "", epoch: appState[uid]?.draftEpoch ?? "", scope: qcScope(uid) ?? "" });
+      $("#qc-flag-study").textContent = s ? `${s.name} (${s.id}) · ${s.date} · ${shownStudyDesc(s)}` : "";
+      const now = $("#qc-flag-now");
+      if (!mark) kinWrite(now, kinSay("QC 상태를 아직 받지 못했습니다. 목록을 새로고침한 뒤 다시 여세요."));
+      else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));
+      else {
+        const why = document.createElement("span"); why.translate = false; why.textContent = mark.reason;
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        now.replaceChildren(kinWrite(document.createElement("span"), kinSay("Flagged")), ": ", why,
+          ...(who ? [" · ", Object.assign(document.createElement("span"), { translate: false, textContent: who })] : []));
+      }
+      const busy = !!d.dataset.request;
+      $("#qc-flag-save").disabled = busy || !mark; $("#qc-flag-clear").disabled = busy || !mark || mark.reason === null;
+    }
+    /**
+     * The open window follows the list (render() calls this after every list read and every redraw): when its study is no
+     * longer a row this account reads as its owning institution - it left the list, cannot be read now, became a row
+     * received for tele-reading, or the server answered 404 for it - the window is emptied and closed at once. Otherwise
+     * the line that shows the mark is drawn again from the list; the base of the command stays (drawQcWindow).
+     */
+    function syncQcWindow() {
+      const d = qcWindow;
+      if (!d?.open || !d.dataset.uid) return;
+      if (qcWindowStands(d)) { drawQcWindow(d, d.dataset.uid); return; }
+      closeQcWindow(d);
+      toast(kinSay("이 검사의 QC 표시를 지금은 볼 수 없어 창을 닫았습니다. 목록을 확인하세요."), "err");
+    }
+    function openQcFlag() {
+      if (!technicianWork()) return;
+      const s = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
+      if (!s) { alert("검사를 선택하세요."); return; }
+      if (!serverMode || offline || demoMode) { toast(kinSay("QC 표시는 서버에 연결된 동안에만 바꿀 수 있습니다"), "err"); return; }
+      if (s.tele) { toast(kinSay("원격판독으로 받은 검사의 QC 표시는 보유 기관에서만 바꿀 수 있습니다"), "err"); return; }
+      if (qcScope(s.uid) === null) { toast(kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."), "err"); return; }
+      const d = qcWindowNode();
+      emptyQcWindow(d);
+      drawQcWindow(d, s.uid, true);
+      $("#qc-flag-reason").value = shownQc(s.uid)?.reason ?? "";
+      if (!d.open) d.showModal();
+      $("#qc-flag-reason").focus();
+    }
+    async function sendQc(clearing) {
+      const d = qcWindow, uid = d?.dataset.uid;
+      if (!d?.open || !uid || d.dataset.request) return;
+      const status = $("#qc-flag-status");
+      // Judged again at the moment of sending, not only when the window opened: the row, the connection and the role.
+      if (!qcWindowStands(d)) { syncQcWindow(); return; }
+      if (!technicianWork() || !serverMode || offline || demoMode) {
+        kinWrite(status, kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."));
+        return;
+      }
+      // The mark changed since the person last saw it here as the base (a poll, another window): the new one is shown and
+      // said, and becomes the base, before anything is sent.
+      const mark = shownQc(uid), scope = qcScope(uid);
+      if (!mark || String(mark.revision) !== d.dataset.revision || (appState[uid]?.draftEpoch ?? "") !== d.dataset.epoch || scope !== d.dataset.scope) {
+        drawQcWindow(d, uid, true);
+        kinWrite(status, kinSay("그 사이 QC 표시가 바뀌었습니다. 지금 상태를 확인한 뒤 다시 누르세요."));
+        return;
+      }
+      const raw = $("#qc-flag-reason").value, reason = raw.trim();
+      if (!clearing && (!reason || reason.length > 500 || /[\u0000-\u001f\u007f-\u009f]/.test(raw))) {
+        kinWrite(status, kinSay("QC 사유를 줄바꿈 없이 1~500자로 적으세요."));
+        return;
+      }
+      const token = String(++qcSeq), at = work.capture("document"), controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      d.dataset.request = token; $("#qc-flag-save").disabled = $("#qc-flag-clear").disabled = true;
+      kinWrite(status, kinSay("저장 중…"));
+      let st = null, error = null;
+      try {
+        st = await api("PATCH", "/studies/" + encodeURIComponent(uid),
+          { qc: clearing ? null : { reason }, qcRevision: mark.revision, epoch: d.dataset.epoch }, controller.signal, at);
+      } catch (e) { error = e; } finally { clearTimeout(timer); }
+      work.commit(at, () => {
+        // Is the window still the one that sent this (closing it, however, drops its token)?
+        const own = d.dataset.request === token && d.open && d.dataset.uid === uid;
+        if (own) delete d.dataset.request;
+        if (st) {
+          // The answer's mark is taken only for the reading it was sent under; the redraw closes this window by its own
+          // rule when the row no longer stands (syncQcWindow in render()).
+          takeQcAnswer(uid, st, scope);
+          // The row is read another way now than when this was sent: the list is asked what the mark is.
+          if (qcScope(uid) !== scope) Promise.resolve(load()).catch(() => {});
+          syncStudy(uid); render(); renderClinical();
+          if (!own || !d.open || d.dataset.uid !== uid) return;
+          closeQcWindow(d);
+          const saved = qcMark(st);
+          toast(kinSay(saved?.reason === null ? "QC 표시를 지웠습니다" : "QC 표시를 저장했습니다"), "info");
+          return;
+        }
+        // 404: the server says this study is not there for this account. Nothing of its mark stays on this page - the row's
+        // mark, the Info line and this window go at once, before the list is read again.
+        if (error?.status === 404) {
+          loseQc(uid); syncStudy(uid); render(); renderClinical();
+          Promise.resolve(load()).catch(() => {});
+          return;
+        }
+        // Refused, lost or timed out: the result is read back from the server (the list) and the window says what happened;
+        // the list read redraws the open window's mark through render() (the status line and the command's base stay).
+        if (!error?.auth) Promise.resolve(load()).catch(() => {});
+        if (!own) return;
+        drawQcWindow(d, uid);
+        kinWrite(status, error?.name === "AbortError"
+          ? kinSay("응답 시간이 지났습니다. 저장됐는지 목록을 다시 읽어 확인합니다.")
+          : kinSay("QC 표시를 저장하지 못했습니다: {e0}", error?.message ?? ""));
+      });
+    }
+    $("#t-qc-flag").addEventListener("click", openQcFlag);
+
     // ── 장비 수신 ──
     // 예전엔 여기 "장비 수신 시뮬" 버튼이 있었다. localStorage에 가짜 행을 만들 뿐이라
     // 영상도 없고 서버도 몰랐다 — 화면에만 있는 검사였다.
@@ -6685,8 +7434,85 @@
       }
       return local;
     }
-    /** 폴링 응답 한 건을 그 검사의 화면 상태에 합친다. 가려진 예비 판독은 서버가 본문을 안 준다. */
-    function mergeObservedReportState(uid, st) {
+    /**
+     * QC Flag (the server's rule: api/src/pacs/qc-flag.ts), kept beside the state merge that keeps it. The mark a state answer carries, read here only: `{reason, by,
+     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     */
+    function qcMark(value) {
+      const qc = value?.qc;
+      if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
+        || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+        revision: qc.revision };
+    }
+    /**
+     * QC marks follow the list the server last sent. A mark is shown, compared or written only for a row of that list this
+     * account can read now, and only inside one reading of that row: one generation of the study's state (draftEpoch) read
+     * one way (by its owning institution, or by a tele-reading receiver, who is not told who marked). qcScopes holds that
+     * reading per listed UID; a UID the list does not have, and a row of a merged or split exam whose originals cannot all
+     * be read now, have none. When the list says another reading for a UID - or stops listing it - the mark held under the
+     * earlier one is dropped first, so a revision is never compared across two readings and nothing read under the earlier
+     * one (the reason, the author's name) is shown under the new one. The list column, its filter and sort, Export List,
+     * the Info line and the QC window all ask shownQc(); none reads the stored mark itself.
+     */
+    function qcScopes() { return qcScopes.byUid ??= new Map(); }
+    /** The reading a state answer was made under: whose study it is, who receives it for tele-reading, and its generation. */
+    function qcReading(st) {
+      return JSON.stringify([st?.institutionId ?? null, st?.teleInstitutionId ?? null, st?.draftEpoch ?? null]);
+    }
+    function dropQc(uid) {
+      if (appState[uid] && Object.hasOwn(appState[uid], "qc")) { const { qc, ...rest } = appState[uid]; appState[uid] = rest; }
+    }
+    /** One row of a list answer, before its state is merged (fromApi and the poll's in-place update). */
+    function observeQcScope(s) {
+      const next = s.examUnavailable === true ? null : qcReading(s.state);
+      if (qcScopes().get(s.uid) !== next) dropQc(s.uid);
+      qcScopes().set(s.uid, next);
+    }
+    /** This study is not there for this account now (it left the list; a QC command was answered 404): its mark goes at once. */
+    function loseQc(uid) { qcScopes().delete(uid); dropQc(uid); }
+    /** A whole list answer: a UID it does not list has no mark on this page any more. */
+    function observeQcList(rows) {
+      const listed = new Set(rows.map(s => s.uid));
+      for (const uid of [...qcScopes().keys()]) if (!listed.has(uid)) loseQc(uid);
+    }
+    /**
+     * A list answer the moment it is in hand - before the read waits for anything else, and before the list is rebuilt
+     * from it: a UID it does not list, or reads another way than this page holds, has no mark here from now on. The
+     * answer's own marks are taken when it is applied (observeQcScope); an answer that is then not applied leaves those
+     * rows Unknown until the next list - never showing what an earlier reading held.
+     */
+    function hearQcList(rows) {
+      const said = new Map(rows.map(s => [s.uid, s.examUnavailable === true ? null : qcReading(s.state)]));
+      for (const [uid, held] of [...qcScopes()]) if (!said.has(uid) || said.get(uid) !== held) loseQc(uid);
+    }
+    function qcScope(uid) { return qcScopes().get(uid) ?? null; }
+    /** The mark this page may show for a study now; null (shown as Unknown) when it is not a readable row of the last list. */
+    function shownQc(uid) { return qcScope(uid) === null ? null : qcMark(appState[uid]); }
+    /**
+     * Every place a server state answer replaces this document's state of a row passes here (mergeObservedReportState and
+     * replaceReportState: list, poll, bootstrap, reconnect, PATCH, Match, commit, discard), and a QC command's own answer
+     * (takeQcAnswer). What it returns is spread over the merged state: `{}` takes the answer's mark, `{ qc }` keeps the
+     * held one (or none).
+     *   - The list's answer (`listed`) says how the row is read now, and the mark held under an earlier reading is already
+     *     dropped (observeQcScope): its mark is taken unless it is older than the held one - the server never lowers the
+     *     revision, so a lower one is a list read before a later change - or carries no readable mark.
+     *   - Any other answer may have been made under an earlier reading of the row: its mark is taken only when it names the
+     *     reading the list says now and is newer than the held one. At the same revision the list's stands (with or
+     *     without the author's name), and an answer for a row the list does not have leaves no mark.
+     * Only the mark is kept or taken this way; the rest of the answer is merged as before.
+     */
+    function newerQc(uid, mine, st, listed) {
+      const held = qcMark(mine), seen = qcMark(st), keep = { qc: held ? mine.qc : undefined };
+      if (!seen) return keep;
+      if (listed) return held && held.revision > seen.revision ? keep : {};
+      return qcScope(uid) !== null && qcScope(uid) === qcReading(st) && !(held && held.revision >= seen.revision) ? {} : keep;
+    }
+    /**
+     * 폴링 응답 한 건을 그 검사의 화면 상태에 합친다. 가려진 예비 판독은 서버가 본문을 안 준다. `listed`: 이 답이 목록(조회·폴링)의
+     * 그 행이다 — QC 표시의 기준이 된다(newerQc).
+     */
+    function mergeObservedReportState(uid, st, listed = false) {
       // An observation can update an idle document, including its draft command baseline.
       const mine = appState[uid] ?? {};
       if (!reportConverge.has(uid) && st)
@@ -6705,7 +7531,7 @@
       const seen = numbered(st?.draftRevision), held = numbered(mine.draftRevision);
       const late = seen && held && seen[1] === held[1] && Number(seen[2]) < Number(held[2])
         ? { draft: mine.draft ?? null, draftRevision: mine.draftRevision, draftEpoch: mine.draftEpoch } : null;
-      return { ...mine, ...st, ...late, ...preservedLocal(uid, mine) };
+      return { ...mine, ...st, ...late, ...newerQc(uid, mine, st, listed), ...preservedLocal(uid, mine) };
     }
 
     /**
@@ -6726,7 +7552,7 @@
       recordReportOrigin(uid, renderedOrigin(st));
       citations.forget(uid); citationNotes.delete(uid);
       structureState.forget(uid); structureNotes.delete(uid);
-      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false };
+      return { ...appState[uid], ...st, draft: st.draft ?? null, examScopeChanged: false, ...newerQc(uid, appState[uid], st, false) };
     }
 
     /** 삽입이 나가 있는 동안의 비-keepalive 초안 저장을 **전부** 비켜세운다(B1). */
@@ -9317,6 +10143,7 @@
       if (typeof a.ward === "string") s.ward = a.ward;
       if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
+      applyQcRow(s);
     }
 
 
@@ -10351,6 +11178,8 @@
           // 요청을 보낸 뒤 확정이 일어났다면 이 응답은 그 이전 사진이다. 버린다.
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           assertStudyOwner(r);
+          // What this answer no longer lists (or reads another way) loses its QC mark and DICOM values now, before the wait below.
+          qcHearsList(r.studies);
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           pollFails = 0;
@@ -10375,8 +11204,10 @@
           // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
           // carries a scope.
           const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          // A row that became (or stopped being) one received for tele-reading is another row for this account: every
+          // field of it is rebuilt from this answer, like a changed exam.
           const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
-            || lostKey(s)!==lostKey(known.get(s.uid)));
+            || lostKey(s)!==lostKey(known.get(s.uid)) || known.has(s.uid) && (s.tele===true)!==(known.get(s.uid).tele===true));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -10390,6 +11221,8 @@
             // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
             // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
             renderObservation();
+            // Another study is viewed now than the Info panel names (a Related study left the list or came back): one study.
+            viewedInfoFollowsList();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
@@ -10400,8 +11233,11 @@
             return;
           }
 
+          // QC marks follow this answer too (report-draft-sync.js observeQcList): the rows it lists and how each is read now.
+          observeQcList(r.studies);
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
+            observeQcScope(s);
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
               draftEpoch:s.state?.draftEpoch??null, sourceMetadata:sourceMetadataView(s.sourceMetadata),
               // Referred is fixed once the study exists; written here by the same rule as fromApi all the same.
@@ -10419,7 +11255,7 @@
               //     되돌아간다. 확정본(findings 등)은 갱신해도 된다 — 초안이 있는 동안
               //     화면은 초안을 그리고, 확정본은 "그 사이 남이 v5를 확정했다" 안내에만 쓰인다.
               // 나머지(rs·ss·holder 등)도 갱신한다. 남이 승인한 게 화면에 보여야 하니까.
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
               /**
                * 판독문 값은 loadReport가 스스로 지키므로, 호출자는 항상 상태를 반영한다.
                * 예전엔 폴링이 `prelimHidden`만 반영하고 판독문 패널은 그대로 뒀다 —
@@ -10433,7 +11269,7 @@
                * 서버 어디에도 없다. 폴링 한 번이 그것을 서버 투영으로 갈아끼우면 돌아온
                * 화면은 옛 글을 그리고, 수렴 저장이 그 옛 글을 서버에 밀어 넣는다.
                */
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
             }
             // Modality changes when a series of another modality arrives (an attached document, too): written like Count and
             // Series, as the list read draws it (fromApi, then applyState's display overlay over the server's value).
@@ -10445,6 +11281,7 @@
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }
           }
           render();
+          viewedInfoFollowsList();
           autoPreload?.afterList();
           if (arrivalNotice) announceArrivals(arrivalNotice);
           pollFails = 0;
@@ -15873,7 +16710,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       reportFrameEnded = true;
       reportOpening = null;
       leftNotes.clear();
-      for (const id of ["rows", "relrows", "user", "roles", "clinical", "thumbwrap", "ctx", "err", "leftnotes"]) $("#" + id)?.replaceChildren();
+      // The QC line and Protocol & Dose hold a study's own values too (the reason, who marked, recorded dose).
+      for (const id of ["rows", "relrows", "user", "roles", "clinical", "study-qc", "study-acquisition", "thumbwrap", "ctx", "err", "leftnotes"]) $("#" + id)?.replaceChildren();
       document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));
       document.querySelectorAll("dialog[open]").forEach(dialog => { if (!dialog.classList.contains("kin-logout")) dialog.close(); });
       document.documentElement.classList.add("kin-closed");
@@ -15942,7 +16780,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
-      ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
+      ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
         if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
@@ -16267,6 +17105,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // FA-066 Export List: the search result in list order, the selection, and each cell's shown text (CELL markup read as text).
       worklistExport = window.KinWorklistExport?.mount?.({button:$('#worklist-export-open'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,
         selected:()=>multiSelection?.snapshot()?.studyUids||[],columns:()=>COLS[mode],shown:shownColumns,notify:m=>toast(m),
+        // At Export the file is written from the rows the list holds then (a study gone from it is not written).
+        current:s=>studies.find(x=>x.uid===s.uid)||null,
         cellText:(s,c,no)=>c.k==='no'?String(no):CELL[c.k]?new DOMParser().parseFromString(CELL[c.k](s),'text/html').body.textContent.replace(/\s+/g,' ').trim():String(s[c.k]??'')});
       // FC-070 More › Query/Retrieve (query-retrieve.js): search a registered peer PACS and pull studies; an arrival reloads the list.
       queryRetrieve = window.KinQueryRetrieve?.mount?.({button:$('#query-retrieve-open'),panel:$('#query-retrieve'),api:API,transport,

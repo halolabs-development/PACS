@@ -159,6 +159,177 @@
     $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
     $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
 
+    /**
+     * ── QC Flag (Technician bar) ──
+     * One window on the selected study (the row the change is stored on, even while a Related study is viewed). It shows the
+     * mark this page may show for that row now (shownQc) and sends one command based on the mark's revision and the row's
+     * epoch as the person saw them when the window opened (api/src/pacs/qc-flag.ts); nothing is painted before the answer.
+     * The window follows the list (syncQcWindow): a study that is no longer a row this account reads as its owning
+     * institution closes it at once, emptied. A refusal, a lost answer or a timeout is said in the window and the list is
+     * read again; a mark that changed meanwhile is said before anything is sent. The bar button follows technicianWork()
+     * (applyRoleUi).
+     */
+    let qcWindow = null, qcSeq = 0;
+    function qcWindowNode() {
+      if (qcWindow) return qcWindow;
+      const d = document.createElement("dialog"); d.id = "qc-flag-window"; d.setAttribute("aria-labelledby", "qc-flag-title");
+      d.style.cssText = "width:min(520px,94vw);background:var(--kin-panel);color:var(--kin-text);border:1px solid var(--kin-muted);border-radius:8px;padding:14px";
+      const make = (tag, id, text) => { const el = document.createElement(tag); if (id) el.id = id; if (text) kinWrite(el, kinSay(text)); return el; };
+      const title = make("h3", "qc-flag-title", "QC Flag"); title.style.margin = "0 0 8px";
+      const study = make("div", "qc-flag-study"); study.translate = false;
+      const now = make("div", "qc-flag-now"); now.style.margin = "6px 0";
+      const label = make("label", null, "Reason"); label.htmlFor = "qc-flag-reason"; label.style.display = "block";
+      // One line (the server refuses line breaks and tabs): an input, not a text area.
+      const reason = make("input", "qc-flag-reason"); reason.type = "text"; reason.maxLength = 500; reason.translate = false;
+      reason.style.cssText = "width:100%;box-sizing:border-box";
+      const status = make("p", "qc-flag-status"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite");
+      const flag = make("button", "qc-flag-save", "Flag"), clear = make("button", "qc-flag-clear", "Clear Flag"), cancel = make("button", "qc-flag-cancel", "Cancel");
+      for (const b of [flag, clear, cancel]) b.type = "button";
+      const actions = document.createElement("div"); actions.style.cssText = "display:flex;gap:8px;flex-wrap:wrap"; actions.append(flag, clear, cancel);
+      d.append(title, study, now, label, reason, status, actions);
+      flag.addEventListener("click", () => sendQc(false));
+      clear.addEventListener("click", () => sendQc(true));
+      cancel.addEventListener("click", () => closeQcWindow(d));
+      // However it closes (Cancel, Esc, the session's end), nothing of the study stays in it; a late answer still updates
+      // the row by its own rule (takeQcAnswer), never this window. (The event comes after the closing: a window opened
+      // again by then keeps what it shows.)
+      d.addEventListener("close", () => { if (!d.open) emptyQcWindow(d); });
+      document.body.append(d);
+      return qcWindow = d;
+    }
+    /** Drops the window's request token and everything it showed or held: the study, the mark, the author, the typed reason. */
+    function emptyQcWindow(d) {
+      qcSeq++;
+      Object.assign(d.dataset, { uid: "", revision: "", epoch: "", scope: "" }); delete d.dataset.request;
+      $("#qc-flag-study").textContent = ""; $("#qc-flag-now").replaceChildren(); $("#qc-flag-status").textContent = "";
+      $("#qc-flag-reason").value = "";
+    }
+    function closeQcWindow(d) { emptyQcWindow(d); if (d.open) d.close(); }
+    /**
+     * May the window show and send for its study now? Only while that study is a row of the list the server last sent, one
+     * this account can read (qcScope) and reads as its owning institution (not a row received for tele-reading).
+     */
+    function qcWindowStands(d) {
+      const uid = d.dataset.uid, row = uid ? studies.find(x => x.uid === uid) : null;
+      return !!row && !row.tele && qcScope(uid) !== null;
+    }
+    /**
+     * The window's picture of its study, drawn from the mark this page may show now. `rebase` (opening the window, and the
+     * moment the person is told the mark changed) also sets what the command will be sent against - the mark's revision,
+     * the row's epoch and the row's reading. Nothing else moves that base: a poll that shows a newer mark here leaves it, so
+     * the next press is answered "changed meanwhile" instead of silently writing over the other change.
+     */
+    function drawQcWindow(d, uid, rebase = false) {
+      const s = studies.find(x => x.uid === uid), mark = shownQc(uid);
+      if (rebase) Object.assign(d.dataset, { uid, revision: mark ? String(mark.revision) : "", epoch: appState[uid]?.draftEpoch ?? "", scope: qcScope(uid) ?? "" });
+      $("#qc-flag-study").textContent = s ? `${s.name} (${s.id}) · ${s.date} · ${shownStudyDesc(s)}` : "";
+      const now = $("#qc-flag-now");
+      if (!mark) kinWrite(now, kinSay("QC 상태를 아직 받지 못했습니다. 목록을 새로고침한 뒤 다시 여세요."));
+      else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));
+      else {
+        const why = document.createElement("span"); why.translate = false; why.textContent = mark.reason;
+        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        now.replaceChildren(kinWrite(document.createElement("span"), kinSay("Flagged")), ": ", why,
+          ...(who ? [" · ", Object.assign(document.createElement("span"), { translate: false, textContent: who })] : []));
+      }
+      const busy = !!d.dataset.request;
+      $("#qc-flag-save").disabled = busy || !mark; $("#qc-flag-clear").disabled = busy || !mark || mark.reason === null;
+    }
+    /**
+     * The open window follows the list (render() calls this after every list read and every redraw): when its study is no
+     * longer a row this account reads as its owning institution - it left the list, cannot be read now, became a row
+     * received for tele-reading, or the server answered 404 for it - the window is emptied and closed at once. Otherwise
+     * the line that shows the mark is drawn again from the list; the base of the command stays (drawQcWindow).
+     */
+    function syncQcWindow() {
+      const d = qcWindow;
+      if (!d?.open || !d.dataset.uid) return;
+      if (qcWindowStands(d)) { drawQcWindow(d, d.dataset.uid); return; }
+      closeQcWindow(d);
+      toast(kinSay("이 검사의 QC 표시를 지금은 볼 수 없어 창을 닫았습니다. 목록을 확인하세요."), "err");
+    }
+    function openQcFlag() {
+      if (!technicianWork()) return;
+      const s = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
+      if (!s) { alert("검사를 선택하세요."); return; }
+      if (!serverMode || offline || demoMode) { toast(kinSay("QC 표시는 서버에 연결된 동안에만 바꿀 수 있습니다"), "err"); return; }
+      if (s.tele) { toast(kinSay("원격판독으로 받은 검사의 QC 표시는 보유 기관에서만 바꿀 수 있습니다"), "err"); return; }
+      if (qcScope(s.uid) === null) { toast(kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."), "err"); return; }
+      const d = qcWindowNode();
+      emptyQcWindow(d);
+      drawQcWindow(d, s.uid, true);
+      $("#qc-flag-reason").value = shownQc(s.uid)?.reason ?? "";
+      if (!d.open) d.showModal();
+      $("#qc-flag-reason").focus();
+    }
+    async function sendQc(clearing) {
+      const d = qcWindow, uid = d?.dataset.uid;
+      if (!d?.open || !uid || d.dataset.request) return;
+      const status = $("#qc-flag-status");
+      // Judged again at the moment of sending, not only when the window opened: the row, the connection and the role.
+      if (!qcWindowStands(d)) { syncQcWindow(); return; }
+      if (!technicianWork() || !serverMode || offline || demoMode) {
+        kinWrite(status, kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."));
+        return;
+      }
+      // The mark changed since the person last saw it here as the base (a poll, another window): the new one is shown and
+      // said, and becomes the base, before anything is sent.
+      const mark = shownQc(uid), scope = qcScope(uid);
+      if (!mark || String(mark.revision) !== d.dataset.revision || (appState[uid]?.draftEpoch ?? "") !== d.dataset.epoch || scope !== d.dataset.scope) {
+        drawQcWindow(d, uid, true);
+        kinWrite(status, kinSay("그 사이 QC 표시가 바뀌었습니다. 지금 상태를 확인한 뒤 다시 누르세요."));
+        return;
+      }
+      const raw = $("#qc-flag-reason").value, reason = raw.trim();
+      if (!clearing && (!reason || reason.length > 500 || /[\u0000-\u001f\u007f-\u009f]/.test(raw))) {
+        kinWrite(status, kinSay("QC 사유를 줄바꿈 없이 1~500자로 적으세요."));
+        return;
+      }
+      const token = String(++qcSeq), at = work.capture("document"), controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      d.dataset.request = token; $("#qc-flag-save").disabled = $("#qc-flag-clear").disabled = true;
+      kinWrite(status, kinSay("저장 중…"));
+      let st = null, error = null;
+      try {
+        st = await api("PATCH", "/studies/" + encodeURIComponent(uid),
+          { qc: clearing ? null : { reason }, qcRevision: mark.revision, epoch: d.dataset.epoch }, controller.signal, at);
+      } catch (e) { error = e; } finally { clearTimeout(timer); }
+      work.commit(at, () => {
+        // Is the window still the one that sent this (closing it, however, drops its token)?
+        const own = d.dataset.request === token && d.open && d.dataset.uid === uid;
+        if (own) delete d.dataset.request;
+        if (st) {
+          // The answer's mark is taken only for the reading it was sent under; the redraw closes this window by its own
+          // rule when the row no longer stands (syncQcWindow in render()).
+          takeQcAnswer(uid, st, scope);
+          // The row is read another way now than when this was sent: the list is asked what the mark is.
+          if (qcScope(uid) !== scope) Promise.resolve(load()).catch(() => {});
+          syncStudy(uid); render(); renderClinical();
+          if (!own || !d.open || d.dataset.uid !== uid) return;
+          closeQcWindow(d);
+          const saved = qcMark(st);
+          toast(kinSay(saved?.reason === null ? "QC 표시를 지웠습니다" : "QC 표시를 저장했습니다"), "info");
+          return;
+        }
+        // 404: the server says this study is not there for this account. Nothing of its mark stays on this page - the row's
+        // mark, the Info line and this window go at once, before the list is read again.
+        if (error?.status === 404) {
+          loseQc(uid); syncStudy(uid); render(); renderClinical();
+          Promise.resolve(load()).catch(() => {});
+          return;
+        }
+        // Refused, lost or timed out: the result is read back from the server (the list) and the window says what happened;
+        // the list read redraws the open window's mark through render() (the status line and the command's base stay).
+        if (!error?.auth) Promise.resolve(load()).catch(() => {});
+        if (!own) return;
+        drawQcWindow(d, uid);
+        kinWrite(status, error?.name === "AbortError"
+          ? kinSay("응답 시간이 지났습니다. 저장됐는지 목록을 다시 읽어 확인합니다.")
+          : kinSay("QC 표시를 저장하지 못했습니다: {e0}", error?.message ?? ""));
+      });
+    }
+    $("#t-qc-flag").addEventListener("click", openQcFlag);
+
     // ── 장비 수신 ──
     // 예전엔 여기 "장비 수신 시뮬" 버튼이 있었다. localStorage에 가짜 행을 만들 뿐이라
     // 영상도 없고 서버도 몰랐다 — 화면에만 있는 검사였다.
