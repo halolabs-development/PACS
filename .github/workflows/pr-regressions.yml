@@ -514,7 +514,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['viewer-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 183
+    timeout-minutes: 186
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
