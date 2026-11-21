@@ -918,7 +918,7 @@ class WSpaceDOM(unittest.TestCase):
                 expect(editor).to_be_hidden()
                 expect(page.locator('#toolbar-view')).to_have_js_property('open', False)
                 after = [t.split('\n')[0].strip() for t in self.column_order(page)]
-                self.assertEqual(['RS', 'No', 'Confirm', 'StudyDate', 'Referred', 'ID', 'StudyDesc', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
+                self.assertEqual(['RS', 'No', 'Confirm', 'Read Req', 'StudyDate', 'Referred', 'ID', 'StudyDesc', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
                                   'Modality', 'PF'], after)
                 for name in hide:
                     self.assertNotIn(name, after)

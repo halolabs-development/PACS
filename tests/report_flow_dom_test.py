@@ -60,6 +60,7 @@ class FlowSite(h.Site):
         self.orders = []                # the Order List (bootstrap), for the Technician tab
         self.hidden = set()
         self.unverified = set()         # studies still being acquired (ss Unverified, em N): read only until Verify
+        self.requested = set()          # studies a clinician asked to be read: open until the report is approved
 
     # ── one study's stored state ──
     def revision_of(self, uid):
@@ -142,6 +143,9 @@ class FlowSite(h.Site):
             row = self.study_row(account, h.UID, name, patient)
             row["uid"] = uid
             row["state"] = self.state_of(uid, account)
+            # Read Req (api/src/pacs/reading-request.ts): the open request, closed by the approval of the study.
+            row["readingRequest"] = ({"at": "2026-10-02T23:00:00.000Z", "by": "SYN Dr. REQUESTER"}
+                                     if uid in self.requested and self.store[uid]["report"]["rs"] != "A" else None)
             rows.append(row)
         return {"studies": rows, "serverTime": "2026-10-03T00:00:00.000Z", "observedAt": "2026-10-03T00:00:00.000Z",
                 "notObserved": [], "pagination": {"owner": [h.INSTITUTION, account["sub"]], "limit": 100, "offset": 0,
@@ -792,6 +796,28 @@ class ReportFlowPage(unittest.TestCase):
         self.type("SYN B report")
         self.approve_next()
         self.wait(lambda: self.selected() == h.PATIENT, "the next row in the sorted queue")
+
+    def test_approve_under_the_read_req_filter_closes_the_request_and_next_goes_to_the_following_request(self):
+        # Read Req: every study asked to be read; the reader works through them under the Requested filter.
+        self.site.requested = {h.UID, h.UID_B, UID_C}
+        self.open()
+        self.page.select_option("#filterrow [data-f=readReq]", "Requested")
+        self.open_study(h.PATIENT_B)
+        self.type("SYN B report")
+        self.page.locator("#b-approve").click()
+        self.wait(lambda: self.site.store[h.UID_B]["report"]["rs"] == "A", "the approval")
+        # The approval closed B's request: it leaves the Requested filter and its Read Req cell is blank.
+        self.wait(lambda: h.PATIENT_B not in self.page.locator("#rows").inner_text(), "B left the Requested filter")
+        self.assertEqual("", self.page.evaluate("u => studies.find(s => s.uid === u).readReq", h.UID_B))
+        self.settle()
+        self.assertEqual(h.PATIENT_B, self.selected(), "Approve stays on the study")
+        # Approve & Next from the next requested study goes to the one after it under the same filter.
+        self.open_study(h.PATIENT)
+        self.type("SYN A report")
+        self.approve_next()
+        self.wait(lambda: self.selected() == PATIENT_C, "Approve & Next to the next requested study")
+        self.wait(lambda: h.PATIENT not in self.page.locator("#rows").inner_text(), "A left the Requested filter")
+        self.assertEqual("A", self.site.store[h.UID]["report"]["rs"])
 
     def test_plain_approve_stays_and_next_continues_from_the_anchor(self):
         self.open()

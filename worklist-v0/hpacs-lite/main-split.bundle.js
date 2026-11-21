@@ -10001,8 +10001,6 @@
         loadReport({ force: true });
         cur().rs = rs;
         cur().holdReason = appState[uid].holdReason;
-        // Read Req: this approval closed the reading request the row showed (the server writes it in the same commit).
-        if (action === "approve") Object.assign(cur(), { readReq: "", readReqBy: "" });
         saveApp();
       }
       render(); renderRelated(); updateReportButtons();
@@ -10441,6 +10439,9 @@
                         "preDoc", "preReviewer", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
       if (a.holder === null || a.holder === undefined) s.holder = a.holder;
+      // Read Req: an approved row has no open reading request - the approval closed it in its own commit and a request is
+      // never made on an approved report (api/src/pacs/reading-request.ts) - so the mark leaves with the approval, at once.
+      if (s.rs === "A") Object.assign(s, { readReq: "", readReqBy: "" });
       // The row Confirm value is the shown approval time (the stored a.confirm is a date only), as in applyState.
       s.confirm = confirmText({ ...a, rs: s.rs });
       // The ward as applyState draws a row: the own value of the study (an empty one included), with the overlay value
