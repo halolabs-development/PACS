@@ -2657,9 +2657,11 @@ function kinCreateViewerHistory() {
       superseded: '다른 영상 칸을 골라 이동을 멈췄습니다.', ended: '로그인이 종료되었습니다.' };
     const ENTRY_MARK = { shown: '표식을 강조했습니다.', key: '키 이미지입니다.', missing: '그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제).',
       hidden: '그 표식은 숨겨져 있습니다.', unverified: '그 측정은 원본을 확인하지 못해 그리지 않았습니다.', none: '표식을 그리지 않았습니다.' };
-    const entryNote = document.createElement('p'); entryNote.id = 'kin-viewer-entry-note'; entryNote.setAttribute('role', 'status'); entryNote.hidden = true;
-    status.after(entryNote);
+    // The panel keeps one status (other modules and tests read it); the outcome of the opening is its own polite line, made
+    // only in a document that has a target.
+    let entryNote = null;
     function entrySay(text) {
+      if (!entryNote) { entryNote = document.createElement('p'); entryNote.id = 'kin-viewer-entry-note'; entryNote.setAttribute('aria-live', 'polite'); status.after(entryNote); }
       entryNote.textContent = text; entryNote.hidden = false;
       // A folded dock still shows its own status row: the reason is readable there too.
       const row = document.getElementById('kin-dock-preference-status'); if (row) row.textContent = text;
