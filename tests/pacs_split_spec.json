@@ -11355,7 +11355,92 @@
       }
     }
   },
-  "di_additions_access_alerts": {
+  "di_additions_patient_consent": {
+    "unit": "patient-consent",
+    "decision": "Patient Consent",
+    "note": "The administrator's patient consent records: a feature controller of its own (lookup, record, withdraw; the patient ID in the body) and its service over the existing Prisma, Orthanc and Study Access providers. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "PatientConsentController"
+    ],
+    "providers": [
+      "PatientConsentService"
+    ],
+    "routes": [
+      {
+        "controller": "PatientConsentController",
+        "handler": "lookup",
+        "method": "POST",
+        "paths": [
+          "admin|patient-consent/lookup"
+        ],
+        "public": null,
+        "status": 200,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0",
+          "3:1@1:null:0"
+        ]
+      },
+      {
+        "controller": "PatientConsentController",
+        "handler": "record",
+        "method": "POST",
+        "paths": [
+          "admin|patient-consent"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0",
+          "3:1@1:null:0"
+        ]
+      },
+      {
+        "controller": "PatientConsentController",
+        "handler": "withdraw",
+        "method": "POST",
+        "paths": [
+          "admin|patient-consent/:id/withdraw"
+        ],
+        "public": null,
+        "status": 200,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:0@0:null:0",
+          "3:2@2:null:0",
+          "5:1@1:\"id\":0"
+        ]
+      }
+    ],
+    "injectables": {
+      "PatientConsentController": {
+        "params": [
+          "PatientConsentService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      },
+      "PatientConsentService": {
+        "params": [
+          "PrismaService",
+          "OrthancService",
+          "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
+  },  "di_additions_access_alerts": {
     "unit": "access-alerts",
     "decision": "Access Alerts",
     "note": "The administrator's alerts of one account opening many different studies in a short time: one provider on the existing AdminController's audit read (report=access-alerts), no new route. U0B-DI compares the snapshot minus exactly these.",

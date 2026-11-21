@@ -660,9 +660,10 @@ class MigrationPins(unittest.TestCase):
         # Image Report: 60 tables (ReportDrawing), rows + its one drawing, 112.
         # Auto Save View: 61 tables (ViewerAutoView), rows + its one saved view, 113.
         # Merge Exam / Split: 63 tables (StudyGroup, StudyGroupMember), rows + one merged exam and its two members, 116.
+        # Patient Consent: no new table, rows + one patient consent row beside the study basis, 117.
         self.assertEqual(len(restore_fixture.TABLES), 63)
         self.assertEqual(set(rows), set(restore_fixture.TABLES))
-        self.assertEqual(sum(len(value) for value in rows.values()), 116)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Merge Exam: + 3
+        self.assertEqual(sum(len(value) for value in rows.values()), 117)   # S7-U5: + the emptied draft row (tombstone); + 2 isolation facts; + 2 change records; S9-U4b: + 12; W5-API: + 3; D1890: + 2; CD-09-P: + 2; CD-09-D: + 1; FC-070: + 1; FC-076: + 1; film print: + 1; Merge Exam: + 3; Patient Consent: + 1
         self.assertEqual({table: len(rows[table]) for table in ("GatewayRetryRequest", "CriticalResult", "CriticalResultEvent",
                                                                 "CriticalResultReceipt")},
                          {"GatewayRetryRequest": 1, "CriticalResult": 4, "CriticalResultEvent": 7, "CriticalResultReceipt": 6})
