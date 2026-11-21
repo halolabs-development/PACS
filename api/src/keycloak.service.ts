@@ -17,9 +17,30 @@ const bound = (limitMs?: number) => limitMs === undefined ? undefined : within(l
  */
 export type ChangeAnswer = { state: 'done' | 'void' | 'unknown'; outcome: string };
 
-/** Preserve a roster HTTP refusal in its recorded credentials outcome. */
+/** Preserve a roster HTTP refusal in its recorded credentials outcome. `body` is the provider's answer, never shown. */
 export class RosterWriteFailure extends ServiceUnavailableException {
-  constructor(readonly answer: ChangeAnswer) { super(`Keycloak roster ${answer.outcome}`); }
+  constructor(readonly answer: ChangeAnswer, readonly body = '') { super(`Keycloak roster ${answer.outcome}`); }
+}
+
+/**
+ * The provider refused to create a member because an account with the same username or email already exists: its 409
+ * to the create request itself. Nothing was created. `field` is the one field the answer names, or null when it does not
+ * name exactly one (the provider's "username or email", an empty or unreadable body).
+ */
+export class MemberExists extends Error {
+  constructor(readonly field: 'username' | 'email' | null) { super('member exists'); }
+}
+
+/** The provider's two single-field duplicate answers to a create request, matched exactly. */
+const EXISTING_FIELD: Record<string, 'username' | 'email'> = {
+  'User exists with same username': 'username',
+  'User exists with same email': 'email',
+};
+export function existingField(body: string): 'username' | 'email' | null {
+  let answer: any;
+  try { answer = JSON.parse(body); } catch { return null; }
+  const said = answer && typeof answer === 'object' ? answer.errorMessage : undefined;
+  return typeof said === 'string' && Object.prototype.hasOwnProperty.call(EXISTING_FIELD, said) ? EXISTING_FIELD[said] : null;
 }
 
 /** 연결 자체가 이루어지지 않은 오류: 요청의 바이트가 인증 서버에 닿지 않았다. */
@@ -127,7 +148,7 @@ export class KeycloakService {
     if (res.status === 404 && method === 'GET' && /^\/users\/[^/?]+$/.test(path)) return null;
     if (!res.ok) throw new RosterWriteFailure({
       state: res.status >= 400 && res.status < 500 ? 'void' : 'unknown', outcome: 'http_' + res.status,
-    });
+    }, await res.text().catch(() => ''));
     if (res.status === 204) return null;
     const text = await res.text();
     if (!text) return null;
@@ -258,7 +279,13 @@ export class KeycloakService {
   async createUser(user: {
     username: string; email: string; firstName: string; lastName: string;
   }): Promise<KeycloakUser> {
-    await this.adm('/users', 'POST', { ...user, enabled: false, emailVerified: false });
+    try {
+      await this.adm('/users', 'POST', { ...user, enabled: false, emailVerified: false });
+    } catch (error) {
+      // Only the create request's own 409 means "already exists"; every other failure stays as it was.
+      if (error instanceof RosterWriteFailure && error.answer.outcome === 'http_409') throw new MemberExists(existingField(error.body));
+      throw error;
+    }
     const found: any[] = await this.adm(
       `/users?username=${encodeURIComponent(user.username)}&exact=true&max=2`,
     ) ?? [];

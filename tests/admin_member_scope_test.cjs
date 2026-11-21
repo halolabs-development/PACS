@@ -317,6 +317,89 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     }
   }
 
+  // 7b. Create Member with a username or email that already has an account says so (409), creates nothing and records
+  //     no half-made member; any other provider failure of the create request keeps its earlier answer.
+  {
+    const { MemberExists } = require('../api/src/keycloak.service.ts');
+    // The provider client: only the create request's own 409 is "already exists"; the field is the one its words name.
+    const provider = new KeycloakService();
+    provider.secret = 'synthetic';
+    provider.token = { value: 'synthetic-token', exp: Date.now() + 3600_000 };
+    const realFetch = global.fetch;
+    const answers = [
+      [409, JSON.stringify({ errorMessage: 'User exists with same username' }), 'username'],
+      [409, JSON.stringify({ errorMessage: 'User exists with same email' }), 'email'],
+      [409, JSON.stringify({ errorMessage: 'User exists with same username or email' }), null],
+      [409, JSON.stringify({ errorMessage: 'toString' }), null],
+      [409, '', null],
+      [409, 'not json', null],
+    ];
+    try {
+      for (const [code, body, field] of answers) {
+        const seen = [];
+        global.fetch = async (url, init) => { seen.push(init.method); return new Response(body || null, { status: code }); };
+        await assert.rejects(provider.createUser({ username: 'dup', email: 'dup@example.test', firstName: 'D', lastName: 'Up' }),
+          error => { assert.ok(error instanceof MemberExists, body); assert.equal(error.field, field, body); return true; });
+        assert.deepEqual(seen, ['POST'], 'nothing is read or changed after a refused create');
+      }
+      for (const code of [400, 403, 500, 502, 503]) {
+        global.fetch = async () => new Response(JSON.stringify({ errorMessage: 'User exists with same username' }), { status: code });
+        await assert.rejects(provider.createUser({ username: 'x', email: 'x@example.test', firstName: 'X', lastName: 'Y' }), error => {
+          assert.ok(error instanceof RosterWriteFailure && !(error instanceof MemberExists), String(code));
+          assert.equal(error.message, `Keycloak roster http_${code}`, 'other failures keep their earlier answer');
+          return true;
+        });
+      }
+      // A created member whose read-back fails is not "already exists".
+      global.fetch = async (url, init) => init.method === 'POST' ? new Response(null, { status: 201 }) : new Response(null, { status: 500 });
+      await assert.rejects(provider.createUser({ username: 'z', email: 'z@example.test', firstName: 'Z', lastName: 'Z' }),
+        error => { assert.ok(!(error instanceof MemberExists)); assert.equal(error.message, 'Keycloak roster http_500'); return true; });
+      global.fetch = async () => { throw new TypeError('fetch failed'); };
+      await assert.rejects(provider.createUser({ username: 'z', email: 'z@example.test', firstName: 'Z', lastName: 'Z' }),
+        error => { assert.ok(!(error instanceof MemberExists)); assert.ok(!(error instanceof RosterWriteFailure)); return true; },
+        'no answer stays as before');
+    } finally { global.fetch = realFetch; }
+
+    // The administration service: 409 MEMBER_EXISTS with the field's words, no provider words, nothing written or audited.
+    const words = {
+      username: '같은 아이디의 계정이 이미 있습니다. 다른 아이디로 만드세요.',
+      email: '같은 이메일의 계정이 이미 있습니다. 다른 이메일로 만드세요.',
+      null: '같은 아이디 또는 이메일의 계정이 이미 있습니다. 아이디나 이메일을 바꿔 다시 만드세요.',
+    };
+    const glossary = fs.readFileSync(path.join(root, 'worklist-v0/hpacs-lite/worklist-language-terms.js'), 'utf8');
+    for (const field of ['username', 'email', null]) {
+      for (const body of [
+        { username: 'reader-a', email: 'new@example.test', firstName: 'New', lastName: 'Member', institution: A, roles: ['radiologist'] },
+        { username: 'reader-a', email: 'new@example.test', firstName: 'New', lastName: 'Member', verificationOverride: false },
+      ]) {
+        const w = world();
+        w.kc.createUser = async user => { w.kcCalls.push(['create', user]); throw new MemberExists(field); };
+        const before = w.writes();
+        await assert.rejects(w.call('admin/users', 'POST', req => w.controller.create(body, req)), error => {
+          assert.equal(error.getStatus(), 409);
+          const answer = error.getResponse();
+          assert.equal(answer.code, 'MEMBER_EXISTS');
+          assert.equal(answer.field, field);
+          assert.equal(answer.message, words[field]);
+          assert.doesNotMatch(answer.message, /Keycloak|roster|http_/i);
+          return true;
+        });
+        assert.deepEqual(w.kcCalls.map(c => c[0]), ['create'], 'no group, role, password or enable call after a refused create');
+        assert.equal(w.writes(), before, 'no member row');
+        assert.equal(w.audits.length, 0, 'no half-made member to record');
+      }
+      assert.ok(glossary.includes(JSON.stringify(words[field])), 'both screen languages have the words');
+    }
+    const w = world();
+    w.kc.createUser = async () => { throw new RosterWriteFailure({ state: 'unknown', outcome: 'http_503' }); };
+    await assert.rejects(w.call('admin/users', 'POST', req => w.controller.create({ username: 'n', email: 'n@example.test',
+      firstName: 'N', lastName: 'M', institution: A, roles: ['radiologist'] }, req)), error => {
+      assert.equal(error.getStatus(), 503);
+      assert.equal(error.message, 'Keycloak roster http_503', 'a provider outage keeps its earlier answer');
+      return true;
+    });
+  }
+
   // 8. The first administrator of an institution without one: an operator command, never an HTTP route.
   {
     const { sendRecordedRoster } = require('../api/src/member-rights-import.ts');
