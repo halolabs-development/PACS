@@ -120,6 +120,14 @@
     .gw-hosts-rows li[data-contact="no_contact"] .gw-host-contact { text-decoration: underline dotted; }
     .gw-host-fact { color: var(--muted); }
     .gw-hosts-empty { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+    /* Gateway Support: one line per Gateway queue with its newest request; actions wrap on a narrow window. */
+    .gw-support-rows { list-style: none; margin: 0 0 8px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .gw-support-rows:empty { display: none; }
+    .gw-support-rows li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; border-bottom: 1px solid #b4b4b426; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; }
+    .gw-support-rows li:last-child { border-bottom: 0; }
+    .gw-support-rows.stale li { opacity: .72; }
+    .gw-support-request { color: var(--muted); }
+    .gw-support-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     /* S5-U6b Operations: every state is a word as well as a colour; no value is coloured by its size (no sourced threshold). */
     .ops { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
     .ops-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -249,6 +257,18 @@
       <p class="message" id="gateway-rules-message" role="alert"></p>
     </section>
 
+    <section class="gateway" id="gateway-support" aria-labelledby="gateway-support-title">
+      <div class="gateway-head">
+        <h2 id="gateway-support-title">Gateway Support</h2>
+        <span class="gstate not_loaded" id="gateway-support-state" role="status">Not Loaded</span>
+        <div class="spacer"></div>
+        <button type="button" id="gateway-support-refresh" disabled>Load Gateway Support</button>
+      </div>
+      <p class="gateway-hint">병원에 가지 않고 이 기관 Gateway를 돕습니다. Gateway는 자기가 바깥으로 거는 연결로 요청을 가져가며(약 30초마다), 병원 안으로 새로 여는 통로는 없습니다. Request Diagnostics는 Gateway의 버전·큐 상태·최근 기록(검사 UID와 숫자·오류 코드만, 환자 이름 없음)을 받아 내려받게 합니다. Restart Gateway는 Gateway 프로그램을 다시 시작합니다(받은 영상은 그대로 남고 이어서 보냅니다). Update Gateway는 이 서버에 있는 판을 보내며, 설치 여부는 Gateway가 병원 호스트에 설정된 서명 키로 정합니다 — 새 판이 3분 안에 정상으로 돌지 않으면 이전 판으로 돌아갑니다. 병원 IT가 Gateway에서 원격 지원을 꺼 두었으면 요청은 Refused로 끝납니다. 요청과 받은 진단은 서버 메모리에만 있어 서버가 다시 시작하면 사라집니다(요청 기록은 감사 기록에 남습니다).</p>
+      <ul class="gw-support-rows" id="gateway-support-rows"></ul>
+      <p class="gateway-empty" id="gateway-support-empty" hidden></p>
+      <p class="message" id="gateway-support-message" role="alert"></p>
+    </section>
     <section class="gateway" id="held-sources" aria-labelledby="held-title">
       <div class="gateway-head">
         <h2 id="held-title">Held Studies</h2>
@@ -2046,6 +2066,7 @@
   <script src="critical-result-inbox-admin.js"></script>
   <script src="dicom-peers-admin.js"></script>
   <script src="gateway-rules-admin.js"></script>
+  <script src="gateway-support-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>
 </body>

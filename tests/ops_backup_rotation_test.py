@@ -711,6 +711,12 @@ class RoundFiveRotationContracts(unittest.TestCase):
         self.assertEqual(result["generations"], [daily(2), daily(1)])
         self.assertEqual(result["thinned"], [])
         self.assertTrue((first / "orthanc.tgz").is_file())
+        # What rotation keeps as a generation, a restore admits: the planned thinning left this set whole.
+        for name in result["generations"]:
+            self.assertEqual(ops._stored_backup(self.root.path / name)[0], (self.root.path / name).resolve())
+        (first / "orthanc.tgz").unlink()
+        with self.assertRaisesRegex(ops.StoredSetError, "thinned by rotation"):
+            ops._stored_backup(first)
 
     def test_rotating_leftover_never_displaces_an_available_daily_generation(self):
         for day in (1,2,3):

@@ -240,7 +240,9 @@ class HostTests(unittest.TestCase):
 
     def test_16_timeout_retains_lock_and_never_rolls_back(self):
         observation = {"preflight_passed": True, "deployment_authorized": False, "automatic_rollback_authorized": False,
-                       "schema_unchanged": True, **{k: v for k, v in self.plan.request().items() if k != "version"}}
+                       "schema_unchanged": True, **{k: v for k, v in self.plan.request().items() if k != "version"},
+                       "storage_encryption": {"status": "unknown", "backup_encryption": "absent",
+                                              "locations": [{"location": "host", "status": "unknown", "detail": "not Linux"}]}}
         with patch.object(self.adapter, "observe", return_value=observation), \
                 patch.object(self.adapter, "command", side_effect=subprocess.TimeoutExpired("fixed", 1)) as command, \
                 patch.object(self.adapter, "send_failure"):

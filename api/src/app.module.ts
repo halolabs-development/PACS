@@ -92,10 +92,12 @@ import { ViewerAutoViewService } from './viewer-auto-view.service';
 import { GatewayStatusController } from './gateway-status.controller';
 import { GatewayStatusService } from './gateway-status.service';
 import { GatewaySettingsController } from './gateway-settings.controller';
+import { GatewaySupportController } from './gateway-support.controller';
 import { GatewaySettingsService } from './gateway-settings.service';
+import { GatewaySupportService } from './gateway-support.service';
 
 @Module({
-  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController],
+  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController, GatewaySupportController],
   providers: [
     PreloadKeyService, PresenceService, EmrAuditService,
     ...startupClinicalProviders,
@@ -105,7 +107,7 @@ import { GatewaySettingsService } from './gateway-settings.service';
       useFactory: (clinical: ClinicalContextSource, catalog: OrthancImageCatalog) => new ProductionImageContext(clinical, catalog) },
     AsrService, StudyAccessService, PrismaService, PacsService, OrthancService, KeycloakService, AuthService, AdminService, ViewerService, FindingService, ViewerJobService, ConnectService, ManualSrService, FavoriteService, StudyTagsService, ReaderAssignmentService, ConsultationService, ClinicianQuestionService, ImageRequestService, ClinicalContextService, CriticalResultService,
     StudyTransferLocalService, DicomImportGateService, StudyImageDeliveryRecorder, DicomFrameService, QueryRetrieveService, StudyAttachmentService, FilmPrintService, TechnicianOrdersService, ModalityWorklistService, ExamMergeService, ViewerAutoViewService, GatewayStatusService, GatewaySettingsService,
-    AdminAccessReview,
+    GatewaySupportService, AdminAccessReview,
     { provide: APP_GUARD, useClass: AuthGuard },
     // W9 source selections use the same request-bound A1 response recorder.
     MultiStudyViewService, ViewingSetAccess,

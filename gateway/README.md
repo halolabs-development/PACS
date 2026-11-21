@@ -95,6 +95,67 @@ UID·단계·병원 보유 N건 중 보낸 M건·재시도 횟수·고정 오류
   보낸다. 이미 압축된 것과 Orthanc가 바꾸지 못한 것은 받은 그대로 보내며 손실 구문으로 가는 길은 없다. 원내 PACS로는 받은
   그대로 보낸다.
 
+## 갱신(Secure Update)
+
+컨테이너는 `update.py run`(런처)으로 시작하고, 런처가 agent를 자식 프로세스로 돌린다. 런처는 이미지의 일부이며
+갱신으로 바뀌지 않는다. agent의 새 판은 **서명된 묶음 파일 하나**(`<판>.json`: 판·파일·Ed25519 서명)다.
+
+- **신뢰**: 묶음은 이 Gateway 호스트에 설정된 공개 키(`GW_UPDATE_KEYS`, base64, 쉼표로 여럿)로 확인될 때만 돈다.
+  키는 KIN에서 오지 않는다. 키가 없으면 어떤 묶음도 깔리지 않는다(`no_update_key`). 런처는 시작할 때마다 보관한
+  묶음을 다시 확인하고, 그 묶음에서 파일을 새로 풀어 돌린다 — 확인한 바이트가 도는 바이트다.
+- **새 판만**: 설치(수동·원격)는 지금 도는 판보다 높은 판만 받는다(`not_newer`). 판은 숫자와 점(`2026.12.1`)이다.
+- **시험 가동**: 새 판은 180초 안에 주 루프를 한 번 마치고 KIN이 그 판의 하트비트를 한 번 저장했을 때만 남는다.
+  그 전에 멈추거나(`exited`) 시간이 지나면(`not_ready`) 런처가 그 판을 멈추고 **바로 앞에 돌던 판**으로 돌아간다.
+  시험 중 컨테이너가 다시 시작되면 `interrupted`로 닫고 앞 판을 돌린다. 돌아간 판을 저절로 다시 시도하지 않는다.
+- **바닥**: 보관한 판이 확인되지 않으면(파일이 바뀜·키가 빠짐) 앞 판, 그것도 안 되면 이미지의 `/app/agent.py`가 돈다.
+- 갱신하는 동안에도 로컬 Orthanc는 계속 받고 큐(`queue.db`)는 그대로다. 다음에 도는 판이 큐를 이어서 보낸다.
+  묶음으로 내는 판은 이전 판과 내장판이 그 큐와 설정 파일을 계속 읽을 수 있어야 한다(큐 구조를 바꾸는 변경은 이미지 교체로).
+- 상태는 `/data/agent-releases/state.json`(현재·이전 판, 마지막 결과)이다.
+
+**수동 설치·복귀 절차**(병원 호스트에서):
+
+```bash
+# 받은 묶음을 컨테이너의 임시 자리로 옮긴다(감시하는 incoming/ 으로 직접 복사하지 않는다)
+docker compose cp kin-gateway-2026.12.1.json gw-agent:/tmp/update.json
+# 서명·판을 먼저 확인하고 런처에 넘긴다(거절이면 그 자리에서 code를 보인다)
+docker compose exec gw-agent python /app/update.py install /tmp/update.json
+docker compose exec gw-agent python /app/update.py status     # last.result: installed / rolled_back / refused
+docker compose logs --since 5m gw-agent | grep -E 'update\.|launcher\.'
+# 앞 판으로 되돌리기(런처가 도는 agent까지 바꾼다)
+docker compose exec gw-agent python /app/update.py rollback
+```
+
+새 Python 의존성이 필요한 변경, 런처 자체의 변경, 그리고 런처가 없던 옛 설치에 런처를 처음 들이는 일은 묶음이 아니라
+**이미지 교체**다: 이 디렉터리를 새 판으로 바꾸고 `docker compose up -d --build gw-agent`. 두 볼륨(`agent-data`,
+`orthanc-data`)과 로컬 Orthanc는 그대로 두며, `.env`의 `GW_UPDATE_KEYS`·`GW_REMOTE_SUPPORT`는 agent를 다시 만들 때 반영된다.
+compose의 `stop_grace_period: 6m`은 agent가 진행 중인 전송 한 회를 마치고 멈추게 한다.
+
+**릴리스 서명**(릴리스 담당자의 컴퓨터에서; 개인 키 파일은 저장소·서버·Gateway에 두지 않는다):
+
+```bash
+python gateway/agent/update.py keygen --out release.key        # 공개 키(base64)를 출력한다 → 각 Gateway의 GW_UPDATE_KEYS
+python gateway/agent/update.py sign --key release.key --version 2026.12.1 --out 2026.12.1.json gateway/agent/agent.py
+```
+
+## 원격 지원(Remote Support)
+
+기관 관리자(병원이 관리자 권한을 준 계정 — HALO 지원 인력도 병원이 준 관리자 계정으로 쓴다)는 회원 콘솔
+`Gateway Support`에서 이 기관 Gateway 한 줄(큐 인스턴스)에 세 가지 중 하나를 요청한다:
+`Request Diagnostics`, `Restart Gateway`, `Update Gateway`(KIN이 가진 판 하나). 요청은 감사 기록
+(`gateway.support.request`)에 남는다. agent는 자기가 바깥으로 거는 연결로 약 30초마다 그 요청을 가져가 한 번만
+실행한다 — **병원 안으로 여는 포트나 원격 셸은 없다**.
+
+- 진단: agent 판, 런처 상태, 가동 시간, 비밀이 아닌 설정, 설정 판, 로컬 Orthanc 응답, `/data` 여유 바이트, 큐 수와
+  KIN으로 가는 검사의 UID·단계·오류 코드(최대 200줄; 오류 문구 없음), 이번 실행의 최근 기록 200줄(시각·사건·숫자·오류
+  코드만; UID 없음). 256 KiB 안에 맞춘다. 환자 이름·PatientID·비밀값·DICOM 바이트는 들어가지 않는다.
+- 재시작: agent가 진행 중인 회를 마치고 끝나며(종료 코드 75), 런처가 바로 다시 띄운다. 새 실행이 `Done`을 알린다.
+- 갱신: agent는 KIN에서 그 판의 묶음을 받아 통째로 런처에 넘길 뿐이고, 설치 여부는 런처가 위 규칙으로 정한다.
+  결과(`Installed`·`Rolled Back`·`Refused`와 code)는 그 뒤에 도는 agent가 KIN이 받았다고 답할 때까지 알린다.
+- 병원의 승인: 관리자 권한은 병원이 정하고, 병원 IT는 Gateway 호스트에서 `GW_REMOTE_SUPPORT=off`로 원격 지원을 끌 수 있다
+  (그러면 모든 요청이 `Refused (remote_support_off)`로 끝나고, 위 수동 절차는 그대로 된다).
+- KIN 쪽 준비: API 컨테이너에 `GATEWAY_UPDATE_DIR`(읽기 전용으로 연결한 디렉터리)를 주고, 서명된 `<판>.json`만 둔다.
+  KIN은 서명을 판정하지 않는다. 요청·진단은 API 메모리에만 있어 API가 다시 시작하면 사라진다(감사 기록은 남는다).
+
 ## 검증
 
 격리된 합성 Gateway 검증은 합성 스택 전용이며 [시험 실행 안내](../tests/README.md)의 지정된 fixture 명령을 사용한다.
