@@ -33,12 +33,26 @@
     H: '판독이 보류된 검사입니다.',
     D: '보존 기간이 끝나 판독문을 파기한 검사입니다.',
   };
-  const FINAL_ONLY = '확정된 판독문(승인 또는 Addendum)만 본문과 키 이미지를 표시합니다.';
+  // B14 / F41: what the server sends is what this page shows (api/src/report-visibility.ts decides who reads which text;
+  // since 2026-11-02 a clinician reads an unsigned W/T/H text too). The status tooltips say what each state brings.
+  const STATUS_NOTE = {
+    final: '확정된 판독문입니다(승인 또는 Addendum).',
+    unsigned: '서버가 확정 전 판독문을 보내면 본문을 함께 표시합니다. 승인 전에 바뀔 수 있습니다.',
+    P: '예비 판독 본문은 지정된 판독의만 읽습니다.',
+  };
+  // Product phrases go through the screen-language writer when the page loads it (this page does not; the words stay as
+  // written). Data (names, report text, values) is written as is.
+  const kinSay = (root.KinLanguage && root.KinLanguage.say) || ((text, ...parts) =>
+    text.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (slot, index, name) => {
+      const value = name !== undefined ? (parts[0] || {})[name] : parts[index];
+      return value === undefined ? slot : String(value && typeof value === 'object' ? (value.t ?? value.e ?? '') : value);
+    }));
+  const say = (...args) => String(kinSay(...args));
   const TEXT = {
     listLoading: '검사 목록을 불러오는 중입니다…',
     listEmpty: '표시할 검사가 없습니다. 목록 조회는 성공했습니다.',
     listFailed: '검사 목록을 불러오지 못했습니다.',
-    pick: '목록에서 검사를 고르면 확정 판독문과 키 이미지를 먼저 표시합니다.',
+    pick: '목록에서 검사를 고르면 판독문과 키 이미지를 표시합니다.',
     gone: '선택했던 검사가 새 목록에 없어 화면에서 내렸습니다.',
     recheck: '검사 목록을 다시 확인하는 중입니다. 확인이 끝나면 선택했던 검사의 판독문을 다시 불러옵니다.',
     unverified: '검사 목록을 다시 확인하지 못해 선택했던 검사를 내렸습니다. 목록을 다시 불러오면 그 검사의 판독문을 새로 읽습니다.',
@@ -49,7 +63,15 @@
     addendum: 'Addendum이 반영된 확정 판독문입니다.',
     unknown: '판독 상태를 확인할 수 없습니다.',
     keysLoading: '키 이미지를 불러오는 중입니다…',
-    keysWithheld: '확정 전에는 키 이미지를 표시하지 않습니다.',
+    keysWithheld: '서버가 이 판독 상태에서는 키 이미지를 보내지 않았습니다.',
+    notFinal: '아래는 확정 전 판독문입니다. 승인 전에 바뀔 수 있습니다.',
+    noBody: '서버가 보낸 판독 본문이 없습니다.',
+    storedVersion: '저장된 판 v{0}을 표시합니다. 이 검사의 지금 판독 상태는 목록의 Report 칸에 있습니다.',
+    storedOther: '저장된 판 v{0}을 표시합니다 — 기준 검사 {1}. 이 검사의 지금 판독 상태는 목록의 Report 칸에 있습니다.',
+    folderShown: '{t0}: 검사 {1}건을 표시합니다 (전체 {2}건).',
+    folderEmpty: '{t0}에 해당하는 검사가 없습니다. 목록 조회는 성공했습니다 (전체 {1}건).',
+    myStudiesRule: 'My Studies는 의뢰의(Requesting Physician)가 로그인한 계정의 이름과 같은 검사입니다. All Studies에서 서버가 허용한 모든 검사를 봅니다.',
+    unavailable: 'Unavailable',
     keysNone: '이 판독문에 지정된 키 이미지가 없습니다.',
     keysFailed: '판독문을 불러오지 못해 키 이미지도 표시하지 않았습니다.',
     emptyField: '기재된 내용이 없습니다.',
@@ -378,6 +400,7 @@
     setAside();
     studies = [];
     tbody.replaceChildren();
+    folderRows('unknown');
     setListState('loading', TEXT.listLoading);
     let issues = [];
     try {
@@ -399,6 +422,8 @@
         accountChanged('');
         return;
       }
+      // My Studies compares the studies with the names of this very answer's account (physician-name.js).
+      account = { familyName: me.familyName ?? null, givenName: me.givenName ?? null, fullName: me.fullName ?? null };
       applyList(loaded, issues);
     } catch (error) {
       if (!listFresh(mine)) return;
@@ -446,12 +471,17 @@
     refocus = null;
     const reopen = resume;
     resume = null;
-    $('#studies').replaceChildren(...studies.map(studyRow));
-    rove(focusUid !== null && byUid.has(focusUid) ? focusUid : reopen, focusUid !== null);
     // "No normal study" and "excluded as unresolved" read differently: the excluded count is its own sentence, not a row.
-    const excluded = issues.length ? `Patient Identity Conflict ${issues.length} · 환자 식별 불일치로 검사 ${issues.length}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.` : '';
-    if (studies.length) setListState('ready', `검사 ${studies.length}건을 표시합니다.`, excluded);
-    else setListState('empty', TEXT.listEmpty, excluded);
+    excludedNote = issues.length ? `Patient Identity Conflict ${issues.length} · 환자 식별 불일치로 검사 ${issues.length}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.` : '';
+    folderRows('complete');
+    // B14: the first complete list of this page (its account checked) opens on My Studies, even when it holds nothing;
+    // after that the folder is the one the doctor chose (a refresh never moves it).
+    if (!folderStarted && folders) {
+      folderStarted = true;
+      if (!folderChosen) folders.setApplied('folder:' + MY_STUDIES);
+    }
+    paintRows(true);
+    rove(focusUid !== null && byUid.has(focusUid) ? focusUid : reopen, focusUid !== null);
     // 내려 둔 검사가 새 목록에 남아 있으면 판독문도 다시 읽어 식별 줄과 판독문이 같은 시점의 것이 되게 한다.
     if (reopen !== null) {
       if (byUid.has(reopen)) select(reopen);
@@ -459,18 +489,79 @@
     }
   }
 
+  // ── Folders (B14) ──
+  // The worklist's folder tree (worklist-folder-tree.js) over this page's list: All Studies, My Studies, Modality. A folder
+  // only chooses which rows the table shows; selection, Compare and the timeline still read the whole list (byUid).
+
+  const MY_STUDIES = 'my-studies';
+  let folders = null, folderStarted = false, folderChosen = false, account = null, excludedNote = '';
+
+  function mountFolders() {
+    if (folders || !root.KinWorklistFolderTree) return;
+    folders = root.KinWorklistFolderTree.mount({ host: $('#folder-tree'), rows: [], loadState: 'unknown',
+      folders: [{ id: MY_STUDIES, name: 'My Studies',
+        matches: row => account === null ? null : root.KinPhysicianName.matches(row.requestingPhysician, account) }],
+      onSelect: (_selection, detail) => {
+        if (detail && detail.reason === 'user') folderChosen = true;
+        if (leaving) return;
+        paintRows();
+        rove(selected, false);
+      },
+      onChange: () => {} });
+  }
+
+  /** The tree counts the list as it stands: while it is read again or after it failed, it counts nothing. */
+  function folderRows(loadState) {
+    if (!folders) return;
+    try { folders.update({ rows: loadState === 'complete' ? studies : [], loadState }); } catch (_) { /* shown by the tree */ }
+  }
+
+  /** The table rows of the chosen folder, and the list line that counts them. */
+  function paintRows(listed = false) {
+    const shown = folders ? folders.filter(studies) : studies;
+    $('#studies').replaceChildren(...shown.map(studyRow));
+    // A folder clicked while the list is read again or after it failed keeps that list line (no rows, no count).
+    if (!listed && ['loading', 'failed'].includes($('#list-state').dataset.state)) return;
+    if (!studies.length) { setListState('empty', TEXT.listEmpty, excludedNote); return; }
+    const snapshot = folders ? folders.snapshot() : null;
+    const chosen = snapshot ? snapshot.items.filter(item => item.selected) : [];
+    const all = !snapshot || (chosen.length === 1 && chosen[0].id === 'all');
+    if (all) { setListState('ready', `검사 ${studies.length}건을 표시합니다.`, excludedNote); return; }
+    const name = chosen.map(item => item.name).join(', ') || 'Modality';
+    const mine = chosen.some(item => item.id === 'folder:' + MY_STUDIES);
+    const detail = [mine ? TEXT.myStudiesRule : '', excludedNote].filter(Boolean).join('\n');
+    if (shown.length) setListState('ready', say(TEXT.folderShown, { t: name }, shown.length, studies.length), detail);
+    else setListState('empty', say(TEXT.folderEmpty, { t: name }, studies.length), detail);
+  }
+
+  /**
+   * F35: the one reading of a report status — the list's Report cell, the Report panel, Compare and the timeline all say a
+   * state with this. `report` is a list row's report or the panel's latest read ({ final, rs, action }).
+   */
+  function reportStatus(report) {
+    if (report && report.final === true)
+      return { kind: 'final', label: report.action === 'addendum' ? 'Final · Addendum' : 'Final', note: STATUS_NOTE.final };
+    const rs = report && OPEN_STATUS[report.rs] ? report.rs : null;
+    if (rs === null) return { kind: 'unknown', label: 'Unknown', note: TEXT.unknown };
+    const more = rs === 'D' ? '' : rs === 'P' ? STATUS_NOTE.P : STATUS_NOTE.unsigned;
+    return { kind: 'open', label: OPEN_STATUS[rs], note: more ? `${OPEN_NOTE[rs]} ${more}` : OPEN_NOTE[rs] };
+  }
+
   function statusName(report) {
-    if (report && report.final === true) return report.action === 'addendum' ? 'Final · Addendum' : 'Final';
-    return (report && OPEN_STATUS[report.rs]) || 'Unknown';
+    return reportStatus(report).label;
   }
 
   function statusBadge(report) {
-    const kind = report && report.final === true ? 'final' : report && OPEN_STATUS[report.rs] ? 'open' : 'unknown';
-    const badge = node('span', `status ${kind}`, statusName(report));
-    // 상태 뜻과, 확정 전에는 본문·키 이미지가 보이지 않는 이유를 툴팁으로 알린다(설명은 한국어, AGENTS §4).
-    badge.title = kind === 'final' ? FINAL_ONLY
-      : kind === 'open' ? (report.rs === 'D' ? OPEN_NOTE.D : `${OPEN_NOTE[report.rs]} ${FINAL_ONLY}`) : `${TEXT.unknown} ${FINAL_ONLY}`;
+    const status = reportStatus(report);
+    const badge = node('span', `status ${status.kind}`, status.label);
+    // 상태 뜻과 그 상태에서 무엇이 보이는지를 툴팁으로 알린다(설명은 한국어, AGENTS §4).
+    badge.title = status.note;
     return badge;
+  }
+
+  /** Row C: a merged or split exam in force whose originals this account cannot all read now (the server's mark). */
+  function examLost(row) {
+    return row ? root.KinExamScope.unavailable(row) : null;
   }
 
   function studyRow(row) {
@@ -487,11 +578,42 @@
     const institution = node('td', null, dash(row.institutionName));
     if (row.tele === true) institution.append(' ', teleTag());
     const report = node('td');
-    report.append(statusBadge(row.report));
+    report.dataset.report = '';
+    paintRowStatus(report, row);
     tr.append(action, node('td', 'name', dash(row.name)), node('td', null, dash(row.id)), node('td', null, sexAge(row)),
       node('td', null, day(row.birth)), node('td', null, day(row.date)), node('td', null, dash(row.modality)),
       node('td', null, dash(row.desc)), institution, report);
     return tr;
+  }
+
+  /** The Report cell of a list row: its status, and Unavailable with the reason when the exam cannot be opened now. */
+  function paintRowStatus(cell, row) {
+    cell.replaceChildren(statusBadge(row.report));
+    const lost = examLost(row);
+    if (lost) {
+      const tag = node('span', 'tag', TEXT.unavailable);
+      tag.dataset.unavailable = '';
+      tag.title = lost.message;
+      tag.style.marginLeft = '6px';
+      tag.style.borderColor = 'var(--danger-line)';
+      tag.style.color = 'var(--danger-text)';
+      cell.append(tag);
+    }
+  }
+
+  /**
+   * F35: the latest read of the selected study's report (not a stored version, not another study's report) is newer than
+   * the list. Its status becomes the row's status — the row cell, a later redraw of the rows and the panel say one state.
+   */
+  function syncRowStatus(uid, view) {
+    const row = byUid.get(uid);
+    if (!row || !studies.includes(row)) return;
+    // The exam scope of that same read too: Compare and the viewer open the exam the read just confirmed.
+    row.report = { ...row.report, final: view.final, rs: view.final ? 'A' : view.rs,
+      action: view.action ?? null, version: view.version ?? null, repDoc: view.repDoc ?? null, confirm: view.confirm ?? null,
+      ...(view.scope ? { scope: view.scope } : {}) };
+    const cell = document.querySelector(`#studies tr[data-uid="${CSS.escape(uid)}"] td[data-report]`);
+    if (cell) paintRowStatus(cell, row);
   }
 
   function teleTag() {
@@ -676,6 +798,11 @@
       return;
     }
     const at=++viewerSequence,mine=reportSeq,scope=displayedExam,target=displayedReport;
+    // Row C: the exam in force that cannot be read whole now is refused before any window opens, for the study and for the
+    // comparison alike, whether or not the row names its exam. A stored version the server let this panel read keeps its
+    // own stored scope (that read already answered for it).
+    const lost=(selectedReportTarget&&scope?null:root.KinExamScope.unavailable(row))||(other?root.KinExamScope.unavailable(other):null);
+    if(lost){note.textContent=lost.message;return;}
     if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
     const expectedSession=KinAuth.sessionId();
     if(!expectedSession){note.textContent='세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.';return;}
@@ -699,7 +826,10 @@
           input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
         }
         if(!fresh())return;
-        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW});popup.opener=null;
+        // B14: a viewer opened from the Physician screen is read-only for every account that opens it here (config/ohif
+        // session.js keeps this mode for the window's reloads): a radiologist who also holds the clinician role annotates
+        // from the Radiologist screen.
+        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician'});popup.opener=null;
         if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
         note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
       }catch(error){if(fresh())note.textContent=describe(error);}
@@ -730,6 +860,7 @@
     $('#report-meta').hidden = true;
     $('#report-body').replaceChildren();
     $('#report-body').hidden = true;
+    $('#report-target')?.remove();
   }
 
   function clearDetail(note) {
@@ -765,7 +896,24 @@
     if (!body || typeof body !== 'object' || body.uid !== uid) throw new Error('응답의 검사가 요청한 검사와 다릅니다.');
     const report = body.report;
     if (!report || typeof report !== 'object' || typeof report.final !== 'boolean') throw new Error('판독 응답 형식을 확인할 수 없습니다.');
-    if (!report.final) return { uid, final: false, rs: OPEN_STATUS[report.rs] ? report.rs : null };
+    // Key images and drawings are read apart from the text: null (not sent for this state) is not an empty list.
+    if (body.keys !== undefined && body.keys !== null && !Array.isArray(body.keys)) throw new Error('판독 응답 형식을 확인할 수 없습니다.');
+    const drawings = Array.isArray(body.drawings) ? body.drawings.filter(d => d && typeof d.id === 'string' && typeof d.png === 'string') : [];
+    if (!report.final) {
+      // F41: an unsigned text the server sent (the state table decides whether this account gets it) is shown as sent,
+      // never filled from the list; a state-only answer (P, D, an emptied text) stays a state.
+      // P and D are status-only states on this route (api/src/clinician-policy.ts CLINICIAN_STATUS_ONLY): no text is read.
+      const fields = ['findings', 'conclusion', 'recommendation'];
+      const sent = !['P', 'D'].includes(report.rs) && fields.every(key => typeof report[key] === 'string');
+      const text = sent && fields.some(key => report[key].trim())
+        ? { findings: report.findings, conclusion: report.conclusion, recommendation: report.recommendation } : null;
+      return { uid, final: false, rs: OPEN_STATUS[report.rs] ? report.rs : null, scope: body.scope || report.scope || null,
+        version: Number.isSafeInteger(report.version) && report.version > 0 ? report.version : null,
+        action: typeof report.action === 'string' ? report.action : null,
+        repDoc: typeof report.repDoc === 'string' ? report.repDoc : null,
+        confirm: typeof report.confirm === 'string' ? report.confirm : null,
+        text, keys: Array.isArray(body.keys) ? body.keys : null, drawings: ['P', 'D'].includes(report.rs) ? [] : drawings };
+    }
     const text = ['findings', 'conclusion', 'recommendation'];
     if (!Number.isSafeInteger(report.version) || report.version < 1 || !FINAL_TYPE[report.action]
         || text.some(key => typeof report[key] !== 'string') || !Array.isArray(body.keys))
@@ -773,12 +921,17 @@
     return { uid, final: true, scope: body.scope || report.scope || null, action: report.action, version: report.version,
       repDoc: typeof report.repDoc === 'string' ? report.repDoc : null,
       confirm: typeof report.confirm === 'string' ? report.confirm : null,
+      // Who signed the version shown and when, as the History of that version shows it (the server names them).
+      signedBy: typeof report.signedBy === 'string' ? report.signedBy : null,
+      at: typeof report.at === 'string' ? report.at : null,
+      keptAt: typeof report.keptAt === 'string' ? report.keptAt : null,
+      keptOn: typeof report.keptOn === 'string' ? report.keptOn : null,
       // FC-034: 승인 후 24시간 안에 승인한 판독의가 고친 판이 머리일 때만 시각이 온다.
       amendedAt: report.action === 'amend' && typeof report.amendedAt === 'string' ? report.amendedAt : null,
       findings: report.findings, conclusion: report.conclusion, recommendation: report.recommendation,
       keys: body.keys,
       // Image Report: the drawings of this same version (what each was drawn on and its picture).
-      drawings: Array.isArray(body.drawings) ? body.drawings.filter(d => d && typeof d.id === 'string' && typeof d.png === 'string') : [] };
+      drawings };
   }
 
   /** Image Report: the drawings attached to the shown version, right after Conclusion (their pictures came with the read). */
@@ -834,27 +987,48 @@
     const status = view.final ? { final: true, action: view.action } : { final: false, rs: view.rs };
     $('#report-status').replaceChildren(statusBadge(status));
     if (!view.final) {
-      // A destroyed report has no final version to wait for: its line says only what happened to it.
-      setReport('status', view.rs === 'D' ? OPEN_NOTE.D : `${view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown} ${FINAL_ONLY}`);
-      setKeys(TEXT.keysWithheld, null);
+      const said = view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown;
+      if (view.text || view.drawings.length) {
+        // F41: the unsigned text the server sent, said to be not final.
+        setReport('open', `${said} ${TEXT.notFinal}`);
+        const meta = $('#report-meta');
+        meta.replaceChildren(field('Version', view.version === null ? '—' : String(view.version)), field('Status', statusName(status)));
+        meta.hidden = false;
+        const text = view.text || { findings: '', conclusion: '', recommendation: '' };
+        $('#report-body').replaceChildren(bodySection('Findings', text.findings), bodySection('Conclusion', text.conclusion),
+          ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', text.recommendation));
+        $('#report-body').hidden = false;
+      } else {
+        // A destroyed report has no final version to wait for: its line says only what happened to it.
+        setReport('status', view.rs === 'D' ? OPEN_NOTE.D : `${said} ${TEXT.noBody}`);
+      }
+      paintKeys(view.keys);
       return;
     }
     setReport('final', view.action === 'addendum' ? TEXT.addendum : TEXT.approved);
     const meta = $('#report-meta');
     meta.replaceChildren(field('Version', String(view.version)), field('Type', FINAL_TYPE[view.action]),
-      field('Signed By', dash(view.repDoc)), field('Signed On', day(view.confirm)));
+      field('Signed By', dash(view.signedBy || view.repDoc)),
+      field('Signed On', window.KinReportPaper.versionStamp(view) || day(view.confirm)));
     meta.hidden = false;
     const body = $('#report-body');
     body.replaceChildren(bodySection('Findings', view.findings), bodySection('Conclusion', view.conclusion),
       ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation));
     // FC-034: 고친 글로 바뀐 판독문은 머리에 그 사실과 시각을 한 줄 붙인다(목록의 상태 표기는 그대로).
     if (view.action === 'amend') {
-      const amended = node('p', 'amended', `수정됨 (${view.amendedAt ? requestTime(view.amendedAt) : '—'})`);
+      // The amendment shown is this version: its time is the one Signed On and History show for it.
+      const amended = node('p', 'amended', `수정됨 (${window.KinReportPaper.versionStamp(view) || '—'})`);
       amended.id = 'report-amended';
       body.prepend(amended);
     }
     body.hidden = false;
-    const keys = view.keys.map(keyItem);
+    paintKeys(view.keys);
+  }
+
+  /** Key images as the server sent them: null is "not sent for this state", [] is "none". */
+  function paintKeys(list) {
+    if (!Array.isArray(list)) { setKeys(TEXT.keysWithheld, null); return; }
+    const keys = list.map(keyItem);
     setKeys(keys.length ? `키 이미지 ${keys.length}건` : TEXT.keysNone, keys);
   }
 
@@ -876,8 +1050,12 @@
     }
     const reports=row.exam?.reports||[];
     const current=root.KinExamScope.read(row.exam?.scope);
-    box.hidden=!row.exam&&!reports.length;
-    box.replaceChildren(node('b','',current?.kind==='merge'?'Merged exam':current?.kind==='split'?'Split exam':'Exam Reports'));
+    const lost=examLost(row);
+    box.hidden=!row.exam&&!reports.length&&!lost;
+    const kind=current?.kind||lost?.kind;
+    box.replaceChildren(node('b','',kind==='merge'?'Merged exam':kind==='split'?'Split exam':'Exam Reports'));
+    // Row C: the reason this exam cannot be opened now, said here whether or not the row carries its exam.
+    if(lost){const why=node('span','',' — '+lost.message);why.dataset.unavailable='';box.append(why);}
     if(row.exam?.readable===false)box.append(' — 저장된 검사 범위 일부를 볼 수 없어 해당 판독문을 열 수 없습니다.');
     if(current?.kind==='merge'&&current.active&&current.reportUid!==row.uid){
       const base=node('button','','Open Base Study');base.type='button';
@@ -917,6 +1095,9 @@
       let view;
       try {
         view = readReport(reportUid, body);
+        // A stored version the server answers with its state only (P: no version, no text) is still that version: the
+        // route refuses a version that is not there.
+        if (version && !view.final && view.version === null) view.version = version;
         if(version && view.version !== version)throw new Error("요청한 판독 버전과 다릅니다.");
       } catch (error) {
         setReport('failed', TEXT.reportFailed, describe(error));
@@ -924,6 +1105,18 @@
         return;
       }
       paintReport(view);
+      // A stored version opens its own images (purpose stored, that version), signed or not; the latest read opens the
+      // exam as it is now.
+      if (version) displayedReport = { uid: reportUid, version: view.version };
+      if (reportTarget) {
+        // A stored version or another study's report: the panel says which one; the row keeps its own current status.
+        const base = reportUid === uid ? null : byUid.get(reportUid);
+        const line = node('p', 'muted', base || reportUid !== uid
+          ? say(TEXT.storedOther, view.version ?? '—', base ? `${day(base.date)} · ${dash(base.modality)} · ${dash(base.desc)}` : reportUid)
+          : say(TEXT.storedVersion, view.version ?? '—'));
+        line.id = 'report-target';
+        $('#report-body').before(line);
+      } else syncRowStatus(uid, view);
     }, error => {
       if (!reportFresh(mine, uid)) return;
       if (error.status === 403) {
@@ -2904,6 +3097,25 @@
     $('#session-who').hidden = false;
   }
 
+  /**
+   * What leaving this page would lose (the mode menu asks before it navigates): a question or image request whose result is
+   * not known yet, or text written and not sent. Both live only in this document's memory.
+   */
+  function unsent() {
+    if (requestAttempts.size || questionAttempts.size) return 'unconfirmed';
+    const written = value => typeof value === 'string' ? value.trim() !== ''
+      : !!value && typeof value === 'object' && Object.entries(value).some(([name, text]) => name !== 'kind' && typeof text === 'string' && text.trim() !== '');
+    return [...questionDrafts.values(), ...requestDrafts.values()].some(written) ? 'unsent' : null;
+  }
+
+  /** B14: the top bar's mode menu (work-mode.js). This page is the Physician mode; the other two open the worklist. */
+  function mountMode() {
+    if (!root.KinWorkMode || $('#work-mode-open')) return;
+    root.KinWorkMode.mount({ host: $('#work-mode-host'), current: () => 'physician',
+      choose: mode => { if (!leaving) location.assign(mode === 'technician' ? 'main.html?mode=Technician' : 'main.html?mode=Radiology'); },
+      leaving: () => unsent() });
+  }
+
   function wire() {
     $('#logout').addEventListener('click', () => logout());
     $('#membership-logout').addEventListener('click', () => logout());
@@ -2952,6 +3164,8 @@
     }
     owner = [session.institution ?? null, session.sub ?? null];
     paintSession(session);
+    mountMode();
+    mountFolders();
     clearDetail();
     loadList();
     // The shared inbox uses this document's defaults; verified owner replacement closes all work.
@@ -2961,5 +3175,5 @@
     } catch (_) { criticalInbox = null; }
   }
 
-  root.KinClinicianHome = { boot, ageAtStudy };
+  root.KinClinicianHome = { boot, ageAtStudy, unsent };
 })(globalThis);

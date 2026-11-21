@@ -5,6 +5,7 @@
 function kinCreateViewerReportPanel() {
   let ready, panel = null, frame, generation = 0;
   const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
+    ['report-preview.js', () => typeof window.KinReportPaper?.approvalText === 'function'],
     ['viewer-report-panel.js', () => !!window.KinViewerReportPanel]];
   function load() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {

@@ -490,6 +490,23 @@
       body .menubar #m-reading { max-width: 90px; }
     }
     body .menubar .brand img { width: 18px; height: 18px; }
+    /* B14 mode menu: the HALO PACS mark opens it (Minhoon 11-01 "I want this icon to be a pull down menu"). The bar has no
+       width for one more button; up to 1199px the mark is folded away with the other names and the tabs stay. */
+    body .menubar .work-mode { display: contents; }
+    body .menubar .brand.work-mode-trigger { cursor: pointer; border-radius: 4px; }
+    body .menubar .brand.work-mode-trigger:hover { background: var(--kin-row-hover); }
+    body .menubar .brand.work-mode-trigger:focus-visible { outline: 2px solid var(--kin-accent, #8ab4c8); outline-offset: 1px; }
+    #work-mode-more-group { display: none; }
+    @media (max-width: 1199px) { #work-mode-more-group { display: contents; } }
+    .work-mode-menu { position: fixed; inset: auto; margin: 0; min-width: 220px; max-width: min(28em, calc(100vw - 16px)); padding: 6px;
+      color: var(--kin-text); background: var(--kin-panel); border: 1px solid var(--kin-border); border-radius: 6px; font-size: 12px; }
+    .work-mode-item { display: block; width: 100%; text-align: start; margin: 2px 0; }
+    .work-mode-item[aria-checked="true"] { font-weight: 700; }
+    .work-mode-item[aria-checked="true"]::before { content: "✓ "; }
+    .work-mode-item[aria-disabled="true"] { opacity: .65; cursor: not-allowed; }
+    .work-mode-reason { margin: 0 4px 6px; color: var(--kin-muted); font-size: 11px; }
+    .work-mode-leave { margin-top: 6px; padding: 6px; border: 1px solid var(--kin-accent); border-radius: 6px; background: var(--kin-bg); color: var(--kin-text); }
+    .work-mode-leave p { margin: 0 0 6px; }
     body .menubar-status { display: flex; align-items: center; column-gap: 10px; margin-left: 6px; white-space: nowrap; }
     @media (max-width: 1919px) { body .menubar-status > :not(#dbstat) { display: none; } }
     /* 좁은 데스크톱에서도 연결 경고와 세션 동작이 함께 들어가도록 메뉴 여백을 줄인다. */
@@ -793,6 +810,9 @@
        from shrinking; in landscape the identity table still gives way first. */
     body:not(.reading) .s-clinical { overflow: auto; }
     body.portrait:not(.reading) .clinical { flex: none; }
+    /* #clinical sits in .clin-pair (beside Clinical Context): the pair is what must not shrink, or the lines drawn below it
+       (QC Flag, the receipt, DICOM Identity) cover the clinical text instead of the column scrolling. */
+    body.portrait:not(.reading) .clin-pair { flex: none; }
     body.portrait .rtabs { flex-wrap: wrap; }
     body.portrait .workrow { flex-direction: column; flex: 1 0 480px; min-height: 480px; }
     body.portrait .related-p { width: 100%; height: 56%; min-height: 286px; flex: none; }
@@ -1596,6 +1616,9 @@
       <div class="on" data-tab="Radiology">Radiology</div>
       <div data-tab="Technician">Technician</div>
     </div>
+    <!-- B14: the mode menu (work-mode.js, mounted by page-boot.js on the HALO PACS mark): Physician opens Clinician Home;
+         Radiologist and Technician are the tabs above. -->
+    <span class="work-mode" id="work-mode-host"></span>
     <div class="item" id="m-home">⌂ Home</div>
     <button class="item" id="m-reading" type="button">Reading Workspace</button>
     <div class="item" id="m-config" role="button" tabindex="0" title="Panel Settings — 판독 창의 패널을 보이거나 숨깁니다.">⚙ <span class="item-label">Config</span></div>
@@ -1645,6 +1668,9 @@
         <button class="chip" id="worklist-alerts-open" type="button" aria-haspopup="dialog" disabled>Worklist Alerts</button>
         <button class="chip" id="worklist-export-open" type="button" aria-haspopup="dialog" disabled title="선택한 검사 또는 검색 결과를 고른 열로 Excel에서 열리는 파일(CSV·Text)로 내려받습니다.">Export List</button>
         <button class="chip" id="query-retrieve-open" type="button" aria-haspopup="dialog" aria-controls="query-retrieve" aria-expanded="false" hidden disabled title="관리자가 등록한 다른 PACS·장비에서 검사를 검색해 이 서버로 가져옵니다.">Query/Retrieve</button>
+        <!-- B14: the mode menu where the narrow bar has folded the HALO PACS mark away (up to 1199px); its own group after
+             More's items, so their list and order stay as they are. -->
+        <span class="work-mode-more" id="work-mode-more-group"><button class="chip" id="work-mode-more" type="button" title="작업 화면을 고릅니다: 진료과 의사(Physician)·판독의(Radiologist)·방사선사(Technician)">Mode</button></span>
       <details class="toolbar-menu" id="toolbar-refresh-menu">
         <summary class="chip" aria-label="Auto Refresh" title="자동 목록 갱신 간격을 펼칩니다"><span class="toolbar-caret" aria-hidden="true">▾</span></summary>
         <div class="toolbar-menu-panel" role="group" aria-label="Auto Refresh">
@@ -1750,6 +1776,7 @@
           <button id="t-import" type="button" hidden title="이 기관의 DICOM 파일을 골라 반입합니다(파일마다 결과를 보입니다).">Import DICOM</button>
           <button id="t-attach" type="button" hidden title="고른 검사에 스캔 문서·그림 파일(JPG·PNG·PDF)을 붙입니다.">Attach Document</button>
           <button id="t-film-print" type="button" hidden title="고른 검사의 영상을 필름 프린터로 인쇄하거나 인쇄 배치를 DICOM 장치로 보냅니다.">Film Print</button>
+          <button id="t-qc-flag" type="button" title="고른 검사에 영상 품질(QC) 표시와 사유를 달거나, 해결되면 지웁니다.">QC Flag</button>
         </span>
         <span style="flex:1"></span>
       </div>
@@ -1893,6 +1920,10 @@
             <p id="clinical-context-scope">이 패널은 서명된 과거 판독문·검사 이력·DICOM 요청 태그·Tech Note만 보여 줍니다. 오더·EMR·검사실·병리 정보는 연결되어 있지 않습니다.</p>
           </section>
           </div>
+          <!-- QC Flag: the server's mark of the viewed study (every tab), outside #clinical so a poll repaints it. -->
+          <div id="study-qc" role="group" aria-label="QC Flag" style="flex:none;padding:2px 10px 0;font-size:11px;overflow-wrap:anywhere" hidden></div>
+          <!-- Protocol and dose recorded in the viewed study's DICOM (Technician tab only), read for the viewed exam's originals. -->
+          <div id="study-acquisition" role="group" aria-label="Protocol and Dose" style="flex:none;max-height:40%;overflow:auto;padding:2px 10px 4px;font-size:11px;overflow-wrap:anywhere" hidden></div>
           <!-- S4-U1b: 폴링마다 관측 시각이 바뀌므로 #clinical 밖에 둔다. 열람 검사 정보는 폴링으로 바뀌지 않는다. -->
           <div id="study-receipt" role="group" aria-label="기관 배정·HALO PACS 관측·Gateway 보고" style="flex:none;padding:2px 10px 6px;font-size:11px;overflow-wrap:anywhere" hidden>
             <div>Institution: <span id="receipt-institution"></span><span id="receipt-assignment"></span></div><div>Observed: <span id="receipt-observation"></span></div><div>Gateway: <span id="receipt-gateway"></span></div><div id="receipt-gap" class="receipt-gap-line" hidden></div><div><button type="button" id="receipt-retry" class="chip" hidden>Now Retry</button> <span id="receipt-retry-note"></span></div>
@@ -1975,6 +2006,7 @@
           <section id="related-mode" class="related-mode" aria-labelledby="related-mode-title" hidden>
             <div class="related-mode-head">
               <h3 id="related-mode-title" tabindex="-1">Related Report</h3>
+              <span class="related-mode-signed" translate="no" hidden></span>
               <span class="related-mode-role" lang="ko">비교 중인 검사의 판독문입니다 — 읽기 전용이며, 현재 초안에는 Insert로만 들어갑니다.</span>
               <span class="spacer"></span>
               <button id="related-mode-back" type="button" aria-keyshortcuts="Control+Alt+4 Escape" title="편집기에서 이어 씁니다 (Esc). 이 판독문은 패널에 그대로 남습니다">Back to Current Draft</button>
@@ -2689,6 +2721,7 @@
   <script src="study-attachments.js"></script>
   <script src="report-popout.js"></script>
   <script src="clinical-info-actions.js"></script>
-  <script src="main-split.bundle.js"></script>
+  <script src="work-mode.js"></script>
+<script src="main-split.bundle.js"></script>
 </body>
 </html>

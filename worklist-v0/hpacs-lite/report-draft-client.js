@@ -371,7 +371,10 @@
       } catch (error) { return failed(error); }
       if (!answer.ok) return refusal(answer);
       const envelope = answer.incomplete ? null : envelopeOf(answer.body);
-      if (!envelope || envelope.uid !== uid || !sameOwner(envelope.owner, owner) || envelope.present
+      // Discard and commit end my draft - with one exception: a Reset that took another reader's in-progress reading back
+      // to Unread (its answer names what it `released`) keeps my own draft, on the version it made (FC-040).
+      const kept = body?.action === 'reset' && !!answer.body?.released && typeof answer.body.released === 'object';
+      if (!envelope || envelope.uid !== uid || !sameOwner(envelope.owner, owner) || (envelope.present && !kept)
         || !answer.body.state || typeof answer.body.state !== 'object') return { outcome: 'unknown', answer };
       return { outcome: 'saved', envelope, state: answer.body.state, answer };
     }

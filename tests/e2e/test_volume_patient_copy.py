@@ -13,7 +13,16 @@ class VolumePatientCopyE2E(ImageContextCopyE2E):
   else:super().active(v,uid)
  def mpr(self,v):
   v.locator('[data-cy=Layout]').click();v.locator('#react-portal').get_by_text('MPR',exact=True).click()
-  v.wait_for_function("""()=>{const g=services.viewportGridService.getState();return g.viewports.size===3&&[...g.viewports.keys()].every(id=>{const v=services.cornerstoneViewportService.getCornerstoneViewport(id);return v?.type==='orthographic'&&cornerstone.cache.getVolume(v.getVolumeId())?.loadStatus.loaded})}""")
+  try:v.wait_for_function("""()=>{const g=services.viewportGridService.getState();return g.viewports.size===3&&[...g.viewports.keys()].every(id=>{const v=services.cornerstoneViewportService.getCornerstoneViewport(id);return v?.type==='orthographic'&&cornerstone.cache.getVolume(v.getVolumeId())?.loadStatus.loaded})}""")
+  except Exception:
+   # What this wait saw when it ran out (cells, their kind, each volume's load state) and the screen; the timeout stands.
+   try:
+    state=v.evaluate("""()=>{const g=services.viewportGridService.getState();return {cells:g.viewports.size,each:[...g.viewports.keys()].map(id=>{const v=services.cornerstoneViewportService.getCornerstoneViewport(id);let volume=null;try{volume=v?.getVolumeId?.()||null}catch(_){}const c=volume?cornerstone.cache.getVolume(volume):null;return {id,type:v?.type||null,volume:!!volume,cached:!!c,status:c?.loadStatus?{loaded:!!c.loadStatus.loaded,loading:!!c.loadStatus.loading,frames:c.loadStatus.cachedFrames?.filter?.(Boolean).length??null,of:c.imageIds?.length??null}:null}})}}""")
+    print('MPR WAIT DIAGNOSIS',self._testMethodName,json.dumps(state),flush=True)
+    folder=Path(__file__).parent/'artifacts'/'volume-mip-orient-ci'
+    if folder.is_dir():v.screenshot(path=str(folder/('mpr-wait-'+self._testMethodName+'.png')))
+   except Exception as e:print('MPR WAIT DIAGNOSIS unavailable',repr(e)[:300],flush=True)
+   raise
   expect(v.locator('#kin-viewer-copy-id')).to_be_enabled();self.tools(v)
   # The initial MPR canvas is rounded up, then the queued native resize uses
   # client dimensions. Compare copy operations only after that resize completes.

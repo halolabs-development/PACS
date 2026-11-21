@@ -80,6 +80,7 @@
       // above always stay as the server sent them, whatever a stored overlay carries.
       for (const key of OVERLAY_KEYS) if (overlayValue(key, a.ov?.[key])) s[key] = a.ov[key];
       s.confirm = confirmText({ ...a, rs: s.rs });
+      applyQcRow(s);
       // Without a server the matched order of this list (demo) gives the request columns, as the server does for its rows.
       if (!serverMode) {
         const order = a.matched === "M" && a.oid ? orders.find(o => o.oid === a.oid) : null;
@@ -89,6 +90,47 @@
       return s;
     }
     function requestText(v) { return typeof v === "string" ? v.trim() : ""; }
+
+    /**
+     * A QC command's own answer: only its mark is taken, by the rule every answer that is not the list's passes (newerQc,
+     * report-draft-sync.js: the reading the list says for the row now, and a newer revision), and only when the row is
+     * still read the way it was when the command was sent (`scope`). The rest of the state it carries is never taken: a
+     * list read that came back meanwhile may already show a later report state (RS, holder).
+     */
+    function takeQcAnswer(uid, st, scope) {
+      if (!scope || qcScope(uid) !== scope) return false;
+      const kept = newerQc(uid, appState[uid], st, false);
+      if (Object.hasOwn(kept, "qc")) return false;
+      appState[uid] = { ...appState[uid], qc: st.qc };
+      return true;
+    }
+    /**
+     * The surfaces that show a QC mark or a study's DICOM values are brought to the list at once, without waiting for the
+     * list's own redraw: the rows' QC fields (what Export List writes), the QC cells already drawn (a row the list no longer
+     * has shows nothing), the open QC window, and the Info panel's study, QC line and Protocol & Dose.
+     */
+    function qcFollowsList() {
+      for (const s of studies) applyQcRow(s);
+      for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
+        const s = studies.find(x => x.uid === cell.dataset.qcUid);
+        cell.innerHTML = s ? qcCellHtml(s) : "";
+      }
+      syncQcWindow();
+      if (!viewedInfoFollowsList()) { renderQcInfo(); renderAcquisition(); }
+    }
+    /**
+     * A list answer the moment it is in hand (a list read and the poll call this before they wait for anything else): what
+     * the answer no longer lists, or reads another way, leaves the screen now - not when the list is rebuilt.
+     */
+    function qcHearsList(rows) {
+      try { hearQcList(rows); qcFollowsList(); } catch (error) { console.error(error); }
+    }
+    /** A row's QC fields (applyState and syncStudy): the mark it may show, and the word the column, filter and sort read. */
+    function applyQcRow(s) {
+      const mark = shownQc(s.uid);
+      s.qcMark = mark;
+      s.qc = !mark ? "Unknown" : mark.reason !== null ? "Flagged" : "None";
+    }
 
     /**
      * 검사 목록.
@@ -111,6 +153,15 @@
     const NOTE_HELP = { Unknown: '아직 Tech 메모 상태를 받지 못했습니다', Yes: 'Tech 메모가 있습니다',
       Cleared: '메모를 비웠고 이전 이력이 남아 있습니다', None: 'Tech 메모가 없습니다' };
     function noteHelp(uid) { return NOTE_HELP[noteLabel(uid)] || ''; }
+    /**
+     * The Tech Note chip's word, its hover help and its accessible name, from the one stored summary at once: the list's
+     * render (CELL.techNote) and the in-place update after a save or clear (updateNoteSummary) both take them from here, so
+     * the help never keeps an earlier state's sentence.
+     */
+    function noteChip(uid, id) {
+      const label = noteLabel(uid);
+      return { label, title: noteHelp(uid), aria: `${id ?? ''} Tech Note ${label}` };
+    }
     function updateNoteSummary(uid, value) {
       if (!value || !Number.isInteger(value.version) || value.version < 0 || typeof value.present !== 'boolean') return;
       // A list poll started before a local save must not roll the badge backward.
@@ -118,7 +169,10 @@
       noteSummaries.set(uid, value);
       const study = studies.find(s => s.uid === uid);
       const button = $('#rows').querySelector(`[data-tech-note="${CSS.escape(uid)}"]`);
-      if (button && study) { button.textContent = noteLabel(uid); button.setAttribute('aria-label', study.id + ' Tech 메모 ' + noteLabel(uid)); }
+      if (button && study) {
+        const chip = noteChip(uid, study.id);
+        button.textContent = chip.label; button.title = chip.title; button.setAttribute('aria-label', chip.aria);
+      }
     }
     const readerAssignments=new Map();
     function updateReaderAssignment(uid,value){
@@ -129,6 +183,7 @@
     function observeExamList(rows) {
       const present=new Set(rows.map(s=>s.uid));
       for(const uid of observedExamScopes.keys()) if(!present.has(uid)) observeExamScope({uid,origin:"logical"});
+      observeQcList(rows);
     }
     function observeExamScope(s) {
       const next = KinExamScope.screenStamp(s), previous = observedExamScopes.get(s.uid);
@@ -172,7 +227,8 @@
        * 아직 서버에 보내지 못한 글을 담은 검사가 고른 검사가 아니면 그 글이 사라졌다.
        * 바로 아래 `applyState`가 `appState`를 읽으므로 목록 행의 판 번호도 여기서 맞는다.
        */
-      appState[s.uid] = mergeObservedReportState(s.uid, s.state);
+      observeQcScope(s);
+      appState[s.uid] = mergeObservedReportState(s.uid, s.state, true);
       return applyState({
         uid: s.uid, pf: "·", assignedReader:readerAssignments.get(s.uid)?.reader?[readerAssignments.get(s.uid).reader.name,readerAssignments.get(s.uid).reader.actor].filter(Boolean).join(" · "):"",
         // While matched, the order's own accession is shown (orderAccession, null without one); sourceAcc keeps the archive's.
@@ -404,7 +460,7 @@
     }
     // My Shortcuts → popup that sets the same column filters as the filter row (fval), so the
     // list, the active-filter summary and Saved Searches all see them. No separate filter state.
-    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'pf',
+    const EXAM_FILTER_KEYS = ['date', 'id', 'name', 'age', 'sex', 'modality', 'desc', 'acc', 'institutionName', 'assignedReader', 'techNote', 'qc', 'pf',
       'rs', 'em', 'ss', 'matched', 'preDoc', 'preReviewer', 'ward'];
     let examFilterDialog = null;
     function openExamFilterPopup(opener) {
@@ -629,6 +685,9 @@
       worklistExport?.sync(list.length);
       rowNavigation?.sync();
       worklistSearch?.show();
+      // What shows a study's QC mark or its DICOM follows the list (a poll, a Refresh, a tab change): the Info panel's QC
+      // line and Protocol & Dose (study-info-panel.js) and the open QC window (study-corrections.js).
+      renderQcInfo(); renderAcquisition(); syncQcWindow();
 
       const active = [];
       if (consultationFilter) {
@@ -1027,6 +1086,8 @@
       const loadSequence = ++listLoadSequence, epoch = commitEpoch;
       // 이 읽기를 시작한 문맥. 목록·관측·안내를 쓰는 자리는 모두 이것을 지난다 — 준비·종료 뒤에 온 답은 목록을 바꾸지 않는다.
       const at = work.capture("document");
+      // A list read (Refresh, a correction, a reconnect) reads the viewed exam's protocol and dose again (study-info-panel.js).
+      forgetAcquisition();
       /**
        * **서버가 죽었다고 Orthanc를 직접 부르지 않는다.**
        *
@@ -1048,6 +1109,7 @@
         const r = await studyPageClient.read({ resume:!!options.resume, epoch, valid:() => !commitInFlight && epoch === commitEpoch });
         if (!work.admits(at) || loadSequence !== listLoadSequence || commitInFlight || epoch !== commitEpoch) return;
         assertStudyOwner(r);
+        qcHearsList(r.studies);
         await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
         let applied = false;
         work.commit(at, () => {
@@ -1071,6 +1133,9 @@
           worklistAlerts?.observe(r.studies.map(s=>({uid:s.uid,em:s.state.em})));
           $('#err').textContent = '';
           applied = true;
+          // The list is drawn below, after the storage read answers. What shows a QC mark or a study's DICOM does not wait
+          // for that: it follows this list now (a row it no longer has, a row that cannot be read now).
+          try { qcFollowsList(); } catch (e2) { console.error(e2); }
         });
         if (!applied) return;
         await refreshStorage(at);
@@ -1095,7 +1160,8 @@
             // A superseded or changed-list answer is not a failed observation; the last one still stands.
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') markObservationUnavailable();
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
-            $("#err").textContent = "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message;
+            // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
+            listRefreshWarning(true, "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message);
             toast("검사 목록 실패: " + e.message, "err");
             render();
           });

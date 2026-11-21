@@ -136,6 +136,8 @@ function fixture({ state = STATE,
         writes.push('reportVersion.createMany'); created.push({ call: 'many', data: a.data }); },
     },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
+    // An approval reads the signer's member name (no member row here: the login is written, as before).
+    memberRights: { findMany: async () => [] },
   };
   const prisma = {
     studyGroupMember: { findMany: async () => [] },

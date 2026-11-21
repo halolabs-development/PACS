@@ -74,12 +74,16 @@ window.KinViewerPriorPanel = (() => {
     else {
       const report = value.report;
       element('p', ['Version ' + report.version, report.action === 'addendum' ? 'Addendum' : report.action === 'amend' ? 'Amended' : 'Approved',
-        report.author || 'Unknown', report.at || 'Unknown'].join(' | '), host);
+        signer(report), stamp(report)].join(' | '), host);
       sections(host, report, 'h4', true);
     }
     shown.push(...[...host.childNodes].slice(start));
     if (['ready', 'none'].includes(value.state) && Array.isArray(value.versions)) history(host, value.versions, shown);
   }
+  // Who signed a version and when, as every report screen shows it: the member name the server sent (authorName), else the
+  // login; the time by the one rule of the report screens (report-preview.js versionStamp: this screen's time zone).
+  const signer = version => (typeof version.authorName === 'string' && version.authorName) || version.author || 'Unknown';
+  const stamp = version => globalThis.KinReportPaper.versionStamp(version) || 'Unknown';
   function sections(host, report, heading, all) {
     for (const [title, text] of [['Findings', report.findings], ['Conclusion', report.conclusion], ['Recommendation', report.recommendation]]) {
       if (!all && !text) continue;
@@ -106,8 +110,8 @@ window.KinViewerPriorPanel = (() => {
       if (!versions.length) element('p', '이 검사의 판독문 이력이 없습니다.', list);
       for (const version of versions) {
         const item = element('article', null, list);
-        element('h5', ['v' + version.version, ACTIONS[version.action] || version.action || 'Unknown', version.author || 'Unknown',
-          version.at ? String(version.at).replace('T', ' ').slice(0, 19) : 'Unknown'].join(' | '), item);
+        element('h5', ['v' + version.version, ACTIONS[version.action] || version.action || 'Unknown', signer(version),
+          stamp(version)].join(' | '), item);
         if (version.reason) element('p', '사유: ' + version.reason, item);
         if (version.findings || version.conclusion || version.recommendation) sections(item, version, 'h6', false);
         else element('p', '(내용 없음)', item);

@@ -91,7 +91,7 @@ test('TEST-S3-U3-PAYLOAD: the approved report shown to the human comes from the 
   const body = {
     code: 'REPORT_DRAFT_STALE', draftBaseVersion: 2,
     head: {
-      version: 4, updatedBy: 'doctor2@kin',
+      version: 4, updatedBy: 'doctor2@kin', updatedByName: 'SYN Lee Second',
       findings: 'LINE ONE\r\n  trailing spaces   \nLINE TWO\n',
       conclusion: '', recommendation: '결론 없음',
     },
@@ -99,6 +99,7 @@ test('TEST-S3-U3-PAYLOAD: the approved report shown to the human comes from the 
   const got = head({ code: 'REPORT_DRAFT_STALE', body });
   assert.equal(got.version, 4);
   assert.equal(got.updatedBy, 'doctor2@kin');
+  assert.equal(got.updatedByName, 'SYN Lee Second', "the signer's member name the server sent is kept for the pane title");
   assert.equal(got.findings, body.head.findings, 'newlines and edge whitespace must survive the display path');
   assert.equal(got.conclusion, '');
   assert.equal(got.recommendation, '결론 없음');
@@ -112,8 +113,8 @@ test('TEST-S3-U3-PAYLOAD: the approved report shown to the human comes from the 
   assert.equal(head({ body: { head: 'v4' } }), null);
   for (const version of [0, -1, 1.5, '4', null, undefined, NaN])
     assert.equal(head({ body: { head: { version, findings: 'x' } } }), null, `version ${String(version)}`);
-  const coerced = head({ body: { head: { version: 1, updatedBy: 7, findings: { a: 1 }, conclusion: ['x'], recommendation: null } } });
-  assert.deepEqual({ ...coerced }, { version: 1, updatedBy: '', findings: '', conclusion: '', recommendation: '', draftBaseVersion: null },
+  const coerced = head({ body: { head: { version: 1, updatedBy: 7, updatedByName: { a: 1 }, findings: { a: 1 }, conclusion: ['x'], recommendation: null } } });
+  assert.deepEqual({ ...coerced }, { version: 1, updatedBy: '', updatedByName: '', findings: '', conclusion: '', recommendation: '', draftBaseVersion: null },
     'non-text must render as empty, never as [object Object]');
   assert.equal(head({ body: { draftBaseVersion: '2', head: { version: 1 } } }).draftBaseVersion, null);
 });

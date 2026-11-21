@@ -70,7 +70,8 @@ class OrdersSite(rf.FlowSite):
             state.update(matched="M", oid=order["oid"], ov={"id": order["id"], "name": order["name"], "sex": order["sex"],
                          "birth": order["birth"], "age": "", "desc": order["desc"], "ward": order["ward"]})
         if state["rs"] == "A":
-            state["approvedAt"] = "2026-10-03T01:00:00.000Z"
+            # The signer as the server writes it for a new approval (the member name) and the kept approval time.
+            state.update(approvedAt="2026-10-03T01:00:00.000Z", repDoc="SYN Kim Reader", confirm="2026-10-03")
         return state
 
     def list_body(self, account, rename=None):
@@ -502,6 +503,8 @@ class TechnicianOrders(unittest.TestCase):
         expect(pane).to_contain_text("Select a study in Study List.")
         self.pick_study(h.PATIENT)
         expect(pane.locator("[data-report-state=approved]")).to_have_text("Approved")
+        # The radiologist and the approval time as every report screen shows them (Asia/Seoul minute of the kept time).
+        expect(pane).to_contain_text("SYN Kim Reader · Approved 2026-10-03 10:00")
         expect(pane).to_contain_text("SYN FINDINGS ALPHA")
         self.assertEqual(0, pane.locator("textarea, input, [contenteditable=true]").count(), "nothing editable")
         pane.get_by_role("button", name="Copy Report").click()

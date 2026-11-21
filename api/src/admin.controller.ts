@@ -60,7 +60,9 @@ export class AdminController {
   @Post('users/:id/reset-password')
   @HttpCode(200)
   resetPassword(@Param('id') id: string, @Body() body: any, @Req() req: any) {
-    return this.admin.resetPassword(id, body, caller(req));
+    // Through the member-change gate: the caller's own authorization is current before the provider write starts and
+    // again before a temporary password is returned (an administrator replaced meanwhile gets neither).
+    return this.withRightsFacts(req, facts => this.admin.resetPassword(id, body, caller(req), facts));
   }
 
   /** S5-U6b 운영 지표. admin 역할·기관 범위·검사 접근 제한은 서비스(need·inst·visible)가 판정한다. */

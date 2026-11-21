@@ -632,6 +632,26 @@ class RelatedLayoutDOMTest(Base):
                 w.assert_clinical_reachable(f"RL-03 {size[0]}x{size[1]}", context=size != SMALL)
                 w.screen.finish()
 
+    def test_rl03b_portrait_clinical_not_under_the_lines_below_it(self):
+        """In the portrait layout the Clinical Info column does not shrink under the lines a hosted page draws below it
+        (QC Flag, the institution/observation/gateway receipt): the column scrolls instead, and the clinical text is
+        reachable at its own point (the hosted 768x1024 roaming case)."""
+        w = self.open_state("unselected", size=(768, 1024))
+        w.page.evaluate("""() => {
+          const qc = document.querySelector('#study-qc'); qc.hidden = false; qc.textContent = 'QC Flag: Flagged - SYN motion';
+          const receipt = document.querySelector('#study-receipt'); receipt.hidden = false;
+          for (const id of ['receipt-institution', 'receipt-observation', 'receipt-gateway']) document.getElementById(id).textContent = 'SYN';
+          document.querySelector('#clinical').textContent = 'SYN clinical line';
+          document.querySelector('#study-identity').hidden = false;
+          document.body.classList.remove('kin-hide-thumbnail', 'kin-hide-template');
+        }""")
+        clinical = w.page.locator("#clinical")
+        self.assertIn("portrait", w.page.evaluate("document.body.className"))
+        w.scroll_into_view(clinical)
+        self.assertTrue(w.pointable(clinical), "#clinical is under the lines below it in the portrait layout")
+        clinical.click(trial=True, timeout=3000)
+        w.screen.finish()
+
     # ── RL-04 ───────────────────────────────────────────────────────────────────────────────────────────────────────
     def test_rl04_small_window_keyboard_rows(self):
         w = self.open_state("unselected")

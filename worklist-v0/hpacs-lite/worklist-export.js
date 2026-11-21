@@ -66,12 +66,19 @@
       cancel.onclick=()=>dialog.close();
       run.onclick=()=>{
         if(!live())return;
-        const rows=rowsFor(),columns=columnsFor(),kind=format.value;if(!rows.length||!columns.length)return;
+        const picked=rowsFor(),columns=columnsFor(),kind=format.value;if(!picked.length||!columns.length)return;
+        // The file is written from the list as it is at this moment, not as it was when the dialog opened (options.current
+        // answers a study's row of the list now, or null): a study that has left the list since is not written, and every
+        // value is the one the list may show now. The studies and their No stay those of the opening.
+        const rows=options.current?picked.map(r=>({...r,study:options.current(r.study)})).filter(r=>r.study):picked;
+        if(!rows.length){dialog.close();options.notify?.('고른 검사가 목록에 남아 있지 않아 내보내지 않았습니다. 목록을 확인한 뒤 다시 여세요.');return;}
+        const gone=picked.length-rows.length;
         const name=fileName(new Date(),kind);
         const blob=new Blob([table(rows,columns,options.cellText,kind)],{type:kind==='txt'?'text/plain;charset=utf-8':'text/csv;charset=utf-8'});
         const a=el('a',null,null);a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();a.remove();
         setTimeout(()=>URL.revokeObjectURL(a.href),0);
-        dialog.close();options.notify?.(`${rows.length}건을 내보냈습니다 (${name}).`);
+        const done=`${rows.length}건을 내보냈습니다 (${name}).`,left=gone?`그 사이 목록에서 사라진 ${gone}건은 뺐습니다.`:'';
+        dialog.close();options.notify?.([done,left].filter(Boolean).join(' '));
       };
       dialog.addEventListener('close',()=>{if(live())button.focus();});
       dialog.showModal();
