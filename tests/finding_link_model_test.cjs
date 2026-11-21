@@ -3108,6 +3108,15 @@ test('MG length copied and live-head values carry the DICOM measurement basis', 
   assert.ok(format('length', 'kin-mg-length-v1:unknown', [12], 'server-copy').includes('단위 미확인'));
 });
 
+// A Length measured in an ultrasound region keeps its basis; the calculator names no other tool.
+test('An ultrasound region Length is named in mm with its Region Calibration basis, a Length only', () => {
+  const format = require('../worklist-v0/hpacs-lite/finding-link-model.js').valueText;
+  for (const source of ['server-copy', 'live-head'])
+    assert.equal(format('length', 'kin-planar-manual-v1:us', [13.416407864998739], source), '13.4 mm · US Region Calibration');
+  for (const kind of ['angle', 'ellipse']) assert.ok(format(kind, 'kin-planar-manual-v1:us', [12], 'server-copy').includes('단위 미확인'), kind);
+  assert.ok(format('length', 'kin-planar-manual-v1:us', [12, 3], 'server-copy').includes('단위 미확인'));
+});
+
 test('valueText: a Circle by Diameter is named with its diameter, area, statistics, unit and spacing basis', () => {
   const V = model.valueText, d = 10, area = Math.PI * 25;
   assert.equal(V('circle', 'kin-circle-v1:pixel:hu', [d, area, 40.04, 2.26, 35, 45, 69], 'server-copy'),

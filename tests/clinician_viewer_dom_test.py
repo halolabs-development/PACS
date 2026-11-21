@@ -2829,6 +2829,56 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual('refused', self.page.evaluate('synPressLength()'))
         self.assertEqual('표시 간격과 원본 간격이 일치하지 않습니다', self.panel()['status'])
 
+    def test_31b_length_inside_an_ultrasound_region_is_measured_with_its_deltas(self):
+        """An ultrasound image without spacing or orientation, with Region Calibrations: Length is drawn where the viewer shows
+        the image (pixel (x, y) at [0, x, -y], display spacing 1) and measured with the deltas of the region that holds both
+        points, its basis named. A line across two regions says why it has no value; a region that is not 2D in cm, Angle on
+        the same image and a screen calibration over it keep the rules they had."""
+        self.me = RADIOLOGIST
+        self.open_viewer(before_boot=self.CALIBRATION_TOOLS)
+        self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+        self.page.evaluate("""() => {
+          const region = (x0, x1, dx, dy, more = {}) => ({RegionSpatialFormat: 1, PhysicalUnitsXDirection: 3, PhysicalUnitsYDirection: 3,
+            PhysicalDeltaX: dx, PhysicalDeltaY: dy, RegionLocationMinX0: x0, RegionLocationMinY0: 0, RegionLocationMaxX1: x1, RegionLocationMaxY1: 199, ...more});
+          window.synRegion = region;
+          window.synMeta = {Modality: 'US', SOPClassUID: '1.2.840.10008.5.1.4.1.1.6.1', SOPInstanceUID: 'SYN-US', Rows: 200, Columns: 300,
+            SequenceOfUltrasoundRegions: [region(0, 149, 0.02, 0.03), region(150, 299, 0.05, 0.04)]};
+          // The cell drew this very image in the viewer's plane at display spacing 1 (viewer-info-bar.js, the stack's image data).
+          window.KinViewerInfoBar = {identity: () => ({instance: synMeta})};
+          cornerstone.getEnabledElement().viewport.getImageData = () => ({spacing: [1, 1, 1], direction: [0, 1, 0, 0, 0, -1, -1, 0, 0], origin: [0, 0, 0]});
+          window.synPlace = (uid, points) => { const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+            a.data.handles.points = points; a.data.cachedStats['imageId:' + a.metadata.referencedImageId] = {length: 1, unit: 'px'};
+            synTools.Length.editData = null; synTools.Length.isDrawing = false; synInteracting = false; };
+        }""")
+        # Inside the left region: (20,20)→(50,60) is hypot(30 × 0.2, 40 × 0.3) = 13.4 mm.
+        uid = self.page.evaluate('synPressLength()')
+        self.assertNotEqual('refused', uid, self.panel()['status'])
+        self.page.evaluate('([uid]) => synPlace(uid, [[0, 20, -20], [0, 50, -60]])', [uid])
+        self.assertEqual(['13.4 mm', 'US Region Calibration'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        # Inside the right region, its own deltas: (160,10)→(190,50) is hypot(30 × 0.5, 40 × 0.4) = 21.9 mm.
+        self.page.evaluate('([uid]) => synPlace(uid, [[0, 160, -10], [0, 190, -50]])', [uid])
+        self.assertEqual(['21.9 mm', 'US Region Calibration'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        # Across the two regions: no value, the reason.
+        self.page.evaluate('([uid]) => synPlace(uid, [[0, 100, -20], [0, 200, -20]])', [uid])
+        self.assertEqual(['초음파 보정 영역 안에서만 mm로 잴 수 있습니다'], self.page.evaluate('([uid]) => synLengthText(uid)', [uid]))
+        # A screen calibration over it: refused as an image with its own spacing.
+        self.page.evaluate("() => { synCalibration = {type: 'User', scale: 2}; }")
+        self.assertEqual('refused', self.page.evaluate('synPressLength()'))
+        self.assertEqual('표시 간격과 원본 간격이 일치하지 않습니다', self.panel()['status'])
+        self.page.evaluate("() => { synCalibration = null; }")
+        # Only Doppler (a spectral region in cm/s) or regions without deltas: refused as before, never a screen calibration.
+        for regions in ("[synRegion(0, 299, 0.02, 0.03, {RegionSpatialFormat: 3, PhysicalUnitsYDirection: 7})]",
+                        "[synRegion(0, 299, undefined, undefined)]"):
+            with self.subTest(regions=regions):
+                self.page.evaluate("regions => { synMeta = {...synMeta, SequenceOfUltrasoundRegions: eval(regions)}; }", regions)
+                self.assertEqual('refused', self.page.evaluate('synPressLength()'))
+                self.assertEqual('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', self.panel()['status'])
+        # An Ellipse on the image with a usable region: the rules it had (no spacing of its own), no mark.
+        self.page.evaluate("() => { synMeta = {...synMeta, SequenceOfUltrasoundRegions: [synRegion(0, 299, 0.02, 0.03)]}; }")
+        self.assertEqual('refused', self.page.evaluate("""() => { const a = synTools.EllipticalROI.addNewAnnotation(
+            {detail: {element: cornerstone.getEnabledElement().viewport.element}}); return a?.annotationUID ? 'made' : 'refused'; }"""))
+        self.assertEqual('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다', self.panel()['status'])
+
     def test_32_screen_calibration_is_read_from_the_calibrated_spacing_and_recalibration_waits_for_the_new_value(self):
         """Which answer counts as a screen calibration, and a calibration made again over a drawn Length."""
         self.me = RADIOLOGIST

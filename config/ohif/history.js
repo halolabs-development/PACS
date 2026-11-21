@@ -99,7 +99,7 @@ function kinCreateViewerHistory() {
     function planar(imageId, kind) {
       const image = cs.metaData.get('instance', imageId);
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
-      return kinPlanarGeometry(image, reference(imageId)?.frame);
+      return kinManualGeometry(image, reference(imageId)?.frame, kind);
     }
     // ── Screen calibration (the Calibration tool) ──
     // An image whose original gives no pixel spacing at all (a scanned film, an outside CR) has no mm of its own. The reader may
@@ -218,7 +218,12 @@ function kinCreateViewerHistory() {
           // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
           // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
           let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
-          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // An ultrasound region's Length (kinManualGeometry) is shown in pixels: each display spacing reads as 1 (none
+          // given counts as 1, as the Measure menu reads it), and only a region or "uncalibrated" answer is no calibration.
+          const shown = n => Number(n) > 0 ? Number(n) : 1;
+          if (geometry.calculator === 'kin-planar-manual-v1:us' ? cs.cache.getImage(imageId)?.calibration?.type || calibrated && !['Region', 'Uncalibrated'].includes(calibrated) ||
+                shown(plane?.rowPixelSpacing) !== 1 || shown(plane?.columnPixelSpacing) !== 1 :
+              cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
           if (geometry.viewerPlane && points?.some(point => unconfirmedPoints.has(pointKey(imageId, point)))) return PLANE_UNCONFIRMED;
           if (points) geometry.measure(kind, points);
@@ -328,7 +333,10 @@ function kinCreateViewerHistory() {
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
           checked.displayText = { primary: [value.toFixed(1) + ' ' + unit, geometry.label], secondary: [] };
-          checked.getReport = () => ({ columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] });
+          // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
+          const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
+          checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
+            { columns: [kind, 'Unit', 'Measurement basis', 'Frame'], values: [value, unit, geometry.label, frame] };
         }
         return checked;
       } catch (_) { return null; } // Display sets may disappear before their metadata.
@@ -1346,8 +1354,11 @@ function kinCreateViewerHistory() {
           if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
           if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
-          const reason = data.kinUnverified ? '재확인 필요: 저장 당시 측정과 다릅니다' :
-            id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          const current = id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          // A saved mark being edited says why its current points give no value (moved out of an ultrasound region, off the
+          // image) rather than only that it differs from its saved value.
+          const edited = current && [...entries.values()].some(e => e.editing && e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID)?.data === data);
+          const reason = data.kinUnverified && !edited ? '재확인 필요: 저장 당시 측정과 다릅니다' : current;
           // A shape still being drawn (an ellipse stretched one way only, an angle with one arm) is not judged until it is finished.
           if (reason) return [[...drawing.values()].some(w => w.annotation.data === data && unfinished(w.annotation)) ? '측정을 완료하세요' : reason];
           if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
