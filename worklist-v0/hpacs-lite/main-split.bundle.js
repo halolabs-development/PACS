@@ -2658,7 +2658,8 @@
             // A superseded or changed-list answer is not a failed observation; the last one still stands.
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') markObservationUnavailable();
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
-            $("#err").textContent = "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message;
+            // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
+            listRefreshWarning(true, "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message);
             toast("검사 목록 실패: " + e.message, "err");
             render();
           });
@@ -11201,7 +11202,7 @@
           qcHearsList(r.studies);
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
-          pollFails = 0;
+          pollFails = 0; listRefreshWarning(false);
           // The questions and image requests of the reading target are read again with the list: one that came after the
           // study opened is learned too.
           studyQuestions?.refresh();
@@ -11326,12 +11327,33 @@
            * 예전엔 폴링의 catch가 통째로 비어 있어서, API가 죽어도 화면은 아무 말도
            * 안 했다. 판독의는 계속 쓰고 Save를 누를 때가 되어서야 알게 됐다.
            * 두 번 연속 실패하면 고장으로 본다. 한 번은 blip일 수 있다.
+           *
+           * 목록 읽기는 영상 저장소의 목록이기도 하다 — 저장소만 멈춰도 실패한다. 그래서 두 번째 실패는 곧바로 끊김이 아니라
+           * 목록을 갱신하지 못했다는 안내이고, 끊김은 수동 읽기와 같은 연결 확인(page-boot.js confirmConnection)이 정한다:
+           * 서버가 답하면 연결·쓰기·판독문은 그대로다.
            */
-          if (++pollFails >= 2) goOffline(e);
+          if (++pollFails >= 2) {
+            listRefreshWarning(true);
+            await confirmConnection(e, at, live);
+          }
         }
       }, seconds * 1000);
     }
     let pollFails = 0;
+    // The notice a failed list read leaves on the banner (two failed polls, or a failed Refresh with its own `text`); a list
+    // read that succeeds takes it away again. Only the text written here is removed — another notice written since stays.
+    let listWarningText = null;
+    function listRefreshWarning(on, text) {
+      const banner = $("#err");
+      if (!banner) return;
+      if (on) {
+        if (text === undefined) kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다"));
+        else banner.textContent = text;
+        listWarningText = banner.textContent; return;
+      }
+      if (listWarningText !== null && banner.textContent === listWarningText) banner.textContent = "";
+      listWarningText = null;
+    }
 
 
     // ── 판독문 이력 ──
@@ -12198,6 +12220,16 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       } catch (_) { return false; }
     }
     /**
+     * 이 목록이 연 창이 뷰어 대신 제품 오류 화면(프록시의 @kin_error_page — 영상 저장소가 멈춘 동안 연 창의 504 같은 것)을
+     * 쥐고 있는가. 그 화면은 스스로 `<meta name="kin-error-page">`로 밝힌다. 뷰어 문서가 아니라 지킬 작업이 없다 — 진입에서
+     * 멈춘 창처럼, 목록에서 다시 열면 그 창만 새로 읽는다. 이 목록이 그 창으로 이동시킨 적이 없으면(목록을 새로 읽었다) 평소의
+     * 보호 그대로다. 읽을 수 없으면 오류 화면으로 보지 않는다.
+     */
+    function productErrorDocument(popup) {
+      try { return ohifPopupSequences.has(popup) && !!popup.document.querySelector('meta[name="kin-error-page"]'); }
+      catch (_) { return false; }
+    }
+    /**
      * Opens or replaces the list's viewer window. The answer is typed for a caller that needs it (W9's launch): `accepted`
      * (navigated, or the same scope focused), `refused` (a protected or unverifiable window kept, a session or slot that
      * cannot be used), `blocked` (no popup) or `failed` (an invalid series). Ordinary callers ignore it; every check and
@@ -12274,7 +12306,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const placementWrite = deferredPlacement ? {pending:true,baseline:null,choice:storedSpanChoice()} : null;
         if (placementWrite) ohifPlacementWrites.set(popup, placementWrite);
         // 진입에서 멈춘 창은 초점만 주거나 "닫고 다시 여세요"로 돌려보내지 않는다: 아래에서 새 세션 확인과 함께 다시 읽게 한다.
-        const stopped = previous.kind === "viewer" && !previous.ready && viewerEntryStopped(popup);
+        const stopped = previous.kind === "viewer" && !previous.ready && (viewerEntryStopped(popup) || productErrorDocument(popup));
         if (previous.kind === "viewer" && !stopped) {
           if (!reread && sameOhifScope(previous.href, url)) {
             if(popup.location.hash!==new URL(url,location.origin).hash){
@@ -16839,12 +16871,36 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       } catch (e) { /* 이름 조회가 실패해도 이메일 표시는 유지한다. */ }
     }
 
-    /** 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다. */
+    /**
+     * 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다.
+     * `b`가 null이면 서버는 답했지만 초기 목록(bootstrap)은 읽지 못한 재연결이다(영상 저장소만 멈춤 — reconnectAnswer):
+     * 연결·쓰기는 되살리고, 이 화면이 가진 오더·필터·상용구·기관 값은 그대로 둔다.
+     */
     function goOnline(b) {
       serverMode = true; offline = false;
       $('#consultations-open').disabled=!!demoMode;consultations.refresh();
       queryRetrieve?.sync();
       stopReconnect();
+      if (b) applyBootstrap(b);
+      mountWorklistFolders();
+      void reloadFolderSearches();
+      renderChips(); renderTemplates();
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
+      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
+      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
+      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
+      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
+      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
+      void showHeldSources();
+      startPolling();
+      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
+      reportSaveFailures.clear();
+      reconcileReportDrafts();
+      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
+    }
+    function applyBootstrap(b) {
       for (const [uid, state] of Object.entries(b.states ?? {})) appState[uid] = mergeObservedReportState(uid, state);
       orders = b.orders;
       myInstitution = b.me?.institution ?? null;
@@ -16861,25 +16917,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
       userFilters = personalSearches(b.filters);
-      mountWorklistFolders();
-      void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];
       try { localStorage.removeItem("kin-filters"); localStorage.removeItem("kin-templates"); } catch (e) {}
-      renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
-      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
-      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
-      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
-      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
-      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
-      void showHeldSources();
-      startPolling();
-      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
-      reportSaveFailures.clear();
-      reconcileReportDrafts();
-      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
-      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -16921,10 +16960,12 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function serverUnanswered(e) {
       return !e?.auth && e?.name !== "AbortError" && !e?.stale && !e?.ownerChanged && !(Number.isInteger(e?.status) && e.status < 500);
     }
+    // The check reads only this member's access policy from the database (GET study-access): the image store is not asked,
+    // so a list that failed because only the image store stopped leaves the connection, the writes and the report as they are.
     async function confirmConnection(cause, at, current) {
       if (offline || !serverMode || !serverUnanswered(cause) || !current()) return;
       const connection = pollGeneration;
-      try { await api("GET", "/bootstrap?states=omit", undefined, undefined, at); }
+      try { await api("GET", "/study-access", undefined, undefined, at); }
       catch (e) {
         if (serverUnanswered(e))
           work.commit(at, () => { if (!offline && serverMode && connection === pollGeneration && current()) goOffline(cause); });
@@ -16937,6 +16978,19 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
      */
     let reconnectTimer = null;
     function stopReconnect() { clearInterval(reconnectTimer); reconnectTimer = null; $("#dbstat").style.cursor = ""; }
+    // Whether the server is back is the same check as going offline (confirmConnection: the member's access policy, database
+    // only), not the initial list: that reads the image store too. When the list is not answered but the check is, the page
+    // reconnects with what it holds (null); the list read after it says on its own whether the list could be refreshed.
+    async function reconnectAnswer(at) {
+      try { return await api("GET", "/bootstrap", undefined, undefined, at); }
+      catch (e) {
+        if (!serverUnanswered(e) || !work.admits(at)) throw e;
+        // Answered is answered, as in confirmConnection: a refusal (4xx) is the server's own answer too.
+        try { await api("GET", "/study-access", undefined, undefined, at); }
+        catch (check) { if (serverUnanswered(check) || check?.auth || check?.stale || check?.ownerChanged) throw check; }
+        return null;
+      }
+    }
     function startReconnect() {
       if (reconnectTimer) return;
       reconnectTimer = setInterval(async () => {
@@ -16945,7 +16999,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const at = work.capture("document");
         if (!work.admits(at)) return;
         try {
-          const b = await api("GET", "/bootstrap", undefined, undefined, at);
+          const b = await reconnectAnswer(at);
           if (!work.commit(at, () => goOnline(b))) return;
           await loadActorNames(at);
           await load();
@@ -16957,7 +17011,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!offline) return;
       const at = work.capture("document");
       try {
-        const b = await api("GET", "/bootstrap", undefined, undefined, at);
+        const b = await reconnectAnswer(at);
         if (!work.commit(at, () => goOnline(b))) return;
         await loadActorNames(at); await load();
         work.commit(at, () => toast("서버에 다시 연결됐습니다", "ok"));

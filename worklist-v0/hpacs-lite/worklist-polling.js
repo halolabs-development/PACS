@@ -178,7 +178,7 @@
           qcHearsList(r.studies);
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
-          pollFails = 0;
+          pollFails = 0; listRefreshWarning(false);
           // The questions and image requests of the reading target are read again with the list: one that came after the
           // study opened is learned too.
           studyQuestions?.refresh();
@@ -303,9 +303,30 @@
            * 예전엔 폴링의 catch가 통째로 비어 있어서, API가 죽어도 화면은 아무 말도
            * 안 했다. 판독의는 계속 쓰고 Save를 누를 때가 되어서야 알게 됐다.
            * 두 번 연속 실패하면 고장으로 본다. 한 번은 blip일 수 있다.
+           *
+           * 목록 읽기는 영상 저장소의 목록이기도 하다 — 저장소만 멈춰도 실패한다. 그래서 두 번째 실패는 곧바로 끊김이 아니라
+           * 목록을 갱신하지 못했다는 안내이고, 끊김은 수동 읽기와 같은 연결 확인(page-boot.js confirmConnection)이 정한다:
+           * 서버가 답하면 연결·쓰기·판독문은 그대로다.
            */
-          if (++pollFails >= 2) goOffline(e);
+          if (++pollFails >= 2) {
+            listRefreshWarning(true);
+            await confirmConnection(e, at, live);
+          }
         }
       }, seconds * 1000);
     }
     let pollFails = 0;
+    // The notice a failed list read leaves on the banner (two failed polls, or a failed Refresh with its own `text`); a list
+    // read that succeeds takes it away again. Only the text written here is removed — another notice written since stays.
+    let listWarningText = null;
+    function listRefreshWarning(on, text) {
+      const banner = $("#err");
+      if (!banner) return;
+      if (on) {
+        if (text === undefined) kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다"));
+        else banner.textContent = text;
+        listWarningText = banner.textContent; return;
+      }
+      if (listWarningText !== null && banner.textContent === listWarningText) banner.textContent = "";
+      listWarningText = null;
+    }

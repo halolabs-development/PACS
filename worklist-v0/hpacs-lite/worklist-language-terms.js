@@ -2169,6 +2169,7 @@ window.KinLanguageTerms = {
     ["검사 목록에서 의뢰할 검사를 먼저 선택하세요.", "First select the study to refer in the study list.", "m"],
     ["검사 목록을 나누어 불러오는 중…", "Loading the study list in parts…", "m"],
     ["검사 목록을 다시 불러옵니다.", "Reload the study list.", "m"],
+    ["검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다", "Could not refresh the study list. Showing the last list", "m"],
     ["검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — {e0}", "Could not load the study list. The current list and your input were kept — {e0}", "m"],
     ["검사 목록의 알림 기준을 확인하지 못했습니다.", "Could not check the alert baseline of the study list.", "m"],
     ["검사 목록이 바뀌어 처음부터 다시 불러오는 중…", "The study list changed; reloading from the start…", "m"],
