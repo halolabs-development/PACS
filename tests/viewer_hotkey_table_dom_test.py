@@ -100,12 +100,18 @@ class ViewerHotkeyTableDOMTest(unittest.TestCase):
         page.focus('[aria-label="Next Series"]')
         for key in ['q', 'Shift+H', '7']:
             page.keyboard.press(key)
-        self.assertEqual([], page.evaluate("synRecorded.filter(key => key !== 'Shift')"))
+        # Nothing reaches the recorder, not even the Shift of a refused Shift+H (it would record a lone 'shift').
+        self.assertEqual([], page.evaluate("synRecorded"))
+        # A held key's repeats are refused too.
+        page.evaluate("""() => { const f = document.activeElement; for (const repeat of [false, true, true])
+          f.dispatchEvent(new KeyboardEvent('keydown', { key: 'l', code: 'KeyL', repeat, bubbles: true, cancelable: true })); }""")
+        self.assertEqual([], page.evaluate("synRecorded"))
         self.assertIn('영상 도구 키', dict(self.notes(page))['Next Series'])
         self.assertEqual([], page.evaluate("synInvoked"))
         page.keyboard.press('PageUp'); page.keyboard.press('Control+q'); page.keyboard.press('5')
         # 5 is a CT preset digit no tool key uses: the viewer gets it.
-        self.assertEqual(['PageUp', 'q', '5'], page.evaluate("synRecorded.filter(key => key !== 'Control' && key !== 'Shift')"))
+        # A modifier with a key the viewer gets is recorded with that key (the recorder reads the key's modifiers).
+        self.assertEqual(['PageUp', 'q', '5'], page.evaluate("synRecorded"))
 
     def test_03_without_the_layer_nothing_is_marked(self):
         page = self.open()

@@ -1051,6 +1051,7 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         self.assertEqual(response.status, 200)
         # The button stands in the reading workspace bar; its dialog is the same outside it.
         work.locator('#workspace-shortcuts-edit').dispatch_event('click')
+        work.locator('#workspace-shortcuts-tab-viewer').click()
         length = work.locator('#workspace-viewer-key-Length')
         expect(length).to_have_value('L')
         expect(length).to_be_enabled()

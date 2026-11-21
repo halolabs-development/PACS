@@ -401,6 +401,23 @@ class PopOutWindow(ReportPopoutPage):
         self.assertEqual((2, "window"), (len(self.context.pages), self.state()), "Pin on: the window stays, as with its Approve")
         self.assertEqual(1, len(self.site.flow_commits))
 
+    def test_the_approve_and_next_key_on_the_page_is_the_page_button_and_leaves_the_window(self):
+        """With the report out in its window (Pin off), the key pressed on the page does what the page's Approve & Next
+        button does there: approve and move on, the window staying open."""
+        self.open()
+        self.open_study(h.PATIENT)
+        self.give_approve_next_a_key()
+        pip = self.pop_out()
+        pip.locator("#findings").fill("SYN A by the key on the page")
+        self.autosave(lambda: "SYN A by the key on the page" in self.drafts_of(h.UID))
+        self.page.bring_to_front()
+        self.page.locator("#b-approve-next").focus()
+        self.page.keyboard.press("Control+Alt+n")
+        self.wait(lambda: self.site.store[h.UID]["report"]["rs"] == "A", "the approval by the key")
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the move to the next study")
+        self.settle(300)
+        self.assertEqual((2, "window"), (len(self.context.pages), self.state()), "as the page's button: the window stays")
+        self.assertEqual(1, len(self.site.flow_commits))
     def test_finalize_key_typed_in_the_window_approves_as_in_the_page(self):
         self.open()
         self.open_study(h.PATIENT)

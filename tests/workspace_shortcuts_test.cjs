@@ -367,3 +367,15 @@ test('Finalize & Next has its own unassigned key slot on the Worklist tab',async
   assert.equal(JSON.parse(f.data.get('kin-workspace-shortcuts:v2:'+f.owner())).finalizeNext,'Control+Alt+KeyN');
   f.instance.end();
 });
+test('Defaults resets the viewer tools only; a key the account keeps for another tool stays',async()=>{
+  const server=accountServer(answer());
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  f.node('workspace-viewer-key-Length').onkeydown(keyEvent('k'));
+  f.node('workspace-shortcuts-default').onclick();
+  assert.equal(f.node('workspace-viewer-key-Length').value,'L');assert.equal(f.node('workspace-viewer-key-UnavailableModeTool').value,'U');
+  f.node('workspace-viewer-key-Zoom').onkeydown(keyEvent('j'));
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.equal(server.puts[0].viewerSettings.shortcuts.UnavailableModeTool,'u');
+  f.instance.end();
+});

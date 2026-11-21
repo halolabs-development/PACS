@@ -170,7 +170,10 @@ window.KinViewerUXShortcuts = (() => {
     const refuse = event => {
       if (!fields().includes(event.target)) return;
       remark();
-      if (event.type !== 'keydown' || event.repeat) return;
+      if (event.type !== 'keydown') return;
+      // A modifier pressed alone is never recorded by itself: the recorder takes the modifiers with the key pressed with
+      // them, so a refused Shift+H leaves the binding as it was rather than "shift".
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) { event.stopImmediatePropagation(); return; }
       const reason = claimant({ key: named(event), ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey });
       if (!reason) return;
       // Before the viewer's recorder (a document listener) hears it: the field keeps its binding.

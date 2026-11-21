@@ -408,6 +408,8 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
 
     current = Object.freeze({
       state: () => state, pinned: () => pinned, popOut, dock, bringToFront, end, asks, confirm: ask, approveNext,
+      // Whether a node of the page is inside the in-page box (a key pressed there is the box's, as its Approve is).
+      holds: node => shown?.kind === 'box' && !!node && shown.shell.contains(node),
       // The parts while they are in a separate window's document (the page's own lookup finds them everywhere else).
       movedElements: () => (shown?.kind === 'window' ? [...parts, ...(save ? [save] : [])] : []),
       // A study switch ends any question the window is asking about the study it was asked for.

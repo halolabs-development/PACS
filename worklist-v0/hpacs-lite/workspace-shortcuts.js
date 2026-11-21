@@ -207,7 +207,8 @@
     }
     button(kinSay('Defaults'),'workspace-shortcuts-default',()=>{
       fill(defaultsV2);
-      if(toolBase)for(const [id,field] of Object.entries(toolFields))if(!field.disabled)setTool(field,viewerKeys.defaults[id]??null);
+      // The viewer's own tools only: a key the account keeps for another tool stays as it is.
+      if(toolBase)for(const [id,field] of Object.entries(toolFields))if(!field.disabled&&Object.hasOwn(viewerKeys.names,id))setTool(field,viewerKeys.defaults[id]??null);
       kinWrite(message, kinSay('기본값을 적용하려면 저장하세요.'));
     });
     button(kinSay('Cancel'),'workspace-shortcuts-cancel',close);

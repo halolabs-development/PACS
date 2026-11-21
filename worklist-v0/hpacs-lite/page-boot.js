@@ -507,16 +507,18 @@
     // `related` (W5): the Related Report / Report Editor keys of another document (the viewer frame) and the workspace buttons.
     // `isFinalize(event)`: whether a keydown of another document (the report pop-up window) is the Finalize key under this
     // page's bindings and gates (editable workspace, no dialog open here, no composition) - the dispatcher's own test below.
-    // `finalizeNext`: Finalize & Next (Approve & Next) by its key - the button's own path; while the report is out in its own
-    // window (or the in-page box) that window's Approve, which is Approve & Next and also keeps its Pin. True when started.
+    // `finalizeNext(node)`: Finalize & Next (Approve & Next) by its key, as the button of the place it was pressed in: pressed
+    // inside the report's in-page box, the box's Approve (Approve & Next with its Pin); anywhere else on the page or in the
+    // viewer frame, the page's Approve & Next button. (A key typed in the report's own window goes to that window's Approve
+    // through report-popout.js.) True when started.
     // `isFinalizeNext(event)`: the same test as isFinalize for that key (the report window's own keydown asks it).
     const commandOf = event => workspaceEditable() && !event.isComposing && !studyPanelComposing && event.keyCode !== 229
       && !document.querySelector('dialog[open], .modal.show, [popover]:popover-open')
       ? KinWorkspaceShortcuts.action((KinWorkspaceShortcuts.readV2 ?? KinWorkspaceShortcuts.read)(workspaceStorage,
         workspaceOwner?.slice(KinWorkspaceLayout.PREFIX.length)), event) : null;
-    const finalizeNext = () => {
+    const finalizeNext = node => {
       const out = window.KinReportPopout?.current?.();
-      return out && ['window', 'box'].includes(out.state()) ? out.approveNext() : finalizeNextCommand();
+      return out?.holds?.(node) ? out.approveNext() : finalizeNextCommand();
     };
     // A key typed in a field of other writing (a search, a job title, a note) never moves the reader to the next patient;
     // the report's own fields (Findings, Conclusion, Recommendation) may, as the Finalize key does there.
@@ -543,7 +545,7 @@
         return;
       }
       if (command === 'finalizeNext') {
-        if (!otherWriting(event.target) && finalizeNext() === true) { event.preventDefault(); event.stopImmediatePropagation(); }
+        if (!otherWriting(event.target) && finalizeNext(event.target) === true) { event.preventDefault(); event.stopImmediatePropagation(); }
         return;
       }
       // W5: Related Report (Ctrl+Alt+3) opens the mode for the viewed Related study; Report Editor (Ctrl+Alt+4) is its Back.
