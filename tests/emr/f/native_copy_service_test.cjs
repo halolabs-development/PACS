@@ -6,7 +6,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { createHash } = require('node:crypto');
-const { fixture, copyIntake, rightsIntake, UID, digest, F } = require('./native_harness.cjs');
+const { fixture, copyIntake, rightsIntake, UID, ACCOUNT, digest, actor, F } = require('./native_harness.cjs');
 const F_state = issuance => F.issuanceState(issuance).state;
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const all = (recordKind) => [{ recordId: UID, versions: 'all', ...(recordKind ? { recordKind } : {}) }];
@@ -76,6 +76,77 @@ test('paper copies render both unsigned and signed grouped native reports withou
     assert.ok(html.includes(signed ? '<dd>Signed</dd>' : '<dd>Not Signed</dd>'));
     assert.equal((await f.controller.issue({}, prepared.issuanceId)).artifact, issued.artifact);
   }
+});
+
+test('paper names every version by the author member name with Korean time; the signed originals stay only in the electronic copy', async () => {
+  const f = fixture();
+  f.members.push({ sub: ACCOUNT, name: '김합성 <b>' });
+  const saved = f.commit(UID, 'save', '저장 소견'), approved = f.commit(UID, 'approve', '승인 소견');
+  const amended = f.commit(UID, 'amend', '수정 소견', '오타'), added = f.commit(UID, 'addendum', '추가 소견');
+  const issue = async (id, format) => {
+    const prepared = await f.controller.prepare({}, copyIntake(id, all('report'), format));
+    return f.controller.issue({}, prepared.issuanceId);
+  };
+  const paper = await issue('SYN-NAMED-PAPER', 'paper-print'), html = Buffer.from(paper.artifact, 'base64').toString('utf8');
+  assert.equal(paper.sha256, sha(Buffer.from(paper.artifact, 'base64')));
+  const fields = [...html.matchAll(/<section>(.*?)<\/section>/g)].map(([, s]) =>
+    Object.fromEntries([...s.matchAll(/<dt>([^<]+)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(([, k, v]) => [k, v])));
+  assert.deepEqual(fields.map(v => [v.Version, v.Author, v.Signature]), [
+    ['1', '김합성 &lt;b&gt; (synthetic-doctor@example.test)', 'Not Signed'], ['2', '김합성 &lt;b&gt; (SYN-DOCTOR)', 'Signed'],
+    ['3', '김합성 &lt;b&gt; (SYN-DOCTOR)', 'Signed'], ['4', '김합성 &lt;b&gt; (SYN-DOCTOR)', 'Signed']]);
+  // The unsigned save shows its row time; a signed version its signature's server time - each in KST.
+  const kst = at => { const t = new Date(Date.parse(at) + 9 * 3600000).toISOString(); return `${t.slice(0, 10)} ${t.slice(11, 19)} KST (UTC+09:00)`; };
+  assert.equal(fields[0].Recorded, '2026-10-01 09:00:01 KST (UTC+09:00)');
+  for (const [i, s] of [[1, approved], [2, amended], [3, added]]) {
+    const at = JSON.parse(Buffer.from(s.signature.envelope.payload, 'base64url').toString('utf8')).serverTime;
+    assert.equal(fields[i].Recorded, kst(at));
+  }
+  assert.ok(html.includes(`<dt>Prepared</dt><dd>${kst(paper.issuance.manifest.preparedAt)}</dd>`));
+  assert.ok(!/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(html), 'no UTC timestamp is printed');
+  // Every version's own content stays on paper, the pre-amendment original included.
+  for (const text of ['저장 소견', '승인 소견', '수정 소견', '오타', '추가 소견']) assert.ok(html.includes(text), text);
+  // No signed source on paper: no manifest dump, envelope, payload, signature value or key.
+  for (const s of [approved, amended, added]) {
+    assert.ok(!html.includes(s.signature.envelope.payload)); assert.ok(!html.includes(s.signature.envelope.signature));
+  }
+  for (const text of ['Original Documents', '<details', 'keyAtSigning', 'envelope', 'manifestSha256', 'publicKey'])
+    assert.ok(!html.includes(text), text);
+  // The electronic copy is the manifest and the stored originals, byte for byte as built from the stored rows and signatures.
+  const electronic = await issue('SYN-NAMED-ELECTRONIC', 'signed-electronic'), bytes = Buffer.from(electronic.artifact, 'base64');
+  const stored = [JSON.stringify({ reportVersion: JSON.stringify(saved.row) }), ...[approved, amended, added].map(s => JSON.stringify(s.signature))];
+  assert.equal(bytes.toString('utf8'), JSON.stringify({ manifest: electronic.issuance.manifest,
+    originals: stored.map((original, i) => ({ recordId: UID, versionId: String(i + 1), original })) }));
+  assert.ok(!bytes.toString('utf8').includes('김합성'), 'the electronic copy carries no display name');
+  // Reopened and re-issued copies are the stored bytes; a later name change does not rewrite an issued paper.
+  f.members[0].name = '이름 바뀜';
+  assert.equal((await f.controller.issue({}, paper.issuance.issuanceId)).artifact, paper.artifact);
+  assert.equal((await f.controller.issuance({}, paper.issuance.issuanceId)).artifact, paper.artifact);
+});
+
+test('paper prints the identifier alone when the account has no member name, and its times stay readable', async () => {
+  const f = fixture();
+  f.members.push({ sub: ACCOUNT, name: '   ' });
+  f.commit(UID, 'save', '저장'); f.commit(UID, 'approve', '승인');
+  const prepared = await f.controller.prepare({}, copyIntake('SYN-UNNAMED', all('report'), 'paper-print'));
+  const html = Buffer.from((await f.controller.issue({}, prepared.issuanceId)).artifact, 'base64').toString('utf8');
+  assert.deepEqual([...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]), ['synthetic-doctor@example.test', 'SYN-DOCTOR']);
+  const { paperTime } = require('../../../api/src/emr-audit/fixed-document.ts');
+  assert.equal(paperTime('2026-10-01T15:00:01.000Z'), '2026-10-02 00:00:01 KST (UTC+09:00)', 'the day turns at KST midnight');
+  assert.equal(paperTime('2026-10-02T00:00:01+09:00'), '2026-10-02 00:00:01 KST (UTC+09:00)');
+  assert.equal(paperTime('2026-10-01'), '2026-10-01', 'a date without a time is printed as stored');
+  assert.equal(paperTime(undefined), '');
+});
+
+test('a Tech Note on paper names its author by the member name of its stored author subject', async () => {
+  const f = fixture();
+  f.members.push({ sub: actor.subject, name: '최기사' });
+  const plan = f.techNote(UID, '합성 Tech Note 본문');
+  const prepared = await f.controller.prepare({}, copyIntake('SYN-NOTE-PAPER', all('clinical'), 'paper-print'));
+  const html = Buffer.from((await f.controller.issue({}, prepared.issuanceId)).artifact, 'base64').toString('utf8');
+  assert.ok(html.includes(`<dt>Author</dt><dd translate="no">최기사 (${actor.issuer} / ${actor.subject})</dd>`), html);
+  const t = new Date(Date.parse(plan.version.at) + 9 * 3600000).toISOString();
+  assert.ok(html.includes(`<dt>Recorded</dt><dd>${t.slice(0, 10)} ${t.slice(11, 19)} KST (UTC+09:00)</dd>`));
+  assert.ok(html.includes('합성 Tech Note 본문')); assert.ok(!html.includes('"plan"'));
 });
 
 test('a native report is copied as its head chain: unsigned saves, signed approvals and a content reset', async () => {

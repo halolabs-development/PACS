@@ -9,6 +9,8 @@ const { generateServerKeyPair, signServerPayload } = require('../../../api/src/e
 const { planClinicalWrite } = require('../../../api/src/emr-clinical/records.ts');
 const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const UID = '2.25.7001';
+/** The account the synthetic doctor writes with (ReportVersion.authorSub); the browser fixture gives it a member name. */
+const ACCOUNT = 'synthetic-doctor-account', DOCTOR_NAME = '김합성';
 const ACTIONS = { approve: 'approve-sign', amend: 'amend', addendum: 'addendum', reset: 'cancel' };
 
 function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
@@ -73,7 +75,8 @@ function fixture(scopes = ['disclosure'], institution = 'SYN-SITE') {
   }
   f.tx.reportVersion = { findMany: async ({ where, orderBy }) => {
     if (orderBy?.version !== 'asc') throw Error('Unexpected synthetic ReportVersion order');
-    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, at: new Date(r.at) }));
+    // A stored row carries its author's account (authorSub, report-commit.ts c.sub); signing and copies strip it (signedReportRow).
+    return rows.filter(r => r.uid === where.uid).sort((a, b) => a.version - b.version).map(r => ({ ...r, authorSub: r.authorSub ?? ACCOUNT, at: new Date(r.at) }));
   } };
   f.tx.report = { findUnique: async ({ where }) => reports.has(where.uid) ? { ...reports.get(where.uid) } : null };
   f.tx.$queryRaw = async (parts, ...values) => {
@@ -96,13 +99,13 @@ function copyIntake(id, scope, format = 'signed-electronic') {
 function rightsIntake(requestId, recordIds, kind = 'correction') {
   return { requestId, kind, receivedAt: '2026-10-01T00:00:00.000Z', patient, recordIds, statement: '합성 정정 요구' };
 }
-module.exports = { fixture, copyIntake, rightsIntake, UID, digest, patient, actor, F };
+module.exports = { fixture, copyIntake, rightsIntake, UID, ACCOUNT, DOCTOR_NAME, digest, patient, actor, F };
 if (require.main === module) {
   // One Study UID holding a Tech Note and a saved-then-approved native report, for the browser tests. `reportOnly`
   // starts without the Tech Note, `saved` sets the saved version's findings; `techNote` adds it later and `legacy` gives the stored issuances their pre-recordKind
   // shape, so a request received unselected, or prepared before F, becomes ambiguous.
   const { EmrAuditController } = require('./inspection_harness.cjs');
-  const seeded = (reportOnly = false, saved = '저장 소견') => { const f = fixture(); if (!reportOnly) f.techNote(UID); f.commit(UID, 'save', saved); f.commit(UID, 'approve', '확정 소견'); return f; };
+  const seeded = (reportOnly = false, saved = '저장 소견') => { const f = fixture(); f.members.push({ sub: ACCOUNT, name: DOCTOR_NAME }); if (!reportOnly) f.techNote(UID); f.commit(UID, 'save', saved); f.commit(UID, 'approve', '확정 소견'); return f; };
   let f = seeded();
   const Filter = Reflect.getMetadata('__exceptionFilters__', EmrAuditController)[0];
   require('node:readline').createInterface({ input: process.stdin }).on('line', async line => {

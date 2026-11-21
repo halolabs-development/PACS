@@ -32,6 +32,27 @@ test('issuance read preserves saved bytes, records only disclosed versions, and 
   assert.equal(foreign.records.length, 0, 'foreign saved bytes are never provided');
 });
 
+test('a signed report on paper names its author and its signer apart when another doctor signed it', async () => {
+  const writer = { id: 'synthetic-writer', issuer: 'synthetic', subject: 'writer' };
+  const authors = html => [...html.matchAll(/<dt>(Author|Signer)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => [m[1], m[2]]);
+  const paper = async f => {
+    const prepared = await f.controller.prepare({}, intake('SYN-PAPER', 'in-person'));
+    return Buffer.from((await f.controller.issue({}, prepared.issuanceId)).artifact, 'base64').toString('utf8');
+  };
+  const other = fixture(undefined, undefined, writer);
+  other.members.push({ sub: 'writer', name: '박작성' }, { sub: 'auditor', name: '승인자' });
+  const html = await paper(other);
+  assert.deepEqual(authors(html), [['Author', '박작성 (synthetic / writer)'], ['Signer', 'SYN-DOCTOR'],
+    ['Author', '박작성 (synthetic / writer)'], ['Signer', 'SYN-DOCTOR']]);
+  assert.ok(html.includes('합성 원문 1 &lt;script&gt;') && html.includes('합성 원문 2 &lt;script&gt;'));
+  // Without a member name the two people are still told apart by their identifiers.
+  assert.deepEqual(authors(await paper(fixture(undefined, undefined, writer))), [['Author', 'synthetic / writer'], ['Signer', 'SYN-DOCTOR'],
+    ['Author', 'synthetic / writer'], ['Signer', 'SYN-DOCTOR']]);
+  // The author who signed it themselves is one person: the name with the signing registration, no Signer row.
+  const own = fixture(); own.members.push({ sub: 'auditor', name: '김판독' });
+  assert.deepEqual(authors(await paper(own)), [['Author', '김판독 (SYN-DOCTOR)'], ['Author', '김판독 (SYN-DOCTOR)']]);
+});
+
 // CD-09-D D7 (의료법 제21조①, reduced): a report destroyed at the end of its retention gets no new copy; a copy issued
 // before the destruction is still returned as issued (its bytes, its sha256).
 test('a destroyed report refuses a new issue and keeps the copy issued before it', async () => {
