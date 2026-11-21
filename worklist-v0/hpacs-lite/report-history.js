@@ -202,7 +202,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       } catch (e) {
         // 늦게 온 **실패**도 새 열람의 목록을 오류 문구로 덮지 않는다.
         if (!work.admits(at) || !historyLive(epoch, uid)) return;
-        box.innerHTML = `<div data-kin-error style="color:#ff8080;padding:10px">${esc(e.message)}</div>`;
+        // The message in the screen's language when it is a known sentence; otherwise as written (worklist-language.js error).
+        box.innerHTML = `<div data-kin-error style="color:#ff8080;padding:10px"></div>`;
+        kinWrite(box.firstElementChild, window.KinLanguage ? window.KinLanguage.error(e.message) : e.message);
       }
     }
     $("#b-history").addEventListener("click", showHistory);

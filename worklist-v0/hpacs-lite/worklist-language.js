@@ -47,15 +47,30 @@
     const key = keyOf(template), translated = own && glossary.get(key)?.[own];
     const pattern = translated && translated !== key
       ? template.match(/^\s*/)[0] + translated + template.match(/\s*$/)[0] : template;
-    const result = pattern.replace(slots, (slot, index, name) => {
+    let result = pattern.replace(slots, (slot, index, name) => {
       const arg = name === undefined ? params[index] : params[0]?.[name];
       if (arg === undefined) return slot;
       // Older callers wrap parts in {t} or {e}. Only a nested sentence carries a translation.
       const part = arg && typeof arg === 'object' && !isSentence(arg) ? arg.t ?? arg.e ?? '' : arg;
       return String(tr(part, lang, visiting));
     });
+    if (lang === 'en' && unknownErrors.has(value) && HANGUL.test(result))
+      result = (glossary.get(UNKNOWN_ERROR)?.en || UNKNOWN_ERROR) + ' ' + result;
     visiting.delete(value);
     return result;
+  }
+  // ── An error as a page shows it (a place marked data-kin-error) ──
+  // The message as the server or the page gave it. A known sentence — the whole message is one Korean entry of the glossary,
+  // such as a known refusal of the server — reads in English on an English screen. Any other message stays as written and,
+  // on an English screen, follows the general English sentence that the request failed. Korean or no choice: as written.
+  const UNKNOWN_ERROR = '요청을 처리하지 못했습니다. 원문:';
+  const unknownErrors = new WeakSet();
+  function error(message) {
+    const text = String(message ?? '');
+    if (HANGUL.test(text) && glossary.has(keyOf(text))) return sayEnglish(text);
+    const sentence = sayEnglish('{e0}', text);
+    unknownErrors.add(sentence);
+    return sentence;
   }
 
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
@@ -563,7 +578,7 @@
   }
 
   window.KinLanguage = {
-    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html,
+    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */

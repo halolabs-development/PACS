@@ -246,6 +246,31 @@ class WorklistLanguageDOM(unittest.TestCase):
                     page.locator("#tech-note-close").click()
                     expect(page.locator("#tech-note-dialog")).to_be_hidden()
 
+    def test_a_known_server_sentence_in_an_error_place_follows_the_screen_and_another_stays_as_written(self):
+        """History's error place: a server message that is a known sentence of the glossary reads in English on an English
+        screen; any other message keeps its words and follows the general English sentence; Korean or no choice show the
+        message exactly as the server gave it."""
+        self.boot()
+        page = self.page
+        known, other = "계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요", "SYN 처음 보는 서버 오류"
+        box = page.locator("#hist-body [data-kin-error]")
+        for lang in (None, "ko", "en"):
+            if lang:
+                page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang)
+            for message in (known, other):
+                with self.subTest(lang=lang, message=message):
+                    page.route("**/report/versions*", lambda route, request, m=message: route.fulfill(status=409, json={"message": m}))
+                    page.locator("#b-history").dispatch_event("click")
+                    expect(box).to_be_visible()
+                    if lang == "en" and message == known:
+                        expect(box).to_have_text("Account settings have changed. Load them, then save again")
+                    elif lang == "en":
+                        expect(box).to_have_text("The request could not be processed. Original message: " + other)
+                    else:
+                        expect(box).to_have_text(message)
+                    page.locator("#hist-close").dispatch_event("click")
+                    page.unroute("**/report/versions*")
+
     def test_the_applied_choice_is_kept_in_the_browser_for_the_other_pages(self):
         self.boot()
         stored = "localStorage.getItem('kin-language:v1')"
