@@ -6235,9 +6235,8 @@
           && !reportEditorBlock(admission && relatedMode.admits(admission, field, at) ? admission : null),
         // An approved report that takes only an Addendum keeps its approved text (keepsApprovedText): every edit of the
         // frame, typed or written, may only write after it. A refused typed edit is put back and said once.
-        // (Page fixtures that carry the frame without the rule hold nothing.)
-        keeps: (field, text, prior) => typeof keepsApprovedText !== "function" || keepsApprovedText(field, text, prior),
-        kept: () => { if (typeof ADDENDUM_APPEND_ONLY === "string") toast(kinSay(ADDENDUM_APPEND_ONLY), "err"); },
+        keeps: (field, text, prior) => keepsApprovedText(field, text, prior),
+        kept: () => toast(kinSay(ADDENDUM_APPEND_ONLY), "err"),
       });
       return reportFrame;
     }
@@ -9650,7 +9649,6 @@
     };
     function refusalWords(e, action) {
       if (e?.code === "DoctorSigningKeyUnavailable" && SIGNING_KEY_WORDS[action]) return kinSay(SIGNING_KEY_WORDS[action]);
-      if (typeof ADDENDUM_APPEND_ONLY !== "string") return null;
       if (e?.code === "REPORT_ADDENDUM_NOT_APPENDED") return kinSay(ADDENDUM_APPEND_ONLY);
       if (e?.code === "REPORT_ADDENDUM_EMPTY") return kinSay(ADDENDUM_EMPTY);
       return null;
@@ -9710,7 +9708,7 @@
       };
       // An Addendum only adds to the approved report: said before anything is sent, with the server's words, where this page
       // knows the approved text its editor stands on (addendumRefusalHere). The text stays as it is.
-      if (action === "addendum" && serverMode && typeof addendumRefusalHere === "function") {
+      if (action === "addendum" && serverMode) {
         const refused = addendumRefusalHere(uid, content);
         if (refused) { toast(kinSay(refused), "err"); return; }
       }

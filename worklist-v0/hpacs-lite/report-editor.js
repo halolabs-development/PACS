@@ -34,9 +34,8 @@
           && !reportEditorBlock(admission && relatedMode.admits(admission, field, at) ? admission : null),
         // An approved report that takes only an Addendum keeps its approved text (keepsApprovedText): every edit of the
         // frame, typed or written, may only write after it. A refused typed edit is put back and said once.
-        // (Page fixtures that carry the frame without the rule hold nothing.)
-        keeps: (field, text, prior) => typeof keepsApprovedText !== "function" || keepsApprovedText(field, text, prior),
-        kept: () => { if (typeof ADDENDUM_APPEND_ONLY === "string") toast(kinSay(ADDENDUM_APPEND_ONLY), "err"); },
+        keeps: (field, text, prior) => keepsApprovedText(field, text, prior),
+        kept: () => toast(kinSay(ADDENDUM_APPEND_ONLY), "err"),
       });
       return reportFrame;
     }

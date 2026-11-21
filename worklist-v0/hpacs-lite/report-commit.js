@@ -260,7 +260,6 @@
     };
     function refusalWords(e, action) {
       if (e?.code === "DoctorSigningKeyUnavailable" && SIGNING_KEY_WORDS[action]) return kinSay(SIGNING_KEY_WORDS[action]);
-      if (typeof ADDENDUM_APPEND_ONLY !== "string") return null;
       if (e?.code === "REPORT_ADDENDUM_NOT_APPENDED") return kinSay(ADDENDUM_APPEND_ONLY);
       if (e?.code === "REPORT_ADDENDUM_EMPTY") return kinSay(ADDENDUM_EMPTY);
       return null;
@@ -320,7 +319,7 @@
       };
       // An Addendum only adds to the approved report: said before anything is sent, with the server's words, where this page
       // knows the approved text its editor stands on (addendumRefusalHere). The text stays as it is.
-      if (action === "addendum" && serverMode && typeof addendumRefusalHere === "function") {
+      if (action === "addendum" && serverMode) {
         const refused = addendumRefusalHere(uid, content);
         if (refused) { toast(kinSay(refused), "err"); return; }
       }
