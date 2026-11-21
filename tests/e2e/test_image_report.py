@@ -24,6 +24,16 @@ from test_template_preservation import TemplatePreservationE2E
 
 FINDINGS = "SYN IMAGE REPORT FINDINGS"
 LABEL = "Mass 1.5 cm"
+# The picture on a canvas or an image element: the extent of the drawn image (grey above the black fill), the centre of its
+# white landmark relative to that extent, and the count of the Red mark's pixels.
+PICTURE = """source => { const c = document.createElement('canvas'); c.width = source.naturalWidth || source.width;
+  c.height = source.naturalHeight || source.height; const g = c.getContext('2d'); g.drawImage(source, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data; let x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1, n = 0, x = 0, y = 0, red = 0;
+  for (let j = 0; j < c.height; j++) for (let i = 0; i < c.width; i++) { const k = (j * c.width + i) * 4, r = d[k], gr = d[k + 1], b = d[k + 2];
+    if (r > 200 && gr < 90 && b < 90) red++;
+    else if (Math.abs(r - gr) < 8 && Math.abs(gr - b) < 8 && r > 30) { x0 = Math.min(x0, i); y0 = Math.min(y0, j); x1 = Math.max(x1, i); y1 = Math.max(y1, j);
+      if (r > 240) { n++; x += i; y += j; } } }
+  return { width: x1 - x0 + 1, height: y1 - y0 + 1, white: n, wx: n ? (x / n - x0) / (x1 - x0 + 1) : null, wy: n ? (y / n - y0) / (y1 - y0 + 1) : null, red }; }"""
 
 
 class ImageReportE2E(TemplatePreservationE2E):
@@ -130,6 +140,124 @@ class ImageReportE2E(TemplatePreservationE2E):
         rows = self.versions(fixture)
         self.assertEqual((rows[-1]["action"], rows[-1]["findings"], rows[-1].get("drawings")), ("amend", FINDINGS, None))
         self.assertEqual([d["id"] for d in rows[-2]["drawings"]], [drawing_id])
+
+    def mammogram(self, fixture):
+        """A For Presentation mammogram in the fixture's study, shaped as modalities store one: no patient plane (no
+        IOP/IPP/Frame of Reference), ImagerPixelSpacing, PatientOrientation, laterality and view. Stored over Orthanc REST."""
+        import io
+        from pydicom import dcmread
+        from pydicom.dataset import Dataset
+        from pydicom.uid import generate_uid
+        rows = self.stack._orthanc_request("POST", "/tools/lookup", fixture.uid.encode("ascii")).body
+        study_id = next(row["ID"] for row in rows if row["Type"] == "Study")
+        first = self.stack._orthanc_request("GET", f"/studies/{study_id}/instances").body[0]["ID"]
+        ds = dcmread(io.BytesIO(self.stack.orthanc_bytes(f"/instances/{first}/file")))
+        ds.SOPClassUID = ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.1.2"
+        ds.SOPInstanceUID = ds.file_meta.MediaStorageSOPInstanceUID = generate_uid()
+        ds.SeriesInstanceUID, ds.Modality, ds.SeriesNumber, ds.InstanceNumber = generate_uid(), "MG", 7, 1
+        for tag in ("ImagePositionPatient", "ImageOrientationPatient", "FrameOfReferenceUID", "PixelSpacing", "SliceThickness",
+                    "SliceLocation", "PositionReferenceIndicator", "NumberOfFrames"):
+            if tag in ds:
+                delattr(ds, tag)
+        ds.ImageType = ["ORIGINAL", "PRIMARY"]
+        ds.ImagerPixelSpacing, ds.PresentationIntentType = [0.1, 0.1], "FOR PRESENTATION"
+        # 128 × 128 stored pixels: grey tissue with a white landmark in the upper left of the stored image.
+        import numpy as np
+        from pydicom.uid import ExplicitVRLittleEndian
+        for tag in ("RescaleSlope", "RescaleIntercept", "RescaleType", "VOILUTFunction", "SmallestImagePixelValue", "LargestImagePixelValue",
+                    "PixelPaddingValue", "WindowCenterWidthExplanation"):
+            if tag in ds:
+                delattr(ds, tag)
+        pixels = np.full((128, 128), 300, dtype="<u2")
+        pixels[10:40, 10:40] = 1000
+        ds.Rows = ds.Columns = 128
+        ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+        ds.BitsAllocated = ds.BitsStored = 16
+        ds.HighBit, ds.PixelRepresentation = 15, 0
+        ds.WindowCenter, ds.WindowWidth = 500, 1000
+        ds.PixelData = pixels.tobytes()
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.is_little_endian, ds.is_implicit_VR = True, False
+        ds.ImageLaterality, ds.ViewPosition, ds.PartialView, ds.PatientOrientation = "L", "CC", "NO", ["A", "R"]
+        code = Dataset()
+        code.CodingSchemeDesignator, code.CodeValue, code.CodeMeaning = "SCT", "399162004", "CC"
+        ds.ViewCodeSequence = [code]
+        stream = io.BytesIO()
+        ds.save_as(stream, write_like_original=False)
+        self.assertEqual(self.stack._orthanc_request("POST", "/instances", stream.getvalue()).status, 200)
+        return ds
+
+    def test_image_report_02_mammogram_key_image_is_the_saved_image_drawn_and_attached(self):
+        patient = "IMGMG-" + uuid.uuid4().hex[:12]
+        fixture = self.fixture(patient_id=patient)
+        mg = self.mammogram(fixture)
+        # The reader's Key Image on the mammogram, through the viewer's own API (the viewer's Add Key Image on breast images
+        # is tests/e2e/test_viewer_mg.py): the server reads the stored original and keeps it.
+        body = {"requestId": str(uuid.uuid4()), "item": dict(schemaVersion=1, kind="key", seriesUid=str(mg.SeriesInstanceUID),
+                                                           sopUid=str(mg.SOPInstanceUID), frame=1, title="MG L CC key", description="")}
+        saved = self.stack.request("POST", f"/studies/{fixture.uid}/viewer-items", "doctor", body)
+        self.assertEqual(saved.status, 200, str(saved.body)[:300])
+        key = saved.body["id"]
+
+        page = self.login()
+        page.locator('#filterrow [data-f="id"]').fill(patient)
+        row = page.locator(f'#rows tr[data-uid="{fixture.uid}"]')
+        row.click()
+        expect(row).to_have_class(re.compile(r"\bsel\b"))
+        expect(page.locator("#findings")).to_be_editable()
+        with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith(f"/studies/{fixture.uid}/report")
+                                  and FINDINGS in (r.request.post_data or ""), timeout=45000) as typed:
+            page.locator("#findings").fill(FINDINGS)
+        self.assertEqual(typed.value.status, 200)
+
+        page.locator("#report-image-report").click()
+        dialog = page.locator("#image-report")
+        expect(dialog).to_be_visible()
+        saved_image = dialog.locator("label", has_text="Saved image (this study)").locator("input")
+        expect(saved_image).to_be_enabled(timeout=30000)
+        with page.expect_response(lambda r: "/frames/0/preview" in r.url) as frame:
+            saved_image.check()
+        self.assertEqual(frame.value.status, 200)
+        expect(dialog.locator("#image-report-status")).not_to_contain_text("저장한 영상", timeout=30000)
+        # The canvas shows the stored mammogram as stored: square, the landmark in its upper left.
+        shown = page.locator("#image-report-canvas").evaluate(PICTURE)
+        self.assertGreater(shown["white"], 0, shown)
+        self.assertAlmostEqual(shown["width"] / shown["height"], 1, delta=0.03, msg=shown)
+        self.assertLess(shown["wx"], 0.4, shown); self.assertLess(shown["wy"], 0.4, shown)
+        dialog.locator("label", has_text="Red").locator("input").check()
+        dialog.locator("label", has_text="Ellipse").locator("input").check()
+        self.drag(page, 0.55, 0.55, 0.75, 0.75)
+        with page.expect_response(lambda r: r.request.method == "PUT" and r.url.endswith(f"/studies/{fixture.uid}/report")
+                                  and '"drawing"' in (r.request.post_data or "")) as attached:
+            dialog.get_by_role("button", name="Attach to Report").click()
+        self.assertEqual(attached.value.status, 200, attached.value.text()[:300])
+        drawing_id = attached.value.json()["drawn"]["added"]
+        expect(dialog.locator("#image-report-attached figure")).to_have_count(1)
+        expect(dialog.locator("#image-report-attached")).to_contain_text("Saved image · frame 1")
+
+        # The attached drawing names the stored mammogram it was drawn on: the key, its series, SOP and frame.
+        read = self.stack.request("GET", f"/studies/{fixture.uid}/report/drawings", "doctor")
+        self.assertEqual(read.status, 200, str(read.body)[:300])
+        drawing = next(d for d in read.body["draft"]["drawings"] if d["id"] == drawing_id)
+        self.assertEqual(drawing["background"], "image")
+        self.assertEqual({k: drawing["source"][k] for k in ("keyImageId", "keyImageRevision", "seriesUid", "sopUid", "frame")},
+                         {"keyImageId": key, "keyImageRevision": saved.body["revision"], "seriesUid": str(mg.SeriesInstanceUID),
+                          "sopUid": str(mg.SOPInstanceUID), "frame": 1})
+        dialog.get_by_role("button", name="Close").click()
+        expect(page.locator("#report-image-attached figure")).to_have_count(1)
+
+        # Opened again: the attached picture read back from the server holds the same mammogram and the Red mark.
+        page.locator("#report-image-attached figure img").evaluate("img => img.decode()")
+        attached_picture = page.locator("#report-image-attached figure img").evaluate(PICTURE)
+        page.locator("#report-image-report").click()
+        expect(dialog.locator("#image-report-attached figure")).to_have_count(1)
+        dialog.locator("#image-report-attached figure img").evaluate("img => img.decode()")
+        reopened = dialog.locator("#image-report-attached figure img").evaluate(PICTURE)
+        for picture in (attached_picture, reopened):
+            self.assertGreater(picture["red"], 0, picture)
+            self.assertGreater(picture["white"], 0, picture)
+            self.assertLess(picture["wx"], 0.4, picture); self.assertLess(picture["wy"], 0.4, picture)
+        dialog.get_by_role("button", name="Close").click()
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(ImageReportE2E(name) for name in loader.getTestCaseNames(ImageReportE2E)

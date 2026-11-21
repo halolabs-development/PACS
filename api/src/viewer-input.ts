@@ -1,7 +1,7 @@
 import { planarGeometry, usRegionGeometry } from './planar-geometry';
 import { BadRequestException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { mgGeometry } from './mg-geometry';
+import { MG_CLASSIC, MG_ENHANCED, mgGeometry } from './mg-geometry';
 import { ORTHO_KINDS, ORTHO_POINTS, ORTHO_VALUES, hasSpacingTags, orthoCalculator, orthoNullable, orthoValues } from './ortho-geometry';
 import { LINE_TOOLS, lineLength, lineValues, sameValues, volumeValue } from './measure-lines';
 
@@ -286,7 +286,11 @@ export function viewerPage(query: any, revisions = false) {
 }
 
 const CT = '1.2.840.10008.5.1.4.1.1.2', US_MULTI = '1.2.840.10008.5.1.4.1.1.3.1';
-const SINGLE = new Set([CT, '1.2.840.10008.5.1.4.1.1.4', '1.2.840.10008.5.1.4.1.1.1', '1.2.840.10008.5.1.4.1.1.1.1']);
+// The originals a viewer item may point at, by the SOP Class the server reads from the stored image: single-frame classes hold
+// frame 1 only; multi-frame classes must give NumberOfFrames and the frame is within it. Only a Key Image uses every class
+// here; the other marks and measurements narrow this further below (CT, or MG Length through mgGeometry above).
+const SINGLE = new Set([CT, '1.2.840.10008.5.1.4.1.1.4', '1.2.840.10008.5.1.4.1.1.1', '1.2.840.10008.5.1.4.1.1.1.1', ...MG_CLASSIC]);
+const MULTI = new Set([US_MULTI, ...MG_ENHANCED]);
 function metadataInteger(value: any): number {
   if (typeof value !== 'number' && (typeof value !== 'string' || !/^[ ]*[+]?\d+[ ]*$/.test(value))) invalid();
   return positive(Number(value));
@@ -359,10 +363,10 @@ export function verifyViewerReference(studyUid: string, item: ViewerItemInput, t
       invalid('MG 원본으로 계산한 길이와 저장값이 일치하지 않습니다');
     return;
   }
-  if (!SINGLE.has(sopClass) && sopClass !== US_MULTI) invalid('지원하지 않는 영상 형식입니다');
+  if (!SINGLE.has(sopClass) && !MULTI.has(sopClass)) invalid('지원하지 않는 영상 형식입니다');
   let frames = 1;
   if (tags.NumberOfFrames !== undefined) frames = metadataInteger(tags.NumberOfFrames);
-  if ((sopClass === US_MULTI && tags.NumberOfFrames === undefined) || (SINGLE.has(sopClass) && frames !== 1) || item.frame > frames) invalid('영상 frame 범위가 올바르지 않습니다');
+  if ((MULTI.has(sopClass) && tags.NumberOfFrames === undefined) || (SINGLE.has(sopClass) && frames !== 1) || item.frame > frames) invalid('영상 frame 범위가 올바르지 않습니다');
   if (item.kind === 'key') return;
   if (sopClass !== CT || item.frame !== 1 || viewerUid(tags.FrameOfReferenceUID) !== item.frameOfReferenceUid) invalid('주석 좌표 기준이 일치하지 않습니다');
   const rows = metadataInteger(tags.Rows), columns = metadataInteger(tags.Columns);

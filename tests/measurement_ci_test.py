@@ -2086,7 +2086,8 @@ class MeasurementCiTests(unittest.TestCase):
         tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
         cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
         declared = [node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')]
-        self.assertEqual(declared, ['test_image_report_01_draw_attach_approve_preview_history_and_clinician'])
+        self.assertEqual(declared, ['test_image_report_01_draw_attach_approve_preview_history_and_clinician',
+                                    'test_image_report_02_mammogram_key_image_is_the_saved_image_drawn_and_attached'])
         self.assertTrue(any(isinstance(node, ast.FunctionDef) and node.name == 'load_tests' for node in tree.body))
         self.assertNotIn('image-report', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
