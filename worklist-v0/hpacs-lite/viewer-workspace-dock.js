@@ -19,7 +19,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   const origins=panels.map(p=>({panel:p,parent:p.parentNode,next:p.nextSibling,open:p.open,hidden:p.hidden}));
   const initialOwner=preferences.owner?.(),key=initialOwner?'kin-viewer-dock:v1:'+initialOwner:null;
   const normalize=window.KinViewerWorkspaceDock.normalize;
-  let ended=false,placement='bottom',selected=-1,autoHide=false,autoHidden=false,hover=false,held=false,pointerButton=null,timer,storage,initialMessage='도구 영역 · 이 창';
+  let ended=false,placement='bottom',selected=-1,autoHide=false,autoHidden=false,hover=false,held=false,pointerButton=null,away=false,timer,storage,initialMessage='도구 영역 · 이 창';
   const live=()=>!ended&&preferences.allowed?.()!==false&&(!initialOwner||preferences.owner?.()===initialOwner);
   // Mount and tab clicks stay silent: the Dock Settings note says where preferences live.
   // A settings or account change confirms itself (reading-appearance copies this status),
@@ -134,7 +134,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
     w.clearTimeout(timer);if(work.state()!=='active'||ended||!autoHide||autoHidden||selected<0)return;
     timer=w.setTimeout(guarded(()=>{
       let blocked=true;
-      try{blocked=!live()||hover||held||dock.contains(d.activeElement)||d.hidden||!d.hasFocus()||!!d.querySelector('dialog[open],[role="dialog"][aria-modal="true"]')||!!dock.querySelector('[aria-busy="true"]')||!!w.kinViewerJobWorkspaceState?.().busy||!!w.kinViewerHistoryWorkspaceState?.().busy;}catch(_){}
+      try{blocked=!live()||hover||held||dock.contains(d.activeElement)&&!away||d.hidden||!d.hasFocus()||!!d.querySelector('dialog[open],[role="dialog"][aria-modal="true"]')||!!dock.querySelector('[aria-busy="true"]')||!!w.kinViewerJobWorkspaceState?.().busy||!!w.kinViewerHistoryWorkspaceState?.().busy;}catch(_){}
       if(blocked){schedule();return;}
       autoHidden=true;apply();
     }),1200);
@@ -142,10 +142,18 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   const enter=e=>{if(e.target===dock){hover=true;schedule();}},leave=e=>{if(e.target===dock){hover=false;schedule();}};
   // Pointer focus must not pre-toggle the subsequent click. Keyboard focus
   // reveals the saved category; only explicit activation changes that preference.
-  const focus=e=>{if(autoHidden&&!held&&e.target!==pointerButton&&buttons.includes(e.target)){autoHidden=false;apply();}schedule();};
-  const down=e=>{held=true;pointerButton=buttons.find(b=>b.contains(e.target))||null;schedule();},up=e=>{held=false;if(e.type==='pointercancel'||pointerButton&&!pointerButton.contains(e.target))pointerButton=null;schedule();},blur=e=>{if(e.target===w){held=false;pointerButton=null;w.clearTimeout(timer);}};
-  const move=e=>{if(held&&e.buttons===0){held=false;pointerButton=null;schedule();}},keyboardActivity=()=>{pointerButton=null;schedule();};
-  const listeners=[[dock,'pointerenter',enter],[dock,'pointerleave',leave],[dock,'focusin',focus],[dock,'focusout',schedule],[d,'pointerdown',down],[d,'pointerup',up],[d,'pointercancel',up],[d,'pointermove',move],[d,'wheel',schedule],[d,'keydown',keyboardActivity],[w,'blur',blur],[w,'focus',schedule]];
+  // Focus left in the dock holds it open only while the dock is where the work is (`away` false). The image viewport
+  // cancels the default of a press, so a tab pressed with the mouse keeps focus: a press or wheel outside the dock lets
+  // go of that hold; focus moving into the dock, a dock control used, or keyboard work in it (Enter, Space, keys in a
+  // field) takes it back. Viewer keys on a retained tab only restart the idle timer. Pointer and key listeners sit on
+  // the window's capture phase so image tools that consume a gesture on the window still let the dock see it.
+  const editable=t=>!!t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName||''));
+  const engage=()=>{away=false;schedule();};
+  const focus=e=>{away=false;if(autoHidden&&!held&&e.target!==pointerButton&&buttons.includes(e.target)){autoHidden=false;apply();}schedule();};
+  const down=e=>{held=true;away=!dock.contains(e.target);pointerButton=buttons.find(b=>b.contains(e.target))||null;schedule();},up=e=>{held=false;if(e.type==='pointercancel'||pointerButton&&!pointerButton.contains(e.target))pointerButton=null;schedule();},blur=e=>{if(e.target===w){held=false;pointerButton=null;w.clearTimeout(timer);}};
+  const move=e=>{if(held&&e.buttons===0){held=false;pointerButton=null;schedule();}},wheel=e=>{if(!dock.contains(e.target))away=true;schedule();};
+  const keyboardActivity=e=>{pointerButton=null;if(dock.contains(e.target)&&(e.key==='Enter'||e.key===' '||editable(e.target)))away=false;schedule();};
+  const listeners=[[dock,'pointerenter',enter],[dock,'pointerleave',leave],[dock,'focusin',focus],[dock,'focusout',schedule],[dock,'click',engage],[dock,'input',engage],[dock,'change',engage],[w,'pointerdown',down],[w,'pointerup',up],[w,'pointercancel',up],[w,'pointermove',move],[w,'wheel',wheel],[w,'keydown',keyboardActivity],[w,'blur',blur],[w,'focus',schedule]];
   for(const [target,event,handler] of listeners)target.addEventListener(event,handler,true);
   function end(){if(ended)return;ended=true;w.clearTimeout(timer);for(const [target,event,handler] of listeners)target.removeEventListener(event,handler,true);placement='bottom';selected=-1;autoHide=false;autoHidden=false;apply();for(const b of buttons)b.disabled=true;location.disabled=reset.disabled=auto.disabled=toggle.disabled=true;w.removeEventListener('storage',storageListener);w.removeEventListener('pagehide',end);}
   function onStorage(e){if(e.key===key)status.textContent='다른 창의 설정 변경 · 현재 창 유지';}
@@ -175,6 +183,10 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   dock.end=end;
   dock.applyPreference=next=>{const clean=normalize(next);if(work.state()!=='active'||!live()||!clean)return false;placement=clean.placement;selected=usable(clean.panel);autoHide=clean.autoHide??autoHide;autoHidden=false;apply();save(true);return true;};
   dock.preference=()=>live()?value():null;
+  // The explicit focus commands (Tools shortcut, Focus Measurements/Comparison) come through here: on a tab that
+  // already has focus no focusin fires, yet the command is dock use and reveals the remembered panel like keyboard
+  // focus. Plain focus() calls that only give focus back (a closing key panel) do not count as dock use.
+  dock.focusTab=(target,options)=>{if(!ended&&buttons.includes(target)&&d.activeElement===target)focus({target});target.focus(options);};
   dock.dispose=()=>{
     end();
     for(const origin of origins){const p=origin.panel;if(p.parentNode!==dock)continue;const parent=origin.parent.isConnected?origin.parent:d.body;parent.insertBefore(p,origin.next?.parentNode===parent?origin.next:null);p.open=origin.open;p.hidden=origin.hidden;}
