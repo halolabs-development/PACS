@@ -3185,6 +3185,7 @@ test('Quick Entry: a clearly separable line is split into the four fields, sizes
   // Not split at all: negation, range, comparison, qualifier, two sizes, a line break, nothing.
   for (const [line, reason] of [['no solid component 8mm', 'ambiguous'], ['8–12 mm nodule', 'ambiguous'], ['8-12mm nodule', 'ambiguous'], ['<8 mm nodule', 'ambiguous'],
     ['약 8mm 결절', 'ambiguous'], ['결절 8mm 이하', 'ambiguous'], ['solid 또는 part-solid 8mm', 'ambiguous'], ['up to 8 mm', 'ambiguous'], ['nodule? 8mm', 'ambiguous'],
+    ['RLL nodule 8 to 12 mm solid', 'ambiguous'], ['우하엽 S6 결절 8mm', 'ambiguous'], ['결절 2개 8mm', 'ambiguous'],
     ['8mm, 12mm nodules', 'sizes'], ['폐결절\n8mm', 'shape'], ['   ', 'empty']])
     assert.deepEqual(plain(Q(line)), { split: false, reason }, line);
 });

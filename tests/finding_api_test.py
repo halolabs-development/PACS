@@ -1225,7 +1225,7 @@ class FindingAPI(unittest.TestCase):
         # A version 2 record with characteristics links a one-study saved view and a two-study one (projection = comparison).
         created = self.v2([x, dict(jobId=view['id'], revision=1), dict(jobId=pair['id'], revision=1)], characteristics='경계 불명확 😀'*3, primary=1)
         status, header, head = self.schema_call('POST', self.path, body=created)
-        self.assertEqual((status, header), (200, '3'), head)
+        self.assertEqual((status, header), (200, '4'), head)
         self.assertEqual(head['item']['schemaVersion'], 2); self.assertEqual(head['item']['characteristics'], '경계 불명확 😀'*3)
         self.assertEqual(head['item']['sources'][1:], [self.job_copy(view, [self.uid], self.uid), self.job_copy(pair, [self.uid, prior.uid], self.uid)])
         # E1: the 17-digit copied value is the item row's own text, in the stored revision and in every answer.
@@ -1236,10 +1236,10 @@ class FindingAPI(unittest.TestCase):
         # R5: without the request header a page or history holding version 2 is refused whole; with it both are served.
         for path in (self.path+'?includeHidden=true', self.path+'/'+head['id']+'/revisions'):
             status, header, body = self.schema_call('GET', path, schema=None)
-            self.assertEqual((status, header, body['code']), (409, '3', 'FINDING_CLIENT_OUTDATED'), path)
+            self.assertEqual((status, header, body['code']), (409, '4', 'FINDING_CLIENT_OUTDATED'), path)
             self.assertNotIn('경계', json.dumps(body, ensure_ascii=False))
         status, header, listed = self.schema_call('GET', self.path+'?includeHidden=true')
-        self.assertEqual((status, header), (200, '3'))
+        self.assertEqual((status, header), (200, '4'))
         self.assertEqual(listed['items'][0]['links'], [dict(itemId=x['id'], linkState='current', headRevision=1, headHidden=False),
             dict(jobId=view['id'], markId=None, linkState='current', headRevision=1, headHidden=False),
             dict(jobId=pair['id'], markId=None, linkState='current', headRevision=1, headHidden=False)])
@@ -1248,9 +1248,9 @@ class FindingAPI(unittest.TestCase):
         self.assertEqual((status, [r['item'] for r in history['revisions']]), (200, [head['item']]))
         # A study whose pages hold only version 1 records is unchanged for a shipped client, and a service refusal names the format too.
         status, header, empty = self.schema_call('GET', prior.path, schema=None)
-        self.assertEqual((status, header, empty['items']), (200, '3', []))
+        self.assertEqual((status, header, empty['items']), (200, '4', []))
         status, header, _ = self.schema_call('GET', self.path+'/'+str(uuid.uuid4())+'/revisions')
-        self.assertEqual((status, header), (404, '3'))
+        self.assertEqual((status, header), (404, '4'))
         # Metadata changes: the link reads metadata-changed, then hidden; a stale pair is refused with the Job named.
         renamed = self.revise_job(anchor, view, title='새 제목')
         stale = self.v2([dict(jobId=view['id'], revision=1)])
@@ -1317,7 +1317,7 @@ class FindingAPI(unittest.TestCase):
         where = '우하엽 S6 😀'
         created = self.v3([x], where, characteristics='분엽상')
         status, header, head = self.schema_call('POST', self.path, body=created, schema='3')
-        self.assertEqual((status, header), (200, '3'), head)
+        self.assertEqual((status, header), (200, '4'), head)
         self.assertEqual((head['item']['schemaVersion'], head['item']['lesionLocation'], head['item']['characteristics']), (3, where, '분엽상'))
         stored = psql(f'''SELECT snapshot->>'lesionLocation' FROM "FindingRevision" WHERE "findingId"={literal(head['id'])}::uuid''')
         self.assertEqual(stored, [where])
@@ -1325,7 +1325,7 @@ class FindingAPI(unittest.TestCase):
         for schema in ('2', None):
             for path in (self.path+'?includeHidden=true', self.path+'/'+head['id']+'/revisions'):
                 status, header, body = self.schema_call('GET', path, schema=schema)
-                self.assertEqual((status, header, body['code']), (409, '3', 'FINDING_CLIENT_OUTDATED'), (schema, path))
+                self.assertEqual((status, header, body['code']), (409, '4', 'FINDING_CLIENT_OUTDATED'), (schema, path))
                 self.assertNotIn('우하엽', json.dumps(body, ensure_ascii=False))
         status, _, listed = self.schema_call('GET', self.path+'?includeHidden=true', schema='3')
         self.assertEqual((status, listed['items'][0]['item']['lesionLocation']), (200, where))
@@ -1654,7 +1654,9 @@ class FindingAPI(unittest.TestCase):
         self.assertEqual(status, 200, second)
 
         report = '/studies/'+study.uid+'/report'
-        listed = {item['id']: item for item in self.call(method='GET', user='xauthor', path=study.path+'?includeHidden=true&limit=100')['items']}
+        status, _, page = self.schema_call('GET', study.path+'?includeHidden=true&limit=100', schema='4')
+        self.assertEqual(status, 200, page)
+        listed = {item['id']: item for item in page['items']}
         def element(finding, text, revision=None):
             link = listed[finding['id']]['links'][0]
             return dict(field='findings', findingId=finding['id'], findingRevision=revision or finding['revision'], sourceIndex=0,

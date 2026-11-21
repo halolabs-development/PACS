@@ -224,7 +224,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         panel = self.panel(p); saved_row = self.saved_row(p, saved[0]['id'])
         saved_row.get_by_role('button', name='Edit', exact=True).click(); saved_row.get_by_label('Finding Text').fill('내 수정 보존')
         # S2-L version rule: the viewer saved a version 3 record, so the other window's edit is version 3 as well.
-        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='다른 창', text='', characteristics='', lesionLocation='', sources=[dict(itemId=head['id'], revision=1)]))
+        other = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=4, title='다른 창', text='', characteristics='', lesionLocation='', size='', sources=[dict(itemId=head['id'], revision=1)]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved[0]['id']+'/revisions', 'doctor', other).status, 200)
         saved_row.get_by_role('button', name='Save', exact=True).click(); expect(saved_row).to_contain_text('서버에 다른 판')
         expect(saved_row.get_by_label('Finding Text')).to_have_value('내 수정 보존'); expect(saved_row.get_by_role('button', name='Save', exact=True)).to_be_disabled()
@@ -265,7 +265,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
             if delayed: break
             p.wait_for_timeout(20)
         self.assertEqual(len(delayed), 1)
-        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=3, title='new A', text='', characteristics='', lesionLocation='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
+        edit = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='edit', item=dict(schemaVersion=4, title='new A', text='', characteristics='', lesionLocation='', size='', sources=[dict(itemId=s['itemId'], revision=s['revision']) for s in saved['item']['sources']]))
         self.assertEqual(self.stack.request('POST', '/studies/'+f.uid+'/findings/'+saved['id']+'/revisions', 'doctor', edit).status, 200)
         # S2-B2: activating the other study of this comparison viewer keeps the first study's list as it is,
         # with its reload still unanswered (held above): the old rows stay and the status says it is reading.
@@ -625,7 +625,7 @@ class FindingNavigationE2E(ViewerHistoryE2E):
         composed.get_by_role('button', name='Save', exact=True).click(); expect(composed).to_contain_text('저장 완료')
         saved = self.findings(f)[0]
         # The viewer writes version 3 (the lesion location is empty until written).
-        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation']), (3, traits, ''))
+        self.assertEqual((saved['item']['schemaVersion'], saved['item']['characteristics'], saved['item']['lesionLocation'], saved['item']['size']), (4, traits, '', ''))
         stored = base.psql(f'''SELECT snapshot->>'characteristics' FROM "FindingRevision" WHERE "findingId"={literal(saved['id'])}::uuid''')
         self.assertEqual(stored, [traits])
         saved_row = self.saved_row(p, saved['id'])

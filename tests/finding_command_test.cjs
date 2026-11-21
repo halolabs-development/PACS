@@ -667,7 +667,7 @@ function worklist(options) {
     api: (method, p) => { s.api.push([method, p]); return s.respond(p); },
     workspace: { viewerTarget: () => typeof s.target === 'function' ? s.target() : s.target },
     windows: () => s.rows(), popup: (...args) => { s.popups.push(args); }, open: uid => { s.opened.push(uid); },
-    cite: (request, origin) => { s.cited.push({ request: plain(request), origin: origin ? origin.textContent : null }); return s.citeAccepts; },
+    cite: (request, origin) => { s.cited.push({ request: plain(request), origin: origin ? origin.textContent : null, inserted: request.inserted }); return s.citeAccepts; },
   };
   const ui = sandbox.KinReadingFindings(app);
   const all = () => document.body.all();
@@ -1565,6 +1565,11 @@ test('adapter: Insert Selected into Report hands every selected finding over in 
   assert.deepEqual(request.items[1].measurements.map(m => m.sourceIndex), [0]);
   assert.deepEqual(request.items[0].measurements.map(m => m.sourceIndex), [0, 1]);
   assert.deepEqual(h.s.api.filter(([method]) => method !== 'GET'), [], 'the panel writes nothing itself');
+  // An accepted insertion clears the choice: reopened, no box is ticked and the button counts nothing.
+  h.s.cited[0].inserted(); await flush();
+  await h.open();
+  assert.deepEqual([box(ID1).checked, box(ID2).checked, insertSelected.textContent, insertSelected.disabled], [false, false, 'Insert Selected into Report', true]);
+  for (const id of [ID2, ID1]) { const b = box(id); b.checked = true; b.dispatchEvent(new h.sandbox.Event('change')); await flush(); }
   // A reload where the first finding moved to another revision drops it from the choice; it is never swapped for the new one.
   h.s.respond = p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding({ revision: 2 }), v4]) : page([])) ;
   await h.click(h.named(h.panel(), 'Reload Findings')[0]);

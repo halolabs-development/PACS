@@ -108,6 +108,8 @@
     };
     const lesionLocation = take(LOCATION_TERMS).join(', '), characteristics = take(CHARACTERISTIC_TERMS).join(', ');
     const title = rest.replace(/[\s,]+/gu, ' ').trim().replace(/^[,;.\s]+|[,;\s]+$/gu, '');
+    // A number left beside the size (`8 to 12 mm`, `S6`, `2개`) belongs to something this rule cannot read: not split.
+    if (/\d/u.test(title)) return { split: false, reason: 'ambiguous' };
     return { split: true, title, size, lesionLocation, characteristics };
   }
   // Saved Comparison Job versions a finding may link; each has a validator, a restorer and a hosted suite.

@@ -389,7 +389,8 @@ window.KinReadingFindings = function (app) {
    * list keeps a choice only where the same finding still shows that revision and that source in a usable state; anything else
    * drops out of the choice (never swapped for another source). The preview built from the choice does not change after it opens. */
   const MAX_SELECTED = 20;
-  let selected = new Map(), selectedStudy = null;
+  // pickBoxes: the Select box of each listed finding, so every render shows exactly the choice the next press will hand over.
+  let selected = new Map(), selectedStudy = null, pickBoxes = new Map();
   const usable = s => !!s && s.linkState !== 'hidden' && s.linkState !== 'missing';
   const sourceKey = s => s ? (s.kind === 'job' ? 'job:' + s.jobId + ':' + (s.mark ? s.mark.id : '') : 'item:' + s.itemId) + ':' + s.revision : '';
   function selectable(row) {
@@ -422,6 +423,7 @@ window.KinReadingFindings = function (app) {
   function renderSelected() {
     const st = store.state();
     const count = selectedStudy === st.uid ? selected.size : 0;
+    for (const [id, box] of pickBoxes) box.checked = selectedStudy === st.uid && selected.has(id);
     kinWrite(insertSelected, count ? kinSay('Insert Selected into Report ({n0})', count) : kinSay('Insert Selected into Report'));
     insertSelected.disabled = !count || !live() || typeof app.cite !== 'function';
   }
@@ -480,7 +482,7 @@ window.KinReadingFindings = function (app) {
   }
   function rebuild(rows) {
     const active = document.activeElement, key = active && list.contains(active) ? active.dataset.focusKey : null;
-    shownRows = rows; list.replaceChildren();
+    shownRows = rows; list.replaceChildren(); pickBoxes = new Map();
     let refocus = null;
     for (const row of rows) {
       const article = node('article', '', list); article.dataset.findingId = row.id; article.dataset.hidden = String(row.hidden);
@@ -488,7 +490,7 @@ window.KinReadingFindings = function (app) {
       // Insert Selected into Report: a finding is chosen with the revision and the source it shows now (selectable()).
       const pick = selectable(row), pickLabel = node('label', '', heading), pickBox = node('input', '', pickLabel);
       pickBox.type = 'checkbox'; pickBox.dataset.focusKey = row.id + ':select'; pickBox.dataset.kinSelectFinding = '';
-      pickBox.disabled = !pick || !live(); pickBox.checked = !!pick && selectedMatches(row, pick);
+      pickBox.disabled = !pick || !live(); pickBox.checked = !!pick && selectedMatches(row, pick); pickBoxes.set(row.id, pickBox);
       pickBox.setAttribute('aria-describedby', heading.id);
       kinWrite(pickBox, kinSay('판독문에 함께 넣을 소견으로 고르기'), 'aria-label');
       pickBox.addEventListener('change', () => { if (!toggleSelected(row.id, pickBox.checked)) pickBox.checked = false; });
