@@ -105,7 +105,7 @@ test('the page table is the fixed thirteen rows in the server order, frozen', ()
   assert.ok(Object.isFrozen(M.METRICS) && M.METRICS.every(Object.isFrozen));
   assert.ok(Object.isFrozen(M.ROW_STATES) && Object.values(M.ROW_STATES).every(Object.isFrozen));
   assert.ok(Object.isFrozen(M.REASONS) && Object.isFrozen(M.UNITS));
-  assert.deepEqual(json(Object.keys(M.REASONS)).sort(), ['invalid_answer', 'no_source', 'source_failed', 'timeout', 'unattributed']);
+  assert.deepEqual(json(Object.keys(M.REASONS)).sort(), ['incomplete', 'invalid_answer', 'no_source', 'source_failed', 'timeout', 'unattributed']);
 });
 
 test('a server answer is read row by row and every row keeps its source, time, unit, denominator and scope', () => {
@@ -345,7 +345,8 @@ const STATES = [
 ];
 const APPROVED = [['1.2.1', 8 * H], ['1.2.2', 26 * H], ['1.2.3', 48 * H], ['1.2.7', 10 * 24 * H], ['1.2.9', 0.5 * H],
   ['1.2.10', 2 * H], ['1.2.12', 7 * 24 * H], ['9.9.9', 1 * H]];
-const STATISTICS = { TotalDiskSize: String(BYTES), TotalDiskSizeMB: 12800, CountStudies: 987654, CountInstances: 876543,
+// CountStudies is the number of Study resources RESOURCES lists (12): the institution storage's completeness check.
+const STATISTICS = { TotalDiskSize: String(BYTES), TotalDiskSizeMB: 12800, CountStudies: 12, CountInstances: 876543,
   CountPatients: 765432, CountSeries: 654321, TotalUncompressedSize: '999999999999' };
 // Institution storage: the Orthanc Study resources (id, StudyInstanceUID, DiskSize). hallym owns ten originals; 1.2.11 has no
 // resource (0 bytes); 1.2.5 (kin-center's, tele-read by hallym), 1.2.9 (kin-center's) and 7.7.7 (registered nowhere) are
@@ -590,7 +591,9 @@ test('ORTHANC-04: an unanswered real source cannot become a success or outlive t
       assert.deepEqual([disk.state, disk.value, disk.observedAt], ['unobservable', null, null]);
       // timeout, or source_failed if a future own service deadline rejects first; never a value.
       assert.ok(['timeout', 'source_failed'].includes(disk.reason), disk.reason);
-      assert.deepEqual(run.answer.metrics.slice(1), AT_CLOCK().slice(1), 'the unanswered source leaves other rows intact');
+      assert.deepEqual(run.answer.metrics.slice(2), AT_CLOCK().slice(2), 'the unanswered source leaves other rows intact');
+      // The institution storage cannot prove its Study list complete without the /statistics count: never a value.
+      assert.deepEqual([run.answer.metrics[1].state, run.answer.metrics[1].value], ['unobservable', null]);
       assert.ok(!JSON.stringify(run.answer).includes('SYN'), 'source wording does not escape in the response');
     }
     snapshots = runs.map(run => clone(run.answer));
@@ -830,12 +833,16 @@ test('server: institution storage is the sum of the own originals only; tele, ot
   assert.deepEqual([ownRow(empty).state, ownRow(empty).value], ['observed', 0]);
   assert.equal(none.calls.filter(call => ['find', 'study-stats'].includes(call[0])).length, 0);
   // Pure rule: owned UIDs, every resource of a UID once; two resources on one owned UID cannot be attributed.
-  const rs = [{ id: 'a', uid: '1' }, { id: 'b', uid: '2' }, { id: 'c', uid: '3' }, { id: 'c', uid: '3' }];
-  assert.equal(MX.institutionStorageBytes(['1', '3', '9'], rs, id => ({ a: 10, c: 5 })[id]), 15, 'a missing resource is 0 bytes');
-  assert.equal(MX.institutionStorageBytes(['1', '2'], [...rs, { id: 'd', uid: '2' }], () => 1), 'unattributed');
-  assert.equal(MX.institutionStorageBytes(['1'], rs, () => null), null, 'one unknown size: no partial sum');
-  assert.equal(MX.institutionStorageBytes(['1', '2'], rs, () => Number.MAX_SAFE_INTEGER), null, 'an unsafe sum is unknown');
-  assert.equal(MX.institutionStorageBytes([], rs, () => 1), 0);
+  assert.equal(RESOURCES.length, STATISTICS.CountStudies);
+  const rs = [{ id: 'a', uid: '1' }, { id: 'b', uid: '2' }, { id: 'c', uid: '3' }];
+  assert.equal(MX.institutionStorageBytes(['1', '3', '9'], rs, 3, id => ({ a: 10, c: 5 })[id]), 15, 'a missing resource is 0 bytes');
+  assert.equal(MX.institutionStorageBytes(['1', '2'], [...rs, { id: 'd', uid: '2' }], 4, () => 1), 'unattributed');
+  assert.equal(MX.institutionStorageBytes(['1'], rs, 3, () => null), null, 'one unknown size: no partial sum');
+  assert.equal(MX.institutionStorageBytes(['1', '2'], rs, 3, () => Number.MAX_SAFE_INTEGER), null, 'an unsafe sum is unknown');
+  assert.equal(MX.institutionStorageBytes([], rs, 3, () => 1), 0);
+  // A list that is not every Study resource (a find result limit, an arrival between the reads) counts nothing.
+  for (const [list, total] of [[rs.slice(0, 2), 3], [rs, 4], [rs, null], [[...rs, rs[0]], 4]])
+    assert.equal(MX.institutionStorageBytes(['1'], list, total, () => 1), 'incomplete', JSON.stringify([list.length, total]));
   for (const [answer, bytes] of [[{ DiskSize: '12' }, 12], [{ DiskSize: 12 }, 12], [{ DiskSize: '-1' }, null], [{ DiskSize: '1.5' }, null],
     [{}, null], [{ TotalDiskSize: '12' }, null], [null, null], [[], null]])
     assert.equal(MX.orthancStudyDiskBytes(answer), bytes, JSON.stringify(answer));
@@ -845,12 +852,16 @@ test('server: one unreadable, failed or late study read makes the institution st
   const cases = [
     ['source_failed', { studyStatistics: async id => { if (id === RESOURCES[3].id) throw new Error('SYN-ORTHANC down'); return { DiskSize: '1' }; } }],
     ['invalid_answer', { studyStatistics: async id => ({ DiskSize: id === RESOURCES[3].id ? 'x' : '1' }) }],
-    ['unattributed', { resources: [...RESOURCES, { id: oid(99), uid: '1.2.4', bytes: 5 }] }],
+    ['unattributed', { resources: [...RESOURCES, { id: oid(99), uid: '1.2.4', bytes: 5 }] }, 13],
+    // Orthanc's find result limit: the list stops before the end, so an owned study missing from it is not 0 bytes.
+    ['incomplete', { resources: RESOURCES.slice(0, 6) }],
+    ['incomplete', { resources: RESOURCES }, null],
     ['source_failed', { resources: null }],
   ];
-  for (const [reason, reads] of cases) {
+  for (const [reason, reads, studies = 12] of cases) {
+    const statistics = { ...STATISTICS, CountStudies: studies };
     const options = reads.resources === null
-      ? { orthancReads: { ...reads, resources: RESOURCES }, orthancService: null } : { orthancReads: reads };
+      ? { orthancReads: { ...reads, resources: RESOURCES }, statistics } : { orthancReads: reads, statistics };
     const built = store(options);
     if (reads.resources === null) built.service.orthanc.studyResources = async () => { throw new Error('SYN find failed'); };
     const answer = clone(await built.service.adminMetrics(ADMIN));
