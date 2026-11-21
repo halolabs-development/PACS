@@ -70,6 +70,9 @@ AGENT_ENV = {
 # Contract section 5 with A1 (B 290 -> 320, R 205 -> 235); their sum plus a 45 s teardown margin is the suite cap. Block G
 # waits for the settings read (60 s) and the independent forward retry (90 s).
 DEADLINES = {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360}
+# After Block G (not a block: no scenario ID): the DICOM receive self-check through one pause of the hospital Orthanc
+# (three 30 s beats, each C-ECHO bounded by 5 s) and one admin Operations read.
+LISTENER_CHECK_SECONDS = 150
 # Block G's hospital PACS: a second Orthanc of the same image on the Gateway's own networks, labelled into the Gateway
 # project so its residue is the project's. The Gateway reaches it by an alias on the local network only, so detaching
 # that network is a destination that is down.
@@ -427,6 +430,67 @@ class GatewayPipelineLive(unittest.TestCase):
                     found[row['MainDicomTags']['SOPInstanceUID']] = cls.pixel_digest(raw)
         return found
 
+    def listener_row(self, admin):
+        """This Gateway's newest line in the admin's Gateway Status (the stack's only Gateway of the institution)."""
+        answer = self.stack.request('GET', '/admin/gateway-status', admin)
+        self.assertEqual(answer.status, 200, answer.text[:500])
+        recent = [row for row in answer.body['gateways'] if row['contact'] == 'recent']
+        return recent[0] if recent else None
+
+    def receive_check_and_server_status(self, admin):
+        """After Block G, on the same stack: the DICOM receive self-check against the real hospital Orthanc, and the
+        admin Operations answer (Server Status and this institution's storage) against the real KIN services.
+
+        The self-check reads Accepted, then No Answer once the hospital Orthanc is paused (its REST API and its DICOM port
+        both stop; the beat itself still reaches KIN), then Accepted again after it resumes, each with a newer check time.
+        """
+        deadline = time.monotonic() + LISTENER_CHECK_SECONDS
+        record = {}
+        newer = lambda result, after: (lambda: (lambda row: row if row and row['dicomListener']
+            and row['dicomListener']['result'] == result and (after is None or row['dicomListener']['observedAt'] > after)
+            else None)(self.listener_row(admin)))
+        first = self.until('DICOM listener Accepted', deadline, newer('accepted', None))
+        record['accepted'] = first['dicomListener']
+        self.assertEqual(first['localOrthanc']['answered'], True)
+        # The admin Operations answer: every server component answered this request; uptimes as they report them.
+        metrics = self.stack.request('GET', '/admin/metrics', admin)
+        self.assertEqual(metrics.status, 200, metrics.text[:500])
+        server = {row['component']: row for row in metrics.body['server']}
+        record['server'] = server
+        self.assertEqual(sorted(server), ['api', 'database', 'image_store', 'login_server'])
+        self.assertEqual({key: row['answer'] for key, row in server.items()}, dict.fromkeys(server, 'answered'))
+        for key in ('api', 'image_store', 'database'):
+            self.assertEqual(server[key]['uptime']['state'], 'observed', key)
+            self.assertIsInstance(server[key]['uptime']['seconds'], int, key)
+        self.assertEqual(server['login_server']['uptime']['reason'], 'no_source')
+        # This institution's storage: exactly the DiskSize of the Study resources of its own original studies.
+        institution = metrics.body['institutionId']
+        owned = psql('SELECT s.uid FROM "StudyState" s WHERE s."institutionId" = %s AND NOT EXISTS (SELECT 1 FROM '
+                     '"StudyGroupMember" m WHERE m."logicalUid" = s.uid AND m."logicalUid" <> m."studyUid")' % lit(institution))
+        expected = 0
+        for uid in owned:
+            lookup = self.stack._orthanc_request('POST', '/tools/lookup', uid.encode('ascii'))
+            self.assertEqual(lookup.status, 200, lookup.text[:500])
+            for item in [item for item in lookup.body if item.get('Type') == 'Study']:
+                stats = self.stack._orthanc_request('GET', '/studies/%s/statistics' % quote(item['ID']))
+                self.assertEqual(stats.status, 200, stats.text[:500])
+                expected += int(stats.body['DiskSize'])
+        storage = next(row for row in metrics.body['metrics'] if row['key'] == 'storage.institution')
+        record['storage'] = {'owned': len(owned), 'expected': expected, 'row': storage}
+        self.assertTrue(owned and expected > 0, 'the institution owns the studies this suite sent')
+        self.assertEqual((storage['state'], storage['value']), ('observed', expected))
+        # The hospital Orthanc stops answering: the next check says so; it comes back after it resumes.
+        self.docker('pause', self.gw_orthanc)
+        try:
+            down = self.until('DICOM listener No Answer while paused', deadline,
+                              newer('no_answer', record['accepted']['observedAt']))
+            record['paused'] = down['dicomListener']
+        finally:
+            self.docker('unpause', self.gw_orthanc)
+        back = self.until('DICOM listener Accepted after resume', deadline, newer('accepted', record['paused']['observedAt']))
+        record['resumed'] = back['dicomListener']
+        self.write_artifact('receive-check.json', record)
+
     def cloud_instances(self, uid):
         lookup = self.stack._orthanc_request('POST', '/tools/lookup', uid.encode('ascii'))
         self.assertEqual(lookup.status, 200, lookup.text[:500])
@@ -763,6 +827,7 @@ class GatewayPipelineLive(unittest.TestCase):
             block['cleared'] = {'status': cleared.status,
                                 'revision': (cleared.body.get('settings') or {}).get('revision')
                                 if isinstance(cleared.body, dict) else None}
+        self.receive_check_and_server_status('eg1-gw-admin')
         # X-5: every block is complete and every scenario ID holds together; the T IDs follow the teardown, offline.
         self.assertEqual(judge.judge({'scenario': self.ev}, ids=judge.SCENARIO_IDS), [], 'X-5')
         type(self).passed = True

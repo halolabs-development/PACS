@@ -393,6 +393,48 @@ export class OrthancService {
   }
 
   /**
+   * Admin Operations, Server Status: Orthanc's Prometheus text (GET /tools/metrics-prometheus), read only for its own
+   * `orthanc_up_time_s` sample by the caller. Bounded (1 MiB); a refusal or transport failure rejects (503, never sent to
+   * a client). `signal` is the caller's deadline.
+   */
+  metricsText(signal?: AbortSignal): Promise<string> {
+    return this.withSourceResponse('/tools/metrics-prometheus', 'check', { method: 'GET', redirect: 'error',
+      headers: { Authorization: this.auth } }, signal, async (res, read, owned) => {
+      if (!res.ok || !res.body) throw new ServiceUnavailableException(`Orthanc HTTP ${res.status}`);
+      const reader = read(), chunks: Uint8Array[] = []; let total = 0;
+      for (let part = await reader.read(); !part.done; part = await reader.read()) {
+        total += part.value.byteLength;
+        if (total > 1 << 20) throw new ServiceUnavailableException('Orthanc metrics answer too large');
+        chunks.push(part.value);
+      }
+      owned.throwIfAborted();
+      return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks));
+    }, (e: any) => new ServiceUnavailableException(`Orthanc에 연결할 수 없습니다: ${e?.message}`));
+  }
+
+  /**
+   * Admin Operations, institution storage: every Study resource as (Orthanc id, StudyInstanceUID), one indexed find.
+   * An entry that does not prove both rejects the whole list (the caller shows the storage as unknown, never a partial sum).
+   */
+  async studyResources(signal?: AbortSignal): Promise<{ id: string; uid: string }[]> {
+    const rows = await this.get('/tools/find', { Level: 'Study', Query: {}, ResponseContent: ['RequestedTags'],
+      RequestedTags: ['StudyInstanceUID'] }, signal);
+    if (!Array.isArray(rows)) throw new ServiceUnavailableException('원본 검사 목록 형식을 확인할 수 없습니다');
+    return rows.map(row => {
+      const id = row?.ID, uid = row?.RequestedTags?.StudyInstanceUID;
+      if (typeof id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(id) || !isStudyLookupKey(uid))
+        throw new ServiceUnavailableException('원본 검사 식별이 없거나 올바르지 않습니다');
+      return { id, uid };
+    });
+  }
+
+  /** One Study resource's GET /studies/{id}/statistics answer as Orthanc gives it (the caller reads DiskSize). */
+  studyStatistics(id: string, signal?: AbortSignal): Promise<unknown> {
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(id)) return Promise.reject(new ServiceUnavailableException('원본 검사 식별이 올바르지 않습니다'));
+    return this.get(`/studies/${id}/statistics`, undefined, signal);
+  }
+
+  /**
    * QIDO-RS 검사 목록.
    *
    * 기관과 환자 키의 원본 태그를 includefield에 명시한다. Orthanc가 지금은 PatientID를

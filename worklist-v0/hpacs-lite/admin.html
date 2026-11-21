@@ -138,6 +138,11 @@
     #metrics-table th { font-size: 12px; }
     #metrics-table.stale #metrics-rows { opacity: .72; }
     #metrics-table .metric-name { font-weight: 650; }
+    .ops-sub { margin: 16px 0 8px; font-size: 14px; }
+    #server-table th, #server-table td { padding: 9px 10px; font-size: 13px; overflow-wrap: anywhere; vertical-align: top; }
+    #server-table th { font-size: 12px; }
+    #server-table.stale #server-rows { opacity: .72; }
+    #server-table .metric-name { font-weight: 650; }
     /* S5-U5b Audit / Security: every state is a word as well as a colour; nothing below 12px. */
     .audit { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
     .audit-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -333,7 +338,7 @@
         <div class="spacer"></div>
         <button type="button" id="metrics-refresh" disabled>Refresh Operations</button>
       </div>
-      <p class="ops-hint">저장 사용량·검사량·판독 TAT와 API 가동 시간입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
+      <p class="ops-hint">저장 사용량·검사량·판독 TAT와 서버 구성요소(API·영상 저장소·DB·로그인 서버)의 가동 상태입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
       <p class="message" id="metrics-message" role="alert"></p>
       <div class="ops-table" id="metrics-wrap" hidden>
         <table id="metrics-table">
@@ -342,6 +347,17 @@
           </thead>
           <tbody id="metrics-rows"></tbody>
         </table>
+      </div>
+      <div id="server-wrap" hidden>
+        <h3 class="ops-sub" id="server-title" title="서버 구성요소마다 이번 조회에서 직접 물어 받은 답입니다. 모든 기관이 함께 쓰는 서버의 값이며, 답하지 않은 구성요소는 가동 시간을 보이지 않습니다. 기록이 없어 가용률(%)은 재지 않습니다.">Server Status (Server-wide)</h3>
+        <div class="ops-table">
+          <table id="server-table" aria-labelledby="server-title">
+            <thead class="ops-columns">
+              <tr><th scope="col">Component</th><th scope="col">Answer</th><th scope="col">Checked At</th><th scope="col">Uptime</th><th scope="col">Running Since</th><th scope="col">Source</th></tr>
+            </thead>
+            <tbody id="server-rows"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -1416,7 +1432,7 @@
         ["storage.server", "Storage Used (Server-wide)", "byte", "server", null,
           "Orthanc 서버 전체가 쓰는 디스크 용량입니다. 모든 기관의 영상이 함께 담긴 값이며 이 기관 몫이 아닙니다."],
         ["storage.institution", "Storage Used (This Institution)", "byte", "institution", null,
-          "기관별 저장량은 제품에 잴 원천이 없어 관측할 수 없습니다."],
+          "이 기관이 소유한 검사의 Orthanc 저장 용량 합입니다(검사마다 Orthanc가 알려 준 디스크 크기). 원격판독으로 받은 검사는 소유 기관 몫이라 넣지 않고, HALO PACS에 아직 등록되지 않은 검사는 어느 기관 몫에도 넣지 않습니다. 검사 하나라도 읽지 못하면 일부 합계 대신 Unobservable로 보입니다."],
         ["studies.own", "Studies Owned", "study", "institution", null,
           "이 기관이 소유한 검사 수입니다. HALO PACS에 등록된 검사만 셉니다 — 워크리스트에 아직 한 번도 나오지 않은 검사는 등록 전입니다."],
         ["studies.tele", "Studies Received for Tele-reading", "study", "institution", null,
@@ -1450,6 +1466,7 @@
         invalid_answer: "응답 형식을 확인할 수 없습니다.",
         timeout: "원천이 제한 시간 안에 답하지 않았습니다.",
         no_source: "제품에 이 값을 잴 원천이 없습니다.",
+        unattributed: "한 검사 UID에 Orthanc 검사가 여럿(환자 둘)이라 어느 기관 몫인지 정하지 못했습니다.",
       });
       const UNITS = Object.freeze({
         byte: ["Bytes (1 GiB = 1024³ B)", "원천 값은 바이트입니다. 화면은 2의 거듭제곱 단위(KiB·MiB·GiB·TiB)로 줄여 보입니다."],
@@ -1522,7 +1539,82 @@
           byKey.set(key, raw);
         }
         return { institutionId: answer.institutionId, generatedAt: answer.generatedAt,
-          rows: METRICS.map(spec => readRow(spec, byKey.get(spec.key))) };
+          rows: METRICS.map(spec => readRow(spec, byKey.get(spec.key))), server: readServer(answer.server) };
+      }
+
+      /*
+       * Server Status (api/src/pacs/server-status.ts serverComponentRows): one row per component, fixed order. A component
+       * answered only when this request got its answer; its uptime is only what it reports itself. A row that does not
+       * prove this reads Answer Unreadable with no uptime, never Answered.
+       */
+      const SERVER = Object.freeze([
+        ["api", "HALO PACS API", "이 응답을 만든 HALO PACS API 프로세스입니다."],
+        ["image_store", "Image Store (Orthanc)", "영상을 저장하고 내주는 Orthanc 서버입니다."],
+        ["database", "Database (PostgreSQL)", "검사·판독·회원 기록을 담는 HALO PACS 데이터베이스입니다."],
+        ["login_server", "Login Server (Keycloak)", "로그인과 계정을 맡는 Keycloak 서버입니다."],
+      ].map(([key, label, title]) => Object.freeze({ key, label, title })));
+      const ANSWERS = Object.freeze({
+        answered: Object.freeze({ text: "Answered", title: "이번 조회에서 이 구성요소가 직접 답했습니다." }),
+        source_failed: Object.freeze({ text: "No Answer", title: "이번 조회에서 이 구성요소에 연결하지 못했거나 오류로 답했습니다." }),
+        timeout: Object.freeze({ text: "No Answer in Time", title: "제한 시간 안에 답하지 않았습니다." }),
+        invalid_answer: Object.freeze({ text: "Answer Unreadable", title: "답의 형식을 확인할 수 없어 답한 것으로 보지 않습니다." }),
+      });
+      const SERVER_KEYS = ["answer", "checkedAt", "component", "source", "uptime"];
+      const UPTIME_KEYS = ["reason", "seconds", "source", "startedAt", "state"];
+      const closedKeys = (value, keys) => { const own = Object.keys(value).sort(); return own.length === keys.length && own.every((k, i) => k === keys[i]); };
+
+      function readServerRow(spec, raw) {
+        const unread = { component: spec.key, answer: "invalid_answer", checkedAt: null, source: null,
+          uptime: { state: "unobservable", reason: "invalid_answer", seconds: null, startedAt: null, source: null } };
+        if (!plain(raw) || !closedKeys(raw, SERVER_KEYS) || raw.component !== spec.key || !owns(ANSWERS, raw.answer)
+          || !plain(raw.uptime) || !closedKeys(raw.uptime, UPTIME_KEYS)) return unread;
+        const source = typeof raw.source === "string" && raw.source.trim() ? raw.source : null;
+        const u = raw.uptime, uptimeSource = typeof u.source === "string" && u.source.trim() ? u.source : null;
+        if (raw.checkedAt !== null && !time(raw.checkedAt)) return unread;
+        if (raw.answer === "answered" && (!source || raw.checkedAt === null)) return unread;
+        let uptime;
+        if (u.state === "observed") {
+          if (raw.answer !== "answered" || !uptimeSource || u.reason !== null || !count(u.seconds)
+            || (u.startedAt !== null && !time(u.startedAt))) return unread;
+          uptime = { state: "observed", reason: null, seconds: u.seconds, startedAt: u.startedAt, source: uptimeSource };
+        } else if (u.state === "unobservable") {
+          if (typeof u.reason !== "string" || !owns(REASONS, u.reason) || u.seconds !== null || u.startedAt !== null) return unread;
+          uptime = { state: "unobservable", reason: u.reason, seconds: null, startedAt: null, source: uptimeSource };
+        } else return unread;
+        return { component: spec.key, answer: raw.answer, checkedAt: raw.checkedAt, source, uptime };
+      }
+
+      /** The four rows in their fixed order; a missing, repeated or malformed one reads Answer Unreadable. */
+      function readServer(list) {
+        const byKey = new Map(), repeated = new Set();
+        for (const raw of Array.isArray(list) ? list : []) {
+          const key = plain(raw) && typeof raw.component === "string" ? raw.component : null;
+          if (key === null) continue;
+          if (byKey.has(key)) repeated.add(key); else byKey.set(key, raw);
+        }
+        return SERVER.map(spec => readServerRow(spec, repeated.has(spec.key) ? null : byKey.get(spec.key)));
+      }
+
+      /** Words for one Server Status row. */
+      function displayServer(row, format = localTime) {
+        const spec = SERVER.find(item => item.key === row.component), answer = ANSWERS[row.answer];
+        const u = row.uptime, answered = row.answer === "answered";
+        let uptime, uptimeTitle;
+        if (u.state === "observed") { uptime = formatUptime(u.seconds); uptimeTitle = `구성요소가 스스로 알려 준 가동 시간 ${u.seconds}초입니다.`; }
+        else if (u.reason === "no_source") { uptime = "Uptime No Source"; uptimeTitle = "이 구성요소는 가동 시간을 알려 주지 않습니다."; }
+        else { uptime = "Unobservable"; uptimeTitle = `가동 시간을 관측하지 못했습니다. ${REASONS[u.reason]}`; }
+        return {
+          key: row.component, answerKey: row.answer, label: spec.label, labelTitle: spec.title + " 모든 기관이 함께 쓰는 서버의 값입니다.",
+          answer: answer.text, answerTitle: answer.title,
+          checked: row.checkedAt ? format(row.checkedAt) : "Not Checked",
+          checkedTitle: row.checkedAt ? `이 구성요소를 이번에 점검한 서버 시각 ${row.checkedAt}.` : "점검한 시각이 없습니다.",
+          uptime, uptimeTitle,
+          started: u.startedAt ? format(u.startedAt) : "Not Reported",
+          startedTitle: u.startedAt ? `구성요소가 알려 준 시작 시각 ${u.startedAt}. 재시작하면 바뀝니다.`
+            : answered ? "이 구성요소는 시작 시각을 알려 주지 않습니다." : "답하지 않아 시작 시각이 없습니다.",
+          source: row.source ?? "Unknown", sourceTitle: [row.source ? "답을 읽은 원천입니다." : "원천을 확인할 수 없습니다.",
+            u.source ? `가동 시간 원천: ${u.source}` : ""].filter(Boolean).join(" "),
+        };
       }
 
       function formatBytes(bytes) {
@@ -1579,6 +1671,7 @@
           value, valueTitle, unit: UNITS[spec.unit][0], unitTitle: UNITS[spec.unit][1], denominator, denominatorTitle,
           scope: spec.scope === "server" ? "Server-wide" : `Institution ${institutionId}`,
           scopeTitle: spec.scope === "server" ? SERVER_SCOPE[spec.unit]
+            : spec.key === "storage.institution" ? "이 기관이 소유한 검사만입니다. 원격판독으로 받은 검사는 소유 기관의 값에 들어갑니다."
             : "이 기관이 소유한 검사와 원격판독으로 받은 검사(워크리스트와 같은 범위)입니다.",
           source: row.source ?? (row.reason === "no_source" ? "No Source" : "Unknown"),
           sourceTitle: !row.source ? reason : row.state === "unobservable" ? `값을 읽으려 한 원천입니다. ${reason}` : "값을 읽은 원천입니다.",
@@ -1599,8 +1692,8 @@
           title: "서버가 이 응답을 만든 시각입니다. 줄마다 원천이 답한 시각이 따로 있습니다." };
       }
 
-      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, readAnswer, display, summary,
-        formatBytes, formatDuration, formatUptime, formatTime: localTime });
+      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, SERVER, ANSWERS, readAnswer, readServer, display,
+        displayServer, summary, formatBytes, formatDuration, formatUptime, formatTime: localTime });
     })(typeof globalThis === "object" ? globalThis : this);
   </script>
   <script>
@@ -1677,6 +1770,26 @@
         $("#metrics-rows").replaceChildren(...rows);
         $("#metrics-wrap").hidden = !read;
         $("#metrics-table").classList.toggle("stale", ops.failed && !!read);
+        // Server Status: the same reading, its own table (server-wide, every component from this request's own answer).
+        const servers = (read ? read.server : []).map(row => {
+          const shown = M.displayServer(row), tr = document.createElement("tr");
+          Object.assign(tr.dataset, { component: shown.key, answer: shown.answerKey });
+          cell(tr, shown.label, shown.labelTitle, "metric-name");
+          const answerCell = document.createElement("td"), chip = document.createElement("span");
+          chip.className = `mstate row-${shown.answerKey === "answered" ? "observed" : "unobservable"}`;
+          chip.textContent = shown.answer;
+          chip.title = shown.answerTitle;
+          answerCell.append(chip);
+          tr.append(answerCell);
+          cell(tr, shown.checked, shown.checkedTitle);
+          cell(tr, shown.uptime, shown.uptimeTitle, "metric-value");
+          cell(tr, shown.started, shown.startedTitle);
+          cell(tr, shown.source, shown.sourceTitle);
+          return tr;
+        });
+        $("#server-rows").replaceChildren(...servers);
+        $("#server-wrap").hidden = !read;
+        $("#server-table").classList.toggle("stale", ops.failed && !!read);
         const line = M.summary({ observedAt: read ? read.generatedAt : null, failed: ops.failed });
         const state = $("#metrics-state");
         state.className = `mstate ${line.key}`;

@@ -234,7 +234,8 @@ class HarnessPins(unittest.TestCase):
                                'GW_BACKOFF_MAX_SECONDS': '90', 'GW_BYTE_BUDGET_MIB': '24'})
         deadlines = assigned(LIVE_TREE, 'DEADLINES')
         self.assertEqual(deadlines, {'setup': 240, 'fixtures': 60, 'N': 90, 'B': 320, 'R': 235, 'F': 90, 'X': 180, 'G': 360})
-        self.assertEqual(sum(deadlines.values()) + 45, 1620)
+        self.assertEqual(assigned(LIVE_TREE, 'LISTENER_CHECK_SECONDS'), 150)
+        self.assertEqual(sum(deadlines.values()) + 45 + assigned(LIVE_TREE, 'LISTENER_CHECK_SECONDS'), 1770)
         self.assertEqual((judge.BACKOFF, judge.RECEIPT_LAG, judge.RETRY_NOW_WITHIN, judge.QUIET), (90, 100, 45, 18))
         self.assertEqual(int(env['GW_BACKOFF_BASE_SECONDS']), judge.BACKOFF)
         self.assertEqual(int(env['GW_BACKOFF_MAX_SECONDS']), judge.BACKOFF)
@@ -401,7 +402,7 @@ class WorkflowPins(unittest.TestCase):
         for path in BOUND:
             self.assertIn(' --file ' + path + ' ', live, path)
         self.assertTrue(live.endswith('"$RUNNER_TEMP/gateway-e2e-python/bin/python" tests/measurement_ci.py --profile gateway-e2e'))
-        self.assertIn('timeout-minutes: 33', step_text('--profile gateway-e2e'))
+        self.assertIn('timeout-minutes: 34', step_text('--profile gateway-e2e'))
 
     def test_judge_and_upload_always_run_and_keep_the_evidence(self):
         judged = step_text('tests/gateway_pipeline_judge.py --evidence')
