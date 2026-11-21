@@ -591,7 +591,9 @@ SITE = [
 class FakeNetwork:
     """ss, docker context/ps/inspect answers of one synthetic Linux host; None answers fail like a missing tool."""
 
-    def __init__(self, ss4=SS4, ss6=SS6, containers=SITE, context="unix:///var/run/docker.sock", ps=None, inspect=None):
+    def __init__(self, ss4=SS4, ss6=SS6, containers=SITE, context="unix:///var/run/docker.sock", ps=None, inspect=None,
+                 warnings=None):
+        self.warnings = warnings or {}
         self.answers = {"ss4": ss4, "ss6": ss6, "context": context,
                         "ps": ps if ps is not None else ("\n".join("id%d" % i for i in range(len(containers))) + "\n"
                                                          if containers is not None else None),
@@ -605,7 +607,8 @@ class FakeNetwork:
         answer = self.answers.get(key)
         if answer is None and kwargs.get("check", True):
             raise RuntimeError(f"{args[0]} failed")
-        return SimpleNamespace(returncode=0 if answer is not None else 1, stdout=(answer or "").encode(), stderr=b"")
+        return SimpleNamespace(returncode=0 if answer is not None else 1, stdout=(answer or "").encode(),
+                               stderr=self.warnings.get(key, "").encode())
 
     def report(self, platform="linux"):
         with patch.object(ops, "run", side_effect=self.run), patch.object(deploy.sys, "platform", platform), \
@@ -694,6 +697,10 @@ class NetworkAccessTests(unittest.TestCase):
             "docker inspect short": (FakeNetwork(ps="id0\nid1\n", inspect=json.dumps(SITE[:1])), ["docker"]),
             "docker ports missing": (FakeNetwork(containers=[{"Name": "/kin-proxy", "Config": {}, "NetworkSettings": {}}]), ["docker"]),
             "remote docker": (FakeNetwork(context="tcp://192.0.2.10:2376"), ["docker"]),
+            "ss warns (interrupted dump, exit 0)": (FakeNetwork(warnings={"ss6": "Dump was interrupted and may be inconsistent.\n"}),
+                                                   ["sockets"]),
+            "proxy binding without HostIp": (FakeNetwork("", "", [site_container("kin-proxy", {"443/tcp": [{"HostPort": "443"}]})]),
+                                             ["docker"]),
         }
         for label, (host, unreadable) in cases.items():
             report = host.report()
@@ -708,10 +715,39 @@ class NetworkAccessTests(unittest.TestCase):
         remote.report()
         self.assertFalse([c for c in remote.commands if c[1:2] in (["ps"], ["inspect"])], "a remote Docker is not asked")
         with patch.dict(os.environ, {"DOCKER_HOST": "tcp://192.0.2.10:2376"}), patch.object(ops, "run", side_effect=AssertionError):
-            with patch.object(deploy.sys, "platform", "linux"), patch.object(deploy, "_socket_rows", return_value=[]):
+            with patch.object(deploy.sys, "platform", "linux"), patch.object(deploy, "_socket_rows", return_value=([], True)):
                 self.assertEqual(deploy.network_access()["unreadable"], ["docker"])
         report = FakeNetwork().report(platform="win32")
         self.assertEqual((report["status"], report["listeners"], report["unreadable"]), ("unknown", [], ["docker", "sockets"]))
+
+    def test_an_entry_that_cannot_be_placed_keeps_every_other_row(self):
+        # ss: a good line, then one it cannot read.
+        ss4 = "tcp LISTEN 0 4096 192.0.2.7:5432 0.0.0.0:*\ntcp LISTEN 0 4096 garbled\n"
+        report = FakeNetwork(ss4, "", []).report()
+        self.assertEqual(bindings(report), {("tcp", "192.0.2.7", 5432): ("exposed", None)})
+        self.assertEqual((report["status"], report["unreadable"]), ("unknown", ["sockets"]))
+        # Docker: the IPv4 mapping stays when the routed-mode IPv6 entry has no host port.
+        routed = [site_container("web-app", {"8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"},
+                                                     {"HostIp": "::", "HostPort": ""}]}, service="web")]
+        report = FakeNetwork("", "", routed).report()
+        self.assertEqual(bindings(report), {("tcp", "0.0.0.0", 8080): ("exposed", "web-app")})
+        self.assertEqual((report["status"], report["unreadable"]), ("unknown", ["docker"]))
+        # A proxy binding without its address is not placed, so it is never credited as public-web on 0.0.0.0.
+        report = FakeNetwork("", "", [site_container("kin-proxy", {"443/tcp": [{"HostPort": "443"}]})]).report()
+        self.assertEqual(report["listeners"], [])
+        self.assertEqual(report["status"], "unknown")
+        # ss's warning on an exit-0 dump keeps what it printed, and the source is incomplete.
+        report = FakeNetwork(warnings={"ss4": "Dump was interrupted and may be inconsistent.\n"}).report()
+        self.assertEqual(len(report["listeners"]), 13)
+        self.assertEqual(report["status"], "unknown")
+
+    def test_interface_scoped_wildcard(self):
+        ss6 = "tcp LISTEN 0 4096 *%eth0:8443 *:*\n"
+        ss4 = "udp UNCONN 0 0 *%eth0:5353 0.0.0.0:*\n"
+        report = FakeNetwork(ss4, ss6, []).report()
+        self.assertEqual(bindings(report), {("tcp", "::%eth0", 8443): ("exposed", None),
+                                            ("udp", "0.0.0.0%eth0", 5353): ("exposed", None)})
+        self.assertEqual(report["status"], "exposed")
 
     def test_empty_docker_and_unpublished_ports_are_ordinary(self):
         report = FakeNetwork("", "", containers=[]).report()

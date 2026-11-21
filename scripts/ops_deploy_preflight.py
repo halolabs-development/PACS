@@ -356,20 +356,27 @@ NETWORK_OPERATOR_CHECKS = (
 )
 
 
-def _bind_address(host, family):
-    """ss's host part of a Local column as one address string: brackets dropped, a %interface kept, a wildcard named by
-    the family it was read under."""
-    if host == "*":
-        return "0.0.0.0" if family == 4 else "::"
-    interface = ""
+def _endpoint(protocol, host, port, family=None):
+    """(protocol, address, port) of one endpoint as a source names it, or None when it cannot be placed. The address is
+    one string: brackets dropped, a %interface kept, ss's wildcard `*` named by the family it was read under (Docker
+    names its own); it must be an IP address."""
+    if protocol not in ("tcp", "udp", "sctp") or not (type(port) is str and port.isdigit()) or type(host) is not str:
+        return None
     if host.startswith("["):
-        address, _, rest = host[1:].partition("]")
-        interface = rest if rest.startswith("%") else ""
-        require(rest in ("", interface), "Unreadable address")
+        address, _, interface = host[1:].partition("]")
+        if interface and not interface.startswith("%"):
+            return None
     else:
         address, _, name = host.partition("%")
         interface = "%" + name if name else ""
-    return address.lower() + interface
+    if address == "*" and family in (4, 6):
+        address = "0.0.0.0" if family == 4 else "::"
+    address = address.lower()
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        return None
+    return protocol, address + interface, port
 
 
 def _is_loopback(address):
@@ -378,64 +385,71 @@ def _is_loopback(address):
     return ip.is_loopback or bool(mapped and mapped.is_loopback)
 
 
+# The one rule for both sources: every entry that can be placed is kept; an entry that cannot (an unreadable line, a
+# binding without its address or port), a failed or refused command, or a command that warns (ss exits 0 after an
+# interrupted dump, saying so on stderr) makes that source incomplete - never a reason to drop what was read.
 def _socket_rows(family):
-    """(protocol, address, port) of every listening TCP and bound UDP socket of one address family, or None."""
-    out = _read(["ss", "-H", "-l", "-n", "-t", "-u", "-" + str(family)])
-    if out is None:
-        return None
-    rows = []
+    """([(protocol, address, port)] of the listening TCP and bound UDP sockets of one address family, complete)."""
     try:
-        for line in out.splitlines():
-            if not line.strip():
-                continue
-            fields = line.split()
-            require(len(fields) >= 6 and fields[0] in ("tcp", "udp"), "Unreadable socket line")
-            host, _, port = fields[4].rpartition(":")
-            require(host and port.isdigit(), "Unreadable socket line")
-            address = _bind_address(host, family)
-            _is_loopback(address)
-            rows.append((fields[0], address, port))
-    except (RuntimeError, ValueError):
-        return None
-    return rows
+        result = ops.run(["ss", "-H", "-l", "-n", "-t", "-u", "-" + str(family)], check=False, timeout=30)
+        out, complete = result.stdout.decode("utf-8", "replace"), result.returncode == 0 and not result.stderr.strip()
+    except Exception:
+        return [], False
+    rows = []
+    for line in out.splitlines() if result.returncode == 0 else []:
+        if not line.strip():
+            continue
+        fields = line.split()
+        host, _, port = fields[4].rpartition(":") if len(fields) >= 6 else ("", "", "")
+        row = _endpoint(fields[0], host, port, family)
+        if row is None:
+            complete = False
+        else:
+            rows.append(row)
+    return rows, complete
 
 
 def _published_rows():
-    """(protocol, address, host port, container port, container, site proxy) of every port the local Docker publishes
-    for a running container, or None. A remote Docker is not asked."""
+    """([(protocol, address, host port, container port, container, site proxy)] of the ports the local Docker
+    publishes for its running containers, complete). A remote Docker is not asked."""
     try:
         ops.require_local_docker()
     except Exception:
-        return None
+        return [], False
     ids = _read(["docker", "ps", "-q", "--no-trunc"])
     if ids is None:
-        return None
+        return [], False
     if not ids.split():
-        return []
+        return [], True
     try:
         items = json.loads(_read(["docker", "inspect", *ids.split()]) or "")
-        require(type(items) is list and len(items) == len(ids.split()), "Unexpected Docker inspection")
-        rows = []
-        for item in items:
-            labels = (item.get("Config") or {}).get("Labels") or {}
-            proxy = (item.get("Name") == PROXY_CONTAINER and labels.get("com.docker.compose.service") == PROXY_SERVICE
-                     and labels.get("com.docker.compose.project.working_dir") == str(ops.ROOT))
-            ports = (item.get("NetworkSettings") or {})["Ports"]
-            require(ports is None or type(ports) is dict, "Unexpected Docker ports")
-            for target, bindings in (ports or {}).items():
-                number, _, protocol = target.partition("/")
-                require(number.isdigit() and protocol in ("tcp", "udp", "sctp"), "Unexpected Docker port")
-                require(bindings is None or type(bindings) is list, "Unexpected Docker ports")
-                for binding in bindings or []:
-                    address, port = binding.get("HostIp") or "0.0.0.0", str(binding.get("HostPort") or "")
-                    require(port.isdigit(), "Unexpected Docker port")
-                    address = address.strip("[]").lower()
-                    _is_loopback(address)
-                    rows.append((protocol, address, port, number, str(item.get("Name") or "").lstrip("/") or None, proxy))
-        return rows
-    except (ValueError, TypeError, KeyError, AttributeError, RuntimeError):
-        return None
-
+    except ValueError:
+        return [], False
+    if type(items) is not list:
+        return [], False
+    rows, complete = [], len(items) == len(ids.split())
+    for item in items:
+        ports = (item.get("NetworkSettings") or {}).get("Ports", False) if type(item) is dict else False
+        if not (ports is None or type(ports) is dict):
+            complete = False
+            continue
+        labels = (item.get("Config") or {}).get("Labels") or {}
+        name = str(item.get("Name") or "").lstrip("/") or None
+        proxy = (item.get("Name") == PROXY_CONTAINER and labels.get("com.docker.compose.service") == PROXY_SERVICE
+                 and labels.get("com.docker.compose.project.working_dir") == str(ops.ROOT))
+        for target, bindings in (ports or {}).items():
+            number, _, protocol = str(target).partition("/")
+            if not (number.isdigit() and (bindings is None or type(bindings) is list)):
+                complete = False
+                continue
+            for binding in bindings or []:
+                binding = binding if type(binding) is dict else {}
+                row = _endpoint(protocol, binding.get("HostIp"), binding.get("HostPort"))
+                if row is None:
+                    complete = False
+                else:
+                    rows.append((*row, number, name, proxy))
+    return rows, complete
 
 def network_access():
     """The report: {"status", "listeners": [{"protocol", "address", "port", "binding", "container"}],
@@ -445,16 +459,15 @@ def network_access():
         unreadable += ["sockets", "docker"]
     else:
         for family in (4, 6):
-            rows = _socket_rows(family)
-            if rows is None:
+            rows, complete = _socket_rows(family)
+            if not complete:
                 unreadable.append("sockets")
-                continue
             for protocol, address, port in rows:
                 endpoints.setdefault((protocol, address, port), {"container": None, "public": False})
-        published = _published_rows()
-        if published is None:
+        published, complete = _published_rows()
+        if not complete:
             unreadable.append("docker")
-        for protocol, address, port, target, container, proxy in published or []:
+        for protocol, address, port, target, container, proxy in published:
             entry = endpoints.setdefault((protocol, address, port), {"container": None, "public": False})
             entry["container"] = entry["container"] or container
             entry["public"] = entry["public"] or (proxy and (protocol, port, target) in PUBLIC_WEB)
