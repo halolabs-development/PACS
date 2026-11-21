@@ -737,6 +737,15 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_viewer_overlay_units.py', 'ViewerOverlayUnitsE2E', 'ci-viewer-overlay-units'),),
     },
+    'suspended-reader-pickers': {
+        'out': ROOT / 'tests/e2e/artifacts/suspended-reader-pickers-ci',
+        'project_prefix': 'kin-suspended-reader-pickers-ci-',
+        # Dispatch only (Focused integration): a reader the administrator suspended through the product's own command is
+        # not offered by Assign Reader or Consultation and a save prepared before is refused with its reason; rows saved
+        # before stay. Three cases; the single-suite cap is a hang ceiling, not an estimate.
+        'suite_timeout': 540,
+        'suites': (('e2e/test_suspended_reader_pickers.py', 'SuspendedReaderPickersE2E', 'ci-suspended-reader-pickers'),),
+    },
 }
 
 # S4-EG1 A3: the gateway-e2e suite names its own Compose project here before its first compose call, so the project

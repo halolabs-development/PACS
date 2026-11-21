@@ -174,6 +174,7 @@ REGRESSION_SUITES = {
         tests/audit_record_kind_dom_test.py
         tests/admin_audit_dom_test.py
         tests/admin_gateway_rules_dom_test.py
+        tests/admin_gateway_support_dom_test.py
         tests/admin_gateway_status_dom_test.py
         tests/admin_member_roles_dom_test.py
         tests/admin_metrics_dom_test.py
@@ -2272,6 +2273,34 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- viewer-overlay-units', dispatch)
         self.assertIn('tests/e2e/artifacts/viewer-overlay-units-ci/', dispatch)
 
+    def test_suspended_reader_pickers_profile_is_exact_and_dispatch_only(self):
+        # A suspended reader in Assign Reader and Consultation: the declared cases of one class in one unit, reached only
+        # through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['suspended-reader-pickers']
+        suite, class_name, unit = 'e2e/test_suspended_reader_pickers.py', 'SuspendedReaderPickersE2E', 'ci-suspended-reader-pickers'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'suspended-reader-pickers-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-suspended-reader-pickers-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 575)
+        for name, other in ci.PROFILES.items():
+            if name != 'suspended-reader-pickers':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_suspended_reader_01_pickers_and_saves',
+                          'test_suspended_reader_02_assign_dialog_says_why',
+                          'test_suspended_reader_03_saved_records_stay'])
+        self.assertNotIn('suspended-reader-pickers', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- suspended-reader-pickers', dispatch)
+        self.assertIn('tests/e2e/artifacts/suspended-reader-pickers-ci/', dispatch)
+
     def test_profiles_are_exact_and_use_separate_owned_artifacts(self):
         self.assertEqual(set(ci.PROFILES),
                          {'context-loss', 'measurement-accuracy', 'measurements', 'volume-rendering', 'output-integration',
@@ -2326,6 +2355,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'login-error-page',
                           # Overlay planes, Freehand ROI units and the saved-item count, Focused integration dispatch only.
                           'viewer-overlay-units',
+                          # A suspended reader in Assign Reader and Consultation, Focused integration dispatch only.
+                          'suspended-reader-pickers',
                           # S7-U5: the session contract job's eight profiles (validate.yml s7-u5-session-contracts matrix);
                           # u5-fixups is the fix round's five screen regressions (final review part 1, blocker 3).
                           'u5-session-api', 'u5-session-draft', 'u5-session-regression', 'u5-session-boundaries',

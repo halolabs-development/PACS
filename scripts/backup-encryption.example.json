@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "age": "/usr/local/bin/age",
+  "current": "backup-key-1",
+  "files": {
+    "backup-key-1": "/etc/kin-deploy/backup-keys/backup-key-1.txt"
+  },
+  "workspace": "/srv/kin-restore-work"
+}

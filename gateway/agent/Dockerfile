@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY agent.py ./
+COPY agent.py update.py ed25519.py ./
 
 RUN useradd --system --uid 10001 --create-home gateway \
  && mkdir -p /data \
@@ -16,4 +16,5 @@ USER gateway
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["python", "/app/agent.py", "status", "--db", "/data/queue.db"]
 
-CMD ["python", "-u", "/app/agent.py", "run"]
+# The launcher (update.py, part of the image, never replaced by an update) runs the agent and its signed updates.
+CMD ["python", "-u", "/app/update.py", "run"]

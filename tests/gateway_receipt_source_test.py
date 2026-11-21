@@ -389,7 +389,8 @@ class AgentPins(unittest.TestCase):
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
         # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
         # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
-        self.assertEqual(count, 76)
+        # 76 -> 89: SupportTests (signed updates' ready signal and remote support, the agent's half).
+        self.assertEqual(count, 89)
 
 
 class ServerPins(unittest.TestCase):

@@ -1563,11 +1563,52 @@ function kinUsRegionGeometry(tags) {
   }
   if (!usable.length) return null;
   const inside = (r, [x, y]) => x >= r.x0 - .5 && x <= r.x1 + .5 && y >= r.y0 - .5 && y <= r.y1 + .5;
-  // The region that holds every point, or null.
-  const region = points => usable.find(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p))) || null;
+  // Every region that holds every point; the first of them, or null.
+  const holding = points => usable.filter(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p)));
+  const region = points => holding(points)[0] || null;
   const spacing = points => { const r = region(points); if (!r) throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); return r.spacing; };
   const length = (a, b) => { const s = spacing([a, b]); return Math.hypot((b[0] - a[0]) * s[1], (b[1] - a[1]) * s[0]); };
-  return { regions: usable, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+  return { regions: usable, holding, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+}
+
+// The geometry a toolbar Length, Angle or Ellipse is measured with (as api/src/planar-geometry.ts manualGeometry). A Length
+// on an ultrasound image that gives no spacing, orientation or functional groups of its own, with at least one usable
+// region (kinUsRegionGeometry), is measured in the viewer's plane — rows along [0,1,0], columns along [0,0,-1], display
+// spacing 1, origin its ImagePositionPatient or else [0,0,0] for one frame and [0,0,f] for frame f of a multi-frame image
+// (the pinned OHIF combineFrameInstance) — with the deltas of the region that holds both points. Regions of different
+// deltas that both hold them, or none, give no length. Everything else is kinPlanarGeometry's.
+function kinManualGeometry(tags, frame, kind) {
+  const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
+  const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
+  if (!us) return kinPlanarGeometry(tags, frame);
+  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  const outside = () => { throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); };
+  const numbers = (v, n) => {
+    const a = typeof v === 'string' ? v.split('\\') : v;
+    if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();
+    return a.map(Number);
+  };
+  const frames = Number(tags.NumberOfFrames ?? 1);
+  if (!Number.isSafeInteger(frame) || frame < 1 || !Number.isSafeInteger(frames) || frame > frames) return fail();
+  const rows = Number(tags.Rows), columns = Number(tags.Columns);
+  if (![rows, columns].every(n => Number.isSafeInteger(n) && n > 0)) return fail();
+  const origin = tags.ImagePositionPatient !== undefined ? numbers(tags.ImagePositionPatient, 3) : [0, 0, frames > 1 ? frame : 0];
+  const orientation = [0, 1, 0, 0, 0, -1], normal = [-1, 0, 0];
+  const imagePoint = point => {
+    const d = numbers(point, 3).map((n, i) => n - origin[i]), x = d[1], y = -d[2];
+    if (Math.abs(d[0]) > .001 || x < -.501 || y < -.501 || x > columns - .499 || y > rows - .499) return fail();
+    return [x, y];
+  };
+  const measure = (kind, points) => {
+    if (kind !== 'length' || !Array.isArray(points) || points.length !== 2) return fail();
+    const p = points.map(imagePoint);
+    if (Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]) <= 1e-6) return fail();
+    const held = us.holding(p), s = held[0]?.spacing;
+    if (!s || held.some(r => r.spacing[0] !== s[0] || r.spacing[1] !== s[1])) return outside();
+    return Math.hypot((p[1][0] - p[0][0]) * s[1], (p[1][1] - p[0][1]) * s[0]);
+  };
+  return { origin, orientation, spacing: [1, 1], normal, imagePoint, measure, label: us.label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
+    calculator: 'kin-planar-manual-v1:us', viewerPlane: true };
 }
 
 function kinCreateViewerHistory() {
@@ -1670,7 +1711,7 @@ function kinCreateViewerHistory() {
     function planar(imageId, kind) {
       const image = cs.metaData.get('instance', imageId);
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
-      return kinPlanarGeometry(image, reference(imageId)?.frame);
+      return kinManualGeometry(image, reference(imageId)?.frame, kind);
     }
     // ── Screen calibration (the Calibration tool) ──
     // An image whose original gives no pixel spacing at all (a scanned film, an outside CR) has no mm of its own. The reader may
@@ -1789,7 +1830,12 @@ function kinCreateViewerHistory() {
           // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
           // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
           let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
-          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // An ultrasound region's Length (kinManualGeometry) is shown in pixels: each display spacing reads as 1 (none
+          // given counts as 1, as the Measure menu reads it), and only a region or "uncalibrated" answer is no calibration.
+          const shown = n => Number(n) > 0 ? Number(n) : 1;
+          if (geometry.calculator === 'kin-planar-manual-v1:us' ? cs.cache.getImage(imageId)?.calibration?.type || calibrated && !['Region', 'Uncalibrated'].includes(calibrated) ||
+                shown(plane?.rowPixelSpacing) !== 1 || shown(plane?.columnPixelSpacing) !== 1 :
+              cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
           if (geometry.viewerPlane && points?.some(point => unconfirmedPoints.has(pointKey(imageId, point)))) return PLANE_UNCONFIRMED;
           if (points) geometry.measure(kind, points);
@@ -1831,6 +1877,10 @@ function kinCreateViewerHistory() {
       })) return '측정이 원본 영상 범위를 벗어났습니다';
       return '';
     }
+    // A value of the planar geometry in one decimal on the cell and in the Measurements panel. An ultrasound region's Length
+    // is rounded as its saved value is said (finding-link-model.js valueText), so the cell, the panel, the History and the
+    // Findings give the same number; the others keep the words they had.
+    const planarText = (geometry, value) => geometry.calculator === 'kin-planar-manual-v1:us' ? (Math.round(value * 10) / 10).toFixed(1) : value.toFixed(1);
     const calculatedGeometry = new WeakMap(), trackedMeasurements = new WeakSet();
     const geometry = data => JSON.stringify(data.handles.points);
     const freshStats = (data, target) => {
@@ -1898,8 +1948,11 @@ function kinCreateViewerHistory() {
         const kind = kinds[a.metadata.toolName], geometry = planar(a.metadata.referencedImageId, kind);
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
-          checked.displayText = { primary: [value.toFixed(1) + ' ' + unit, geometry.label], secondary: [] };
-          checked.getReport = () => ({ columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] });
+          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, geometry.label], secondary: [] };
+          // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
+          const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
+          checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
+            { columns: [kind, 'Unit', 'Measurement basis', 'Frame'], values: [value, unit, geometry.label, frame] };
         }
         return checked;
       } catch (_) { return null; } // Display sets may disappear before their metadata.
@@ -2917,15 +2970,18 @@ function kinCreateViewerHistory() {
           if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
           if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
-          const reason = data.kinUnverified ? '재확인 필요: 저장 당시 측정과 다릅니다' :
-            id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          const current = id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          // A saved mark being edited says why its current points give no value (moved out of an ultrasound region, off the
+          // image) rather than only that it differs from its saved value.
+          const edited = current && [...entries.values()].some(e => e.editing && e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID)?.data === data);
+          const reason = data.kinUnverified && !edited ? '재확인 필요: 저장 당시 측정과 다릅니다' : current;
           // A shape still being drawn (an ellipse stretched one way only, an angle with one arm) is not judged until it is finished.
           if (reason) return [[...drawing.values()].some(w => w.annotation.data === data && unfinished(w.annotation)) ? '측정을 완료하세요' : reason];
           if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
-            return [value.toFixed(1) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
+            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
           }
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);

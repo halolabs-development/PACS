@@ -76,7 +76,9 @@ def check_observation(result, plan):
                 "previous_sha": plan.previous_sha, "target_sha": plan.target_sha,
                 "previous_api_image": plan.previous_api_image,
                 "target_api_image": plan.target_api_image, "compose_files": list(pre.COMPOSE)}
-    pre.require(type(result) is dict and set(result) == set(expected), "Invalid preflight observation")
+    # The storage encryption report is a warning the preflight records, never a condition of this deployment.
+    pre.require(type(result) is dict and set(result) == {*expected, "storage_encryption"}
+                and pre.storage_valid(result["storage_encryption"]), "Invalid preflight observation")
     pre.require(all(type(result[key]) is type(value) and result[key] == value
                     for key, value in expected.items()), "Preflight observation changed")
 
