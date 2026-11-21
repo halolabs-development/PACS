@@ -12,7 +12,7 @@ const NUMBERS = new Set(['length', 'size', 'count', 'total', 'images', 'number',
   'selected', 'checked', 'skipped', 'added', 'removed', 'moved', 'width', 'height', 'frames', 'series', 'studies', 'rows', 'seconds', 'minutes', 'percent']);
 // Calls and properties through which a literal reaches the screen.
 const UI_PROPS = new Set(['textContent', 'innerText', 'innerHTML', 'outerHTML', 'title', 'placeholder', 'label', 'ariaLabel', 'alt']);
-const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'kinSay', 'kinWrite', 'note', 'show', 'announce', 'tell', 'setStatus',
+const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'kinSay', 'kinSayEn', 'kinWrite', 'note', 'show', 'announce', 'tell', 'setStatus',
   'status', 'append', 'prepend', 'replaceChildren', 'insertAdjacentText', 'insertAdjacentHTML', 'createTextNode', 'element', 'el', 'make', 'node',
   'button', 'btn', 'chip', 'h', 'tag', 'create', 'option', 'plain', 'primary', 'cancel', 'labelled', 'add', 'line', 'row', 'cell', 'heading',
   'field', 'section', 'group', 'link', 'item', 'tab', 'action', 'menuItem', 'choice', 'pick', 'toggle', 'radio', 'check', 'checkbox', 'fail', 'fill', 'message', 'reason', 'finish']);
@@ -87,9 +87,10 @@ function ui(n) {
   return false;
 }
 
-// Whether a piece reaches the screen through the screen-language write path: it is the template of kinSay / kinText / kinHtml /
-// kinError / KinLanguage.say|text|html (or the value of kinWrite / KinLanguage.write), through choices and wrappers only.
-const SAY = new Set(['kinSay', 'say', 'kinText', 'kinHtml', 'kinError', 'text', 'html']), WRITE = new Set(['kinWrite', 'write']);
+// Whether a piece reaches the screen through the screen-language write path: it is the template of kinSay / kinSayEn / kinText /
+// kinHtml / kinError / KinLanguage.say|sayEnglish|text|html (or the value of kinWrite / KinLanguage.write), through choices and
+// wrappers only.
+const SAY = new Set(['kinSay', 'kinSayEn', 'say', 'sayEnglish', 'kinText', 'kinHtml', 'kinError', 'text', 'html']), WRITE = new Set(['kinWrite', 'write']);
 function rise(n) {
   let child = n, p = n.parent;
   while (p && (ts.isParenthesizedExpression(p) || ts.isConditionalExpression(p) && child !== p.condition ||
@@ -100,7 +101,7 @@ function through(n) {
   const { child, p } = rise(n);
   if (!p || !ts.isCallExpression(p) || child === p.expression) return false;
   const callee = p.expression;
-  const name = ts.isIdentifier(callee) ? (/^kin(Say|Text|Html|Error|Write)$/.test(callee.text) ? callee.text : '')
+  const name = ts.isIdentifier(callee) ? (/^kin(Say|SayEn|Text|Html|Error|Write)$/.test(callee.text) ? callee.text : '')
     : ts.isPropertyAccessExpression(callee) && /(?:^|\.)(KinLanguage|language)$/.test(callee.expression.getText()) ? callee.name.text : '';
   if (SAY.has(name)) return p.arguments[0] === child;
   if (WRITE.has(name)) return p.arguments[1] === child;
