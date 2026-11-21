@@ -17,6 +17,39 @@
     function technicianItem(item) {
       return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
     }
+    /**
+     * B14: the top bar's mode menu (work-mode.js), opened from the HALO PACS mark; the Radiology / Technician tabs stay as they are. Radiologist
+     * and Technician are those tabs; Physician opens Clinician Home. The menu follows the tab shown, however it changed
+     * (a tab click, a saved search, ?mode=). Choosing a mode grants nothing: technicianWork() and the server still decide.
+     */
+    function mountWorkMode() {
+      const host = $("#work-mode-host");
+      if (!host || !window.KinWorkMode || host.firstChild) return;
+      const tabs = document.querySelector(".tabs");
+      // Up to 1199px the bar folds the mark away; More's Mode entry opens the same menu there (and closes More).
+      const more = $("#work-mode-more");
+      more?.addEventListener("click", () => { const panel = more.closest("details"); if (panel) panel.open = false; });
+      const menu = KinWorkMode.mount({ host, trigger: document.querySelector(".menubar .brand") || undefined, openers: [more],
+        current: () => mode === "Technician" ? "technician" : "radiologist",
+        choose: chosen => {
+          if (chosen === "physician") { location.assign("clinician.html"); return; }
+          const tab = chosen === "technician" ? "Technician" : "Radiology";
+          if (mode !== tab) document.querySelector(`.tabs > div[data-tab="${tab}"]`)?.click();
+        } });
+      if (tabs) new MutationObserver(() => menu.refresh()).observe(tabs, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    }
+    /** `main.html?mode=Technician|Radiology` (from the mode menu of Clinician Home): applied once, after the boot's default search. */
+    function applyRequestedMode() {
+      let asked = null;
+      try { asked = new URLSearchParams(location.search).get("mode"); } catch (_) { asked = null; }
+      if (asked !== "Technician" && asked !== "Radiology") return;
+      try {
+        const url = new URL(location.href);
+        url.searchParams.delete("mode");
+        history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+      } catch (_) {}
+      if (mode !== asked) setMode(asked);
+    }
     function applyRoleUi() {
       const rad = KinAuth.has("radiologist"), tec = technicianWork();
       studyPanel?.setAvailable(studyPanelAvailable());
@@ -336,6 +369,7 @@
       renderHeads();
       renderTemplates();
       applyRoleUi();
+      mountWorkMode();
       if (!sess.demo) userFilters = [];
       mountWorklistFolders();
       $('#consultations-open').hidden=!(KinAuth.has('radiologist')||KinAuth.has('admin'));
@@ -500,6 +534,7 @@
             toast('기본 검색 오류(업무 화면·복합 조건)로 목록을 숨겼습니다. 다른 저장 검색을 적용하거나 Clear로 해제하세요.', 'err');
           }
         }
+        applyRequestedMode();
         await loadActorNames(at);
       } catch (e) {
         if (!work.admits(at)) return;

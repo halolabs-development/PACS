@@ -351,6 +351,9 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
     const entry = JSON.parse(raw);
     window.name = typeof entry.name === 'string' ? entry.name : '';
     const expected = typeof entry.session === 'string' && entry.session ? entry.session : null;
+    // B14: the screen that opened this window. Opened from Clinician Home (the Physician mode) it is read-only for every
+    // account (kinViewerClinicianOnly); every hand-off says it again and a reload of this tab keeps the last one.
+    try { sessionStorage.setItem('kin-viewer-mode', entry.mode === 'physician' ? 'physician' : ''); } catch (_) {}
     // A fresh list action may reuse the named window and its URL. It starts a new
     // verification; a reload has no handoff and retains the previous entry instead.
     history.replaceState({ ...history.state, kinViewerSession: {
@@ -3650,6 +3653,15 @@ function kinViewerClinicianOnly(me) {
   return app.length > 0 && app.every(role => role === 'clinician');
 }
 
+/**
+ * B14: whether this viewer tab was opened from the Physician mode (Clinician Home; the last hand-off said so, and
+ * config/ohif/session.js keeps it for the tab's reloads). The document's role verdict below then is read-only for every
+ * account - a radiologist who also holds the clinician role annotates from the Radiologist screen.
+ */
+function kinViewerPhysicianMode() {
+  try { return sessionStorage.getItem('kin-viewer-mode') === 'physician'; } catch (_) { return false; }
+}
+
 /* Shared viewer role, distinct from the document's session authority. Ordinary HTTP failures
  * keep this verdict. Only the page gate ends the document; successful role reads cannot reopen it.
  */
@@ -3684,7 +3696,7 @@ const kinViewerSession = (() => {
     const who = account(me);
     if (who !== null && owner !== null && who !== owner) return state();
     if (who !== null && owner === null) owner = who;
-    return who === null ? settle('unconfirmed') : settle(kinViewerClinicianOnly(me) ? 'read-only' : 'writer');
+    return who === null ? settle('unconfirmed') : settle(kinViewerClinicianOnly(me) || kinViewerPhysicianMode() ? 'read-only' : 'writer');
   }
   // F02: the document's own logout receivers, for its whole life (a panel's listener leaves with the panel at mode exit).
   const loggedOut = () => { settle('refused', 'logout'); };
