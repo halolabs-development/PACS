@@ -143,6 +143,17 @@ export function markAuthCode(res: any, error: any) {
 }
 
 /**
+ * The DICOM gate (PacsService.authzDicom) at an HTTP entry that reads images or their descriptions: authz/dicom (nginx's
+ * auth_request), the recorded relay, the frame range reader and the strip preview. Its refusal carries its `AUTH_*` code
+ * in the header there too - nginx can pass on only the header, and the same path must answer the same way whichever of
+ * them answers it. Every such entry admits through this one function.
+ */
+export async function admitDicomRead<T>(res: any, admit: () => Promise<T>): Promise<T> {
+  try { return await admit(); }
+  catch (error) { markAuthCode(res, error); throw error; }
+}
+
+/**
  * 토큰을 브라우저가 아니라 이 서비스 한 곳에서 다룬다. 콜백과 refresh가 같은 검증 함수를
  * 써야, 최초 로그인만 엄격하고 갱신 토큰은 느슨한 두 번째 인증 경로가 생기지 않는다.
  *

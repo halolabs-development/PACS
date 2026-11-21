@@ -83,6 +83,8 @@ assert extract_function(MAIN, "runUnmatch").count(NEW_RESTORE) == 1
 
 SHARED = "\n".join([
     statement(MAIN, "    const OVERLAY_KEYS = "), statement(MAIN, "    const overlayValue = "),
+    # The one gate of the study writes (study-state.js): the correction paths below choose their way through it.
+    statement(MAIN, "    const NOT_CONNECTED = "), extract_function(MAIN, "studyWriteRoute"),
     extract_function(MAIN, "ageOf"), extract_function(MAIN, "noteIdentityCorrection"),
     "async " + extract_function(MAIN, "refreshOrders"),
 ])

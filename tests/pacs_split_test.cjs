@@ -231,14 +231,17 @@ function withoutDeclared(now, declared) {
     routes: now.routes.filter(r => !declaredRoutes.includes(routeKey(r))) };
 }
 /** W5-API (D1460), the caution app's Change Password (#259) and FC-040's hold renew body: the snapshot minus exactly the
- * declared added parameter decorators (spec.w5_api.route_args, spec.caution_app.route_args, spec.fc040_api.route_args) -
- * each present once. */
+ * declared added parameter decorators (spec.w5_api.route_args, spec.caution_app.route_args, spec.fc040_api.route_args,
+ * spec.source_unavailable_api.route_args - the DICOM admission's passthrough response) - each present once. */
 function withoutW5Arguments(now) {
   assert.deepEqual(spec.w5_api.route_args.map(change => `${change.controller}.${change.handler}`), ['PacsController.draft']);
   assert.deepEqual(spec.caution_app.route_args.map(change => `${change.controller}.${change.handler}`),
     ['AuthController.callback', 'AuthController.login']);
   assert.deepEqual(spec.fc040_api.route_args.map(change => `${change.controller}.${change.handler}`), ['PacsController.hold']);
-  const declared = [...spec.w5_api.route_args, ...spec.caution_app.route_args, ...spec.fc040_api.route_args];
+  assert.deepEqual(spec.source_unavailable_api.route_args.map(change => `${change.controller}.${change.handler}`),
+    ['PacsController.authzDicom']);
+  const declared = [...spec.w5_api.route_args, ...spec.caution_app.route_args, ...spec.fc040_api.route_args,
+    ...spec.source_unavailable_api.route_args];
   return { ...now, routes: now.routes.map(route => {
     const change = declared.find(item => item.controller === route.controller && item.handler === route.handler);
     if (!change) return route;

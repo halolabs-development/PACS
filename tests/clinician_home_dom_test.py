@@ -207,7 +207,7 @@ KEYS_FAILED = "판독문을 불러오지 못해 키 이미지도 표시하지 �
 CHANGED = "검사 목록 또는 판독 상태가 바뀌었습니다. 새로고침하세요."
 RECHECK = "검사 목록을 다시 확인하는 중입니다. 확인이 끝나면 선택했던 검사의 판독문을 다시 불러옵니다."
 UNVERIFIED = "검사 목록을 다시 확인하지 못해 선택했던 검사를 내렸습니다. 목록을 다시 불러오면 그 검사의 판독문을 새로 읽습니다."
-CLOSING = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
+CLOSING = "업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
 PICK = "목록에서 검사를 고르면 확정 판독문과 키 이미지를 먼저 표시합니다."
 
 # UXR-SP-34 / UXR-G-18 core-screen avoided words (as tests/admin_member_roles_dom_test.py), and UXR-S5-15: nothing on
