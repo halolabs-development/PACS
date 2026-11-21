@@ -4744,7 +4744,8 @@ class LiveInvariantTests(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
         )
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertIn("Ran 25 tests", completed.stderr + completed.stdout)
+        # 25 -> 26: every child is told the image agent version (retention of delivered copies reads it).
+        self.assertIn("Ran 26 tests", completed.stderr + completed.stdout)
 
     def test_gateway_agent_queue_and_batch_contract(self) -> None:
         completed = subprocess.run(
@@ -4759,6 +4760,7 @@ class LiveInvariantTests(unittest.TestCase):
         # The number is the suite as authored; tests/gateway_receipt_source_test.py pins it to an AST
         # count of test_agent.py, so neither can move without the other.
         # 76 -> 89: signed updates and remote support added SupportTests (the agent's half).
+        # 89 -> 109: RetentionTests (deleting delivered local copies after the set days).
         self.assertIn("Ran 109 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
