@@ -218,9 +218,59 @@ def collect() -> list[Piece]:
     return collect_html() + collect_js() + collect_css() + collect_server()
 
 
+# The other documents: the pages and the viewer (config/ohif and the page scripts it loads). Their screens are English
+# only (a reader who chose Korean keeps them as they are), so only their Korean words need a glossary entry.
+PAGES = ("clinician.html", "admin.html", "audit.html", "index.html")
+
+
+def viewer_scripts() -> list[Path]:
+    order = json.loads((ROOT / "config/ohif/source-order.json").read_text(encoding="utf-8"))
+    files = [ROOT / "config/ohif" / name for name in order["sources"]] + [ROOT / name for name in order.get("shared", [])]
+    names = set()
+    for source in sorted((ROOT / "config/ohif").glob("*.js")):
+        text = source.read_text(encoding="utf-8")
+        names |= set(re.findall(r"/worklist/hpacs-lite/([\w.-]+\.js)", text)) | set(re.findall(r"'(viewer-[\w.-]+\.js)'", text))
+    return files + [PAGE_DIR / name for name in sorted(names) if (PAGE_DIR / name).exists()]
+
+
+def collect_document(name: str, tmp) -> list[Piece]:
+    if name == "viewer":
+        return collect_js(viewer_scripts())
+    return (collect_html(name) + collect_js([PAGE_DIR / n for n in page_scripts(name)] + [inline_scripts(name, tmp)])
+            + collect_css(name))
+
+
+def missing_by_document(known: set, css: set) -> dict:
+    """Per document: its distinct product words, and those without a glossary entry (main.html: every word; the other
+    documents: their Korean words). tests/worklist_language_source_test.py reads the glossary the same way."""
+    import tempfile
+    out = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ("main.html",) + PAGES + ("viewer",):
+            pieces = collect() if name == "main.html" else collect_document(name, tmp)
+            distinct = {}
+            for p in pieces: distinct.setdefault(p.text, p)
+            needs = {t: p for t, p in distinct.items()
+                     if name == "main.html" or p.kind != "server" and HANGUL.search(SLOT.sub("", t))}
+            out[name] = {"words": len(distinct), "need": len(needs),
+                         "missing": sorted(f"{p.file}:{p.line} [{p.kind}] {t}" for t, p in needs.items()
+                                           if t not in known and not (p.kind == "css" and t in css))}
+    return out
+
+
 if __name__ == "__main__":
     import collections, sys
     sys.stdout.reconfigure(encoding="utf-8")
+    if sys.argv[1:2] == ["--missing"]:
+        # Rerun the glossary check on every document: python tests/worklist_language_collect.py --missing
+        script = "global.window={};require(process.argv[1]);process.stdout.write(JSON.stringify(window.KinLanguageTerms))"
+        terms = json.loads(subprocess.run([NODE, "-e", script, str(PAGE_DIR / "worklist-language-terms.js")],
+                                          capture_output=True, check=True).stdout.decode("utf-8"))
+        result = missing_by_document({row[0] for row in terms["terms"]} | set(terms["skip"]), {c[2].strip() for c in terms["css"]})
+        for name, row in result.items():
+            print(f"{name}: {row['words']} words, {row['need']} need an entry, {len(row['missing'])} without one")
+            for line in row["missing"]: print("  " + line)
+        sys.exit(1 if any(row["missing"] for row in result.values()) else 0)
     ps = collect()
     by = collections.Counter(p.kind for p in ps)
     distinct = {}
