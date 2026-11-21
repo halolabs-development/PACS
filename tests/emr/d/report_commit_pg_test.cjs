@@ -496,7 +496,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     await witness.$executeRaw`UPDATE "StudyState" SET "approvedAt" = now() AT TIME ZONE 'UTC' WHERE uid=${amended.uid}`;
     assert.equal(await unchanged(), versionCount, 'no refused amendment wrote a version');
     // An Addendum (by anyone) closes the amendment.
-    const added = await commitAs(amended.uid, second, 'addendum', fixed('덧붙인 소견'));
+    // (An Addendum adds to the approved text: written after the amended text.)
+    const added = await commitAs(amended.uid, second, 'addendum', fixed('다시 고친 소견\n덧붙인 소견'));
     assert.equal(added.status, 201, JSON.stringify(added.body));
     assert.ok((await stateOf(amended.uid)).addendumAt instanceof Date);
     assert.match((await refusal(null, fixed('덧붙인 뒤 고친 소견')))[2], /Addendum\)가 붙은 판독문/);
@@ -514,7 +515,7 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     const backfilled = await study('1.2.840.9999.61');
     await write(backfilled.uid, null, fixed('옛 승인 소견'));
     assert.equal((await commitAs(backfilled.uid, null, 'approve', fixed('옛 승인 소견'))).status, 201);
-    assert.equal((await commitAs(backfilled.uid, second, 'addendum', fixed('옛 덧붙임'))).status, 201);
+    assert.equal((await commitAs(backfilled.uid, second, 'addendum', fixed('옛 승인 소견\n옛 덧붙임'))).status, 201);
     const open = await study('1.2.840.9999.62');
     await save(open.uid, second);
     await witness.$executeRaw`UPDATE "StudyState" SET "approvedAt" = NULL, "approvedBySub" = NULL, "amendedAt" = NULL, "addendumAt" = NULL

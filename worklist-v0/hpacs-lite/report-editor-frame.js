@@ -2,7 +2,10 @@
 (function (root) {
   'use strict';
 
-  function create({ fields, canEdit, host = null }) {
+  // `keeps(field, text, prior)` (optional): whether a field may become `text` from `prior` - the host's rule for text an
+  // edit must leave in place (an approved report that takes only an Addendum). Every edit of this frame meets it: a write
+  // that would not keep it is refused ('kept'), and a typed edit that did not is put back as it was (`kept(field)` is told).
+  function create({ fields, canEdit, host = null, keeps = null, kept = null }) {
     const names = Object.keys(fields);
     const home = fields[names[0]]?.ownerDocument;
     if (!names.length || typeof canEdit !== 'function' || names.some(name =>
@@ -100,10 +103,32 @@
       return states[name];
     }
 
+    // The text and selection a typed edit starts from (before its input, or its composition), for `keeps`.
+    const snap = el => ({ value: el.value, start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection });
+    // A typed edit that does not keep the host's text is put back (the field's text and selection as they were before it).
+    function putBack(s) {
+      const prior = s.prior;
+      s.prior = null;
+      if (!keeps || !prior || keeps(s.name, s.el.value, prior.value)) return false;
+      s.el.value = prior.value;
+      s.el.setSelectionRange(prior.start, prior.end, prior.direction);
+      fit(s.el);
+      if (typeof kept === 'function') kept(s.name);
+      return true;
+    }
     function bind(s) {
-      const start = () => { s.composing = true; };
-      const end = () => { s.composing = false; };
-      const input = () => { s.revision++; fit(writing ? null : s.el); };
+      const start = () => { s.composing = true; if (!writing && keeps) s.prior = snap(s.el); };
+      const end = () => {
+        s.composing = false;
+        // The composition's text is in the field now; when it may not stay, the field goes back and the page hears it once.
+        if (!writing && putBack(s)) s.el.dispatchEvent(new (doc().defaultView.Event)('input', { bubbles: true }));
+      };
+      const before = () => { if (!writing && keeps && !s.composing) s.prior = snap(s.el); };
+      const input = event => {
+        // A typed edit that may not stay never happened: it is put back before anyone else hears of it.
+        if (!writing && !s.composing && putBack(s)) { event.stopImmediatePropagation(); return; }
+        s.revision++; fit(writing ? null : s.el);
+      };
       // 숫자 위치는 브라우저가 소유하고 여기서는 사람이 이 칸을 사용했는지만 기억한다. 같은 검사의
       // 경계에서 글이 같은 칸은 이 표시가 선택과 함께 옮겨 가고, 다른 검사나 바뀐 글에서는 지워진다.
       // The same events name the field the person last worked in (focus, press, key, input) for commands that write
@@ -122,12 +147,14 @@
       };
       s.el.addEventListener('compositionstart', start);
       s.el.addEventListener('compositionend', end);
+      s.el.addEventListener('beforeinput', before);
       s.el.addEventListener('input', input);
       for (const event of ['focus', 'input']) s.el.addEventListener(event, away);
       for (const event of ['focus', 'pointerdown', 'keydown', 'input']) s.el.addEventListener(event, caret);
       s.unbind = () => {
         s.el.removeEventListener('compositionstart', start);
         s.el.removeEventListener('compositionend', end);
+        s.el.removeEventListener('beforeinput', before);
         s.el.removeEventListener('input', input);
         for (const event of ['focus', 'input']) s.el.removeEventListener(event, away);
         for (const event of ['focus', 'pointerdown', 'keydown', 'input']) s.el.removeEventListener(event, caret);
@@ -280,6 +307,10 @@
       const s = state(at.field), el = s.el;
       const expected = at.text.slice(0, start) + text + at.text.slice(end);
       if (expected === el.value) return { status: 'unchanged' };
+      if (keeps && !keeps(at.field, expected, at.text)) {
+        if (typeof kept === 'function') kept(at.field);
+        return refused('kept');
+      }
       if (el.maxLength >= 0 && expected.length > el.maxLength) return refused('length');
       const active = doc().activeElement, saved = view(el), positions = scrolls();
       writing = true;
@@ -325,6 +356,10 @@
           const el = state(at.field).el;
           const length = at.text.length - (at.end - at.start) + lf(text).length;
           if (el.maxLength >= 0 && length > el.maxLength) return 'length';
+          if (keeps && !keeps(at.field, at.text.slice(0, at.start) + lf(text) + at.text.slice(at.end), at.text)) {
+            if (typeof kept === 'function') kept(at.field);
+            return 'kept';
+          }
         }
         return null;
       }

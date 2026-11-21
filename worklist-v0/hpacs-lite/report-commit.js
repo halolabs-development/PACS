@@ -235,7 +235,38 @@
       return learned;
     }
 
+    /**
+     * One press of a report decision. A Save refused because another window of this same account saved the report in the
+     * meantime asks once whether to save this window's text after that version (commitReportOnce, route "mine"): yes sends
+     * the same Save again on the version the question named - the editor's text is now based on it, and the server meets
+     * every check again. Each further round is another question; no is the end.
+     */
     async function commitReport(action, reason, reviewer) {
+      let again = null;
+      for (;;) {
+        const done = await commitReportOnce(action, reason, reviewer, again);
+        if (!done?.again) return done;
+        again = done.again;
+        recordReportOrigin(again.uid, again.version);
+      }
+    }
+
+    /** The server's refusal said in the page's words where they are known (code and action); null: the server's own. */
+    const SIGNING_KEY_WORDS = {
+      approve: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      amend: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인 후 수정을 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      addendum: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 추가기재(Addendum)를 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      reset: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 판독 취소(Reset)를 하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+    };
+    function refusalWords(e, action) {
+      if (e?.code === "DoctorSigningKeyUnavailable" && SIGNING_KEY_WORDS[action]) return kinSay(SIGNING_KEY_WORDS[action]);
+      if (e?.code === "REPORT_ADDENDUM_NOT_APPENDED") return kinSay(ADDENDUM_APPEND_ONLY);
+      if (e?.code === "REPORT_ADDENDUM_EMPTY") return kinSay(ADDENDUM_EMPTY);
+      return null;
+    }
+
+    // `again`: the version the reader confirmed to save this window's text after ({ uid, version }) - sent as the base as it is.
+    async function commitReportOnce(action, reason, reviewer, again = null) {
       if (!selectedUid) return;
       // 확정은 겹쳐 부르지 않는다. 더블클릭이 만든 판 하나가 더 쌓이는 걸 여기서 막는다.
       // 삽입이 나가 있는 동안도 같다 — 그 응답 전에 서명하면 사람이 확인한 문장이
@@ -286,6 +317,12 @@
         conclusion: $("#conclusion").value,
         recommendation: $("#recommendation").value,
       };
+      // An Addendum only adds to the approved report: said before anything is sent, with the server's words, where this page
+      // knows the approved text its editor stands on (addendumRefusalHere). The text stays as it is.
+      if (action === "addendum" && serverMode) {
+        const refused = addendumRefusalHere(uid, content);
+        if (refused) { toast(kinSay(refused), "err"); return; }
+      }
       // 받아들여진 확정이 싣지 않은, 그 뒤에 친 글이 남았는가(아래) — 완료 안내가 그 사실을 함께 말한다.
       let lateText = false;
       // 진행 중 판독 되돌리기의 답이 말하는 남의 점유·글의 자리(있을 때만). 완료 안내가 그대로 옮긴다.
@@ -304,8 +341,8 @@
         // my text - it releases the head the screen shows, so it is sent on that version; my draft stays mine (keepCallerDraft).
         const takeover = action === "reset" && !!inProgressReset(cur());
         const mine = !takeover && (!!appState[uid]?.draft || reportDirty());
-        const baseVersion = mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0)
-                                 : (appState[uid]?.version ?? 0);
+        const baseVersion = again?.uid === uid ? again.version
+          : mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0) : (appState[uid]?.version ?? 0);
         // 응답이 돌아왔을 때 "그때 그 선택인가"를 판단할 기준. 요청이 떠나기 전에 잡는다.
         const seq = selectionSeq;
         /**
@@ -372,8 +409,24 @@
            * textarea도, 초안 행도 그대로 두고 **서버가 보낸 승인본**을 옆에 펼쳐
            * 사람이 읽고 정하게 한다. 다시 불러오기(force)는 하지 않는다.
            */
-          if (route === "stale") { openStaleRebase(uid, seq, e); return; }
-          if (route === "reload") {
+          if (route === "stale") { openStaleRebase(uid, seq, e, action); return; }
+          /**
+           * Another window of this same account saved the report in the meantime (head.mine). This window's text is not
+           * overwritten and not merged: a Save asks once whether to save it after that version - yes sends the same Save
+           * on it (commitReport); no leaves the text as it is. Other decisions (signing, Reset) take the reload path below.
+           */
+          const head = e.body?.head;
+          if (route === "mine" && action === "save" && Number.isSafeInteger(head?.version)) {
+            const askedEdits = reportEdits;
+            const question = String(kinSay("다른 창에서 이 계정으로 v{n0}을 저장했습니다. 이 창의 글을 v{n0} 다음 판으로 저장할까요?\n(취소하면 이 창의 글은 그대로 있고 아무것도 저장하지 않습니다)", head.version));
+            const reportWindowNow = window.KinReportPopout?.current?.();
+            const yes = await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question));
+            // Asked in the report window, the page went on meanwhile: a yes counts only for the same study, selection, text
+            // and work context.
+            if (!yes || uid !== selectedUid || seq !== selectionSeq || reportEdits !== askedEdits || !work.admits(at)) return;
+            return { again: { uid, version: head.version } };
+          }
+          if (route === "reload" || route === "mine") {
             toast(e.message, "err");
             const askedEdits = reportEdits;
             // While the report is in its separate window the question is asked there (KinReportPopout), else as before.
@@ -422,7 +475,9 @@
           }
           // 문맥이 무효가 된 뒤의 실패(이어진 읽기의 취소 등)는 알릴 실패가 아니다.
           // 서명키가 없어 거절된 승인은 판독의가 풀 수 없다: 서버가 말한 까닭을 읽고 관리자에게 전할 만큼 오래 보인다.
-          if (work.admits(at)) toast("저장 실패: " + e.message, "err", e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
+          const words = refusalWords(e, action);
+          if (work.admits(at)) toast(words ? kinSay("저장 실패: {e0}", words) : "저장 실패: " + e.message, "err",
+            e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
           return;
         } finally {
           // 이 확정이 세운 표시는 이 확정이 내린다(자기 것만). 단추를 다시 그리는 것은 문맥이 그대로일 때만 한다 — 편집으로

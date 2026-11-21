@@ -427,6 +427,9 @@ REPORT_FRAME = slice_between(MAIN, "    let reportFrame = null;\n", "    functio
 EXIT_STAND_INS = """
 // The logout slice includes presence cleanup; this question fixture has no worklist columns.
 const viewingNames = new Map();
+// The frame's Addendum rule (report-editor.js keepsApprovedText: an approved report that takes only an Addendum keeps its
+// approved text) lives in the report region this file does not cut out. These cases open no approved report: nothing is held.
+function keepsApprovedText() { return true; }
 function shownColumns() { return []; }
 let insertInFlight = false, commitInFlight = false, appState = {}, selectionSeq = 0, user = 'syn-radiologist';
 const RFIELDS = ['findings', 'conclusion', 'recommendation'];

@@ -234,7 +234,9 @@ class CriticalResultTeleLiveTests(CriticalResultHarness, unittest.TestCase):
             self.check(sent1, 201)
             r2, sent2 = self.send("kdoctor", f.uid, "clinician2", 1)
             self.check(sent2, 201)
-            self.check(self.commit(f.uid, "doctor", "addendum", 1, findings="SYNTHETIC owner addendum " + f.secret), 201)
+            # An Addendum adds to the approved text (written after it).
+            self.check(self.commit(f.uid, "doctor", "addendum", 1,
+                                   findings="SYNTHETIC tele approved " + f.secret + "\nSYNTHETIC owner addendum " + f.secret), 201)
             stub = self.item("clinician", r1)
             self.assertEqual((stub["view"], stub["source"], "message" in stub, "body" in stub),
                              ("stub", {"current": False, "reason": "head_moved"}, False, False))

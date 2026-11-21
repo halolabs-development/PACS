@@ -810,13 +810,16 @@ class ClinicianReadLive(unittest.TestCase):
         """S5-U1b-F02 on the compiled PacsService: an Addendum between listStudies' StudyState and Report reads."""
         with self.stack.fixture() as fixture:
             uid = fixture.uid
-            box: dict[str, Any] = {"v": self.commit(uid, "approve", 0, findings=fixture.secret, conclusion="approved")}
+            box: dict[str, Any] = {"v": self.commit(uid, "approve", 0, findings=fixture.secret, conclusion="approved"),
+                                   "text": fixture.secret}
             # each run changes the signer, so the worklist row would carry the new version with the old signer
             for paged, signer in ((False, "doctor2"), (True, "doctor")):
                 with self.subTest(paged=paged):
                     def addendum(event: dict, user: str = signer) -> None:
-                        box["v"] = self.commit(uid, "addendum", box["v"], user=user,
-                                               findings=fixture.secret + " addendum " + user, conclusion="approved")
+                        # An Addendum adds to the approved text: each one is written after the head's.
+                        text = box["text"] + " addendum " + user
+                        box["v"] = self.commit(uid, "addendum", box["v"], user=user, findings=text, conclusion="approved")
+                        box["text"] = text
 
                     result = self.drive("list", uid, {"state": addendum}, paged=paged)[-1]
                     self.assertTrue(result["paused"], "the pause never reached the page that carries the study")

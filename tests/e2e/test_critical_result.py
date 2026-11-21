@@ -266,7 +266,9 @@ class CriticalResultE2E(KeycloakGroups, CriticalResultHarness, unittest.TestCase
         self.approved(f)
         r0, sent = self.send("doctor", f.uid, "clinician", 1)
         self.created(sent)
-        self.check(self.commit(f.uid, "doctor", "addendum", 1, findings="SYNTHETIC addendum body " + f.secret[-8:]), 201)
+        # An Addendum adds to the approved text (each field starts with the approved one - approved() above).
+        self.check(self.commit(f.uid, "doctor", "addendum", 1, findings="SYNTHETIC approved " + f.secret
+                               + "\nSYNTHETIC addendum body " + f.secret[-8:], conclusion="SYNTHETIC conclusion v1"), 201)
         stub = self.item("clinician", r0)                                                           # S-SU1
         self.assertEqual((stub["view"], stub["source"], stub["state"]), ("stub", {"current": False, "reason": "head_moved"}, "created"))
         self.text_free(stub, MESSAGE, f.secret, "SYNTHETIC addendum body", "SYNTHETIC approved")
@@ -1820,8 +1822,10 @@ class CriticalResultScreensE2E(KeycloakGroups, CriticalResultHarness, base.Workl
         return fixture
 
     def addendum(self, fixture: Fixture, tag: str) -> None:
-        self.check(self.commit(fixture.uid, "doctor", "addendum", 1, findings=f"SYNTHETIC U2b {self.run} {tag} findings v2.",
-                               conclusion=f"SYNTHETIC U2b {self.run} {tag} conclusion v2."), 201)
+        # An Addendum adds to the approved text: v2's lines are written after v1's.
+        self.check(self.commit(fixture.uid, "doctor", "addendum", 1,
+                               findings=f"SYNTHETIC U2b {self.run} {tag} findings v1.\nSYNTHETIC U2b {self.run} {tag} findings v2.",
+                               conclusion=f"SYNTHETIC U2b {self.run} {tag} conclusion v1.\nSYNTHETIC U2b {self.run} {tag} conclusion v2."), 201)
         self.mark_change()
         self.version_cache.pop(fixture.uid, None)
 

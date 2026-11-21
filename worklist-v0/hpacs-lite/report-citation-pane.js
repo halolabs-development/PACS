@@ -541,6 +541,13 @@
         // 구분자(LF)는 `insertedText` 바깥이다. 증언이 가리키는 것은 그 블록뿐이고,
         // 보내는 문자열과 화면에 들어갈 문자열은 **이 계획 하나**에서 나온다.
         const before = content[field];
+        // An approved report that takes only an Addendum keeps its approved text: the citation goes after it, or not at all
+        // (the draft is written before the editor, so the rule is met here first - keepsApprovedText).
+        if (typeof keepsApprovedText === "function" && !keepsApprovedText(field, plan2.text, before)) {
+          pane.status = ADDENDUM_APPEND_ONLY;
+          renderCitePreview();
+          return;
+        }
         content[field] = plan2.text;
         const a = appState[pane.uid] ?? {};
         const baseVersion = reportBaseVersion(pane.uid, a.draft?.baseVersion ?? a.version ?? 0);
