@@ -494,6 +494,23 @@ def psql(sql: str) -> list[str]:
     return [line for line in completed.stdout.splitlines() if line.strip()]
 
 
+def drop_viewer_rows(uid: str) -> None:
+    """A run-owned synthetic study's viewer rows (findings, manual SR, viewer items with their revisions and requests, the
+    storage budget), children first: they reference StudyState, so the study's own cleanup can then delete it. RESTRICT is
+    bypassed only in the owned fixture teardown; product routes have no DELETE."""
+    if not re.fullmatch(r"[0-9.]+", uid):
+        raise RuntimeError("Viewer cleanup requires a synthetic study UID")
+    q = "'" + uid + "'"
+    psql('BEGIN; '
+         f'DELETE FROM "FindingRevision" WHERE "findingId" IN (SELECT id FROM "Finding" WHERE "studyUid"={q}); '
+         f'DELETE FROM "Finding" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ManualSr" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ViewerRequest" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={q}); '
+         f'DELETE FROM "ViewerRevision" WHERE "itemId" IN (SELECT id FROM "ViewerItem" WHERE "studyUid"={q}); '
+         f'DELETE FROM "ViewerItem" WHERE "studyUid"={q}; '
+         f'DELETE FROM "ViewerStorageBudget" WHERE "studyUid"={q}; COMMIT;')
+
+
 UUID_RE = r"^[0-9a-f-]{36}$"
 
 
