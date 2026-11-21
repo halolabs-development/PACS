@@ -22,6 +22,11 @@
  */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js, loaded before this file), or as written when it is
+  // not loaded. English only: a screen with Korean chosen or no choice keeps the words as written. An error takes the words
+  // in the screen's language as it is made; a notice is written as a sentence by the page that shows it.
+  const kinSay = (root && root.KinLanguage && root.KinLanguage.say) || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])));
+  const kinSayEn = (root && root.KinLanguage && root.KinLanguage.sayEnglish) || kinSay;
 
   // 종류별 한도(ms). 0은 "부른 쪽이 준 것만"이다.
   const DEADLINES = Object.freeze({ draft: 10000, api: 60000, media: 0 });
@@ -62,9 +67,9 @@
     if (!Number.isInteger(status) || status === 0 || status === 408 || status === 429 || status >= 500) return 'temporary';
     return 'failed';
   }
-  function responseError(reply, message = '요청을 완료하지 못했습니다.', denied = '검사 접근이 거절되었습니다. 접근 권한을 확인하세요.') {
+  function responseError(reply, message = kinSayEn("요청을 완료하지 못했습니다."), denied = kinSayEn("검사 접근이 거절되었습니다. 접근 권한을 확인하세요.")) {
     const kind = refusal(reply);
-    return Object.assign(new Error(kind === 'temporary' ? '연결을 확인하지 못했습니다. 잠시 뒤 다시 시도하세요.'
+    return Object.assign(new Error(kind === 'temporary' ? kinSayEn("연결을 확인하지 못했습니다. 잠시 뒤 다시 시도하세요.")
       : kind === 'denied' ? denied : message), {
       status: reply?.status, code: reply?.headers?.get?.('X-KIN-Auth-Code') || reply?.code,
       retryable: kind === 'temporary' || !kind && (!reply || reply.status === 429 || reply.status >= 500),
@@ -80,12 +85,12 @@
     return path.startsWith('/api/') ? 'api' : 'media';
   }
   const MESSAGES = {
-    'not-admitted': '지금 이 작업을 시작할 수 없어 요청을 보내지 않았습니다.',
-    unbound: '세션 식별값이 없어 요청을 보내지 않았습니다.',
-    cancelled: '요청을 취소했습니다.',
-    stale: '작업 문맥이 바뀌어 요청을 취소했습니다.',
-    timeout: '서버가 제한 시간 안에 답하지 않았습니다.',
-    network: '서버에 연결하지 못했습니다.',
+    'not-admitted': kinSayEn("지금 이 작업을 시작할 수 없어 요청을 보내지 않았습니다."),
+    unbound: kinSayEn("세션 식별값이 없어 요청을 보내지 않았습니다."),
+    cancelled: kinSayEn("요청을 취소했습니다."),
+    stale: kinSayEn("작업 문맥이 바뀌어 요청을 취소했습니다."),
+    timeout: kinSayEn("서버가 제한 시간 안에 답하지 않았습니다."),
+    network: kinSayEn("서버에 연결하지 못했습니다."),
   };
 
   /**
@@ -93,8 +98,8 @@
    * be confirmed (`unknown`). The body is the answer and is shown as usual; the page adds this one line. Nothing to retry.
    */
   const ACCESS_RECORD = Object.freeze({
-    'not-recorded': '이 내용의 열람 기록을 서버에 남기지 못했습니다. 내용은 그대로 표시하며, 기록 실패는 서버에 남았습니다.',
-    unknown: '이 내용의 열람 기록이 저장됐는지 서버가 확인하지 못했습니다. 내용은 그대로 표시합니다.',
+    'not-recorded': kinSayEn("이 내용의 열람 기록을 서버에 남기지 못했습니다. 내용은 그대로 표시하며, 기록 실패는 서버에 남았습니다."),
+    unknown: kinSayEn("이 내용의 열람 기록이 저장됐는지 서버가 확인하지 못했습니다. 내용은 그대로 표시합니다."),
   });
   const ACCESS_RECORD_EVENT = 'kin-access-record';
   /** The page's line for an answer body, or '' when its 열람 record was kept (or the body is no such answer). */

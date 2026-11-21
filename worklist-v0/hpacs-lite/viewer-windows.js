@@ -2,6 +2,9 @@
  * rediscovered from authenticated viewer documents after worklist reload. */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (root.KinLanguage) return root.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (root.KinLanguage && root.KinLanguage.say) || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinSayEn = (root.KinLanguage && root.KinLanguage.sayEnglish) || kinSay;
   const uuid = v => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
   function normalize(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) ||
@@ -136,11 +139,11 @@
         : raw.length <= 512 && normalize(JSON.parse(raw));
       if (!normalize(state)) throw Error('format');
       storage.setItem(key, JSON.stringify(state));
-    } catch (_) { error = '영상 창 연결 저장소를 확인하지 못했습니다. 기존 창을 유지하며 새 창은 열지 않습니다.'; }
+    } catch (_) { error = kinSayEn("영상 창 연결 저장소를 확인하지 못했습니다. 기존 창을 유지하며 새 창은 열지 않습니다."); }
     const current = () => !ended && !!bound && owner() === bound;
     function persist(next) {
       try { storage.setItem(key, JSON.stringify(next)); state = next; error = null; return true; }
-      catch (_) { error = '영상 창 연결을 저장하지 못했습니다. 기존 창에서 작업을 확인하세요.'; return false; }
+      catch (_) { error = kinSayEn("영상 창 연결을 저장하지 못했습니다. 기존 창에서 작업을 확인하세요."); return false; }
     }
     function prune() {
       if (!state || !current()) return;
@@ -172,17 +175,17 @@
       });
     }
     function choose(href, limit, options = {}) {
-      if (!current() || error || !scope(href, origin)) return { error: error || '현재 계정과 영상 대상을 확인한 뒤 다시 여세요.' };
-      if (!Number.isInteger(limit) || limit < 1 || limit > 4) return { error: '영상 창 수 설정을 확인하세요.' };
+      if (!current() || error || !scope(href, origin)) return { error: String(error || kinSayEn("현재 계정과 영상 대상을 확인한 뒤 다시 여세요.")) };
+      if (!Number.isInteger(limit) || limit < 1 || limit > 4) return { error: String(kinSayEn("영상 창 수 설정을 확인하세요.")) };
       const singleWindow = options?.singleWindow === true;
       if (singleWindow) limit = 1;
       const freshDocument = options?.freshDocument === true && !singleWindow;
       const open = rows(), wanted = JSON.stringify(scope(href, origin));
-      if (error) return { error };
+      if (error) return { error: String(error) };
       let row = freshDocument ? null : open.find(r => r.scope && JSON.stringify(r.scope) === wanted);
       if (!freshDocument && !row && limit === 1 && open.length === 1 && (singleWindow || open[0].index === 0)) row = open[0];
       if (row) return { ...row, fresh: false };
-      if (open.length >= limit) return { full: true, error: freshDocument ? '새 영상 화면을 열 수 없습니다. Image Opening에서 Viewer Windows 수를 늘리거나 기존 영상 창의 작업을 저장하고 닫으세요.' : '영상 창 수 제한에 도달했습니다. Viewer Windows에서 기존 창으로 돌아가거나 저장 후 닫으세요.' };
+      if (open.length >= limit) return { full: true, error: String(freshDocument ? kinSayEn("새 영상 화면을 열 수 없습니다. Image Opening에서 Viewer Windows 수를 늘리거나 기존 영상 창의 작업을 저장하고 닫으세요.") : kinSayEn("영상 창 수 제한에 도달했습니다. Viewer Windows에서 기존 창으로 돌아가거나 저장 후 닫으세요.")) };
       const index = state.slots.indexOf(false), next = normalize(state);
       next.slots[index] = true;
       if (!persist(next)) return { error };
@@ -238,7 +241,7 @@
       bar = doc.createElement('div'); bar.id = 'kin-worklist-monitor-bar'; bar.setAttribute('role', 'status');
       bar.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483000;max-width:min(720px,94vw);display:flex;gap:8px;align-items:center;padding:8px 12px;border:1px solid #8ab4c8;border-radius:6px;background:#10202a;color:#e8f1f5;font:13px system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.45)';
       const text = doc.createElement('span'), open = doc.createElement('button'), close = doc.createElement('button'), note = doc.createElement('span');
-      text.textContent = '이 Hanging Protocol은 목록 창을 Monitor ' + (monitor + 1) + '에 둡니다. 이 목록은 브라우저 탭이라 브라우저가 옮기지 않습니다.';
+      kinWrite(text, kinSayEn("이 Hanging Protocol은 목록 창을 Monitor {0}에 둡니다. 이 목록은 브라우저 탭이라 브라우저가 옮기지 않습니다.", monitor + 1));
       open.type = 'button'; open.textContent = 'Open Worklist on Monitor ' + (monitor + 1);
       open.style.cssText = 'padding:4px 10px;border:1px solid #8ab4c8;border-radius:4px;background:#8ab4c8;color:#0b1820;font-weight:600;cursor:pointer';
       close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', 'Close');
@@ -258,7 +261,7 @@
         const features = 'popup=yes,resizable=yes,scrollbars=yes,left=' + Math.round(display.left) + ',top=' + Math.round(display.top) +
           ',width=' + Math.round(display.width) + ',height=' + Math.round(display.height);
         try { w = root.open('', 'kin-worklist-window-' + state.id, features); } catch (_) { w = null; }
-        if (!w) { note.textContent = '브라우저가 목록 창을 열지 않았습니다. 팝업 차단을 확인하세요.'; return; }
+        if (!w) { kinWrite(note, kinSayEn("브라우저가 목록 창을 열지 않았습니다. 팝업 차단을 확인하세요.")); return; }
         if (w === root) { hideBar(); return; }
         let blank = false;
         try { blank = w.location.href === 'about:blank'; } catch (_) { blank = false; }
@@ -271,7 +274,7 @@
         // A later request may have put up its own bar meanwhile: only this bar is this click's.
         if (bar !== shown) return;
         if (arrived) { hideBar(); return; }
-        note.textContent = '목록 창을 열었지만 Monitor ' + (monitor + 1) + '에 두지 못했습니다. 창을 직접 옮기거나 Viewer Windows › Detect Displays로 창 관리 권한을 허용하세요.';
+        kinWrite(note, kinSayEn("목록 창을 열었지만 Monitor {0}에 두지 못했습니다. 창을 직접 옮기거나 Viewer Windows › Detect Displays로 창 관리 권한을 허용하세요.", monitor + 1));
       });
     }
     // Only the latest request decides (from whichever viewer, in the order they arrive): a new one takes down the bar an
