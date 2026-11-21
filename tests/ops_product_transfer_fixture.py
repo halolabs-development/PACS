@@ -155,7 +155,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261120130000_study_qc_flag/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
               'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
-              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql']
+              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql',
+              'api/prisma/migrations/20261121130000_access_alerts/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and

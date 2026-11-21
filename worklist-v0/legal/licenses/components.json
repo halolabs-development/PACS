@@ -9383,7 +9383,7 @@
     "docker-compose.prod.yml": "9bbdf6d4e8e1b9a7b700c748f84eca275eaf63ea4e789549fd5ff2545ad25448",
     "docker-compose.qr-peer.yml": "691dd0cde19132d1170e6f128ce59e2d3dea7c8066b2825c2b93c75099b63e91",
     "docker-compose.runtime-test.yml": "6b87c7d9e784ad471c1701ba750bad4405d86d3f1b0a68551716e47c84451e82",
-    "docker-compose.yml": "1da54723b1936cb269cec3968b5c5a098b426b056e2404ffe70a5380ed158a6a",
+    "docker-compose.yml": "5835a009bdc9f830ce99d4a12dec08e82db17652d2dc8161c2dded217059cd42",
     "emr/deploy/docker-compose.signing.yml": "74a3e444b5618fface6a9a3cfb0ce9f00622ff8d5324fe0bf4ef664ea9844e1b",
     "gateway/agent/Dockerfile": "3673cbf2a3df392ed5bc1d188e5f30f9bb2fded8707f1fe66272a0a92a28aa54",
     "gateway/agent/requirements.txt": "6f27c1c7f1918d97eee24a188b7ca45b2610504193e1e601506abe423b0a841f",

@@ -36,6 +36,7 @@ PROFILE_DEADLINES = {'hanging-protocols': 1884, 'measurements': 3300, 'exam-merg
 REGRESSION_SUITES = {
     'source-regressions': """
         scripts/test_ops_soup_vulns.py
+        tests/access_alerts_rules_test.cjs
         tests/access_record_writes_test.cjs
         tests/admin_audit_attribution_test.cjs
         tests/clinician_policy_test.py
@@ -171,6 +172,7 @@ REGRESSION_SUITES = {
         tests/audit_rights_dom_test.py
         tests/audit_intake_refusal_dom_test.py
         tests/audit_record_kind_dom_test.py
+        tests/admin_access_alerts_dom_test.py
         tests/admin_audit_dom_test.py
         tests/admin_gateway_rules_dom_test.py
         tests/admin_gateway_support_dom_test.py
