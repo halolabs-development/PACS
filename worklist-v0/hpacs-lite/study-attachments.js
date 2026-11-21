@@ -11,7 +11,8 @@
  * The server decides everything that matters (role, institution, the file's kind from its first bytes, its size limit);
  * the page only keeps its controls honest.
  *
- * Mounted by feature-mounts.js: KinStudyAttachments({ api, transport, allowed, can, demo, study, current, button, notice }).
+ * Mounted by feature-mounts.js: KinStudyAttachments({ api, transport, allowed, can, demo, study, current, button, notice,
+ * reload }) - reload is the worklist's own list read, called after a write the server confirmed (afterWrite).
  */
 window.KinStudyAttachments = function (app) {
   'use strict';
@@ -236,21 +237,36 @@ window.KinStudyAttachments = function (app) {
     return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('png')), 'image/png'));
   }
 
+  /**
+   * A write the server confirmed (a document stored, a withdrawal) changes the study's series, images and modalities: the
+   * worklist reads its list again through the page's own list read (app.reload, the one Refresh uses), so the row shows
+   * what the server now holds. The page never counts them itself. `context` is the write's own: a session or document
+   * that ended since reads nothing. Not called for a refusal or an answer that did not come (nothing known was written).
+   */
+  function afterWrite(context) {
+    if (context && work.admits(context)) app.reload?.();
+  }
+
   async function attachAll() {
     const mine = session;
     if (!mine || mine.sending || !app.allowed() || !mine.canAttach || !mine.sourceUid || !current(mine,mine.at)) return;
     mine.sending = true;
     status.textContent = '';
     render();
-    for (const entry of pending()) {
-      if (session !== mine) return;
-      await attachOne(mine, entry);
-      if (session !== mine) return;
+    // The context of the last request of this round the server stored; the list is read once, after the round, even
+    // when the dialog was closed meanwhile.
+    let stored = null;
+    try {
+      for (const entry of pending()) {
+        if (session !== mine) return;
+        stored = await attachOne(mine, entry) || stored;
+        if (session !== mine) return;
+        render();
+      }
+      mine.sending = false;
       render();
-    }
-    mine.sending = false;
-    render();
-    void loadAttached(mine);
+      void loadAttached(mine);
+    } finally { afterWrite(stored); }
   }
 
   /** Still the dialog, study and choice this work began in, under the same admitted session. */
@@ -285,11 +301,13 @@ window.KinStudyAttachments = function (app) {
         method: 'POST', body: sent.body, context, deadlineMs: 120000,
         headers: { 'Content-Type': sent.type, 'X-KIN-File-Name': encodeURIComponent(sent.name), 'X-KIN-Request-Id': sent.requestId, ...sent.headers } });
     } catch (_) { answer = null; }
+    // Stored is known whatever happened to the dialog since; the caller reads the list for it (afterWrite).
+    const stored = answer?.ok && !answer.incomplete && answer.body?.state === 'stored' ? context : null;
     // Drawn only for the dialog, study and choice this request left from, and while the session still admits it.
-    if (!current(mine, context)) return;
+    if (!current(mine, context)) return stored;
     const said = typeof answer?.body?.message === 'string' ? answer.body.message : '';
     const settled = () => { entry.sent = null; entry.uncertain = false; entry.requestId = crypto.randomUUID(); };
-    if (answer?.ok && !answer.incomplete && answer.body?.state === 'stored') { entry.state = 'attached'; entry.reason = ''; entry.uncertain = false; }
+    if (stored) { entry.state = 'attached'; entry.reason = ''; entry.uncertain = false; }
     else if (answer?.ok && !answer.incomplete && answer.body?.state === 'failed') {
       // The server's final word on this request's own row: nothing is served for it, so a new attempt is a new request.
       entry.state = 'failed'; entry.reason = answer.body.failReason || '문서가 저장되지 않았습니다';
@@ -306,6 +324,7 @@ window.KinStudyAttachments = function (app) {
       // same request id, which answers the row it already wrote; nothing about the file changes until then.
       entry.state = 'failed'; entry.reason = said && [409, 503].includes(answer?.status) ? said : TEXT.lost;
     }
+    return stored;
   }
 
   /** The study's attached documents; only the newest read of this dialog is drawn. */
@@ -387,9 +406,11 @@ window.KinStudyAttachments = function (app) {
         answer = await app.transport.request(app.api + '/studies/' + encodeURIComponent(mine.uid) + '/attachments/'
           + encodeURIComponent(row.id) + '/withdraw', { method: 'POST', json: { reason }, context });
       } catch (_) { answer = null; }
+      const withdrawn = answer?.ok && !answer.incomplete;
+      if (withdrawn) afterWrite(context);
       if (!current(mine,context)) return;
       confirm.disabled = false;
-      if (answer?.ok && !answer.incomplete) { void loadAttached(mine); return; }
+      if (withdrawn) { void loadAttached(mine); return; }
       note.textContent = typeof answer?.body?.message === 'string' ? answer.body.message : TEXT.lost;
     });
     li.append(form);
