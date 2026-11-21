@@ -255,6 +255,31 @@ test('previous and next traverse only ordered enabled fully matched rules withou
   assert.deepEqual(value,before);assert.throws(()=>model.navigate(value,context,null,'sideways'),/방향/);
 });
 
+test('a CT study that also holds presentation states or reports still matches a CT rule',()=>{
+  const ct=rule(IDS[0],'Brain CT'),mr=rule(IDS[1],'Brain MR');ct.match.modality='CT';mr.match.modality='MR';
+  const value={version:1,activeRuleId:null,rules:[ct,mr]},sets=[display('1.2.1.1','1.2.1',1)];
+  const first=modality=>{const result=model.resolve(value,{studies:[{...studies()[0],modality}],displaySets:sets});return result.kind==='match'?result.rule.name:'none';};
+  // The study list joins Modalities in Study with commas; a DICOM value joins them with a backslash.
+  for(const modality of ['CT','CT,PR','CT,SR','PR,CT,SR','CT\\PR','ct, pr','CT,KO,SEG,DOC,RTSTRUCT','CT,CT,PR'])
+    assert.equal(first(modality),'Brain CT',modality);
+  for(const modality of ['MR,PR','SR,MR'])assert.equal(first(modality),'Brain MR',modality);
+  // Two kinds of images, or no images at all, still name no single modality: only an Any rule fits.
+  for(const modality of ['CT,MR','CT,MR,PR','PR','SR','PR,SR','',null])assert.equal(first(modality),'none',String(modality));
+  const sr=rule(IDS[0],'Report only');sr.match.modality='SR';
+  assert.equal(model.resolve({version:1,activeRuleId:null,rules:[sr]},{studies:[{...studies()[0],modality:'SR'}],displaySets:sets}).kind,'match','a study of one kind keeps its own modality');
+  // A rule written with the whole list still matches that same list, and only it.
+  const both=rule(IDS[0],'CT with PR');both.match.modality='CT,PR';const mixed=rule(IDS[0],'CT and MR');mixed.match.modality='CT,MR';
+  const one=(r,modality)=>model.resolve({version:1,activeRuleId:null,rules:[r]},{studies:[{...studies()[0],modality}],displaySets:sets}).kind;
+  assert.equal(one(both,'CT,PR'),'match');assert.equal(one(both,'CT'),'no-match');assert.equal(one(both,'PR,CT'),'no-match');
+  assert.equal(one(mixed,'CT,MR'),'match');assert.equal(one(mixed,'CT,MR,PR'),'no-match');
+  // The rule order and the series choice are untouched: the first matching rule wins, and the selector still picks among the study's series.
+  const any=rule(IDS[1],'Any');value.rules=[any,ct];
+  assert.equal(model.resolve(value,{studies:[{...studies()[0],modality:'CT,PR'}],displaySets:sets}).rule.name,'Any');
+  ct.selectors[0].modality='CT';value.rules=[ct];
+  const withPr=[{...display('1.2.1.9','1.2.1',0),Modality:'PR'},...sets];
+  assert.equal(model.resolve(value,{studies:[{...studies()[0],modality:'CT,PR'}],displaySets:withPr}).cells[0].SeriesInstanceUID,'1.2.1.1');
+});
+
 test('an attached picture without a Series Number is not the first series: the panel order in either direction',()=>{
   const value=library(),s=value.rules[0].selectors[0];
   // As the pinned stack handler builds a display set: SeriesNumber is instance.SeriesNumber || 0; the instance keeps its own.

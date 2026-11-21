@@ -257,3 +257,48 @@ test('a reviewed nobody overrides a single current directory holder', async t =>
   assert.equal((await db.userFilter.findFirst({ where: { owner: occupied } })).quick,'untouched');
   assert.equal((await db.userFilterCollection.findUnique({ where: { owner: occupied } })).revision,7);
 });
+
+test('an administrator replacement whose successor now has the predecessor\'s old email: the successor gets only their own draft', async t => {
+  const { db, tools, migrate } = await fixture(t);
+  process.env.KC_ISSUER ||= 'https://synthetic.invalid/realms/owner';
+  // Before the upgrade: the departed sole administrator wrote a draft and an unsigned version under the email they had;
+  // that email was since given to the successor (the departed account's email was changed). No reviewed history.
+  const X = 'SYN', mail = 'admin@hospital.example.test';
+  await db.memberRights.createMany({ data: [
+    { sub: 'departed', username: 'departed-login', email: 'departed-renamed@hospital.example.test', name: 'Synthetic',
+      emailVerified: true, approved: true, suspended: false, institution: X, roles: ['admin', 'radiologist'] },
+    { sub: 'successor', username: 'successor-login', email: mail, name: 'Synthetic',
+      emailVerified: true, approved: true, suspended: false, institution: X, roles: ['radiologist'] }] });
+  const study = uid(9);
+  await db.reportDraft.createMany({ data: [{ uid: study, author: mail, present: true, workUnit: 'disposal:'+randomUUID(),
+    workSince: new Date(), workIntent: 'approve', findings: 'the departed administrator\'s private draft' }] });
+  await db.reportVersion.createMany({ data: [{ uid: study, version: 1, action: 'save', author: mail,
+    findings: 'the departed administrator\'s unsigned version' }] });
+  await tools.configure(db, 'unknown', []);
+  await db.$disconnect();
+  await migrate();
+  // The operator's replacement (the real service on this database; the ledger records stand in as plain effects).
+  require(path.join(api, 'node_modules/reflect-metadata'));
+  const { AdminService } = require(path.join(api, 'dist/admin.service'));
+  const provider = { institutions: async () => [X],
+    getUser: async id => ({ id, username: id + '-login', email: id === 'successor' ? mail : id + '@hospital.example.test',
+      emailVerified: true, firstName: 'Synthetic', lastName: id, enabled: true, serviceAccountClientId: null, groups: [X], roles: [] }),
+    memberStanding: async () => ({ groups: [X], effectiveRoles: [] }) };
+  const work = { transactionWithRecords: (body, options) => db.$transaction(tx => body(tx, async (event, effect) => effect()), options),
+    resolveIdentity: async () => randomUUID(), resolveRequestIdentity: async () => randomUUID() };
+  const replaced = await new AdminService(db, provider, null, { publishCredentials() {} })
+    .replaceSoleAdmin('departed', 'successor', X, { name: 'ops', reason: 'synthetic hospital request' }, work);
+  assert.deepEqual([replaced.approvalState, [...replaced.roles].sort()], ['APPROVED', ['admin', 'radiologist']]);
+  // The successor writes their own draft of the same study and reads it back; the predecessor's never answers to them.
+  const successor = { ...login('successor', mail), roles: ['radiologist', 'admin'] };
+  const [{ author }] = await db.$queryRaw`SELECT draft_account_author(${'successor'}::text) AS author`;
+  await db.reportDraft.create({ data: { uid: study, author, authorSub: 'successor', authorLogin: mail, present: true,
+    workUnit: 'disposal:'+randomUUID(), workSince: new Date(), workIntent: 'approve', findings: 'the successor\'s own draft' } });
+  assert.equal((await draftOf(db, study, successor)).findings, 'the successor\'s own draft');
+  const version = await db.reportVersion.findFirst({ where: { uid: study, version: 1 } });
+  assert.equal(await storedVersionReadable(db, study, version, successor), false, 'the unsigned version is not the successor\'s');
+  // The predecessor's rows are kept as they were, unattributed.
+  const kept = await db.reportDraft.findFirst({ where: { uid: study, author: mail } });
+  assert.deepEqual([kept.authorSub, kept.findings], [null, 'the departed administrator\'s private draft']);
+  assert.deepEqual([version.authorSub, version.findings], [null, 'the departed administrator\'s unsigned version']);
+});

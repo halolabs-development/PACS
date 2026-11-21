@@ -92,6 +92,8 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
     },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
     reportDraftPurposeEnd: { findFirst: async () => null },
+    // The refused head names its signer by the member name, and an approval writes it (no member row here).
+    memberRights: { findMany: async () => [] },
   };
   const prisma = {
     studyGroupMember: { findMany: async () => [] },

@@ -522,9 +522,7 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.page.clock.install()
         self.open_main()
         self.select_and_type()
-        self.site.list_answers = [(500, {"code": "SYN_OUTAGE"})] * 2
-        self.page.clock.run_for(61000)
-        expect(self.page.locator("#dbstat")).to_contain_text("서버 연결 끊김")
+        self.go_offline()
         latest = "SYN typed offline"
         self.page.fill("#findings", latest)
         self.leave(h.PATIENT_B)
@@ -617,9 +615,13 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.assertEqual("preparing", self.screen(other)["state"])
 
     def go_offline(self, elapsed=61000):
+        """The server stops: two polls fail and so does the connection check they lead to (the member's access policy,
+        page-boot.js confirmConnection). A list that fails while that check answers is not a lost connection."""
         self.site.list_answers = [(500, {"code": "SYN_OUTAGE"})] * 2
+        self.site.gets["/api/study-access"] = (502, {"message": "SYN bad gateway"})
         self.page.clock.run_for(elapsed)
         expect(self.page.locator("#dbstat")).to_contain_text("서버 연결 끊김")
+        del self.site.gets["/api/study-access"]
 
     def test_u04_a_study_list_the_server_cannot_answer_makes_the_top_status_lost_and_clickable(self):
         """C-R03-144#6: a Refresh whose list read the server does not answer (5xx, no answer) asks once whether the server
@@ -630,18 +632,18 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         expect(status).to_contain_text("DB Connected")
         # The list alone fails while the server still answers: not a lost connection.
         self.site.list_answers = [(502, {"message": "SYN bad gateway"})]
-        checks = self.site.count("GET", "/api/bootstrap")
+        checks = self.site.count("GET", "/api/study-access")
         self.refresh()
-        self.wait_until(lambda: self.site.count("GET", "/api/bootstrap") > checks, "the connection check")
+        self.wait_until(lambda: self.site.count("GET", "/api/study-access") > checks, "the connection check")
         self.page.wait_for_timeout(150)
         expect(status).to_contain_text("DB Connected")
         # A 4xx is the server's own answer: no check.
         self.site.list_answers = [(400, {"code": "SYN_BAD_REQUEST", "message": "SYN refused"})]
-        checks, lists = self.site.count("GET", "/api/bootstrap"), self.site.count("GET", "/api/studies")
+        checks, lists = self.site.count("GET", "/api/study-access"), self.site.count("GET", "/api/studies")
         self.refresh()
         self.wait_until(lambda: self.site.count("GET", "/api/studies") > lists, "the refused list read")
         self.page.wait_for_timeout(150)
-        self.assertEqual(checks, self.site.count("GET", "/api/bootstrap"), "a 4xx list answer checks nothing")
+        self.assertEqual(checks, self.site.count("GET", "/api/study-access"), "a 4xx list answer checks nothing")
         expect(status).to_contain_text("DB Connected")
         # The server is gone: every API request gets the gateway's 502.
         def down(route):
@@ -668,19 +670,19 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.open_main()
         expect(status).to_contain_text("DB Connected")
         # The server stops: list reads and the connection check wait with no answer.
-        self.site.held_gets["/api/studies"], self.site.held_gets["/api/bootstrap"] = [], []
+        self.site.held_gets["/api/studies"], self.site.held_gets["/api/study-access"] = [], []
         self.refresh()
         self.wait_until(lambda: self.site.held_gets["/api/studies"], "the stalled list read")
         self.page.clock.run_for(60000)
         expect(banner).to_contain_text("서버가 제한 시간 안에 답하지 않았습니다")
         expect(banner).not_to_contain_text("요청을 취소했습니다")
-        self.wait_until(lambda: self.site.held_gets["/api/bootstrap"], "the connection check")
+        self.wait_until(lambda: self.site.held_gets["/api/study-access"], "the connection check")
         expect(status).to_contain_text("DB Connected")
         self.page.clock.run_for(60000)
         expect(status).to_contain_text("서버 연결 끊김")
         self.assertEqual("pointer", status.evaluate("el => el.style.cursor"))
         # The server is back: the click reconnects.
-        self.site.held_gets.pop("/api/studies"), self.site.held_gets.pop("/api/bootstrap")
+        self.site.held_gets.pop("/api/studies"), self.site.held_gets.pop("/api/study-access")
         status.click()
         expect(status).to_contain_text("DB Connected")
 
@@ -691,10 +693,10 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.open_main()
         expect(status).to_contain_text("DB Connected")
         self.site.list_answers = [(502, {"message": "SYN bad gateway"})]
-        self.site.held_gets["/api/bootstrap"] = []
+        self.site.held_gets["/api/study-access"] = []
         self.refresh()
-        self.wait_until(lambda: self.site.held_gets["/api/bootstrap"], "A's connection check held")
-        held = self.site.held_gets.pop("/api/bootstrap")
+        self.wait_until(lambda: self.site.held_gets["/api/study-access"], "A's connection check held")
+        held = self.site.held_gets.pop("/api/study-access")
         lists = self.site.count("GET", "/api/studies")
         self.refresh()
         self.wait_until(lambda: self.site.count("GET", "/api/studies") > lists, "B's list read")
@@ -714,10 +716,10 @@ class ReportTextBoundaries(h.LogoutDOMTest):
         self.page.clock.run_for(58000)
         expect(status).to_contain_text("DB Connected")
         self.site.list_answers = [(502, {"message": "SYN bad gateway"})]
-        self.site.held_gets["/api/bootstrap"] = []
+        self.site.held_gets["/api/study-access"] = []
         self.refresh()
-        self.wait_until(lambda: self.site.held_gets["/api/bootstrap"], "A's connection check held")
-        held = self.site.held_gets.pop("/api/bootstrap")
+        self.wait_until(lambda: self.site.held_gets["/api/study-access"], "A's connection check held")
+        held = self.site.held_gets.pop("/api/study-access")
         self.go_offline(elapsed=3000)
         self.site.held_gets["/api/colleagues"] = []
         status.click()

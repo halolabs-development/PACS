@@ -208,6 +208,10 @@ class ServedClinicalPages(unittest.TestCase):
         self.assertEqual(len(self.site.threads), 1)
 
     def select(self, page, uid):
+        if page != 'main':
+            # B14: Clinician Home opens on My Studies; these synthetic rows name no requesting physician.
+            self.page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+            self.page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies') && !b.hasAttribute('aria-current'))?.click()")
         self.page.locator(('#rows' if page == 'main' else '#studies') + f' tr[data-uid="{uid}"]').click()
 
     def open_questions(self, page):

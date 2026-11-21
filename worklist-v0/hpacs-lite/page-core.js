@@ -24,6 +24,11 @@
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
+    /** Who signed a report version: the member name the server sent with it (authorName), else the login shown as before. */
+    function signerName(version) {
+      const name = version?.authorName;
+      return typeof name === "string" && name ? name : displayActor(version?.author);
+    }
     /**
      * The report state table (server: report-visibility.ts): why this study's report text is not on this screen, from the
      * server's `prelimHidden` (no text for you) and `bodyLock` (the reason) - "" when the text is yours to read. Every screen

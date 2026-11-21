@@ -125,6 +125,26 @@ function contractSuite() {
     const admin = member();
     assert(A.parseAccessEvent(authEvent(A, { userId: known(admin), affectedIdentity: known(who), action: 'auth.logout', surface: 'PATCH admin/users/:id',
       auth: { endCause: 'isolation', failureCause: null, trigger: null } })));
+    // An operator's administrator replacement ends the replaced members' sessions as a service isolation, on its own
+    // surface only and only of a known member. The first-administrator, realm-import and sweep surfaces never isolate;
+    // the replacement surface never sweeps and is never a member's.
+    const operator = member('ops', 'urn:kin:pacs:operator');
+    const serviceEnd = (surface, more = {}) => authEvent(A, { userId: known(operator), affectedIdentity: known(who), executor: 'service',
+      cause: 'service-job', surface, action: 'auth.logout', trustedProxyIp: C.IN_PROCESS_SERVICE, rolesAtTime: known([]),
+      rightsVersion: { status: 'not-applicable', reason: 'in-process-service' },
+      actingInstitution: { status: 'not-applicable', reason: 'in-process-service' },
+      context: { basis: 'service-job', studyId: null, relatedStudyId: null, reason: null },
+      auth: { endCause: 'isolation', failureCause: null, trigger: null }, ...more });
+    assert.equal(A.parseAccessEvent(serviceEnd('service:sole-admin-replacement')).executor, 'service');
+    for (const surface of ['service:first-admin-designation', 'service:member-rights-import', 'service:auth-session-sweep', 'PATCH admin/users/:id'])
+      assert.throws(() => A.parseAccessEvent(serviceEnd(surface)), surface + ' never ends a session as a service isolation');
+    assert.throws(() => A.parseAccessEvent(serviceEnd('service:sole-admin-replacement', { affectedIdentity: unresolved('not-resolved') })),
+      'a replacement ends only a known member');
+    assert.throws(() => A.parseAccessEvent(serviceEnd('service:sole-admin-replacement', { action: 'auth.session.expired',
+      auth: { endCause: 'sweep', failureCause: null, trigger: null } })), 'the replacement surface never sweeps');
+    assert.throws(() => A.parseAccessEvent(authEvent(A, { userId: known(admin), affectedIdentity: known(who), action: 'auth.logout',
+      surface: 'service:sole-admin-replacement', auth: { endCause: 'isolation', failureCause: null, trigger: null } })),
+      'a member is never the executor on the replacement surface');
     // Refused: a clinical write dressed as authentication, a mismatched result, an extra key, clinical targets, a wrong end.
     for (const bad of [
       { action: 'write' }, { action: 'approve-sign' },

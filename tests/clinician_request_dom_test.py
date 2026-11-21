@@ -122,7 +122,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "clinical-signature.js")}
 MAIN = read_page_source(HPACS / "main.html")
 
 # The commit this unit (and S5-U4b) started from (main after S5-UI3) and the main commit that merged the S5-U4b/U4c
@@ -659,6 +659,13 @@ def has_hangul(text):
     return any(unicodedata.name(ch, "").startswith("HANGUL") for ch in text)
 
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
+
+
 class ImageRequestStructureTest(unittest.TestCase):
     """Stdlib side: where the change was (on the fixed commits), and where the hooks are now (on the live files)."""
 
@@ -986,6 +993,7 @@ class ClinicianRequestDOMTest(Harness):
     def open_home(self, script=None):
         self.files["clinician.js"] = SHIPPED["clinician.js"] if script is None else script
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
 
     def pick(self, n):

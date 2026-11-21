@@ -17,6 +17,39 @@
     function technicianItem(item) {
       return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
     }
+    /**
+     * B14: the top bar's mode menu (work-mode.js), opened from the HALO PACS mark; the Radiology / Technician tabs stay as they are. Radiologist
+     * and Technician are those tabs; Physician opens Clinician Home. The menu follows the tab shown, however it changed
+     * (a tab click, a saved search, ?mode=). Choosing a mode grants nothing: technicianWork() and the server still decide.
+     */
+    function mountWorkMode() {
+      const host = $("#work-mode-host");
+      if (!host || !window.KinWorkMode || host.firstChild) return;
+      const tabs = document.querySelector(".tabs");
+      // Up to 1199px the bar folds the mark away; More's Mode entry opens the same menu there (and closes More).
+      const more = $("#work-mode-more");
+      more?.addEventListener("click", () => { const panel = more.closest("details"); if (panel) panel.open = false; });
+      const menu = KinWorkMode.mount({ host, trigger: document.querySelector(".menubar .brand") || undefined, openers: [more],
+        current: () => mode === "Technician" ? "technician" : "radiologist",
+        choose: chosen => {
+          if (chosen === "physician") { location.assign("clinician.html"); return; }
+          const tab = chosen === "technician" ? "Technician" : "Radiology";
+          if (mode !== tab) document.querySelector(`.tabs > div[data-tab="${tab}"]`)?.click();
+        } });
+      if (tabs) new MutationObserver(() => menu.refresh()).observe(tabs, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    }
+    /** `main.html?mode=Technician|Radiology` (from the mode menu of Clinician Home): applied once, after the boot's default search. */
+    function applyRequestedMode() {
+      let asked = null;
+      try { asked = new URLSearchParams(location.search).get("mode"); } catch (_) { asked = null; }
+      if (asked !== "Technician" && asked !== "Radiology") return;
+      try {
+        const url = new URL(location.href);
+        url.searchParams.delete("mode");
+        history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+      } catch (_) {}
+      if (mode !== asked) setMode(asked);
+    }
     function applyRoleUi() {
       const rad = KinAuth.has("radiologist"), tec = technicianWork();
       studyPanel?.setAvailable(studyPanelAvailable());
@@ -34,7 +67,7 @@
         if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
-      ["#t-verify", "#t-unverify", "#t-modify"].forEach(s => {
+      ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
         if (!tec) el.title = TECHNICIAN_WORK_REASON;
       });
@@ -74,12 +107,36 @@
       } catch (e) { /* 이름 조회가 실패해도 이메일 표시는 유지한다. */ }
     }
 
-    /** 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다. */
+    /**
+     * 서버가 살아 있을 때. 재연결에서도 다시 불리므로 누적되는 조작을 하지 않는다.
+     * `b`가 null이면 서버는 답했지만 초기 목록(bootstrap)은 읽지 못한 재연결이다(영상 저장소만 멈춤 — reconnectAnswer):
+     * 연결·쓰기는 되살리고, 이 화면이 가진 오더·필터·상용구·기관 값은 그대로 둔다.
+     */
     function goOnline(b) {
       serverMode = true; offline = false;
       $('#consultations-open').disabled=!!demoMode;consultations.refresh();
       queryRetrieve?.sync();
       stopReconnect();
+      if (b) applyBootstrap(b);
+      mountWorklistFolders();
+      void reloadFolderSearches();
+      renderChips(); renderTemplates();
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
+      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
+      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
+      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
+      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
+      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
+      void showHeldSources();
+      startPolling();
+      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
+      reportSaveFailures.clear();
+      reconcileReportDrafts();
+      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
+      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
+    }
+    function applyBootstrap(b) {
       for (const [uid, state] of Object.entries(b.states ?? {})) appState[uid] = mergeObservedReportState(uid, state);
       orders = b.orders;
       myInstitution = b.me?.institution ?? null;
@@ -96,25 +153,8 @@
        * 계정에 붙인다고 해놓고 브라우저에 남은 것을 안 지우면 반쪽이다.
        */
       userFilters = personalSearches(b.filters);
-      mountWorklistFolders();
-      void reloadFolderSearches();
       templates = Array.isArray(b.templates) ? b.templates : [];
       try { localStorage.removeItem("kin-filters"); localStorage.removeItem("kin-templates"); } catch (e) {}
-      renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
-      // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
-      // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
-      // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
-      $("#roles").textContent = `${myInstitutionName} · ${roleText}`;
-      // D1882 수신 보류 알림은 관리자에게만, 보류가 있을 때만 보인다. 평소엔 0건이라 숨어 있어야 맞다.
-      void showHeldSources();
-      startPolling();
-      // 연결이 되살아났다: 앞서 실패해 멈춘 검사도 한 번 다시 보낸다(같은 거절이면 한 번 알리고 다시 멈춘다).
-      reportSaveFailures.clear();
-      reconcileReportDrafts();
-      // The rows that stand whether or not the server answers (questions, image requests, sent results) say so again.
-      (window.kinOnConnection || []).forEach(change => { try { change(); } catch (_) {} });
     }
 
     /**
@@ -156,10 +196,12 @@
     function serverUnanswered(e) {
       return !e?.auth && e?.name !== "AbortError" && !e?.stale && !e?.ownerChanged && !(Number.isInteger(e?.status) && e.status < 500);
     }
+    // The check reads only this member's access policy from the database (GET study-access): the image store is not asked,
+    // so a list that failed because only the image store stopped leaves the connection, the writes and the report as they are.
     async function confirmConnection(cause, at, current) {
       if (offline || !serverMode || !serverUnanswered(cause) || !current()) return;
       const connection = pollGeneration;
-      try { await api("GET", "/bootstrap?states=omit", undefined, undefined, at); }
+      try { await api("GET", "/study-access", undefined, undefined, at); }
       catch (e) {
         if (serverUnanswered(e))
           work.commit(at, () => { if (!offline && serverMode && connection === pollGeneration && current()) goOffline(cause); });
@@ -172,6 +214,19 @@
      */
     let reconnectTimer = null;
     function stopReconnect() { clearInterval(reconnectTimer); reconnectTimer = null; $("#dbstat").style.cursor = ""; }
+    // Whether the server is back is the same check as going offline (confirmConnection: the member's access policy, database
+    // only), not the initial list: that reads the image store too. When the list is not answered but the check is, the page
+    // reconnects with what it holds (null); the list read after it says on its own whether the list could be refreshed.
+    async function reconnectAnswer(at) {
+      try { return await api("GET", "/bootstrap", undefined, undefined, at); }
+      catch (e) {
+        if (!serverUnanswered(e) || !work.admits(at)) throw e;
+        // Answered is answered, as in confirmConnection: a refusal (4xx) is the server's own answer too.
+        try { await api("GET", "/study-access", undefined, undefined, at); }
+        catch (check) { if (serverUnanswered(check) || check?.auth || check?.stale || check?.ownerChanged) throw check; }
+        return null;
+      }
+    }
     function startReconnect() {
       if (reconnectTimer) return;
       reconnectTimer = setInterval(async () => {
@@ -180,7 +235,7 @@
         const at = work.capture("document");
         if (!work.admits(at)) return;
         try {
-          const b = await api("GET", "/bootstrap", undefined, undefined, at);
+          const b = await reconnectAnswer(at);
           if (!work.commit(at, () => goOnline(b))) return;
           await loadActorNames(at);
           await load();
@@ -192,7 +247,7 @@
       if (!offline) return;
       const at = work.capture("document");
       try {
-        const b = await api("GET", "/bootstrap", undefined, undefined, at);
+        const b = await reconnectAnswer(at);
         if (!work.commit(at, () => goOnline(b))) return;
         await loadActorNames(at); await load();
         work.commit(at, () => toast("서버에 다시 연결됐습니다", "ok"));
@@ -314,6 +369,7 @@
       renderHeads();
       renderTemplates();
       applyRoleUi();
+      mountWorkMode();
       if (!sess.demo) userFilters = [];
       mountWorklistFolders();
       $('#consultations-open').hidden=!(KinAuth.has('radiologist')||KinAuth.has('admin'));
@@ -359,6 +415,8 @@
       // FA-066 Export List: the search result in list order, the selection, and each cell's shown text (CELL markup read as text).
       worklistExport = window.KinWorklistExport?.mount?.({button:$('#worklist-export-open'),owner:()=>KinViewerOpening.key(KinAuth.session()),rows:orderedStudies,
         selected:()=>multiSelection?.snapshot()?.studyUids||[],columns:()=>COLS[mode],shown:shownColumns,notify:m=>toast(m),
+        // At Export the file is written from the rows the list holds then (a study gone from it is not written).
+        current:s=>studies.find(x=>x.uid===s.uid)||null,
         cellText:(s,c,no)=>c.k==='no'?String(no):CELL[c.k]?new DOMParser().parseFromString(CELL[c.k](s),'text/html').body.textContent.replace(/\s+/g,' ').trim():String(s[c.k]??'')});
       // FC-070 More › Query/Retrieve (query-retrieve.js): search a registered peer PACS and pull studies; an arrival reloads the list.
       queryRetrieve = window.KinQueryRetrieve?.mount?.({button:$('#query-retrieve-open'),panel:$('#query-retrieve'),api:API,transport,
@@ -476,6 +534,7 @@
             toast('기본 검색 오류(업무 화면·복합 조건)로 목록을 숨겼습니다. 다른 저장 검색을 적용하거나 Clear로 해제하세요.', 'err');
           }
         }
+        applyRequestedMode();
         await loadActorNames(at);
       } catch (e) {
         if (!work.admits(at)) return;

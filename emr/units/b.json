@@ -26,6 +26,7 @@
       "api/src/emr-runtime/limits.ts",
       "api/src/emr-runtime/manifest.ts",
       "api/src/emr-runtime/nest-lifecycle.ts",
+      "api/src/emr-runtime/operator-runtime.ts",
       "api/src/emr-runtime/record-port.ts",
       "api/src/emr-runtime/store.ts",
       "api/src/emr-audit/contract.ts",

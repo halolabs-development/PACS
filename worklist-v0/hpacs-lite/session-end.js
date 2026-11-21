@@ -67,7 +67,8 @@
       reportFrameEnded = true;
       reportOpening = null;
       leftNotes.clear();
-      for (const id of ["rows", "relrows", "user", "roles", "clinical", "thumbwrap", "ctx", "err", "leftnotes"]) $("#" + id)?.replaceChildren();
+      // The QC line and Protocol & Dose hold a study's own values too (the reason, who marked, recorded dose).
+      for (const id of ["rows", "relrows", "user", "roles", "clinical", "study-qc", "study-acquisition", "thumbwrap", "ctx", "err", "leftnotes"]) $("#" + id)?.replaceChildren();
       document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));
       document.querySelectorAll("dialog[open]").forEach(dialog => { if (!dialog.classList.contains("kin-logout")) dialog.close(); });
       document.documentElement.classList.add("kin-closed");

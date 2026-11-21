@@ -51,6 +51,9 @@
       Technician: [
         { k: "assignedReader", t: "Assigned Reader", f: "text" },
         { k: "techNote", t: "Tech Note", f: ["Yes", "None", "Cleared", "Unknown"] },
+        // QC Flag: the technician's image quality mark (the server's, pacs/qc-flag.ts). Unknown is a row whose mark has not
+        // been received; it is neither Flagged nor None.
+        { k: "qc", t: "QC Flag", f: ["Flagged", "None", "Unknown"] },
         { k: "no", t: "No", num: 1 },
         { k: "count", t: "Count", num: 1 },
         { k: "series", t: "Series", num: 1 },
@@ -128,12 +131,9 @@
       return Number.isFinite(until) && now >= until;
     }
     function reportStatusWord(a, now) { return reportFinalized(a, now) ? "Finalized" : RS_WORD[a?.rs] ?? a?.rs; }
-    /** 수정 창의 시각을 이 화면의 시간대로 MM-DD HH:mm. */
+    /** 수정 창의 시각 — 판독 화면의 시각 한 규칙(이 화면의 시간대로 YYYY-MM-DD HH:mm, report-preview.js paperStamp). */
     function amendTime(iso) {
-      const d = new Date(iso);
-      if (!Number.isFinite(d.getTime())) return "—";
-      const p = n => String(n).padStart(2, "0");
-      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      return KinReportPaper.paperStamp(typeof iso === "string" ? iso : "") || "—";
     }
     /**
      * 승인본(RS A)에서 Approve(= 24시간 안의 수정 뒤 다시 승인)를 열지와 그 단추의 설명. `edited`는 편집기의 글이 승인본과
@@ -149,7 +149,7 @@
         ? { open: true, title: `승인 후 24시간 안입니다 — 본문을 고쳐 다시 Approve할 수 있습니다 (${until}까지). 의뢰의 화면에 "수정됨(시각)"이 붙습니다` }
         : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
     }
-    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 MM-DD HH:mm까지, 수정됨 MM-DD HH:mm. */
+    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 (시각)까지, 수정됨 (시각). */
     function reportStatusParts(a, now) {
       if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];
@@ -173,9 +173,16 @@
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
+    function qcCellHtml(s) {
+      return s.qc === "Flagged" ? `<span class="qc-flag">Flagged</span> <span class="qc-reason" translate="no" data-kin-keep="title" title="${esc(s.qcMark.reason)}">${esc(s.qcMark.reason)}</span>`
+        : s.qc === "Unknown" ? `<span class="qc-unknown">Unknown</span>` : "";
+    }
     const CELL = {
       assignedReader:s=>`<button type="button" class="chip" data-reader-assignment="${esc(s.uid)}" ${!serverMode||demoMode||offline?'disabled':''}>${s.assignedReader?`<span translate="no">${esc(s.assignedReader)}</span>`:'Unassigned'}</button>`,
-      techNote: s => `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(s.id)} Tech Note ${noteLabel(s.uid)}" title="${noteHelp(s.uid)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${noteLabel(s.uid)}</button>`,
+      techNote: s => { const chip = noteChip(s.uid, s.id); return `<button type="button" class="chip" data-tech-note="${esc(s.uid)}" aria-label="${esc(chip.aria)}" title="${esc(chip.title)}" ${!serverMode || demoMode || offline ? 'disabled' : ''}>${esc(chip.label)}</button>`; },
+      // QC Flag: the word, and when flagged the reason (data: never translated or read as markup); the full reason is the title.
+      // The cell names its study so it can be drawn again by itself (qcFollowsList, worklist-data.js).
+      qc: s => `<span data-qc-uid="${esc(s.uid)}">${qcCellHtml(s)}</span>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
       rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;

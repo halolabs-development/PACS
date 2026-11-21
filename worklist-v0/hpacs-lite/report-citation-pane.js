@@ -7,7 +7,7 @@
     }
     function citationEntryText(entry, scope) {
       const C = KinReportCitation;
-      const when = entry?.insertedAt ? String(entry.insertedAt).replace("T", " ").slice(0, 16) : "시각 미확인";
+      const when = KinReportPaper.paperStamp(entry?.insertedAt) || "시각 미확인";
       // 작성자는 서버가 쓰는 값이고 삽입 응답에는 실려 오지 않는다. 화면이 그 자리를
       // 추측한 문자열로 채우면 증언이 아닌 것이 증언처럼 보인다 — 방금 넣은 건은
       // 그렇게 말하고, 다음 전용 읽기가 서버의 바이트로 바꾼다.

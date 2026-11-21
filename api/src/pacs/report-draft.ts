@@ -20,6 +20,8 @@ import type { PacsAudit } from './audit';
 import { nativeReportScope } from '../emr-report/native-snapshot';
 import { examScopeChanged, assertExamSource, resolveExamScope, prepareExamRead, examParentAccess, readableExamRecord, scopeIncludesSeries, ResolvedExamScope, ExamScopeRequest } from '../exam-merge.service';
 import type { PacsReportEvidence } from './report-evidence';
+import { citationArray } from '../report-citation';
+import { structureArray } from '../report-structure';
 import { relatedInsertInput, relatedInsertId, relatedEvidenceIds, relatedRequestHash, relatedProposalHash, relatedInsertionText,
   relatedInsertTargets,
   relatedOwnReceipt, relatedSameBinding, relatedReceiptHash, relatedResult, relatedInsertInvalid, relatedInsertRefusal, relatedInsertIdReused }
@@ -353,6 +355,22 @@ export class PacsReportDraft {
     const stored = await this.storeDraft(tx, uid, writer, row, content, 'approve', groupId ?? null);
     await record({ author: stored!.author, revision: draftToken(epoch, stored!.revision) });
     return true;
+  }
+
+  /**
+   * FC-040: the own draft of the reader who takes another reader's in-progress reading back to Unread. That Reset is not
+   * the reader cancelling their own reading (only the Reset that asks for a reason is): it never ends this draft. A live
+   * draft keeps its text, citations, structured items, drawings, exam group and work unit (no purpose end); only its base
+   * moves to the version this Reset made - an empty head, whose former text is on the `discarded` copy and its writer's
+   * draft. A row without a draft is written as the empty place it already is, so its revision still moves on and an older
+   * write of another tab does not land after this Reset.
+   */
+  async keepCallerDraft(tx: Prisma.TransactionClient, uid: string, c: Caller, row: any, version: number) {
+    if (!row?.present) return this.storeDraft(tx, uid, c, row, null);
+    return this.storeDraft(tx, uid, c, row, {
+      findings: row.findings, conclusion: row.conclusion, recommendation: row.recommendation, baseVersion: version,
+      citations: citationArray(row.citations), structured: structureArray(row.structured),
+    }, row.workIntent === 'addendum' ? 'addendum' : 'approve', row.groupId ?? null);
   }
 
   /**
