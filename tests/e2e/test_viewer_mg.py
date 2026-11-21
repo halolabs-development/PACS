@@ -4,8 +4,9 @@ their tissue against the chest wall each stored orientation names: current needs
 both axes): Mirrored point on eight cells (the same view only, in image coordinates through each image's stored
 orientation), Quadrant Zoom Next ×3 by the quarters of the breast as it was made, the I key, the lens, Breast Edge, Fit
 Breast and Match Size on the image as it was made, a synthetic five-frame DBT where Step
-Interval, Slab Thickness (pixel values in the cell and on its canvas, and back) and Play run on the real stack, and
-Mammo Keypad Patient ▶ between two patient tabs with a linked reading screen holding unconfirmed text."""
+Interval, Slab Thickness (pixel values in the cell and on its canvas, and back) and Play run on the real stack,
+Mammo Keypad Patient ▶ between two patient tabs with a linked reading screen holding unconfirmed text, and Add Key Image
+on breast images drawn flipped (stored orientation, Flip Horizontal) and on a DBT frame: the stored original and frame."""
 import json, os, re, time, unittest, uuid
 import numpy as np
 from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
@@ -16,6 +17,7 @@ from test_viewer_ux_priors import ViewerUXPriorsE2E
 from test_mammography_hanging import MammographyHangingE2E as MG
 from test_prior_selection import canvas_ready
 from invariants_live import Fixture, drop_viewer_rows
+from viewer_tools import image_tool
 
 # Per-cell state read from the viewer: identity from the image's metadata, the zoom and the focal point in image indices.
 CELLS = '''() => [...services.viewportGridService.getState().viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x).map(g=>{
@@ -384,7 +386,7 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         self.assertEqual(200, result.status, result.text)
         return {i['item']['title']: i['item'] for i in result.body['items'] if i['item']['kind'] == 'key'}
 
-    def test_mg_04_key_image_on_flipped_and_tomosynthesis_breast_images_names_the_stored_original(self):
+    def test_mg_05_key_image_on_flipped_and_tomosynthesis_breast_images_names_the_stored_original(self):
         # The earlier study's L images are stored flipped on both axes: the viewer draws them flipped back. A display mirror
         # flips the R MLO on the screen only. Either way the Key Image names the stored original and its frame.
         patient = 'MGKEY-' + uuid.uuid4().hex[:12]
@@ -396,8 +398,11 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
         self.history_panel(page)
         flipped = self.cell(page, prior.uid, 'L', 'CC')['id']
         mirrored = self.cell(page, prior.uid, 'R', 'MLO')['id']
-        page.evaluate('''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
-          v.setCamera({ flipHorizontal: !v.getCamera().flipHorizontal }); v.render(); }''', mirrored)
+        # The toolbar's own Flip Horizontal on the active R MLO cell (a screen-only flip).
+        page.evaluate('id => services.viewportGridService.setActiveViewportId(id)', mirrored)
+        page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=mirrored)
+        image_tool(page, 'flipHorizontal').click()
+        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id).getCamera().flipHorizontal', arg=mirrored, timeout=15000)
         before = {'L CC key': self.shown(page, flipped), 'R MLO key': self.shown(page, mirrored)}
         self.assertEqual((before['L CC key']['flipH'], before['L CC key']['flipV']), (True, True), before)
         self.assertEqual((before['R MLO key']['flipH'], before['R MLO key']['flipV']), (True, False), before)
