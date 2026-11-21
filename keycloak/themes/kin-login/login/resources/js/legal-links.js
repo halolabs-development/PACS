@@ -3,11 +3,12 @@
 // /worklist), so no new site is involved; a new tab keeps the login form and its session binding untouched. The parent
 // theme's templates are not copied: this only appends a footer.
 (() => {
+  // The names in the page's language (Keycloak writes the language it chose into <html lang>), the screens' own words.
   const NOTICES = [
-    ['/worklist/legal/privacy.html', 'Privacy Policy'],
-    ['/worklist/legal/operator-notice.html', 'Operator Notice'],
-    ['/worklist/legal/open-source-notices.html', 'Open Source Notices'],
-    ['/worklist/legal/accessibility.html', 'Accessibility'],
+    ['/worklist/legal/privacy.html', 'Privacy Policy', '개인정보 처리방침'],
+    ['/worklist/legal/operator-notice.html', 'Operator Notice', '운영자 고지'],
+    ['/worklist/legal/open-source-notices.html', 'Open Source Notices', '오픈소스 고지'],
+    ['/worklist/legal/accessibility.html', 'Accessibility', '접근성'],
   ];
 
   const addLinks = () => {
@@ -15,14 +16,15 @@
     const footer = document.createElement('footer');
     footer.id = 'kin-legal-links';
     footer.className = 'kin-legal-links';
+    const korean = /^ko\b/i.test(document.documentElement.lang || '');
     const nav = document.createElement('nav');
-    nav.setAttribute('aria-label', 'Notices');
-    for (const [href, label] of NOTICES) {
+    nav.setAttribute('aria-label', korean ? '고지' : 'Notices');
+    for (const [href, english, hangul] of NOTICES) {
       const link = document.createElement('a');
       link.href = href;
       link.target = '_blank';
       link.rel = 'noopener';
-      link.textContent = label;
+      link.textContent = korean ? hangul : english;
       nav.append(link);
     }
     footer.append(nav);
