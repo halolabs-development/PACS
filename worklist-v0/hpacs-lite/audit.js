@@ -1,5 +1,7 @@
 (() => {
   'use strict';
+  // Product words in the language this page took as it opened (worklist-language.js), or as written.
+  const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   const el = name => document.getElementById(`audit-${name}`);
   // Existing STATUTORY_ACT groups (emr-contract/access-event.ts); the API accepts actions.
   const actions = {
@@ -1104,7 +1106,7 @@
     incidentEl('register').elements.to.value = tomorrow.toISOString().slice(0, 16);
     rightsEl('receive').elements.receivedAt.value = new Date().toISOString().slice(0, 16);
     for (const name of ['receivedAt', 'checkedAt']) disclosureEl('receive').elements[name].value = new Date().toISOString().slice(0, 16);
-    ready = true; el('workspace').hidden = false; controls(); message('조건을 선택하고 Search로 조회하세요.');
+    ready = true; el('workspace').hidden = false; controls(); message(kinText('조건을 선택하고 Search로 조회하세요.'));
     // Pre-fill the intake forms; a refusal or failure here is said again when Receive Request is pressed.
     loadIntake().catch(() => {});
   }).catch(() => message('세션을 확인할 수 없습니다. 다시 로그인하세요.'));

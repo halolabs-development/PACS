@@ -19,6 +19,8 @@
  */
 (function (root) {
   'use strict';
+  // Product words in the language this page took as it opened (worklist-language.js), or as written.
+  const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
 
   const API = `${location.origin}/api`;
   // 워크리스트(study-pages.js)와 같은 쪽 크기이자 서버 상한(study-page.ts)이다.
@@ -240,7 +242,7 @@
   }
 
   function failure(status, body, fallback) {
-    const error = new Error(errorText(body) || fallback || '서버가 요청을 거절했습니다.');
+    const error = new Error(errorText(body) || kinText(fallback || '서버가 요청을 거절했습니다.'));
     error.status = status;
     error.code = body && typeof body.code === 'string' ? body.code : null;
     error.kin = true;
@@ -251,7 +253,7 @@
     const parts = [];
     if (error && error.status) parts.push(`HTTP ${error.status}`);
     if (error && error.code) parts.push(error.code);
-    const message = error && error.message ? error.message : '응답을 확인하지 못했습니다.';
+    const message = error && error.message ? error.message : kinText('응답을 확인하지 못했습니다.');
     return parts.length ? `${message} (${parts.join(' · ')})` : message;
   }
 
@@ -357,7 +359,7 @@
   function setListState(state, text, detail) {
     const box = $('#list-state');
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#list-retry').hidden = state !== 'failed';
     $('#studies').closest('table').setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
@@ -586,7 +588,7 @@
     button.hidden = selected === null;
     const back = closeTarget();
     const row = back === null ? null : byUid.get(back);
-    button.title = row ? TEXT.closeBack(`${day(row.date)} · ${dash(row.modality)} · ${dash(row.desc)}`) : TEXT.close;
+    button.title = row ? TEXT.closeBack(`${day(row.date)} · ${dash(row.modality)} · ${dash(row.desc)}`) : kinText(TEXT.close);
   }
 
   /**
@@ -629,10 +631,10 @@
     const key = patientKey(row);
     const peers = key === null ? [] : studies.filter(other => other.uid !== row.uid && patientKey(other) === key);
     if (!peers.length) {
-      note.textContent = `${TEXT.viewer} ${key === null ? TEXT.compareNoKey : TEXT.compareNone}`;
+      note.textContent = `${kinText(TEXT.viewer)} ${kinText(key === null ? TEXT.compareNoKey : TEXT.compareNone)}`;
       return;
     }
-    note.textContent = TEXT.viewer;
+    note.textContent = kinText(TEXT.viewer);
     const section = node('section');
     section.id = 'compare';
     section.dataset.uid = row.uid;
@@ -709,7 +711,7 @@
   function setReport(state, text, detail) {
     const box = $('#report-state');
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#report-retry').hidden = state !== 'failed';
   }
@@ -745,7 +747,7 @@
     $('#keys').hidden = true;
     $('#viewer-slot').hidden = true;
     $('#open-viewer').disabled = true;
-    $('#viewer-note').textContent = TEXT.viewer;
+    $('#viewer-note').textContent = kinText(TEXT.viewer);
     paintClose();
     clearRequests();
     const compare = $('#compare');
@@ -753,7 +755,7 @@
     clearTimeline();
     clearQuestions();
     const empty = $('#detail-empty');
-    empty.textContent = note || TEXT.pick;
+    empty.textContent = kinText(note || TEXT.pick);
     empty.hidden = false;
   }
 
@@ -1315,7 +1317,7 @@
     const box = $('#image-requests-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#image-requests-retry').hidden = state !== 'failed' && !retry;
   }
@@ -1789,7 +1791,7 @@
     const box = $('#timeline-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#timeline-retry').hidden = state !== 'failed';
   }
@@ -2310,7 +2312,7 @@
     const box = $('#questions-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#questions-retry').hidden = state !== 'failed';
   }
@@ -2462,7 +2464,7 @@
     if (!box) return;
     box.dataset.state = state;
     box.hidden = state === 'ready';
-    box.querySelector('.state-text').textContent = text;
+    box.querySelector('.state-text').textContent = kinText(text);
     box.querySelector('.state-detail').textContent = detail || '';
     $('#question-thread-retry').hidden = state !== 'failed';
   }
