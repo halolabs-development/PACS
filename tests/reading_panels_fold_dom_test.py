@@ -670,6 +670,36 @@ class ReadingPanelsFoldDOM(unittest.TestCase):
         settle(page)
         self.assertEqual(260, self.stored(page)['portrait'].get('top'))
 
+    PLACES = '''() => Object.fromEntries(['.right > .rw', '.related-p', '.report-p'].map(s => {
+      const b = document.querySelector(s).getBoundingClientRect(); return [s, [Math.round(b.y), Math.round(b.height)]]; }))'''
+
+    def test_24_the_study_panel_drawer_closing_in_a_narrow_window_moves_no_panel(self):
+        drawer = lambda page: page.get_by_role('complementary', name='Study Panel', exact=True)
+        cases = (('opened at 900x768', (900, 768), None), ('opened at 600x500, every panel open', (600, 500), plant(record())),
+                 ('opened at 840x768, folded names and AI Report tab', (840, 768),
+                  plant(record(collapsed=('thumbnail', 'imageReport', 'template')))))
+        for label, (width, height), init in cases:
+            with self.subTest(case=label):
+                page, _ = self.open(width=width, height=height, init=init)
+                page.locator('#rows tr[data-uid]').first.click()
+                settle(page)
+                home = page.evaluate(self.PLACES) if (width, height) == (840, 768) else None
+                page.keyboard.press('Control+Alt+5')
+                expect(drawer(page)).to_be_visible()
+                settle(page)
+                page.set_viewport_size({'width': 840, 'height': 768})
+                settle(page)
+                held = page.evaluate(self.PLACES)
+                if home:
+                    self.assertEqual(home, held, f'{label}: opening the drawer moved a panel')
+                page.keyboard.press('Escape')
+                expect(drawer(page)).to_have_count(0)
+                settle(page)
+                self.assertEqual(held, page.evaluate(self.PLACES), f'{label}: closing the drawer moved a panel')
+                if init is None or 'folded' in label:
+                    self.assertEqual([], page.evaluate(self.NARROW_CLINICAL)['buttons'], label)
+                self.doCleanups()
+
 
 if __name__ == '__main__':
     unittest.main()

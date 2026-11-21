@@ -12115,9 +12115,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       if (!studyPanel) studyPanelField = null;
       noteStudyPanelOpener(document.activeElement);
       workspaceState = KinWorkspaceLayout.toVersion3(workspaceState);
-      // The narrow sheet's band is as tall as its open panels (main.html); the drawer borrows them, so the band keeps
-      // the height it had until the drawer closes and opening or closing the drawer moves no panel.
-      if (!document.body.classList.contains('study-panel-open') && document.body.classList.contains('workspace-narrow')) {
+      // The narrow sheet's band (main.html, 601-899 px) keeps its panel row while the drawer borrows the panels; the
+      // folded names and AI Report tab rows above it lose what the drawer holds, so the band keeps the height it had
+      // until the drawer closes (or the window leaves the sheet, applyLayout) and the drawer moves no panel.
+      if (!document.body.classList.contains('study-panel-open') && document.body.classList.contains('workspace-narrow') && innerWidth > 600) {
         $('.right > .rw').style.setProperty('--kin-narrow-band-held', $('.right > .rw').getBoundingClientRect().height + 'px');
       }
       if (!studyPanel) {
@@ -12193,6 +12194,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         $('#rail-collapse')?.setAttribute('aria-expanded', String(!geometry.railCollapsed));
       }
       const left = $(".left"), related = $(".related-p"), top = $(".rw"), prior = $(".related-list-pane");
+      // A band height held while the drawer is open belongs to the narrow sheet it was taken in (openStudyPanel).
+      if (!(narrow && innerWidth > 600)) top.style.removeProperty('--kin-narrow-band-held');
       // Before any measuring below: the workflow mode and the hidden panels decide the band's panels and their columns.
       // Each column is its share of the shown shares; the last takes the remainder, as Template always has, so the
       // default band paints to the same sub-pixel as the percentage widths it replaces.
