@@ -1648,7 +1648,6 @@ window.KinLanguageTerms = {
     ["{n0}. {1} · 소견 r{2} · 인용 당시 연결 {3}", "{n0}. {1} · finding r{2} · link when cited {3}", "m"],
     ["판독문에 넣을 소견을 다시 고르세요 (1~20건, 같은 소견은 한 번)", "Select the findings to insert again (1 to 20, each finding once)", "m"],
     ["판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", "Inserted {n0} findings into the report — each finding's source record was saved in the same save", "m"],
-    ["서버의 답을 받지 못했지만 다시 읽어 기록된 것을 확인했습니다 — 같은 글을 판독문에 넣었습니다", "The server's answer did not arrive, but a fresh read shows it was recorded — the same text was put into the report", "m"],
     ["insert 배열은 1~{0}건이어야 합니다", "The insert list must hold 1 to {0} entries.", "m"],
     ["insert 배열의 건은 모두 같은 칸이어야 합니다", "Every entry of the insert list must be for the same field.", "m"],
     ["insert 배열에 같은 소견을 두 번 실을 수 없습니다", "The insert list cannot hold the same finding twice.", "m"],

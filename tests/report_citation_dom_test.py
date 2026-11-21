@@ -1442,11 +1442,9 @@ class ReportCitationDOMTest(unittest.TestCase):
         self.page.wait_for_function("()=>citeCalls.length>=2")
 
     def test_a_short_or_reordered_batch_answer_is_not_taken_as_saved(self):
-        # A short or duplicated answer is not saved, and the one read after it (the server row holds one id, or the same id
-        # twice) does not show the batch either. An answer that names another field is not taken as saved by itself; what
-        # the read finds then decides (the next case).
         for answer in ("[{cid: 'c-1', field: 'findings', insertedAt: 't'}]",
-                       "[{cid: 'c-1', field: 'findings', insertedAt: 't'}, {cid: 'c-1', field: 'findings', insertedAt: 't'}]"):
+                       "[{cid: 'c-1', field: 'findings', insertedAt: 't'}, {cid: 'c-1', field: 'findings', insertedAt: 't'}]",
+                       "[{cid: 'c-1', field: 'findings', insertedAt: 't'}, {cid: 'c-2', field: 'conclusion', insertedAt: 't'}]"):
             self.open(citations={"version": 1, "head": [], "draft": []})
             self.open_batch({}, self.SECOND)
             self.page.evaluate("reply({status: 200, body: {insertedAll: %s}})" % answer)
@@ -1456,19 +1454,6 @@ class ReportCitationDOMTest(unittest.TestCase):
             self.assertEqual([EXISTING, "", ""], value["text"], answer)
             self.page.close()
         self.page = self.browser.new_page()
-
-    def test_an_answer_naming_another_field_is_checked_by_one_read_of_the_server_row(self):
-        self.open(citations={"version": 1, "head": [], "draft": []})
-        self.open_batch({}, self.SECOND)
-        self.page.evaluate("reply({status: 200, body: {insertedAll: [{cid: 'c-1', field: 'findings', insertedAt: 't'},"
-                           " {cid: 'c-2', field: 'conclusion', insertedAt: 't'}]}})")
-        self.press_insert()
-        # The row holds the sent text and two new ids: that is a recorded write, put on the screen as such; the dedicated read
-        # then answers what each entry is.
-        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
-        value = self.page.evaluate("snapshot()")
-        self.assertEqual(EXISTING + "\n" + BLOCK + "\n" + self.SECOND["block"], value["text"][0])
-        self.assertIn("다시 읽어 기록된 것을 확인", value["toasts"][-1]["message"])
 
     def test_a_refused_batch_leaves_the_report_as_it_was(self):
         self.open(citations={"version": 1, "head": [], "draft": []})
@@ -1511,39 +1496,30 @@ class ReportCitationDOMTest(unittest.TestCase):
           };
         }""")
 
-    def test_a_lost_answer_to_a_recorded_batch_is_found_by_one_read_and_the_next_save_keeps_the_blocks(self):
-        self.open(citations={"version": 1, "head": [], "draft": []})
-        self.open_batch({}, self.SECOND)
-        self.lose_insert_answers()
-        self.page.evaluate("reply({status: 200, body: {insertedAll: [{cid: 'c1', field: 'findings', insertedAt: 't'}, {cid: 'c2', field: 'findings', insertedAt: 't'}]}})")
-        self.press_insert()
-        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
-        joined = EXISTING + "\n" + BLOCK + "\n" + self.SECOND["block"]
-        value = self.page.evaluate("snapshot()")
-        self.assertEqual(joined, value["text"][0], "the recorded blocks are put on the screen")
-        self.assertEqual([], value["converge"], "no mark that would send the old text")
-        self.assertIn("다시 읽어 기록된 것을 확인", value["toasts"][-1]["message"])
-        self.page.evaluate("autosaveTick()")
-        self.page.wait_for_timeout(300)
-        after = self.page.evaluate("uid=>contractRow(uid)", UID)
-        self.assertEqual(joined, after["snapshot"]["findings"], "the server row keeps both blocks")
-        self.assertEqual(["c1", "c2"], after["snapshot"]["citations"])
-
-    def test_a_lost_answer_to_a_recorded_single_insertion_is_found_the_same_way(self):
-        self.open(citations={"version": 1, "head": [], "draft": []})
-        self.open_pane()
-        self.lose_insert_answers()
-        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'c1', field: 'findings', insertedAt: 't'}}})")
-        self.press_insert()
-        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
-        value = self.page.evaluate("snapshot()")
-        self.assertEqual(EXISTING + "\n" + BLOCK, value["text"][0])
-        self.assertEqual([], value["converge"])
+    def test_a_lost_answer_to_a_recorded_insertion_is_reported_as_not_inserted_like_the_single_insert(self):
+        # The server records the insertion but its answer never arrives. As with the single Insert into Report, the screen
+        # reports failure, leaves the report text as it was and marks the study to converge on the server row.
+        for batch in (False, True):
+            self.open(citations={"version": 1, "head": [], "draft": []})
+            if batch:
+                self.open_batch({}, self.SECOND)
+            else:
+                self.open_pane()
+            self.lose_insert_answers()
+            self.page.evaluate("reply({status: 200, body: {insertedAll: [{cid: 'c1', field: 'findings', insertedAt: 't'}, {cid: 'c2', field: 'findings', insertedAt: 't'}]}})"
+                               if batch else "reply({status: 200, body: {inserted: {cid: 'c1', field: 'findings', insertedAt: 't'}}})")
+            self.press_insert()
+            self.page.wait_for_function("()=>$('#cite-preview-status').textContent.includes('인용하지 못했습니다')")
+            value = self.page.evaluate("snapshot()")
+            self.assertEqual([EXISTING, "", ""], value["text"], batch)
+            self.assertEqual([UID], value["converge"], batch)
+            self.page.close()
+        self.page = self.browser.new_page()
 
     def test_a_lost_answer_the_server_did_not_record_stays_unknown_and_moves_nothing(self):
         self.open(citations={"version": 1, "head": [], "draft": []})
         self.open_batch({}, self.SECOND)
-        # The request never reaches the server: nothing to find, the report stays as it was and the pane says so.
+        # The request never reaches the server: the report stays as it was and the pane says so.
         self.page.evaluate("""() => { const send = window.fetch; window.fetch = async function (url, opts) {
           if (opts?.method === 'PUT' && opts.body && JSON.parse(opts.body).insert !== undefined) { await new Promise(r => setTimeout(r, 10)); throw new TypeError('Response lost'); }
           return send(url, opts); }; }""")

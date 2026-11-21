@@ -157,21 +157,6 @@
      * 소견마다 넣을 글(그 건의 `insertedText`) — 블록(Write as Sentence를 켰으면 문장 서식), 그 아래 그 소견의 측정 줄(준비됐고
      * 그 소견에 줄이 있을 때만). 여러 소견이면 이 글들을 목록 순서로 LF 하나씩 이은 것이 `citeText`다.
      */
-    /**
-     * 답을 잃은 삽입이 서버에 섰는가 — 초안 줄의 전체 읽기 하나(check)로 본다. 선 것은 서버의 초안이 이 누름이 보낸 세 칸·기준 판
-     * 그대로이고, 인용 id가 쓰기 전 목록 전부에 서로 다른 새 id가 정확히 건 수만큼 더해졌을 때뿐이다. 그 밖(읽지 못함·다른 글·
-     * 다른 수)은 모르는 것 그대로다. 아무것도 쓰지 않는다.
-     */
-    async function landedInsert(uid, sent, kept, count, at) {
-      if (!Array.isArray(kept)) return null;
-      const checked = await draftClient.check(uid, { owner: draftOwner, context: at });
-      if (!checked || checked.outcome !== "ready") return null;
-      const now = draftClient.stored(uid), stored = now && now.snapshot;
-      if (!stored || !RFIELDS.every(k => (stored[k] ?? "") === (sent[k] ?? "")) || stored.baseVersion !== sent.baseVersion) return null;
-      const ids = stored.citations || [];
-      if (ids.length !== kept.length + count || new Set(ids).size !== ids.length || !kept.every(cid => ids.includes(cid))) return null;
-      return { revision: now.revision };
-    }
     function itemBlock(pane, item) {
       return pane.sentence && item.sentence ? item.sentence : item.block;
     }
@@ -572,20 +557,12 @@
         const one = (item, i) => ({ field, findingId: item.findingId, findingRevision: item.findingRevision,
           sourceIndex: item.sourceIndex, insertedText: texts[i],
           expectedLinkState: item.linkState, expectedHeadRevision: item.headRevision, ...(measures[i] || {}) });
-        // 이 쓰기가 딛고 선 인용 id 목록 — 답을 잃었을 때 서버가 이 삽입을 기록했는지 가르는 기준이다.
-        const keptBefore = draftClient.lists(pane.uid)?.citations?.slice() ?? null;
         const result = await draftClient.write(pane.uid, { ...content, baseVersion }, { owner: draftOwner, context: at,
           operation: { insert: pane.many ? pane.items.map(one) : one(pane.items[0], 0) } });
         // 이 삽입이 세운 표시는 이 삽입이 내린다(자기 것만).
         insertInFlight = false;
         wakeIdle();
-        /**
-         * 답을 잃은 삽입(결과 모름)은 수렴 표시를 세우기 전에 서버의 초안을 한 번 읽는다. 서버가 이 누름이 보낸 세 칸 그대로와
-         * 이 삽입의 건 수만큼 새 인용 id를 가졌으면 그 저장은 된 것이다 — 화면에도 같은 글을 놓는다. 그러지 않고 표시를 세우면
-         * 다음 자동 저장이 삽입 전 글을 보내 방금 기록된 블록을 지우고 인용만 남긴다.
-         */
-        const landed = result.outcome === "unknown" ? await landedInsert(pane.uid, { ...content, baseVersion }, keptBefore, pane.items.length, at) : null;
-        if (result.outcome !== "saved" && !landed) {
+        if (result.outcome !== "saved") {
           const untouched = insertLeftNoText(pristine, result);
           work.commit(at, () => {
             // 판독문은 한 글자도 바뀌지 않았다. 다만 이 요청이 서버에 닿았는지는 알 수 없으므로
@@ -604,9 +581,9 @@
           draftNotSaved(epoch.uid, at, result, { quiet: true, converge: !untouched });
           return;
         }
-        const answer = landed ? null : result.answer.body;
+        const answer = result.answer.body;
         if (!work.admits(at)) return;
-        appState[pane.uid] = { ...appState[pane.uid], draftRevision: landed ? landed.revision : result.envelope.revision };
+        appState[pane.uid] = { ...appState[pane.uid], draftRevision: result.envelope.revision };
         if (epoch.uid !== selectedUid || epoch.selSeq !== selectionSeq || epoch.seq !== citeSeq) {
           markConverge(epoch.uid);
           // 서버는 문장과 증언을 기록했을 수 있는데 화면은 그 `cid`를 쓰지 못했다.
@@ -647,17 +624,15 @@
         // 옛 서버의 200은 그 키를 버렸을 수 있다: 글 전체의 인용은 그대로 넓히고, 측정 기록 여부는 다음 인용 읽기가 말한다.
         // 여러 소견: 응답 대조(건수·순서·새 id·칸·측정 기록)는 초안 쓰기가 이미 했다. 화면이 지어낸 건으로 목록을 넓히지 않고
         // 인용 전용 읽기 한 번이 서버의 바이트(출처 포인터 포함)로 채운다 — 그때까지 유지 목록은 만들지 않는다.
-        // 다시 읽어 확인한 삽입은 새 id를 모른다 — 같은 규칙으로 전용 읽기가 채운다.
-        if (landed) { appState[pane.uid].draft = { ...content, baseVersion, at: new Date().toISOString() }; reportConverge.delete(pane.uid); }
-        if (pane.many || landed) invalidateCitations(pane.uid);
-        const recorded = !pane.many && !landed && !!measurement && answer?.inserted?.measurementRecorded === true;
-        const extended = !pane.many && !landed && !!answer?.inserted?.cid &&
+        if (pane.many) invalidateCitations(pane.uid);
+        const recorded = !pane.many && !!measurement && answer?.inserted?.measurementRecorded === true;
+        const extended = !pane.many && !!answer?.inserted?.cid &&
           citations.extend(pane.uid, { v: KinReportCitation.SCHEMA, cid: answer.inserted.cid, field,
             findingId: pane.findingId, findingRevision: pane.findingRevision, sourceIndex: pane.sourceIndex,
             linkStateAtInsert: pane.linkState, headRevisionAtInsert: pane.headRevision,
             insertedText: text, ...(recorded ? measurement : {}), insertedAt: answer.inserted.insertedAt, insertedBy: null,
             mine: true, sameTextCount: 1 });
-        if (!pane.many && !landed && (!extended || (measurement && !recorded))) invalidateCitations(pane.uid);
+        if (!pane.many && (!extended || (measurement && !recorded))) invalidateCitations(pane.uid);
         /**
          * 인용 삽입은 **본문을 바꿨다.** 구조화 건의 존재 상태는 그 본문에 대해 계산되므로
          * 지금 화면이 들고 있는 상태는 옛 것이다. 값이 바뀐 것은 없지만 "그 문장이 아직
@@ -679,8 +654,7 @@
         }
         closeCitePreview();
         renderDraftBar();
-        if (landed) toast("서버의 답을 받지 못했지만 다시 읽어 기록된 것을 확인했습니다 — 같은 글을 판독문에 넣었습니다", "ok");
-        else toast(pane.many ? kinSay("판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", pane.items.length)
+        toast(pane.many ? kinSay("판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", pane.items.length)
           : "판독문에 넣었습니다 — 같은 저장에 출처 증언이 함께 기록됐습니다", "ok");
       } finally {
         // 이 삽입이 잠근 창의 단추는 이 삽입이 푼다(자기 것만). 창을 다시 그리는 것은 문맥이 그대로일 때만 한다.
