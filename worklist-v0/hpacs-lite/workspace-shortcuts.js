@@ -64,6 +64,8 @@
     const status = el('span','',host); status.id='workspace-shortcuts-status'; status.setAttribute('role','status');
     // Its place in the bar (one line kept for it, beside the buttons where the bar has room) is reading-workspace.css's.
     const dialog = el('dialog','',d.body); dialog.id='workspace-shortcuts-dialog'; dialog.style.cssText='max-height:85vh;overflow:auto;width:640px;max-width:95vw;box-sizing:border-box;padding:20px;background:#111c2f;color:#d6e6ff;border:1px solid #718eaa;border-radius:8px';
+    // One look for every key field of the dialog (the work page's keys and the viewer's image tool keys).
+    const fieldCss='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';
     const title = el('h2','Workspace Shortcuts',dialog); title.id='workspace-shortcuts-title'; dialog.setAttribute('aria-labelledby',title.id);
     el('p','이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer 창의 새 Ctrl+Alt 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.',dialog);
     const tabs=el('div','',dialog);tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Shortcut scope');
@@ -79,7 +81,7 @@
     const fields = {};
     for (const id of ids) {
       const row=el('label',labels[id],panels[scope(id)]); row.style.cssText='display:grid;grid-template-columns:minmax(100px,1fr) minmax(130px,1fr);align-items:center;gap:12px;margin:8px 0';
-      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;kinWrite(field,kinSay('{t0} 단축키',kinSay(labels[id])),'aria-label');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';fields[id]=field;
+      const field=el('input','',row);field.readOnly=true;field.id='workspace-shortcut-'+id;kinWrite(field,kinSay('{t0} 단축키',kinSay(labels[id])),'aria-label');field.style.cssText=fieldCss;fields[id]=field;
       field.onkeydown=e=>{
         if (e.key==='Tab'||e.key==='Escape') return;
         e.preventDefault();e.stopPropagation();
@@ -117,7 +119,7 @@
         // A viewer tool's name as the viewer shows it (its own words, not this page's), so it is not translated here.
         const name=d.createElement('span');name.textContent=toolName(id);name.setAttribute('translate','no');row.append(name);
         const field=el('input','',row);field.readOnly=true;field.id='workspace-viewer-key-'+id;field.dataset.tool=id;
-        kinWrite(field,kinSay('{0} 단축키',toolName(id)),'aria-label');field.style.cssText='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';
+        kinWrite(field,kinSay('{0} 단축키',toolName(id)),'aria-label');field.style.cssText=fieldCss;
         setTool(field,values?.[id]??null);toolFields[id]=field;
         field.onkeydown=e=>{
           if(e.key==='Tab'||e.key==='Escape')return;

@@ -144,7 +144,7 @@ window.KinViewerUXShortcuts = (() => {
       if (!reason) { if (note) note.hidden = true; field.removeAttribute('aria-invalid'); return; }
       if (!note) {
         note = document.createElement('span'); note.id = 'kin-hotkey-note-' + ++notes; note.className = 'kin-hotkey-note';
-        note.style.cssText = 'display:block;padding:4px 0;text-align:left;font-size:12px;line-height:1.3;color:#fca5a5;white-space:normal';
+        note.style.cssText = 'display:block;padding:4px 0;text-align:left;font-size:12px;line-height:1.3;color:var(--kin-accent);white-space:normal';
         field.dataset.kinHotkeyNote = note.id; field.setAttribute('aria-describedby', note.id); field.after(note);
       }
       if (note.textContent !== reasons[reason]) note.textContent = reasons[reason];
