@@ -1,13 +1,17 @@
 """C1-2a safety contracts; synthetic Git/files only, no service mutations."""
+import contextlib
 import copy
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -31,6 +35,77 @@ _ComposeLoader.add_multi_constructor("!", lambda loader, suffix, node: (
 
 def compose_api(name):
     return yaml.load((ROOT / name).read_text(encoding="utf-8"), Loader=_ComposeLoader)["services"]["api"]
+
+
+STORAGE_REPORT = {"status": "not-detected", "backup_encryption": "configured", "locations": [
+    {"location": "kin-db:/var/lib/postgresql/data", "status": "not-detected", "detail": "/dev/sdb1"},
+    {"location": "backup root", "status": "unknown", "detail": "no host path"}]}
+
+
+def age_program():
+    """The pinned age the backup encrypts with (CI: KIN_TEST_AGE); its age-keygen sits beside it."""
+    program = os.environ.get("KIN_TEST_AGE") or shutil.which("age")
+    if not program:
+        raise RuntimeError("Set KIN_TEST_AGE to the pinned age program: the backup key is judged by encrypting with it")
+    return Path(program).absolute()
+
+
+def backup_configuration(config, **changes):
+    """A test-only backup encryption configuration at `config`, with a new age identity beside it."""
+    age = age_program()
+    key = config.with_name("backup-key.txt")
+    key.unlink(missing_ok=True)
+    subprocess.run([str(age.with_name("age-keygen" + age.suffix)), "-o", str(key)], check=True, capture_output=True)
+    body = {"format": 1, "age": str(age), "current": "k1", "files": {"k1": str(key)}, **changes}
+    config.write_text(json.dumps(body), encoding="utf-8")
+    return body
+
+
+def lsblk(*chain):
+    """lsblk --json --inverse of a device built on `chain` (each a (name, type) or a list of such chains)."""
+    def node(items):
+        (name, kind), rest = items[0], items[1:]
+        entry = {"name": name, "type": kind}
+        if rest:
+            entry["children"] = [node(branch) for branch in rest[0]] if isinstance(rest[0], list) else [node(rest)]
+        return entry
+    return json.dumps({"blockdevices": [node(chain)]})
+
+
+class FakeHost:
+    """findmnt, lsblk and docker inspect answers of one synthetic Linux host; anything else fails like a missing tool."""
+
+    def __init__(self, mounts, filesystems, devices, btrfs=None):
+        self.mounts, self.filesystems, self.devices, self.btrfs = mounts, filesystems, devices, btrfs or {}
+        self.commands = []
+
+    def run(self, args, **kwargs):
+        self.commands.append(list(args))
+        answer = None
+        if args[:2] == ["docker", "inspect"] and args[2] in self.mounts:
+            answer = json.dumps([{"Mounts": self.mounts[args[2]]}])
+        elif args[0] == "findmnt" and args[-1] in self.filesystems:
+            source, fstype, uuid_ = self.filesystems[args[-1]]
+            answer = json.dumps({"filesystems": [{"source": source, "fstype": fstype, "uuid": uuid_}]})
+        elif args[0] == "lsblk" and args[-1] in self.devices:
+            answer = self.devices[args[-1]]
+        return SimpleNamespace(returncode=0 if answer is not None else 1, stdout=(answer or "").encode(), stderr=b"")
+
+    def listdir(self, path):
+        uuid_ = path.split("/")[4]
+        if uuid_ not in self.btrfs:
+            raise FileNotFoundError(path)
+        return self.btrfs[uuid_]
+
+    def report(self, backup_root=None):
+        with patch.object(ops, "run", side_effect=self.run), patch.object(deploy.sys, "platform", "linux"), \
+                patch.object(deploy.os, "listdir", side_effect=self.listdir), \
+                patch.object(deploy, "backup_key_state", return_value="configured"):
+            return deploy.storage_encryption(backup_root)
+
+
+def volume(destination, source, *, rw=True, driver="local", kind="volume"):
+    return {"Type": kind, "Destination": destination, "Source": source, "Driver": driver, "RW": rw}
 
 
 def request():
@@ -277,11 +352,16 @@ class PreflightTests(unittest.TestCase):
                 patch.object(ops, "require_local_docker"), \
                 patch.object(deploy, "check_repository", return_value={body["previous_sha"]: "old", body["target_sha"]: "new"}), \
                 patch.object(deploy, "check_image"), patch.object(deploy, "check_running_api"), \
+                patch.object(deploy, "storage_encryption", return_value=STORAGE_REPORT), \
+                contextlib.redirect_stderr(io.StringIO()) as line, \
                 patch.object(ops, "text", return_value='[{}]') as commands:
             result = deploy.preflight(body)
         self.assertTrue(result["preflight_passed"])
         self.assertFalse(result["deployment_authorized"])
         self.assertFalse(result["automatic_rollback_authorized"])
+        self.assertEqual(result["storage_encryption"], STORAGE_REPORT, "reported, and the preflight still passes")
+        self.assertEqual(line.getvalue().strip(), "storage encryption: not-detected (kin-db:/var/lib/postgresql/data=not-detected, "
+                                                  "backup root=unknown); backup encryption: configured")
         self.assertEqual([call.args[0] for call in commands.call_args_list], [
             ["docker", "image", "inspect", body["previous_api_image"]],
             ["docker", "image", "inspect", body["target_api_image"]], ["docker", "inspect", "kin-api"]])
@@ -294,6 +374,177 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(result.stdout, b"")
             self.assertNotIn(b"must-not-leak", result.stderr)
             self.assertFalse(json.loads(result.stderr)["deployment_authorized"])
+
+
+class StorageEncryptionTests(unittest.TestCase):
+    """The storage report: every writable data location of the site and the backup root, each encrypted only when every
+    device under it reaches a crypt layer; a warning in the observation, never a refusal."""
+    PG, ORTHANC, STATE = "/var/lib/docker/volumes/kin_pg/_data", "/var/lib/docker/volumes/kin_orthanc/_data", "/var/lib/docker/volumes/kin_state/_data"
+    LUKS_LVM = lsblk(("vg-data", "lvm"), ("luks-1", "crypt"), ("sda3", "part"), ("sda", "disk"))
+    PLAIN = lsblk(("sdb1", "part"), ("sdb", "disk"))
+
+    def mounts(self):
+        return {"kin-db": [volume("/var/lib/postgresql/data", self.PG), volume("/var/lib/postgresql/emr-access", self.PG)],
+                "kin-orthanc": [volume("/var/lib/orthanc/db", self.ORTHANC), volume("/etc/orthanc", "/srv/site/orthanc.json", rw=False, kind="bind"),
+                                {"Type": "tmpfs", "Destination": "/tmp", "RW": True}],
+                "kin-api": [volume("/var/lib/kin-emr", self.STATE), volume("/var/lib/orthanc/db", self.ORTHANC, rw=False)]}
+
+    def statuses(self, report):
+        return {row["location"]: row["status"] for row in report["locations"]}
+
+    def test_luks_under_lvm_everywhere_is_encrypted(self):
+        filesystems = {path: ("/dev/mapper/vg-data", "ext4", "u1") for path in (self.PG, self.ORTHANC, self.STATE, "/srv/backups")}
+        host = FakeHost(self.mounts(), filesystems, {"/dev/mapper/vg-data": self.LUKS_LVM})
+        report = host.report("/srv/backups")
+        self.assertEqual(report["status"], "encrypted")
+        self.assertEqual(self.statuses(report), {"kin-db:/var/lib/postgresql/data": "encrypted", "kin-db:/var/lib/postgresql/emr-access": "encrypted",
+                                                 "kin-orthanc:/var/lib/orthanc/db": "encrypted", "kin-api:/var/lib/kin-emr": "encrypted",
+                                                 "backup root": "encrypted"}, "writable data only: no read-only bind, no tmpfs")
+        self.assertEqual(sum(command[0] == "lsblk" for command in host.commands), 1, "one device is examined once")
+        self.assertTrue(deploy.storage_valid(report))
+
+    def test_one_plain_location_is_not_detected_and_an_unseen_one_unknown(self):
+        filesystems = {self.PG: ("/dev/mapper/vg-data", "ext4", "u1"), self.ORTHANC: ("/dev/sdb1", "xfs", "u2"),
+                       self.STATE: ("/dev/mapper/vg-data", "ext4", "u1")}
+        host = FakeHost(self.mounts(), filesystems, {"/dev/mapper/vg-data": self.LUKS_LVM, "/dev/sdb1": self.PLAIN})
+        report = host.report()
+        self.assertEqual(report["status"], "not-detected")
+        self.assertEqual(self.statuses(report)["kin-orthanc:/var/lib/orthanc/db"], "not-detected")
+        self.assertEqual(self.statuses(report)["backup root"], "unknown", "no backup root given")
+        self.assertEqual(deploy.storage_line(report).split(";")[0].split(" (")[0], "storage encryption: not-detected")
+
+    def test_a_volume_built_on_one_encrypted_and_one_plain_device_is_not_encrypted(self):
+        spanning = lsblk(("vg-data", "lvm"), [[("luks-1", "crypt"), ("sda3", "part")], [("sdc1", "part"), ("sdc", "disk")]])
+        filesystems = {path: ("/dev/mapper/vg-data", "ext4", "u1") for path in (self.PG, self.ORTHANC, self.STATE, "/srv/backups")}
+        report = FakeHost(self.mounts(), filesystems, {"/dev/mapper/vg-data": spanning}).report("/srv/backups")
+        self.assertEqual(set(self.statuses(report).values()), {"not-detected"})
+
+    def test_btrfs_subvolumes_and_every_member_device(self):
+        filesystems = {path: ("/dev/mapper/luks-a[/@kin]", "btrfs", "b1") for path in (self.PG, self.ORTHANC, self.STATE, "/srv/backups")}
+        devices = {"/dev/dm-0": lsblk(("luks-a", "crypt"), ("sda2", "part")), "/dev/dm-1": lsblk(("luks-b", "crypt"), ("sdb2", "part")),
+                   "/dev/sdc2": self.PLAIN}
+        self.assertEqual(FakeHost(self.mounts(), filesystems, devices, {"b1": ["dm-0", "dm-1"]}).report("/srv/backups")["status"], "encrypted")
+        report = FakeHost(self.mounts(), filesystems, devices, {"b1": ["dm-0", "sdc2"]}).report("/srv/backups")
+        self.assertEqual(report["status"], "not-detected", "one plain member device")
+        self.assertEqual(FakeHost(self.mounts(), filesystems, devices).report("/srv/backups")["status"], "unknown", "members not readable")
+
+    def test_what_this_host_cannot_see_is_unknown(self):
+        mounts = self.mounts()
+        mounts["kin-orthanc"][0] = volume("/var/lib/orthanc/db", "/remote", driver="nfs-driver")
+        filesystems = {self.PG: ("overlay", "overlay", None), self.STATE: ("server:/export", "nfs4", None)}
+        host = FakeHost(mounts, filesystems, {})
+        report = host.report("/srv/missing")
+        self.assertEqual(report["status"], "unknown")
+        self.assertEqual(set(self.statuses(report).values()), {"unknown"})
+        report = FakeHost({}, {}, {}).report()
+        self.assertEqual([row["location"] for row in report["locations"]], [*deploy.STORAGE_CONTAINERS, "backup root"],
+                         "a container that cannot be inspected is reported, not skipped")
+        with patch.object(deploy.sys, "platform", "win32"), patch.object(deploy, "backup_key_state", return_value="absent"):
+            report = deploy.storage_encryption("/srv/backups")
+        self.assertEqual((report["status"], report["locations"][0]["detail"]), ("unknown", "not Linux"))
+        self.assertTrue(deploy.storage_valid(report))
+
+    def test_a_refused_or_failing_read_is_unknown_never_an_error(self):
+        """The protected deployment entry admits only its fixed git/docker commands through ops.run: the report's other
+        reads are refused there, and the observation must still be made (the report is a warning)."""
+        def protected(args, *, input_data=None, timeout=60, check=True, **kwargs):
+            if args[0] not in ("git", "docker") or kwargs:
+                raise RuntimeError("Invalid protected deployment state")
+            return SimpleNamespace(returncode=0, stdout=json.dumps([{"Mounts": [volume("/var/lib/postgresql/data", self.PG)]}]).encode())
+        for failure in (protected, RuntimeError("daemon"), subprocess.TimeoutExpired("findmnt", 30), OSError("no tool")):
+            with self.subTest(failure=type(failure).__name__), patch.object(ops, "run", side_effect=failure), \
+                    patch.object(deploy.sys, "platform", "linux"), patch.object(deploy, "backup_key_state", return_value="absent"):
+                report = deploy.storage_encryption("/srv/backups")
+            self.assertEqual(report["status"], "unknown")
+            self.assertTrue(deploy.storage_valid(report))
+        with patch.object(ops, "backup_key", side_effect=KeyError("files")), tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "backup-encryption.json"
+            config.write_text("{}")
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual(deploy.backup_key_state(), "invalid")
+
+    def test_backup_key_state(self):
+        """`configured` is the backup's own verdict (ops.usable_backup_key) for the actual backup root and checkout:
+        never said of a key the backup would refuse, and never without the backup root."""
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            config, root = folder / "keys" / "backup-encryption.json", folder / "backups"
+            root.mkdir(mode=0o700)   # a backup root is its account's private directory; the admission refuses any other
+            config.parent.mkdir()
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual((deploy.backup_key_state(root), deploy.backup_key_state()), ("absent", "absent"))
+                config.write_text("{}")
+                self.assertEqual((deploy.backup_key_state(root), deploy.backup_key_state()), ("invalid", "invalid"))
+                body = backup_configuration(config)
+                self.assertEqual(deploy.backup_key_state(root), "configured")
+                # Without the backup root the configuration and key are only read: nothing is run, nothing is said.
+                with patch.object(ops, "age_bytes", side_effect=AssertionError("age was run")):
+                    self.assertEqual(deploy.backup_key_state(), "unknown")
+                    with patch.object(deploy.sys, "platform", "win32"):
+                        self.assertEqual(deploy.storage_encryption()["backup_encryption"], "unknown")
+                # The report passes the actual backup root and checkout on to that one check.
+                with patch.object(deploy.sys, "platform", "win32"):
+                    self.assertEqual(deploy.storage_encryption(root)["backup_encryption"], "configured")
+                    self.assertEqual(deploy.storage_encryption(root, config.parent)["backup_encryption"], "invalid",
+                                     "the key is inside the installation's checkout")
+                    self.assertEqual(deploy.storage_encryption(config.parent)["backup_encryption"], "invalid",
+                                     "the key is inside the backup root")
+                    # The destination belongs to the same admission: a backup root inside the checkout is refused by
+                    # the backup, so it is never reported as configured.
+                    site = folder / "site"
+                    self.assertEqual(deploy.storage_encryption(site / "backups", site)["backup_encryption"], "invalid")
+                    self.assertEqual(deploy.storage_encryption(root, site)["backup_encryption"], "configured")
+                    with self.assertRaisesRegex(RuntimeError, "outside the Git repository"):
+                        ops.backup_admission(site / "backups", checkout=site)
+                if os.name == "posix":
+                    # The daily backup runs as the backup root's owner; another account cannot speak for it.
+                    with patch.object(deploy.os, "geteuid", return_value=os.geteuid() + 1):
+                        self.assertEqual(deploy.backup_key_state(root), "unknown")
+                # A well-formed identity that age refuses (a mistyped key): the backup refuses it, so does the report.
+                Path(body["files"]["k1"]).write_text("AGE-SECRET-KEY-1" + "Q" * 58 + "\n")
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
+                with self.assertRaisesRegex(ops.BackupEncryptionError, "Backup encryption failed"):
+                    ops.usable_backup_key(root)
+                self.assertEqual(deploy.backup_key_state(), "unknown")
+            # A configuration path this account cannot look at is reported, never raised out of the warning.
+            with patch.object(deploy.Path, "exists", side_effect=PermissionError("denied")):
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
+                with patch.object(deploy.sys, "platform", "win32"):
+                    self.assertTrue(deploy.storage_valid(deploy.storage_encryption("/srv/backups")))
+        for state in deploy.BACKUP_KEY_STATES:
+            self.assertTrue(deploy.storage_valid({**STORAGE_REPORT, "backup_encryption": state}))
+        self.assertFalse(deploy.storage_valid({**STORAGE_REPORT, "backup_encryption": "usable"}))
+
+    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
+    def test_an_age_program_that_cannot_run_or_does_not_encrypt_is_not_configured(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            root = folder / "backups"
+            root.mkdir(mode=0o700)
+            (folder / "keys").mkdir()
+            program = folder / "keys" / "age-copy"
+            shutil.copyfile(age_program(), program)
+            program.chmod(0o600)
+            config = folder / "keys" / "backup-encryption.json"
+            backup_configuration(config, age=str(program))
+            with patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(config)}):
+                self.assertEqual(deploy.backup_key_state(root), "invalid")
+                program.chmod(0o700)
+                self.assertEqual(deploy.backup_key_state(root), "configured")
+                program.write_bytes(b"#!/bin/sh\nexit 0\n")
+                self.assertEqual(deploy.backup_key_state(root), "invalid", "a program that runs but does not encrypt")
+
+    def test_storage_only_cli_reports_without_request_or_lock(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = {**os.environ, "KIN_BACKUP_ENCRYPTION": str(Path(folder) / "absent.json")}
+            result = subprocess.run([sys.executable, deploy.__file__, "--storage-only", "--backup-root", folder],
+                                    capture_output=True, env=env, cwd=folder)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertTrue(deploy.storage_valid(report))
+        self.assertEqual(report["backup_encryption"], "absent")
+        self.assertTrue(result.stderr.decode().startswith("storage encryption: "))
+        self.assertFalse((ops.ROOT / ".kin-ops.lock").exists())
 
 
 def rows(*spec):

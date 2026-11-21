@@ -8,6 +8,7 @@ docker CLI of tests/ops_audit_integrity_test.py.
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import copy
 from datetime import datetime, timedelta, timezone
@@ -16,11 +17,13 @@ import json
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import stat
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -30,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ops_backup as ops
 import ops_audit_integrity as audit
+import ops_deploy_preflight as preflight
 import ops_monitor as monitor
 from ops_audit_integrity_test import FakeDocker, verifier_answer
 
@@ -37,6 +41,160 @@ PRESENT = {"state": "present", "statements": {"insert": "accepted", "update": "r
                                               "truncate": "refused"}}
 INEFFECTIVE = {"state": "ineffective", "statements": {"insert": "accepted", "update": "accepted", "delete": "refused",
                                                       "truncate": "refused"}}
+
+
+def age_program():
+    """The pinned age the backup encrypts with (CI: KIN_TEST_AGE); its age-keygen sits beside it."""
+    program = os.environ.get("KIN_TEST_AGE") or shutil.which("age")
+    if not program:
+        raise RuntimeError("Set KIN_TEST_AGE to the pinned age program: every new daily backup is encrypted")
+    return Path(program).absolute()
+
+
+def write_encryption_config(folder, key_ids=("test-1",), current=None, workspace=True):
+    """A test-only backup encryption configuration in `folder`: fresh identities, the workspace beside them."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    age = age_program()
+    keygen = age.with_name("age-keygen" + age.suffix)
+    files = {}
+    for key_id in key_ids:
+        path = folder / (key_id + ".key")
+        if not path.exists():
+            subprocess.run([str(keygen), "-o", str(path)], check=True, capture_output=True)
+        files[key_id] = str(path)
+    body = {"format": 1, "age": str(age), "current": current or key_ids[-1], "files": files}
+    if workspace:
+        (folder / "open").mkdir(exist_ok=True)
+        body["workspace"] = str(folder / "open")
+    config = folder / "backup-encryption.json"
+    config.write_text(json.dumps(body), encoding="utf-8")
+    return config
+
+
+def sealed_metadata(folder):
+    """The manifest a restore reads of an encrypted daily set: its sealed role catalog and plaintext digests."""
+    manifest = json.loads((Path(folder) / "manifest.json").read_text(encoding="utf-8"))
+    return ops.plaintext_manifest(manifest, ops.backup_key(manifest["encryption"]["key_id"]))
+
+
+def as_plaintext_set(folder):
+    """The set as a backup written before encryption existed left it: plaintext components, no encryption record."""
+    folder = Path(folder)
+    with ops.opened_set(folder) as opened:
+        for name in opened.manifest["sha256"]:
+            shutil.copyfile(opened.path / name, folder / name)
+        ops.write_json(folder / "manifest.json", opened.manifest)
+    return json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+
+
+def reseal(folder, components):
+    """Rewrite components of an encrypted set as only its key holder could: encrypted, sealed and authenticated anew."""
+    folder = Path(folder)
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    key = ops.backup_key(manifest["encryption"]["key_id"])
+    plain = ops.plaintext_manifest(manifest, key)
+    metadata = {"plaintext": {name: {"sha256": plain["sha256"][name], "bytes": plain["bytes"][name]} for name in plain["sha256"]}}
+    if "role_catalog" in plain:
+        metadata["role_catalog"] = plain["role_catalog"]
+    for name, data in components.items():
+        (folder / name).unlink()
+        with ops.SealedComponent(folder / name, key) as sink:
+            sink.write(data)
+        metadata["plaintext"][name] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+        manifest["sha256"][name], manifest["bytes"][name] = ops.digest(folder / name), (folder / name).stat().st_size
+    manifest["encryption"]["sealed"] = base64.b64encode(ops.age_bytes(key, json.dumps(metadata).encode("utf-8"))).decode("ascii")
+    manifest["encryption"]["auth"] = ops.manifest_auth(manifest, key)
+    ops.write_json(folder / "manifest.json", manifest)
+    return manifest
+
+
+def refused_before_restore(test, folder, pattern, opening, **options):
+    """The rehearsal refuses with `pattern` and nothing of a restore happened: no Docker command at all, nothing in
+    the opening workspace `opening`, no rehearsal result."""
+    before, results = set(opening.iterdir()), set(folder.glob("rehearsal-*.json"))
+    with patch.object(ops, "run") as run, patch.object(ops, "text") as text, \
+            patch.object(ops, "temporary_run") as helper, contextlib.redirect_stdout(io.StringIO()):
+        with test.assertRaisesRegex(RuntimeError, pattern):
+            ops.rehearse(folder, **options)
+    test.assertEqual((run.call_args_list, text.call_args_list, helper.call_args_list), ([], [], []))
+    test.assertEqual(set(opening.iterdir()), before)
+    test.assertEqual(set(folder.glob("rehearsal-*.json")), results)
+
+
+def restore_wrapping_cli(folder, destination, *extra):
+    """The standalone `restore-wrapping` command; returns its error (None when it wrote the key copies)."""
+    with patch.object(sys, "argv", ["ops_backup.py", "restore-wrapping", str(folder), "--destination", str(destination), *extra]), \
+            contextlib.redirect_stdout(io.StringIO()):
+        try:
+            ops.main()
+        except RuntimeError as error:
+            return error
+    return None
+
+
+@contextlib.contextmanager
+def another_run(source, arguments, environment=None, *, kill):
+    """`source` in a new Python process, up to where it prints the private folder it works in and waits; yields that
+    folder. Then the process is killed (none of its cleanup code runs) or let to finish normally."""
+    child = subprocess.Popen([sys.executable, "-B", "-c", source, str(Path(ops.__file__).parent), *map(str, arguments)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env={**os.environ, **(environment or {})})
+    stalled = threading.Timer(120, child.kill)   # a run that never reports must not hold the suite
+    stalled.start()
+    try:
+        line = child.stdout.readline().decode("utf-8").strip()
+        if not line:
+            child.kill()
+            raise AssertionError("the other run did not start: " + child.stderr.read().decode("utf-8", "replace")[-800:])
+        yield Path(line)
+    finally:
+        if kill:
+            child.kill()
+        else:
+            child.stdin.close()
+        child.wait()
+        stalled.cancel()
+        for stream in (child.stdin, child.stdout, child.stderr):
+            stream.close()
+
+
+# A run that has an encrypted set open (its plaintext in the opening workspace) ...
+OPENING_RUN = """import sys
+sys.path.insert(0, sys.argv[1])
+import ops_backup as ops
+with ops.opened_set(sys.argv[2]) as opened:
+    print(opened.path, flush=True)
+    sys.stdin.read()
+"""
+# ... and one inside a rehearsal's check of the wrapping key copies (the keys in a temporary folder).
+CUSTODY_RUN = """import json, sys
+sys.path.insert(0, sys.argv[1])
+import ops_backup as ops
+manifest = json.loads(open(sys.argv[2], encoding="utf-8").read())
+def unwrap(args, **options):
+    mount = next(part for part in args if part.startswith("type=bind,source="))
+    print(mount[len("type=bind,source="):].rsplit(",target=", 1)[0], flush=True)
+    sys.stdin.read()
+    return "WRAPPING_RESTORE_VERIFIED"
+ops.signing_keys = lambda *args, **options: [{"kid": "doctor-key", "wrapped": {"wrappingKeyId": "wrap-1"}}]
+ops.temporary_run = unwrap
+ops.rehearse_wrapping_custody(None, manifest, "unused")
+"""
+
+
+_MODULE_KEYS = None
+
+
+def setUpModule():
+    global _MODULE_KEYS
+    _MODULE_KEYS = tempfile.TemporaryDirectory()
+    os.environ["KIN_BACKUP_ENCRYPTION"] = str(write_encryption_config(_MODULE_KEYS.name))
+
+
+def tearDownModule():
+    os.environ.pop("KIN_BACKUP_ENCRYPTION", None)
+    _MODULE_KEYS.cleanup()
 
 
 def rows_stream(rows, guard=PRESENT, schema=()):
@@ -160,6 +318,12 @@ class Host:
         (self.repo / ".env").write_text("POSTGRES_PASSWORD=synthetic-fixture\nKIN_EMR_RUNTIME_PASSWORD=synthetic-runtime\n")
         self.parent = Path(temporary) / "backups"
         self.parent.mkdir(mode=0o700)
+        # Every new daily set is encrypted: the module's test-only key (or, imported elsewhere, this host's own), outside
+        # the repository and the backup root.
+        configured = os.environ.get("KIN_BACKUP_ENCRYPTION")
+        if not configured or not Path(configured).is_file():
+            os.environ["KIN_BACKUP_ENCRYPTION"] = str(write_encryption_config(Path(temporary) / "backup-keys"))
+        self.encryption = Path(os.environ["KIN_BACKUP_ENCRYPTION"])
         self.info = [{"Name": "/" + name, "State": {"Running": True}, "Image": "sha256:" + "a" * 64,
                       "Config": {"Labels": {"com.docker.compose.project": "fixture",
                                             "com.docker.compose.project.working_dir": str(self.repo)}},
@@ -248,15 +412,17 @@ class Host:
         return folder, json.loads((folder / "manifest.json").read_text(encoding="utf-8")), error
 
     def legacy_backup(self, answer):
-        """Construct a pre-cleanup sealed archive; new daily backups no longer seal."""
+        """Construct a pre-cleanup sealed archive (written before encryption existed); new daily backups no longer
+        seal and are encrypted."""
         folder, manifest, error = self.backup(answer)
         if error:
             raise error
+        manifest = as_plaintext_set(folder)
         with patch.object(audit, 'evaluate', side_effect=self.boundary(answer)):
             alarm = audit.seal(folder, self.parent, manifest)
         return folder, manifest, RuntimeError(alarm) if alarm else None
 
-    def rehearse(self, folder, answer):
+    def rehearse(self, folder, answer, **options):
         """One ops.rehearse run whose restored-copy verification is answered with `answer`."""
         self.events.clear()
         self.sources.clear()
@@ -278,7 +444,7 @@ class Host:
                 patch.object(audit, "evaluate", side_effect=self.boundary(answer)), \
                 contextlib.redirect_stdout(io.StringIO()):
             try:
-                ops.rehearse(folder)
+                ops.rehearse(folder, **options)
             except RuntimeError as caught:
                 error = caught
         (written,) = set(folder.glob("rehearsal-*.json")) - earlier
@@ -581,6 +747,11 @@ class BackupSafetyTests(unittest.TestCase):
             host = Host(temporary)
             host.init_ledger()
             folder, manifest, _ = host.backup(rows_stream({1: "a"}))
+            # An encrypted daily set is never sealed: the seal refuses before it writes anything.
+            with self.assertRaisesRegex(audit.Refused, "encrypted daily backup is not sealed"):
+                audit.seal(folder, host.parent, manifest)
+            self.assertFalse((folder / audit.CHECKPOINT).exists())
+            manifest = as_plaintext_set(folder)
             # Older sealed archives remain readable and retain their declared components.
             with patch.object(audit, 'evaluate', return_value=rows_stream({1: 'a'})):
                 audit.seal(folder, host.parent, manifest)
@@ -982,8 +1153,9 @@ class EmrRestoreVerification(unittest.TestCase):
         whose bootstrap superuser is kin, replays the roles and memberships from that catalog (never pg_dumpall's
         GRANTED BY statements as postgres), compares the restored role catalog and verifies the seal as kin. A restore
         whose catalog differs is refused."""
-        self.assertEqual(self.manifest["role_catalog"], daily_role_catalog())
-        kinds = [" ".join(event[1][:2]) if event[0] == "command" else event[0] for event in self.host.events]
+        self.assertNotIn("role_catalog", self.manifest, "role and database comments and settings stay sealed")
+        self.assertEqual(sealed_metadata(self.folder)["role_catalog"], daily_role_catalog())
+        kinds =[" ".join(event[1][:2]) if event[0] == "command" else event[0] for event in self.host.events]
         read = next(index for index, event in enumerate(self.host.events) if event[0] == "command" and ops.ROLE_CATALOG_SQL in event[1])
         self.assertLess(kinds.index("docker stop"), read)
         self.assertLess(read, kinds.index("docker start"), "the role catalog is read inside the writer pause")
@@ -1012,7 +1184,7 @@ class EmrRestoreVerification(unittest.TestCase):
             self.host.table_counts[table] = 1
         folder, manifest, error = self.host.backup(self.answer)
         self.assertIsNone(error)
-        self.assertIn("role_catalog", manifest)
+        self.assertIn("role_catalog", sealed_metadata(folder))
         for table in ("emr_audit.fixed_copy", "emr_image.preparation"):
             self.assertEqual(manifest["counts"]["kin"][table], 1)
             self.host.table_counts[table] = 0
@@ -1023,7 +1195,7 @@ class EmrRestoreVerification(unittest.TestCase):
 
     def test_d23_an_older_daily_set_without_a_role_catalog_keeps_its_previous_rehearsal(self):
         """D23: a set made before the role catalog was recorded is rehearsed as before (pg_dumpall roles as postgres)."""
-        manifest = dict(self.manifest)
+        manifest = as_plaintext_set(self.folder)
         manifest.pop("role_catalog")
         ops.write_json(self.folder / "manifest.json", manifest)
         result, error, _, _ = self.host.rehearse(self.folder, self.answer)
@@ -1050,7 +1222,7 @@ class EmrRestoreVerification(unittest.TestCase):
         self.host.role_catalog = captured
         folder, manifest, error = self.host.backup(self.answer)
         self.assertIsNone(error, error)
-        self.assertEqual(manifest["role_catalog"], captured, "the manifest keeps the cluster as captured")
+        self.assertEqual(sealed_metadata(folder)["role_catalog"], captured, "the manifest keeps the cluster as captured")
         result, error, _, _ = self.host.rehearse(folder, self.answer)
         self.assertIsNone(error, error)
         self.assertTrue(result["success"])
@@ -1077,15 +1249,34 @@ class EmrRestoreVerification(unittest.TestCase):
             ops.supported_catalog(captured, shape="post")
 
     def test_unsafe_emr_archive_refused_despite_matching_checksum(self):
+        cases = [('../outside', tarfile.REGTYPE), ('/absolute', tarfile.REGTYPE),
+                 ('seal/link', tarfile.SYMTYPE), ('seal/device', tarfile.CHRTYPE)]
+
+        def unsafe(name, kind):
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode='w:gz') as archive:
+                entry = tarfile.TarInfo(name)
+                entry.type = kind
+                entry.linkname = '../outside' if kind == tarfile.SYMTYPE else ''
+                archive.addfile(entry)
+            return stream.getvalue()
+        with ops.opened_set(self.folder) as opened:
+            safe = (opened.path / 'emr-state.tgz').read_bytes()
+        # An encrypted set whose key holder sealed an unsafe archive: refused after decryption, before any restore.
+        for name, kind in cases:
+            with self.subTest(encrypted=name):
+                reseal(self.folder, {'emr-state.tgz': unsafe(name, kind)})
+                with patch.object(ops, 'run') as commands:
+                    with self.assertRaisesRegex(RuntimeError, 'Unsafe EMR archive entry'):
+                        ops.validate_backup(self.folder)
+                    commands.assert_not_called()
+        # A set written before encryption: its stored archive is checked as before.
+        reseal(self.folder, {'emr-state.tgz': safe})
+        self.manifest = as_plaintext_set(self.folder)
         archive_path = self.folder / 'emr-state.tgz'
-        for name, kind in [('../outside', tarfile.REGTYPE), ('/absolute', tarfile.REGTYPE),
-                           ('seal/link', tarfile.SYMTYPE), ('seal/device', tarfile.CHRTYPE)]:
+        for name, kind in cases:
             with self.subTest(name=name):
-                with tarfile.open(archive_path, 'w:gz') as archive:
-                    entry = tarfile.TarInfo(name)
-                    entry.type = kind
-                    entry.linkname = '../outside' if kind == tarfile.SYMTYPE else ''
-                    archive.addfile(entry)
+                archive_path.write_bytes(unsafe(name, kind))
                 self.manifest['sha256']['emr-state.tgz'] = ops.digest(archive_path)
                 self.manifest['bytes']['emr-state.tgz'] = archive_path.stat().st_size
                 ops.write_json(self.folder / 'manifest.json', self.manifest)
@@ -1093,6 +1284,424 @@ class EmrRestoreVerification(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, 'Unsafe EMR archive entry'):
                         ops.validate_backup(self.folder)
                     commands.assert_not_called()
+
+
+class BackupEncryptionTests(unittest.TestCase):
+    """Every new daily set is encrypted; a set written before encryption is still restored as it is; whatever is wrong
+    with an encrypted set (key, record, components) refuses before any restore target exists."""
+
+    def setUp(self):
+        self.temp = self.enterContext(tempfile.TemporaryDirectory())
+        self.keys = Path(self.temp) / "keys"
+        self.config = write_encryption_config(self.keys, ("key-a",))
+        self.enterContext(patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(self.config)}))
+        self.host = Host(self.temp)
+        self.answer = rows_stream({1: "a"})
+
+    def backup(self):
+        folder, manifest, error = self.host.backup(self.answer)
+        self.assertIsNone(error, error)
+        self.assertTrue(manifest["complete"])
+        return folder, manifest
+
+    def refused_before_restore(self, folder, pattern, **options):
+        refused_before_restore(self, folder, pattern, self.keys / "open", **options)
+
+    def test_a_new_set_holds_no_plaintext_and_restores_like_a_set_written_before_encryption(self):
+        folder, manifest = self.backup()
+        self.assertEqual(manifest["encryption"]["key_id"], "key-a")
+        self.assertNotIn("role_catalog", manifest)
+        secrets = [b"synthetic-fixture", b"synthetic-runtime", b"fixture dump", b"TEST_ONLY=placeholder"]
+        for path in folder.iterdir():
+            data = path.read_bytes()
+            self.assertFalse(any(secret in data for secret in secrets), path.name)
+            if path.name != "manifest.json":
+                self.assertTrue(data.startswith(ops.AGE_HEADER), path.name)
+        self.assertEqual(self.host.status(), [])
+        result, error, _, _ = self.host.rehearse(folder, self.answer)
+        self.assertIsNone(error, error)
+        self.assertTrue(result["success"])
+        self.assertEqual((result["backup"], result["encryption"]), (folder.name, "key-a"))
+        self.assertEqual(list((self.keys / "open").iterdir()), [], "the opened plaintext is removed")
+        # The same snapshot as a backup written before encryption left it: restored as before, without any key.
+        plain = folder.parent / ("20000101-000000-" + folder.name[-8:])
+        shutil.copytree(folder, plain)
+        for item in plain.glob("rehearsal-*.json"):
+            item.unlink()
+        as_plaintext_set(plain)
+        self.config.unlink()
+        result, error, _, _ = self.host.rehearse(plain, self.answer)
+        self.assertIsNone(error, error)
+        self.assertTrue(result["success"])
+        self.assertEqual(result["encryption"], "none")
+        self.refused_before_restore(folder, "configuration is missing")
+
+    def test_a_wrong_or_missing_key_refuses_before_anything_is_opened_or_restored(self):
+        folder, _ = self.backup()
+        other = write_encryption_config(Path(self.temp) / "other-keys", ("key-a",))
+        body = json.loads(self.config.read_text())
+        body["files"]["key-a"] = json.loads(other.read_text())["files"]["key-a"]
+        self.config.write_text(json.dumps(body))
+        self.refused_before_restore(folder, "key does not match this set")
+        self.refused_before_restore(folder, "key does not match this set", identity=json.loads(other.read_text())["files"]["key-a"])
+        body["files"] = {"key-b": body["files"]["key-a"]}
+        body["current"] = "key-b"
+        self.config.write_text(json.dumps(body))
+        self.refused_before_restore(folder, "No backup key is configured for this set's key ID key-a")
+
+    def test_a_changed_record_or_component_refuses_before_restore(self):
+        folder, manifest = self.backup()
+        original = copy.deepcopy(manifest)
+        changes = {
+            "an image the restore would use": lambda m: m["running_images"]["kin-api"].update(id="sha256:" + "b" * 64),
+            "the recorded row counts": lambda m: m["counts"]["kin"].update({"public.Report": 6}),
+            "the custody locator": lambda m: m.update(wrapping_custody={"directory": "/elsewhere", "files": {}}),
+            "a plaintext role catalog beside the record": lambda m: m.update(role_catalog=daily_role_catalog()),
+            "the key ID": lambda m: m["encryption"].update(key_id="key-b"),
+            "an unknown format": lambda m: m["encryption"].update(format="kin-backup-age-v2"),
+            "a removed record": lambda m: m.pop("encryption"),
+        }
+        for label, change in changes.items():
+            with self.subTest(label):
+                changed = copy.deepcopy(original)
+                change(changed)
+                ops.write_json(folder / "manifest.json", changed)
+                with patch.object(ops, "run") as run, patch.object(ops, "temporary_run") as helper:
+                    with self.assertRaises(RuntimeError):
+                        ops.rehearse(folder)
+                self.assertEqual((run.call_args_list, helper.call_args_list), ([], []))
+        ops.write_json(folder / "manifest.json", original)
+        # A component swapped, truncated, extended or removed on disk: its stored digest refuses it first.
+        stored = {name: (folder / name).read_bytes() for name in original["sha256"]}
+        for label, files in {"swapped": {"kin.dump": stored["keycloak.dump"], "keycloak.dump": stored["kin.dump"]},
+                             "truncated": {"orthanc.tgz": stored["orthanc.tgz"][:-20]},
+                             "trailing bytes": {"emr-state.tgz": stored["emr-state.tgz"] + b"\0"}}.items():
+            with self.subTest(label):
+                for name, data in files.items():
+                    (folder / name).write_bytes(data)
+                self.refused_before_restore(folder, "checksum mismatch")
+                for name, data in stored.items():
+                    (folder / name).write_bytes(data)
+        (folder / ".env").unlink()
+        self.refused_before_restore(folder, "checksum mismatch: .env")
+        (folder / ".env").write_bytes(stored[".env"])
+        # Stored bytes that match an authentic record but do not decrypt to the sealed plaintext (only the key holder can
+        # write such a set): refused after decryption, the workspace removed, still before any restore.
+        key = ops.backup_key("key-a")
+        (folder / "kin.dump").unlink()
+        with ops.SealedComponent(folder / "kin.dump", key) as sink:
+            sink.write(b"another dump")
+        changed = copy.deepcopy(original)
+        changed["sha256"]["kin.dump"], changed["bytes"]["kin.dump"] = ops.digest(folder / "kin.dump"), (folder / "kin.dump").stat().st_size
+        changed["encryption"]["auth"] = ops.manifest_auth(changed, key)
+        ops.write_json(folder / "manifest.json", changed)
+        self.refused_before_restore(folder, "did not decrypt to its recorded content: kin.dump")
+
+    def test_the_backup_refuses_before_stopping_writers_without_a_usable_key(self):
+        """And the deployment preflight says of each key what the backup does with it: `configured` only for the key
+        the backup accepts, judged for the actual backup root and checkout."""
+        def reported(*root):
+            with patch.object(ops, "ROOT", self.host.repo):
+                return preflight.backup_key_state(*root)
+        self.assertEqual(reported(self.host.parent), "configured")
+        self.assertEqual(reported(), "unknown", "without the backup root nothing is said for the backup")
+        self.backup()
+
+        def refused_without_a_command(destination):
+            self.host.events.clear()
+            with patch.object(ops, "ROOT", self.host.repo), patch.object(ops, "text", side_effect=self.host.fake_text), \
+                    patch.object(ops, "run", side_effect=self.host.fake_run):
+                with self.assertRaises(RuntimeError):
+                    ops.backup(destination)
+            self.assertEqual(self.host.events, [], "no Docker command, no writer stopped")
+        # The destination is part of the same admission: inside the checkout, or not this account's private directory.
+        destinations = {"inside the checkout": self.host.repo / "backups"}
+        if os.name == "posix":
+            destinations["readable by others"] = Path(self.temp) / "shared-backups"
+            destinations["readable by others"].mkdir()
+            destinations["readable by others"].chmod(0o755)
+            if os.geteuid() != 0:
+                # A destination that does not exist yet, under a folder this account cannot create in.
+                closed = Path(self.temp) / "closed"
+                closed.mkdir()
+                closed.chmod(0o555)
+                self.addCleanup(closed.chmod, 0o700)
+                destinations["cannot be made"] = closed / "backups"
+        for label, destination in destinations.items():
+            with self.subTest(destination=label):
+                refused_without_a_command(destination)
+                self.assertEqual(reported(destination), "invalid")
+        # A destination that holds the configured wrapping custody (the backup writes that custody after the writers
+        # stop): refused by the same admission; the same custody beside it is accepted.
+        holding = Path(self.temp) / "holding-custody"
+        holding.mkdir(mode=0o700)
+        custody = Path(self.temp) / "custody.json"
+        custody.write_text(json.dumps({"backup_root": str(holding / "wrapping"), "files": {}}))
+        with patch.dict(os.environ, {"KIN_EMR_WRAPPING_CUSTODY": str(custody)}):
+            with self.subTest(destination="holds the wrapping custody"):
+                refused_without_a_command(holding)
+                self.assertEqual(reported(holding), "invalid")
+            if os.name == "posix":
+                # A custody root beside it that is not this account's private directory.
+                shared = Path(self.temp) / "shared-wrapping"
+                shared.mkdir()
+                shared.chmod(0o755)
+                custody.write_text(json.dumps({"backup_root": str(shared), "files": {}}))
+                with self.subTest(destination="custody readable by others"):
+                    refused_without_a_command(holding)
+                    self.assertEqual(reported(holding), "invalid")
+            # A custody root that is another operating account's private directory, which this account cannot write
+            # (a root run beside a read-only mounted custody of the operating account).
+            foreign = (Path(self.temp) / "other-account-wrapping").resolve()
+            foreign.mkdir(mode=0o700)
+            custody.write_text(json.dumps({"backup_root": str(foreign), "files": {}}))
+            owner_of, can = ops.backup_parent_owner, os.access
+            with patch.object(ops, "backup_parent_owner",
+                              side_effect=lambda parent: (4242, 4242) if Path(parent).resolve() == foreign else owner_of(parent)), \
+                    patch.object(ops.os, "access",
+                                 side_effect=lambda path, *a, **kw: False if Path(path).resolve() == foreign else can(path, *a, **kw)):
+                with self.subTest(destination="custody of another account that cannot be written"):
+                    refused_without_a_command(holding)
+                    self.assertEqual(reported(holding), "invalid")
+            custody.write_text(json.dumps({"backup_root": str(Path(self.temp) / "wrapping"), "files": {}}))
+            self.assertEqual(reported(holding), "configured")
+        body = json.loads(self.config.read_text())
+        broken = {
+            "configuration missing": None,
+            "key file missing": {**body, "files": {"key-a": str(self.keys / "absent.key")}},
+            "not an age identity": {**body, "files": {"key-a": str(self.config)}},
+            "an identity whose checksum is wrong": {**body, "files": {"key-a": str(self.keys / "mistyped.key")}},
+            "key inside the backup root": {**body, "files": {"key-a": str(self.host.parent / "key-a.key")}},
+            "key inside the checkout": {**body, "files": {"key-a": str(self.host.repo / "key-a.key")}},
+            "age program missing": {**body, "age": str(self.keys / "no-age")},
+        }
+        (self.keys / "mistyped.key").write_text("AGE-SECRET-KEY-1" + "Q" * 58 + "\n")
+        for inside in (self.host.parent, self.host.repo):
+            shutil.copyfile(body["files"]["key-a"], inside / "key-a.key")
+        for label, config in broken.items():
+            with self.subTest(label):
+                if config is None:
+                    self.config.unlink(missing_ok=True)
+                else:
+                    self.config.write_text(json.dumps(config))
+                self.host.events.clear()
+                before = set(self.host.parent.iterdir())
+                with patch.object(ops, "ROOT", self.host.repo), patch.object(ops, "text", side_effect=self.host.fake_text), \
+                        patch.object(ops, "run", side_effect=self.host.fake_run):
+                    with self.assertRaises(ops.BackupEncryptionError):
+                        ops.backup(self.host.parent)
+                self.assertEqual(self.host.events, [], "no Docker command, no writer stopped")
+                self.assertEqual(set(self.host.parent.iterdir()), before)
+                self.assertEqual(reported(self.host.parent), "absent" if config is None else "invalid")
+
+    def test_a_set_opened_directly_is_admitted_like_a_validated_one(self):
+        """A caller that restores from a set it opens itself (opened_set alone) gets nothing from a set that lost or
+        changed a component: no opened folder, no workspace folder, no command."""
+        folder, _ = self.backup()
+        plain = folder.parent / ("20000101-000000-" + folder.name[-8:])
+        shutil.copytree(folder, plain)
+        as_plaintext_set(plain)
+
+        def refused(directory, pattern):
+            with patch.object(ops, "run") as run, patch.object(ops, "temporary_run") as helper:
+                with self.assertRaisesRegex(RuntimeError, pattern):
+                    with ops.opened_set(directory):
+                        self.fail("the set was opened")
+            self.assertEqual((run.call_args_list, helper.call_args_list, list((self.keys / "open").iterdir())), ([], [], []))
+        # A set written before encryption: a component of the same length with other content, then a lost one.
+        original = (plain / "kin.dump").read_bytes()
+        (plain / "kin.dump").write_bytes(bytes(byte ^ 1 for byte in original))
+        refused(plain, "checksum mismatch: kin.dump")
+        (plain / "kin.dump").unlink()
+        refused(plain, "checksum mismatch: kin.dump")
+        (plain / "kin.dump").write_bytes(original)
+        # Its manifest lost one component's size (that form records every size): refused; the oldest form, which
+        # records no size, is still admitted by its digests.
+        written = (plain / "manifest.json").read_bytes()
+        changed = json.loads(written)
+        changed["bytes"].pop("kin.dump")
+        ops.write_json(plain / "manifest.json", changed)
+        refused(plain, "inventory differs")
+        changed["bytes"] = {}
+        ops.write_json(plain / "manifest.json", changed)
+        with ops.opened_set(plain):
+            pass
+        # An audit checkpoint records its own size wherever it is attached: without it, refused.
+        checkpoint = plain / ops.AUDIT_CHECKPOINT
+        checkpoint.write_text("{}")
+        changed["sha256"][ops.AUDIT_CHECKPOINT] = ops.digest(checkpoint)
+        ops.write_json(plain / "manifest.json", changed)
+        refused(plain, "inventory differs")
+        changed["bytes"] = {ops.AUDIT_CHECKPOINT: checkpoint.stat().st_size}
+        ops.write_json(plain / "manifest.json", changed)
+        with ops.opened_set(plain):
+            pass
+        checkpoint.unlink()
+        (plain / "manifest.json").write_bytes(written)
+        with ops.opened_set(plain) as opened:
+            self.assertEqual((opened.path, opened.manifest), (plain.resolve(), opened.stored))
+        # An encrypted set that lost a component file while its manifest stayed as written.
+        (folder / "emr-state.tgz").unlink()
+        refused(folder, "checksum mismatch: emr-state.tgz")
+
+    def test_a_removed_record_is_seen_in_the_sets_own_folder_whatever_the_manifest_lists(self):
+        earlier, _ = self.backup()
+        folder, manifest = self.backup()
+        for label, listed in (("no name left", []), ("names of files that are not there", ["notes.txt"])):
+            changed = {name: value for name, value in manifest.items() if name != "encryption"}
+            changed["sha256"], changed["bytes"] = {name: "0" * 64 for name in listed}, {name: 1 for name in listed}
+            ops.write_json(folder / "manifest.json", changed)
+            with self.subTest(label):
+                self.refused_before_restore(folder, "Encrypted components without an encryption record")
+                with self.assertRaisesRegex(ops.BackupEncryptionError, "without an encryption record"):
+                    ops.stored_encryption(folder, changed)
+                with patch.object(ops, "ROOT", self.host.repo):
+                    result = ops.rotate(self.host.parent, 1, dry_run=True)
+                self.assertIn("encryption record missing", result["incomplete"][folder.name])
+                self.assertEqual((result["generations"], result["would_delete"]), ([earlier.name], []),
+                                 "the older set that can be restored stays the kept generation")
+
+    def test_an_encryption_failure_leaves_an_incomplete_set_without_plaintext_and_resumes_writers(self):
+        class Failing(ops.SealedComponent):
+            def __enter__(self):
+                sink = super().__enter__()
+                if self.path.name == "orthanc.tgz":
+                    self.process.kill()
+                return sink
+        with patch.object(ops, "SealedComponent", Failing):
+            folder, manifest, error = self.host.backup(self.answer)
+        self.assertIsInstance(error, ops.BackupEncryptionError)
+        self.assertFalse(manifest["complete"])
+        self.assertEqual(manifest["backup_error"]["stage"], "archive Orthanc")
+        self.assertFalse((folder / "orthanc.tgz").exists())
+        for path in folder.iterdir():
+            if path.name != "manifest.json":
+                self.assertTrue(path.read_bytes().startswith(ops.AGE_HEADER), path.name)
+        commands = [event[1] for event in self.host.events if event[0] == "command"]
+        self.assertCountEqual([name for command in commands if command[:2] == ["docker", "start"] for name in command[2:]],
+                              ops.CONTAINERS[:-1])
+        with self.assertRaisesRegex(RuntimeError, "incomplete"):
+            ops.validate_backup(folder)
+
+    def test_rotated_keys_open_their_own_sets_and_a_key_kept_elsewhere_opens_an_old_set(self):
+        first, _ = self.backup()
+        self.config = write_encryption_config(self.keys, ("key-a", "key-b"), current="key-b")
+        second, manifest = self.backup()
+        self.assertEqual(manifest["encryption"]["key_id"], "key-b")
+        for folder, key_id in ((first, "key-a"), (second, "key-b")):
+            result, error, _, _ = self.host.rehearse(folder, self.answer)
+            self.assertIsNone(error, error)
+            self.assertEqual((result["success"], result["encryption"]), (True, key_id))
+        body = json.loads(self.config.read_text())
+        kept = Path(self.temp) / "offsite" / "key-a.key"
+        kept.parent.mkdir()
+        shutil.move(body["files"].pop("key-a"), kept)
+        self.config.write_text(json.dumps(body))
+        self.refused_before_restore(first, "No backup key is configured for this set's key ID key-a")
+        result, error, _, _ = self.host.rehearse(first, self.answer, identity=str(kept))
+        self.assertIsNone(error, error)
+        self.assertEqual((result["success"], result["encryption"]), (True, "key-a"))
+
+    def test_the_opening_workspace_is_required_and_kept_apart_from_the_backups(self):
+        folder, _ = self.backup()
+        body = json.loads(self.config.read_text())
+        body.pop("workspace")
+        self.config.write_text(json.dumps(body))
+        self.refused_before_restore(folder, "needs an existing workspace")
+        self.refused_before_restore(folder, "outside the repository and the backup root", workspace=str(self.host.parent))
+
+    def test_rotation_keeps_older_sets_when_a_new_set_is_not_authentic(self):
+        folders = [self.backup()[0] for _ in range(3)]
+        manifest = json.loads((folders[-1] / "manifest.json").read_text())
+        manifest["counts"]["kin"]["public.Report"] = 99
+        ops.write_json(folders[-1] / "manifest.json", manifest)
+        with patch.object(ops, "ROOT", self.host.repo), patch.object(ops, "datetime", type("Clock", (datetime,), {"now": staticmethod(self.host.now)})):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertIn("not authentic", result["incomplete"][folders[-1].name])
+        self.assertEqual(result["generations"], [folders[1].name])
+        self.assertNotIn(folders[-1].name, result["would_delete"])
+
+    def test_rotation_never_counts_age_files_whose_record_was_removed(self):
+        folders = [self.backup()[0] for _ in range(2)]
+        manifest = json.loads((folders[-1] / "manifest.json").read_text())
+        manifest.pop("encryption")
+        ops.write_json(folders[-1] / "manifest.json", manifest)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertIn("encryption record missing", result["incomplete"][folders[-1].name])
+        self.assertEqual((result["generations"], result["would_delete"]), ([folders[0].name], []))
+        self.refused_before_restore(folders[-1], "Encrypted components without an encryption record")
+
+    def test_custody_restore_of_an_encrypted_set_needs_its_authentic_manifest(self):
+        folder, manifest = self.backup()
+        changed = copy.deepcopy(manifest)
+        changed["wrapping_custody"] = {"directory": str(Path(self.temp) / "elsewhere"), "files": {"wrap-1": {"file": "wrap-0.key", "sha256": "0" * 64, "bytes": 32}}}
+        ops.write_json(folder / "manifest.json", changed)
+        destination = Path(self.temp) / "restored-custody"
+        with patch.object(sys, "argv", ["ops_backup.py", "restore-wrapping", str(folder), "--destination", str(destination)]):
+            with self.assertRaisesRegex(ops.BackupEncryptionError, "does not match this set, or its manifest was changed"):
+                ops.main()
+        self.assertFalse(destination.exists())
+
+    def test_a_set_whose_writers_did_not_resume_is_not_ready_but_restores(self):
+        original = self.host.fake_run
+
+        def failing_start(args, **kwargs):
+            if list(args[:3]) == ["docker", "start", "kin-api"]:
+                raise RuntimeError("simulated start failure")
+            return original(args, **kwargs)
+        with patch.object(self.host, "fake_run", side_effect=failing_start):
+            folder, manifest, error = self.host.backup(self.answer)
+        self.assertIn("need recovery", str(error))
+        self.assertEqual((manifest["complete"], manifest["ready"], manifest["resume_failures"]), (True, False, ["kin-api"]))
+        result, error, _, _ = self.host.rehearse(folder, self.answer)
+        self.assertIsNone(error, error)
+        self.assertTrue(result["success"])
+
+    def test_a_caller_that_keeps_a_set_open_rehearses_it_without_opening_it_again(self):
+        """A rollback opens its B once and restores from it: its rehearsal uses that opening (one set's workspace)."""
+        folder, manifest = self.backup()
+        workspace = self.keys / "open"
+        with ops.opened_set(folder) as opened:
+            held = set(workspace.iterdir())
+            self.assertEqual(len(held), 1)
+            with patch.object(ops, "opened_set", side_effect=AssertionError("opened a second time")), \
+                    patch.object(ops, "rehearse", side_effect=lambda directory, **options: ops.rehearse_opened(opened, manifest)):
+                result, error, _, _ = self.host.rehearse(folder, self.answer)
+            self.assertIsNone(error, error)
+            self.assertTrue(result["success"])
+            self.assertEqual((result["backup"], result["encryption"]), (folder.name, "key-a"))
+            self.assertEqual(set(workspace.iterdir()), held)
+        self.assertEqual(list(workspace.iterdir()), [])
+
+    @unittest.skipUnless(os.name == "posix", "POSIX execute permission")
+    def test_an_age_program_that_cannot_run_is_unusable(self):
+        program = self.keys / "age-not-executable"
+        shutil.copyfile(age_program(), program)
+        program.chmod(0o600)
+        body = json.loads(self.config.read_text())
+        self.config.write_text(json.dumps({**body, "age": str(program)}))
+        with self.assertRaisesRegex(ops.BackupEncryptionError, "age program is unavailable"):
+            ops.backup_key()
+
+    def test_the_audit_verifier_compares_an_external_checkpoint_with_the_plaintext_dump(self):
+        folder, manifest = self.backup()
+        with ops.opened_set(folder) as opened:
+            expected = opened.manifest["sha256"]["kin.dump"]
+        seen = []
+        def verify(checkpoint, source):
+            seen.append((source.sha256, Path(source.path).read_bytes()[:12], folder in Path(source.path).parents))
+            return 0, {"exit": 0}
+        checkpoint = Path(self.temp) / "external-checkpoint.json"
+        checkpoint.write_text("{}")
+        with patch.object(audit, "verify", side_effect=verify):
+            self.assertEqual(audit.verify_backup(folder, checkpoint)[0], 0)
+            self.assertEqual(audit.verify_backup(folder)[0], 2)
+            # A set that lost a component is not judged (exit 2): never a pass, never an integrity claim.
+            (folder / "keycloak.dump").unlink()
+            self.assertEqual(audit.verify_backup(folder, checkpoint),
+                             (2, {"exit": 2, "error": "Backup component checksum mismatch: keycloak.dump"}))
+        self.assertEqual(seen, [(expected, b"fixture dump", False)])
 
 
 class WrappingCustodyTests(unittest.TestCase):
@@ -1173,24 +1782,200 @@ class WrappingCustodyTests(unittest.TestCase):
                 self.assertFalse(manifest["complete"])
                 self.assertEqual(manifest["resume_failures"], [])
 
+    def test_the_key_copy_is_written_only_for_an_admitted_set(self):
+        """restore-wrapping passes the admission a restore passes: for a set that is incomplete, thinned, lost or
+        changed a component, or lost its encryption record, no key copy is written."""
+        folder, manifest = self.backup()
+        self.secret.unlink()
+        destination = self.root / "restored-keys"
+        stored = (folder / "orthanc.tgz").read_bytes()
+
+        def refused(pattern):
+            self.assertRegex(str(restore_wrapping_cli(folder, destination)), pattern)
+            self.assertFalse(destination.exists(), "no key copy was written")
+        # An encrypted set that lost a component file while its manifest stayed as written.
+        (folder / "orthanc.tgz").unlink()
+        refused("checksum mismatch: orthanc.tgz")
+        (folder / "orthanc.tgz").write_bytes(stored)
+        # Its encryption record removed, and the manifest's list emptied with it: the folder still holds age files.
+        ops.write_json(folder / "manifest.json", {**{name: value for name, value in manifest.items() if name != "encryption"},
+                                                  "sha256": {}, "bytes": {}})
+        refused("Encrypted components without an encryption record")
+        ops.write_json(folder / "manifest.json", {**manifest, "complete": False})
+        refused("Backup is incomplete")
+        ops.write_json(folder / "manifest.json", manifest)
+        # Thinned by rotation: the marker with the Orthanc archive gone.
+        (folder / ops.THINNED_FILE).write_text("{}")
+        (folder / "orthanc.tgz").unlink()
+        refused("thinned by rotation")
+        (folder / ops.THINNED_FILE).unlink()
+        (folder / "orthanc.tgz").write_bytes(stored)
+        # A set written before encryption: a component of the same length with other content.
+        as_plaintext_set(folder)
+        original = (folder / "kin.dump").read_bytes()
+        (folder / "kin.dump").write_bytes(bytes(byte ^ 1 for byte in original))
+        refused("checksum mismatch: kin.dump")
+        (folder / "kin.dump").write_bytes(original)
+        self.assertIsNone(restore_wrapping_cli(folder, destination))
+        self.assertEqual((destination / "wrap-0.key").read_bytes(), bytes(range(32)))
+
+    def test_rotation_never_counts_a_set_whose_key_copies_a_restore_could_not_find(self):
+        """A set that counts stored signing keys but names no key copy is refused by a restore before its first write;
+        rotation asks the same question, so it never keeps such a set in place of an older one that can be restored."""
+        older, _ = self.backup()
+        newer, _ = self.backup()
+        manifest = as_plaintext_set(newer)
+        custody = manifest.pop("wrapping_custody")
+        ops.write_json(newer / "manifest.json", manifest)
+        workspace = Path(json.loads(self.host.encryption.read_text())["workspace"])
+        refused_before_restore(self, newer, "Wrapping custody locator is missing", workspace)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertIn("wrapping custody unavailable", result["incomplete"][newer.name])
+        self.assertEqual((result["generations"], result["would_delete"]), ([older.name], []))
+        # The same for a set whose manifest no longer attests one pause: the admission a restore passes is rotation's too.
+        manifest["wrapping_custody"] = custody
+        manifest["emr"]["same_pause"] = False
+        ops.write_json(newer / "manifest.json", manifest)
+        refused_before_restore(self, newer, "was not paused together", workspace)
+        with patch.object(ops, "ROOT", self.host.repo):
+            result = ops.rotate(self.host.parent, 1, dry_run=True)
+        self.assertEqual(result["incomplete"][newer.name],
+                         "a restore would not admit it: EMR database/failure-spool capture was not paused together")
+        self.assertEqual((result["generations"], result["would_delete"]), ([older.name], []))
+
     def test_missing_changed_custody_and_restored_schema_count_drift_fail_rehearsal(self):
         folder, manifest = self.backup()
         entry = manifest["wrapping_custody"]["files"]["wrap-1"]
         custody = Path(manifest["wrapping_custody"]["directory"]) / entry["file"]
-        for value in (None, b"x" * 32):
-            if value is None: custody.unlink()
-            else: custody.write_bytes(value)
-            with self.subTest(custody=value is not None):
-                result, error, _, _ = self.host.rehearse(folder, rows_stream({1: "original"}))
-                self.assertIsNotNone(error)
-                self.assertFalse(result["success"])
-        custody.write_bytes(bytes(range(32)))
+        workspace = Path(json.loads(self.host.encryption.read_text())["workspace"])
+        # The separate key copy is checked before the first restore write: a lost or changed copy - also at the
+        # relocated custody the operator names - starts nothing (no container, no volume, no restored database).
+        moved = self.root / "relocated-custody"
+        shutil.copytree(custody.parent, moved)
+        for path, options in ((custody, {}), (moved / entry["file"], {"wrapping_source": str(moved)})):
+            for value in (None, b"x" * 32):
+                if value is None: path.unlink()
+                else: path.write_bytes(value)
+                with self.subTest(relocated=bool(options), custody=value is not None):
+                    refused_before_restore(self, folder, "unavailable" if value is None else "differs from the snapshot",
+                                           workspace, **options)
+                path.write_bytes(bytes(range(32)))
+        result, error, _, _ = self.host.rehearse(folder, rows_stream({1: "original"}), wrapping_source=str(moved))
+        self.assertIsNone(error, error)
+        self.assertEqual((result["success"], result["wrapping_custody"]["directory"]), (True, str(moved)))
         for schema in ("emr_signing.private_key", "emr_clinical.online_version", "emr_audit.fixed_copy", "emr_image.preparation"):
             self.host.table_counts[schema] += 1
             result, error, _, _ = self.host.rehearse(folder, rows_stream({1: "original"}))
             self.assertIn("row counts differ", str(error))
             self.assertFalse(result["success"])
             self.host.table_counts[schema] -= 1
+
+
+class PrivateWorkTests(unittest.TestCase):
+    """Plaintext taken out of a set (an opened encrypted set, a rehearsal's wrapping key copies) exists only in a
+    private work folder. A run that is killed leaves its folder; the next run removes it, and never the folder of a
+    run that is still going."""
+
+    def setUp(self):
+        self.temp = self.enterContext(tempfile.TemporaryDirectory())
+        self.root = Path(self.temp)
+        self.keys = self.root / "keys"
+        self.enterContext(patch.dict(os.environ, {"KIN_BACKUP_ENCRYPTION": str(write_encryption_config(self.keys, ("key-a",)))}))
+        self.workspace = self.keys / "open"
+        # This test's own temporary directory, for this process and for the runs it starts.
+        self.scratch = self.root / "scratch"
+        self.scratch.mkdir()
+        self.enterContext(patch.object(tempfile, "tempdir", str(self.scratch)))
+        self.scratch_env = {name: str(self.scratch) for name in ("TMPDIR", "TEMP", "TMP")}
+        self.host = Host(self.temp)
+        self.host.table_counts["emr_signing.private_key"] = 1
+        secret = self.root / "live.key"
+        secret.write_bytes(bytes(range(32)))
+        custody = self.root / "custody.json"
+        custody.write_text(json.dumps({"backup_root": str(self.root / "custody"), "files": {"wrap-1": str(secret)}}))
+        self.enterContext(patch.dict(os.environ, {"KIN_EMR_WRAPPING_CUSTODY": str(custody)}))
+        self.enterContext(patch.object(ops, "signing_keys", return_value=[{"kid": "doctor-key", "wrapped": {"wrappingKeyId": "wrap-1"}}]))
+        self.answer = rows_stream({1: "a"})
+        self.folder, _, error = self.host.backup(self.answer)
+        self.assertIsNone(error, error)
+
+    def killed_runs(self):
+        """What two killed runs left: an opened set's plaintext in the workspace, wrapping keys in the temporary folder."""
+        with another_run(OPENING_RUN, [self.folder], kill=True) as opened:
+            self.assertEqual(opened.parent, self.workspace)
+            self.assertIn(b"synthetic-fixture", (opened / ".env").read_bytes())
+        with another_run(CUSTODY_RUN, [self.folder / "manifest.json"], self.scratch_env, kill=True) as keys:
+            self.assertEqual((keys.parent, (keys / "secrets" / "wrap-0.key").read_bytes()), (self.scratch, bytes(range(32))))
+        self.assertTrue(opened.is_dir() and keys.is_dir(), "a killed run cannot remove its own plaintext")
+        return opened, keys
+
+    def test_what_a_killed_run_left_is_removed_when_the_next_run_starts(self):
+        opened, keys = self.killed_runs()
+        with patch.object(sys, "argv", ["ops_backup.py", "rotate", "--root", str(self.host.parent), "--dry-run"]), \
+                patch.object(ops, "ROOT", self.host.repo), contextlib.redirect_stdout(io.StringIO()):
+            ops.main()
+        self.assertEqual((list(self.workspace.iterdir()), list(self.scratch.iterdir())), ([], []))
+
+    def test_the_next_opening_and_rehearsal_remove_it_and_leave_a_running_runs_folder(self):
+        opened, keys = self.killed_runs()
+        with another_run(OPENING_RUN, [self.folder], kill=False) as running:
+            self.assertFalse(opened.exists(), "the next opening removed the killed run's plaintext")
+            result, error, _, _ = self.host.rehearse(self.folder, self.answer)
+            self.assertIsNone(error, error)
+            self.assertTrue(result["success"])
+            self.assertFalse(keys.exists(), "the next rehearsal removed the killed run's key copies")
+            self.assertEqual(ops.reclaim_work(self.workspace), [])
+            self.assertIn(b"synthetic-fixture", (running / ".env").read_bytes(), "a running run keeps its folder")
+            self.assertEqual(list(self.workspace.iterdir()), [running])
+        self.assertEqual((list(self.workspace.iterdir()), list(self.scratch.iterdir())), ([], []), "and removes it itself")
+
+    def test_the_room_a_killed_run_took_is_free_again_before_the_next_opening_measures_it(self):
+        """A caller that opens the set again itself (no command in between) is not refused for the room the killed
+        run's plaintext still takes: that is reclaimed first, the free space measured after."""
+        opened, _ = self.killed_runs()
+        actual = shutil.disk_usage
+
+        def one_set_of_room(path):
+            usage = actual(path)
+            return SimpleNamespace(total=usage.total, used=usage.used, free=0 if opened.exists() else usage.free)
+        with patch.object(ops.shutil, "disk_usage", side_effect=one_set_of_room):
+            with ops.opened_set(self.folder) as again:
+                self.assertFalse(opened.exists())
+                self.assertEqual(list(self.workspace.iterdir()), [again.path])
+            self.assertEqual(list(self.workspace.iterdir()), [])
+            # A workspace that really is too small still refuses, and leaves nothing.
+            with patch.object(ops.shutil, "disk_usage", return_value=SimpleNamespace(total=1, used=1, free=0)):
+                with self.assertRaisesRegex(ops.BackupEncryptionError, "Insufficient free space"):
+                    with ops.opened_set(self.folder):
+                        self.fail("opened without room")
+        self.assertEqual(list(self.workspace.iterdir()), [])
+
+    def test_only_this_tools_dead_leftovers_are_removed(self):
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        ended.wait()
+        here = {"host": ops.platform.node(), "pid": os.getpid(), "started": ops._process_started(os.getpid())}
+        gone = {**here, "pid": ended.pid, "started": None}
+
+        def folder(name, record):
+            path = self.workspace / name
+            path.mkdir()
+            (path / "kin.dump").write_bytes(b"plaintext")
+            if record is not None:
+                (path / ops.WORK_OWNER).write_text(json.dumps(record))
+            return path
+        kept = [folder("kin-open-no-record", None), folder("kin-open-other-host", {**gone, "host": "another-host"}),
+                folder("kin-open-still-running", here), folder("another-tools-folder", gone),
+                folder("kin-open-unreadable-record", {"pid": "x"})]
+        removed = [folder("kin-open-ended", gone), folder("kin-wrapping-restore-ended", gone)]
+        if sys.platform.startswith("linux"):
+            # The PID of a run that ended, given to a later process: the recorded start time tells them apart.
+            removed.append(folder("kin-open-pid-reused", {**here, "started": "another-boot:1"}))
+        self.assertEqual(sorted(ops.reclaim_work(self.workspace)), sorted(path.name for path in removed))
+        self.assertEqual(sorted(self.workspace.iterdir()), sorted(kept))
+        with self.assertRaisesRegex(RuntimeError, "Unknown private work folder kind"):
+            with ops.private_work(self.workspace, "kin-other-"):
+                self.fail("made a folder the next run would not know")
 
 
 if __name__ == "__main__":
