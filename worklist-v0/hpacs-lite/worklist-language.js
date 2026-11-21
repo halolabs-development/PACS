@@ -4,7 +4,7 @@
  */
 (function () {
   'use strict';
-  const HANGUL = /[가-힣]/;
+  const HANGUL = /[\uAC00-\uD7A3]/; // 가-힣, written as escapes so the shared config/ohif.js reads the same in any page encoding
   const slots = /\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g;
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
@@ -17,7 +17,7 @@
     glossary.set(key, HANGUL.test(key.replace(slots, ''))
       ? { en: other, ko: same || key } : { en: same || key, ko: other });
   }
-  const sentences = new WeakSet();
+  const sentences = new WeakSet(), englishOnly = new WeakSet();
   const isSentence = value => sentences.has(value);
   function say(template, ...params) {
     if (typeof template !== 'string') return template;
@@ -28,12 +28,21 @@
     sentences.add(sentence);
     return sentence;
   }
+  // English only: a sentence that reads exactly as written unless its screen is English (words put on this path after the
+  // Korean screen was settled, so a reader who chose Korean sees them as before).
+  function sayEnglish(template, ...params) {
+    const sentence = say(template, ...params);
+    if (isSentence(sentence)) englishOnly.add(sentence);
+    return sentence;
+  }
   function tr(value, lang, visiting = new Set()) {
     if (!isSentence(value)) return value;
     if (visiting.has(value)) return '';
     visiting.add(value);
+    // Its own words stay as written unless the screen is English; the sentences nested in it follow their own rule.
+    const own = lang !== 'en' && englishOnly.has(value) ? null : lang;
     const { template, params } = value;
-    const key = keyOf(template), translated = lang && glossary.get(key)?.[lang];
+    const key = keyOf(template), translated = own && glossary.get(key)?.[own];
     const pattern = translated && translated !== key
       ? template.match(/^\s*/)[0] + translated + template.match(/\s*$/)[0] : template;
     const result = pattern.replace(slots, (slot, index, name) => {
@@ -115,23 +124,40 @@
     }
     return el;
   }
-  function registerMarkup(doc) {
+  // The page's own markup (the document at start, or a part markup() is given): a text node or a title-like attribute whose
+  // whole text is a glossary entry. Korean only for a part built later, so a screen with Korean chosen keeps it as written.
+  function registerMarkup(root, koreanOnly = false) {
     const skip = 'script,style,[translate="no"],[contenteditable="true"],[contenteditable=""]';
-    const walk = doc.createTreeWalker(doc.documentElement, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
+    const known = text => glossary.has(keyOf(text)) && (!koreanOnly || HANGUL.test(text));
+    const phrase = koreanOnly ? sayEnglish : say;
+    const top = root.nodeType === 9 ? root.documentElement : root;
+    const walk = top.ownerDocument.createTreeWalker(top, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
     for (let node = walk.currentNode; node; node = walk.nextNode()) {
       const el = node.nodeType === 3 ? node.parentElement : node;
-      if (el.closest(skip)) continue;
+      if (!el || el.closest(skip)) continue;
       if (node.nodeType === 3) {
-        if (!el.closest('textarea,option:not([value])') && glossary.has(keyOf(node.data)))
-          register(node, '', say(node.data));
+        if (!el.closest('textarea,option:not([value])') && known(node.data))
+          register(node, '', phrase(node.data));
       } else {
         const keep = (el.getAttribute('data-kin-keep') || '').split(' ');
         for (const name of ATTRS) {
           const text = el.getAttribute(name);
-          if (text && !keep.includes(name) && glossary.has(keyOf(text))) register(el, name, say(text));
+          if (text && !keep.includes(name) && known(text)) register(el, name, phrase(text));
         }
       }
     }
+  }
+  /** A part of the page its script built after start from its own markup alone (a dialog template with no data in it),
+   *  registered as the page's markup is: its Korean words follow the language of their screen from now on. */
+  function markup(root) {
+    if (!root?.ownerDocument) return root;
+    flush();
+    registerMarkup(root, true);
+    if (active()) {
+      const walk = root.ownerDocument.createTreeWalker(root, 5);
+      for (let node = root; node; node = walk.nextNode()) if (records.has(node)) refresh(node);
+    }
+    return root;
   }
   const docs = new Map();
   const active = () => REGIONS.some(r => state[r]);
@@ -360,7 +386,7 @@
     for (const input of dialog.querySelectorAll('input[name="kin-language"]')) input.checked = input.value === state.worklist;
     dialog.querySelector('#language-scope-worklist').checked = true;
     dialog.querySelector('#language-scope-reading').checked = true;
-    dialog.querySelector('#language-dialog-status').textContent = account ? '' : '계정 설정을 불러온 뒤 언어를 저장할 수 있습니다.';
+    write(dialog.querySelector('#language-dialog-status'), account ? '' : sayEnglish('계정 설정을 불러온 뒤 언어를 저장할 수 있습니다.'));
     paintDialog();
     if (!dialog.open) dialog.showModal();
   }
@@ -382,7 +408,7 @@
     const patch = {};
     for (const r of REGIONS) if (scopes[r]) patch[r] = lang;
     const status = dialog.querySelector('#language-dialog-status');
-    busy = true; paintDialog(); status.textContent = '언어 설정을 저장하는 중…';
+    busy = true; paintDialog(); write(status, sayEnglish('언어 설정을 저장하는 중…'));
     try {
       // The latest choice of the account changes only on the ticked screens; nothing on the screen changes until it is saved.
       const result = await save({ patch });
@@ -414,6 +440,50 @@
     worklist: ['.menubar', '.split > .left', '#modal', '#batch-report-dialog', '#batch-approve-dialog', '#query-retrieve', '#study-transfer', '#ctx'],
     reading: ['.split > .right', '#reading-bar', '#reading-viewer', '#histmodal', '#stalemodal', '#tplmodal', '#tpl-preview', '#structmodal', '#cite-preview', '#reasonmodal', '#cvr-send'],
   };
+  // ── Words as a string (the viewer, and words a page writes once) ──────────────────────────────────────────────
+  // English only: a screen with Korean chosen or no choice gets the template filled with the values as written, exactly.
+  const fill = (template, params) => template.replace(/\{[ten]?(\d+)\}/g, (slot, i) => String(params[i]));
+  const english = () => state[lastRegion] === 'en';
+  /** A product sentence ({0} data, {n0} number, {t0} words, {e0} message) as a string in the language of the screen. */
+  function text(template, ...params) {
+    return english() ? String(tr(say(template, ...params.map(String)), 'en')) : fill(template, params);
+  }
+  // Markup: each piece of text between tags and each title-like attribute value is its own phrase (the way the glossary
+  // check reads a template); tags, other attributes and the values go in as written.
+  const TAG = /<\s*\/?\s*[a-zA-Z][^<>]*>/g;
+  const ATTR = /\b(title|aria-label|placeholder|alt|aria-description|aria-valuetext)(\s*=\s*)(?:"([^"]*)"|'([^']*)')/g;
+  const ENTITY = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+  const decode = s => s.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (m, n) => ENTITY[n]);
+  const encode = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function phrase(part, params) {
+    if (!HANGUL.test(part)) return fill(part, params);
+    const order = [];
+    const local = decode(part).replace(/\{([ten]?)(\d+)\}/g, (slot, kind, i) => {
+      if (!order.includes(+i)) order.push(+i);
+      return '{' + kind + order.indexOf(+i) + '}';
+    });
+    const key = keyOf(local), found = glossary.get(key)?.en;
+    if (!found || found === key) return fill(part, params);
+    const words = encode(String(tr(say(local, ...order.map((_, k) => '\u0001' + k + '\u0001')), 'en')));
+    return words.replace(/\u0001(\d+)\u0001/g, (m, k) => String(params[order[k]]));
+  }
+  function html(template, ...params) {
+    if (!english()) return fill(template, params);
+    let out = '', at = 0;
+    for (const tag of template.matchAll(TAG)) {
+      out += phrase(template.slice(at, tag.index), params);
+      let inner = '', from = 0;
+      for (const a of tag[0].matchAll(ATTR)) {
+        const value = a[3] ?? a[4], quote = a[3] !== undefined ? '"' : "'";
+        inner += fill(tag[0].slice(from, a.index), params) + a[1] + a[2] + quote + phrase(value, params) + quote;
+        from = a.index + a[0].length;
+      }
+      out += inner + fill(tag[0].slice(from), params);
+      at = tag.index + tag[0].length;
+    }
+    return out + phrase(template.slice(at), params);
+  }
+
   function start() {
     registerMarkup(document);
     watchMoves(document);
@@ -423,9 +493,21 @@
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
     if (follows) followBrowser();
+    // The choice kept for the viewer and the other documents is the account's: this page writes it again once the account's
+    // choice is applied, so one another account left in this browser is not followed meanwhile.
+    else try { localStorage.removeItem(BROWSER); } catch (_) { /* nothing kept */ }
     if (active()) repaint(); else showLabel();
   }
-  start();
+  // The viewer document (config/ohif.js sets KinLanguageDocument before this file runs): OHIF's page, so its markup is
+  // never registered and nothing is stored. It is the image half of the reading screen: the words our viewer code writes
+  // follow the reading-screen choice the work page last applied in this browser, English only, as the viewer opens.
+  function startViewer() {
+    lastRegion = 'reading';
+    let stored = null;
+    try { stored = normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { stored = null; }
+    if (stored?.reading === 'en') state.reading = 'en';
+  }
+  if (window.KinLanguageDocument === 'viewer') startViewer(); else start();
 
   /** The words the page wrote into this element (or one of its attributes), whatever language shows now. */
   function source(el, name) {
@@ -440,7 +522,7 @@
   }
 
   window.KinLanguage = {
-    tr, say, write, normalize, value, attach, source, connect,
+    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html,
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */
