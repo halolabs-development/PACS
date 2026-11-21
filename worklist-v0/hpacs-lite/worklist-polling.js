@@ -9,7 +9,7 @@
       for (const row of $('#rows').querySelectorAll('tr[data-uid]')) {
         const cell = row.cells[index], study = byUid.get(row.dataset.uid);
         // Keep the saved width container and render the writing lock alongside presence.
-        if (cell && study) (cell.querySelector(':scope > .wc-cell') || cell).innerHTML = CELL.viewing(study);
+        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.viewing(study); window.KinLanguage?.markup?.(target); }
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
@@ -34,7 +34,7 @@
       const byUid = new Map(studies.map(study => [study.uid, study]));
       for (const row of $('#rows').querySelectorAll('tr[data-uid]')) {
         const cell = row.cells[index], study = byUid.get(row.dataset.uid);
-        if (cell && study) (cell.querySelector(':scope > .wc-cell') || cell).innerHTML = CELL.pf(study);
+        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.pf(study); window.KinLanguage?.markup?.(target); }
       }
     }
     function clearViewing() {

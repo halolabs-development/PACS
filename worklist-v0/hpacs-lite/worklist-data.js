@@ -113,7 +113,7 @@
       for (const s of studies) applyQcRow(s);
       for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
         const s = studies.find(x => x.uid === cell.dataset.qcUid);
-        cell.innerHTML = s ? qcCellHtml(s) : "";
+        cell.innerHTML = s ? qcCellHtml(s) : ""; window.KinLanguage?.markup?.(cell);
       }
       syncQcWindow();
       if (!viewedInfoFollowsList()) { renderQcInfo(); renderAcquisition(); }
@@ -672,7 +672,8 @@
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
           // A cell holding data of the study is never translated (the screen language changes labels and states only).
-          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          // Pt Class is the value the hospital sent with the order: data too.
+          const data = c.k !== "no" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
           return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
         || `<tr><td class="empty" colspan="${shown.length}"></td></tr>`;
