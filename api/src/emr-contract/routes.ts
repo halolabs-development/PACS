@@ -301,11 +301,21 @@ export const INTERNAL_SURFACES: Readonly<Record<string, RouteContract>> = freeze
   // An operator designates an institution's first administrator (api/prisma/designate-first-admin.cjs): the ordinary
   // approval command run by that process (it refuses a signed-in person, so it never ends a session).
   'service:first-admin-designation': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
+  // An operator replaces an institution's sole administrator (api/prisma/replace-sole-admin.cjs): the predecessor's
+  // suspension and the successor's approval, and the end of each one's sessions (SERVICE_ISOLATION_SURFACES).
+  'service:sole-admin-replacement': { kinds: ['identity-access'], operation: 'write', causes: ['service-job'] },
   // S7-U3a / D1860: the receiving institution's reader allocation closes inside the member's PATCH/DELETE studies/:uid.
   // That close is the server's own allocation operation, not a record act of the study route: the study routes serve
   // record kinds, and a route that mixed them with the non-record allocation would demand a served-record manifest.
   'server:reader-assignment-close': { kinds: ['assignment'], operation: 'write', causes: ['user-view'] },
 });
+/** The service jobs that may end a member's sessions as an isolation (the executor is the service, the affected member
+ * known). Closed: the first-administrator designation and the realm import never end a session. */
+export const SERVICE_ISOLATION_SURFACES: readonly string[] = freeze(['service:sole-admin-replacement']);
+for (const surface of SERVICE_ISOLATION_SURFACES) {
+  const contract = INTERNAL_SURFACES[surface];
+  if (!contract || contract.operation !== 'write' || !contract.kinds.includes('identity-access')) throw new Error('Isolation surface must write identity access');
+}
 for (const surface of Object.keys(INTERNAL_SURFACES)) {
   if (Object.prototype.hasOwnProperty.call(ROUTE_CONTRACTS, surface)) throw new Error('Internal surface shadows an HTTP route');
 }

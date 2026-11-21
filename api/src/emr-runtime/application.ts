@@ -17,19 +17,30 @@ export class EmrRuntime {
   private readonly journal: FailureJournal;
   private readonly ledger: AccessLedgerStore;
   private ready = false;
-  constructor(url: string, failureDirectory: string) {
+  /** role 'operator': a command run beside the running API (operator-runtime.ts). It never settles pending operations —
+   * they may be the running API's or another command's work in flight; the API recovers its own at its start — and its
+   * failure spool is its own run's (empty at start), so it has nothing of its own to replay. */
+  constructor(url: string, failureDirectory: string, private readonly role: 'api' | 'operator' = 'api') {
     this.db = new EmrLedgerClient(url);
     this.journal = new FailureJournal(this.db, new FailureSpool(failureDirectory));
     this.ledger = new AccessLedgerStore(this.db, this.journal);
     ({ port: this.port, control: this.control } = createRecordPort(this.ledger));
+  }
+  /** Operator only, after start: import a finished run's failure spool (its one writer has ended). */
+  async importSpool(directory: string): Promise<number> {
+    if (this.role !== 'operator' || !this.ready) throw new Error('Operator runtime required');
+    const journal = new FailureJournal(this.db, new FailureSpool(directory));
+    try { return await journal.replay(); } finally { await journal.close(); }
   }
   async start(): Promise<void> {
     if (this.ready) return;
     try {
       await this.db.$connect();
       if (process.env.DEPLOYMENT_MODE === 'production') await verifyRuntimeConnection(this.db);
-      await this.ledger.recoverPending();
-      await this.journal.replay();
+      if (this.role === 'api') {
+        await this.ledger.recoverPending();
+        await this.journal.replay();
+      }
       composeEmrAdapters(runtimeAdapters);
       this.ready = true;
     } catch (error) {
