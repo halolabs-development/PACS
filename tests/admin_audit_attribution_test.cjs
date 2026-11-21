@@ -1044,3 +1044,41 @@ test('force-release audit uses the viewing account within the recorded instituti
     }
   }
 });
+
+test('Change Name / Email: the old -> new email and name reach the one institution both sides recorded; snapshots never carry email; any other shape hides the row', () => {
+  const identity = { email: { from: 'old@members.test', to: 'new@members.test' }, name: { from: 'SYN old', to: 'SYN new' } };
+  const own = row(90, 'admin.user.identity', M1, { before: snap(M1, 'inst-a', 'APPROVED'),
+    after: snap(M1, 'inst-a', 'APPROVED', { email: 'new@members.test', name: 'SYN new' }), verificationOverride: false, identity });
+  const attributed = A.attributeAuditRow(own);
+  assert.deepEqual([attributed.rule, json(attributed.visible_to)], ['member_snapshots', ['inst-a']]);
+  const shown = A.projectAuditRow(own, 'inst-a');
+  assert.deepEqual(json(shown.detail.identity), identity, 'recorded as written');
+  assert.ok(!('email' in shown.detail.before) && !('email' in shown.detail.after), 'no email in either snapshot');
+  assert.equal(shown.detail.after.name, 'SYN new');
+  assert.equal(A.projectAuditRow(own, 'inst-b'), null);
+  assert.ok(A.auditCandidateRow(own, 'inst-a'), 'the SQL prefilter keeps it');
+  const hiddenRow = (n, detail) => A.attributeAuditRow(row(n, 'admin.user.identity', M1, detail));
+  const base = { before: snap(M1, 'inst-a', 'APPROVED'), after: snap(M1, 'inst-a', 'APPROVED'), verificationOverride: false };
+  for (const [n, detail] of [
+    [91, { ...base, after: snap(M1, 'inst-b', 'APPROVED'), identity }],            // two institutions
+    [92, { ...base, before: null, identity }],                                     // a side not recorded
+    [93, { ...base }],                                                             // no identity
+    [94, { ...base, identity: {} }],
+    [95, { ...base, identity: { email: { from: 'a@x', to: 'b@x', extra: 1 } } }],
+    [96, { ...base, identity: { username: { from: 'a', to: 'b' } } }],
+    [97, { ...base, identity: { email: { from: 'a@x', to: 7 } } }],
+    [98, { ...base, identity: [identity] }],
+  ]) {
+    const result = hiddenRow(n, detail);
+    assert.deepEqual(json(result.visible_to), [], `row ${n}`);
+    assert.equal(result.projection_by_side.size, 0, `row ${n}`);
+  }
+  // Another member action carrying an `identity` key: the key is not projected.
+  const other = A.projectAuditRow(row(99, 'admin.user.update', M1, { ...base, identity }), 'inst-a');
+  assert.ok(other && !('identity' in other.detail));
+  // Nor does a field-rule row (an access row with an `identity` key): its own fields only.
+  const login = A.projectAuditRow(row(100, 'auth.login', M1, { institution: 'inst-a', ip: null, dataSubject: null, outcome: 'success',
+    identity }, 'syn-m1@members.test'), 'inst-a');
+  assert.deepEqual(json(login.detail), { institution: 'inst-a', ip: null, dataSubject: null, outcome: 'success' });
+  assert.ok(!JSON.stringify(login).includes('old@members.test'));
+});

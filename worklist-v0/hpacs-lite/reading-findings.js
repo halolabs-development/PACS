@@ -18,7 +18,7 @@ window.KinReadingFindings = function (app) {
   // S3-U2b: the citation module joins that check, so a half-updated tab cannot build a block the
   // server would refuse - or, worse, one it would accept under a different rule.
   // Record version 3 adds the lesion location; the citation module must also carry the Include Measurements rule.
-  if (links.SCHEMA !== 3 || command.SCHEMA !== 3 || citation.SCHEMA !== 2 || typeof citation.measurementEligible !== 'function' ||
+  if (links.SCHEMA !== 4 || command.SCHEMA !== 4 || citation.SCHEMA !== 2 || typeof citation.measurementEligible !== 'function' || typeof citation.sentenceBlock !== 'function' ||
       typeof command.measurementOf !== 'function')
     throw new Error(links.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.');
   const node = (tag, value, parent) => { const el = document.createElement(tag); if (value) kinWrite(el, value); if (parent) parent.append(el); return el; };
@@ -42,6 +42,9 @@ window.KinReadingFindings = function (app) {
   const hiddenLabel = node('label', '', controls);
   const hiddenBox = node('input', '', hiddenLabel); hiddenBox.type = 'checkbox'; hiddenBox.id = 'reading-findings-hidden';
   hiddenLabel.append(document.createTextNode(' Show Hidden'));
+  const insertSelected = button(kinSay('Insert Selected into Report'), () => citeSelected(), controls);
+  insertSelected.id = 'reading-findings-insert-selected';
+  kinWrite(insertSelected, kinSay('고른 소견들을 목록 순서대로 판독문 초안에 한 번에 넣습니다. 미리보기에서 확인한 뒤 서버가 한 번에 기록합니다.'), 'title');
   hiddenBox.addEventListener('change', () => { sync(); if (live() && store.state().uid) store.includeHidden(hiddenBox.checked); else render(); });
   const readiness = node('p', '', panel); readiness.id = 'reading-findings-target';
   const result = node('p', '', panel); result.id = 'reading-findings-nav'; result.setAttribute('role', 'status'); result.dataset.result = '';
@@ -370,7 +373,7 @@ window.KinReadingFindings = function (app) {
       ? [{ sourceIndex: i, ...command.measurementOf(s), studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame }] : []);
     const opened = app.cite({ uid: st.uid, findingId: row.id, findingRevision: row.revision,
       sourceIndex: index, sourceLabel: source.description, linkState: source.linkState,
-      headRevision: source.headRevision === undefined ? null : source.headRevision, block, measurements,
+      headRevision: source.headRevision === undefined ? null : source.headRevision, block, sentence: citation.sentenceBlock(row), measurements,
       // This panel is fixed over the report column: it never moves the report, it covers it. Once
       // the server has recorded one insertion, everything the person must read next - the changed
       // field and the citation bar that now counts it - is underneath, and so are that bar's
@@ -379,6 +382,72 @@ window.KinReadingFindings = function (app) {
       // not: the next press comes from this same list, on the revision it is still showing.
       inserted: effect(() => { show(false); }, 'study') },
       origin || null);
+    if (opened) setResult('판독문에 넣을 내용을 미리보기에서 확인하세요.', 'cite-preview', false);
+  }
+  /* Insert Selected into Report (several findings, one server write). A finding is chosen with the revision and the source it shows
+   * when the box is ticked: its primary source, or - when that one is hidden or missing - the first source that is not. A reloaded
+   * list keeps a choice only where the same finding still shows that revision and that source in a usable state; anything else
+   * drops out of the choice (never swapped for another source). The preview built from the choice does not change after it opens. */
+  const MAX_SELECTED = 20;
+  // pickBoxes: the Select box of each listed finding, so every render shows exactly the choice the next press will hand over.
+  let selected = new Map(), selectedStudy = null, pickBoxes = new Map();
+  const usable = s => !!s && s.linkState !== 'hidden' && s.linkState !== 'missing';
+  const sourceKey = s => s ? (s.kind === 'job' ? 'job:' + s.jobId + ':' + (s.mark ? s.mark.id : '') : 'item:' + s.itemId) + ':' + s.revision : '';
+  function selectable(row) {
+    if (!row || row.hidden || !Array.isArray(row.sources)) return null;
+    const index = usable(row.sources[row.primary]) ? row.primary : row.sources.findIndex(usable);
+    if (index < 0 || !citation.assembleBlock(row)) return null;
+    return { revision: row.revision, index, key: sourceKey(row.sources[index]), primary: index === row.primary };
+  }
+  const selectedMatches = (row, pick) => { const chosen = selected.get(row.id); return !!chosen && chosen.revision === pick.revision && chosen.key === pick.key; };
+  function toggleSelected(id, on) {
+    sync();
+    const st = store.state(), row = st.rows.find(r => r.id === id), pick = selectable(row);
+    if (selectedStudy !== st.uid) { selected = new Map(); selectedStudy = st.uid; }
+    let kept = false;
+    if (on && pick && selected.size < MAX_SELECTED) { selected.set(id, pick); kept = true; }
+    else if (on && pick) setResult(kinSay('한 번에 {n0}건까지 고를 수 있습니다.', MAX_SELECTED), 'refused', false);
+    else selected.delete(id);
+    renderSelected();
+    return kept;
+  }
+  // The choice follows the list: a study change clears it, a reload keeps only exact matches.
+  function pruneSelected() {
+    const st = store.state();
+    if (selectedStudy !== st.uid) { selected = new Map(); selectedStudy = st.uid; return; }
+    for (const [id, chosen] of [...selected]) {
+      const row = st.rows.find(r => r.id === id), pick = selectable(row);
+      if (!pick || pick.revision !== chosen.revision || pick.key !== chosen.key) selected.delete(id);
+    }
+  }
+  function renderSelected() {
+    const st = store.state();
+    const count = selectedStudy === st.uid ? selected.size : 0;
+    for (const [id, box] of pickBoxes) box.checked = selectedStudy === st.uid && selected.has(id);
+    kinWrite(insertSelected, count ? kinSay('Insert Selected into Report ({n0})', count) : kinSay('Insert Selected into Report'));
+    insertSelected.disabled = !count || !live() || typeof app.cite !== 'function';
+  }
+  function citeSelected() {
+    sync(); pruneSelected();
+    const st = store.state();
+    if (!live() || !st.uid || st.uid !== current() || !selected.size) {
+      setResult('소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 고르세요.', 'list-changed', false);
+      render(); renderSelected();
+      return;
+    }
+    if (typeof app.cite !== 'function') { setResult('이 화면에서는 판독문에 넣을 수 없습니다.', 'unsupported', false); return; }
+    // List order, not the order of the ticks: the report reads top to bottom like the list.
+    const items = st.rows.filter(row => selected.has(row.id)).map(row => {
+      const chosen = selected.get(row.id), source = row.sources[chosen.index];
+      return { findingId: row.id, findingRevision: row.revision, sourceIndex: chosen.index,
+        sourceLabel: chosen.primary ? source.description : kinSay('{0} (대표 출처를 쓸 수 없어 이 출처로 인용)', source.description),
+        linkState: source.linkState, headRevision: source.headRevision === undefined ? null : source.headRevision,
+        block: citation.assembleBlock(row), sentence: citation.sentenceBlock(row),
+        measurements: row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid)
+          ? [{ sourceIndex: i, ...command.measurementOf(s), studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame }] : []) };
+    });
+    const opened = app.cite({ uid: st.uid, items,
+      inserted: effect(() => { selected = new Map(); show(false); }, 'study') }, insertSelected);
     if (opened) setResult('판독문에 넣을 내용을 미리보기에서 확인하세요.', 'cite-preview', false);
   }
   // Only the existing open/re-attach paths; the user presses Go to Image again afterwards.
@@ -413,17 +482,31 @@ window.KinReadingFindings = function (app) {
   }
   function rebuild(rows) {
     const active = document.activeElement, key = active && list.contains(active) ? active.dataset.focusKey : null;
-    shownRows = rows; list.replaceChildren();
+    shownRows = rows; list.replaceChildren(); pickBoxes = new Map();
     let refocus = null;
     for (const row of rows) {
       const article = node('article', '', list); article.dataset.findingId = row.id; article.dataset.hidden = String(row.hidden);
       const heading = node('p', '', article); heading.className = 'reading-findings-title'; heading.id = 'reading-findings-label-' + (++labels);
+      // Insert Selected into Report: a finding is chosen with the revision and the source it shows now (selectable()).
+      const pick = selectable(row), pickLabel = node('label', '', heading), pickBox = node('input', '', pickLabel);
+      pickBox.type = 'checkbox'; pickBox.dataset.focusKey = row.id + ':select'; pickBox.dataset.kinSelectFinding = '';
+      pickBox.disabled = !pick || !live(); pickBox.checked = !!pick && selectedMatches(row, pick); pickBoxes.set(row.id, pickBox);
+      pickBox.setAttribute('aria-describedby', heading.id);
+      kinWrite(pickBox, kinSay('판독문에 함께 넣을 소견으로 고르기'), 'aria-label');
+      pickBox.addEventListener('change', () => { if (!toggleSelected(row.id, pickBox.checked)) pickBox.checked = false; });
+      if (pickBox.dataset.focusKey === key) refocus = pickBox;
+      pickLabel.append(document.createTextNode(' '));
       node('strong', row.title || kinSay('(제목 없음)'), heading);
       if (row.text) node('p', row.text, article).className = 'reading-findings-text';
       // Version 3: the user's own lesion location, labelled the same way (free text, never interpreted).
       if (row.lesionLocation) {
         const line = node('p', kinSay('Location (병변 위치): {0}', row.lesionLocation), article);
         line.className = 'reading-findings-characteristics'; line.dataset.kinLesionLocation = '';
+      }
+      // Version 4: the user's own lesion size, as typed.
+      if (row.size) {
+        const line = node('p', kinSay('Size (크기): {0}', row.size), article);
+        line.className = 'reading-findings-characteristics'; line.dataset.kinLesionSize = '';
       }
       // Version 2: the user's own lesion characteristics, labelled; never interpreted or mapped to a vocabulary.
       if (row.characteristics) {
@@ -472,7 +555,9 @@ window.KinReadingFindings = function (app) {
     reload.disabled = !usable || st.loading;
     hiddenBox.disabled = !usable; hiddenBox.checked = st.includeHidden;
     toggle.disabled = ended;
+    pruneSelected();
     if (st.rows !== shownRows) rebuild(st.rows);
+    renderSelected();
     renderReadiness();
   }
 

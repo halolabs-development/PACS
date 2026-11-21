@@ -4,7 +4,8 @@
  * Gateway agent는 30초마다(시작 직후 한 번) 자기 상태를 알린다: 큐 epoch, 실행마다 메모리에서 한 번 만드는 무작위 bootId,
  * 그 실행에서 새 상태 본문마다 1부터 올리는 seq, 버전, 가동 초,
  * 큐 수(waiting·retry·failed — complete는 싣지 않는다), 마지막 STOW 뒤 경과 초, 로컬 Orthanc REST가 마지막에 답했는지와
- * 그 뒤 경과 초. 본문에는 이 호스트의 시각·UID·기관·자유 문구가 없다. 시각은 모두 KIN이 받은 시각(R)에서 만든다 —
+ * 그 뒤 경과 초, 그리고 DICOM 수신 자가 점검(dicomListener — agent가 자기 Orthanc의 DICOM 포트에 직접 보낸 C-ECHO의 결과와
+ * 그 뒤 경과 초; 이 키가 없는 옛 agent의 본문도 받고 그때는 null이다). 본문에는 이 호스트의 시각·UID·기관·자유 문구가 없다. 시각은 모두 KIN이 받은 시각(R)에서 만든다 —
  * 시작 = R − 가동 초, 마지막 STOW = R − 경과 초. 이것은 추정 시각이다(전송 지연만큼 이르다).
  *
  * 행 키는 (자격증명 sub, 큐 epoch)다. 같은 자격증명을 쓰는 서로 다른 큐는 서로 다른 행이고, 옛 epoch의 행은 지우지 않아
@@ -40,6 +41,12 @@ const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
 const MAX_SECONDS = 10 * 366 * 24 * 3600;
 const MAX_COUNT = 2 ** 31 - 1;
 const TOP_KEYS = ['bootId', 'epoch', 'lastStowAgeSeconds', 'localOrthanc', 'queue', 'seq', 'uptimeSeconds', 'version'];
+/** 이 키 하나만 빠져도 된다(옛 agent). 있으면 닫힌 모양이어야 한다. */
+const OPTIONAL_KEYS = ['dicomListener'];
+const LISTENER_KEYS = ['ageSeconds', 'result'];
+/** C-ECHO의 결과. accepted는 Status 0x0000의 C-ECHO-RSP뿐이다 — 하트비트·REST 응답은 이 칸을 채우지 않는다. */
+export const GATEWAY_DICOM_LISTENER_RESULTS = Object.freeze(['accepted', 'rejected', 'no_answer'] as const);
+export type GatewayDicomListenerResult = typeof GATEWAY_DICOM_LISTENER_RESULTS[number];
 const QUEUE_KEYS = ['failed', 'retry', 'waiting'];
 const LOCAL_KEYS = ['ageSeconds', 'answered'];
 
@@ -48,6 +55,7 @@ export interface GatewayHeartbeat {
   epoch: string; bootId: string; seq: number; version: string; uptimeSeconds: number;
   queue: GatewayQueueCounts | null; lastStowAgeSeconds: number | null;
   localOrthanc: { answered: boolean; ageSeconds: number } | null;
+  dicomListener: { result: GatewayDicomListenerResult; ageSeconds: number } | null;
 }
 
 /** 저장되는 한 행. 시각은 모두 서버 시계의 ms다. */
@@ -55,6 +63,7 @@ export interface GatewayHeartbeatRow {
   gateway: string; label: string; institutionId: string; epoch: string; bootId: string; seq: number; version: string;
   uptimeSeconds: number; startedAt: number; receivedAt: number; queue: GatewayQueueCounts | null;
   lastStowAt: number | null; localOrthanc: { answered: boolean; observedAt: number } | null;
+  dicomListener: { result: GatewayDicomListenerResult; observedAt: number } | null;
 }
 
 const plain = (value: unknown): value is Record<string, unknown> =>
@@ -66,9 +75,14 @@ const closed = (value: Record<string, unknown>, keys: string[]) => {
 const seconds = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= MAX_SECONDS;
 const count = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= MAX_COUNT;
 
-/** 닫힌 본문. 키를 더하거나 빼거나, 범위 밖 수·형식 밖 글자는 모두 400이다(어느 칸인지만 말한다). */
+/**
+ * 닫힌 본문. 키를 더하거나 빼거나, 범위 밖 수·형식 밖 글자는 모두 400이다(어느 칸인지만 말한다). dicomListener만은 옛 agent가
+ * 싣지 않으므로 없어도 되고, 없음과 null은 같은 '아직 점검 안 함'이다.
+ */
 export function parseGatewayHeartbeat(body: unknown): GatewayHeartbeat {
-  if (!plain(body) || !closed(body, TOP_KEYS)) throw new GatewayHeartbeatInputError('body');
+  if (!plain(body)) throw new GatewayHeartbeatInputError('body');
+  const present = OPTIONAL_KEYS.filter(key => Object.prototype.hasOwnProperty.call(body, key));
+  if (!closed(body, [...TOP_KEYS, ...present].sort())) throw new GatewayHeartbeatInputError('body');
   const { epoch, bootId, seq, version, uptimeSeconds, queue, lastStowAgeSeconds, localOrthanc } = body;
   if (typeof epoch !== 'string' || !UUID.test(epoch)) throw new GatewayHeartbeatInputError('epoch');
   if (typeof bootId !== 'string' || !UUID.test(bootId)) throw new GatewayHeartbeatInputError('bootId');
@@ -92,8 +106,16 @@ export function parseGatewayHeartbeat(body: unknown): GatewayHeartbeat {
       throw new GatewayHeartbeatInputError('localOrthanc');
     local = { answered: localOrthanc.answered, ageSeconds: localOrthanc.ageSeconds as number };
   }
+  const listener = body.dicomListener ?? null;
+  let dicom: GatewayHeartbeat['dicomListener'] = null;
+  if (listener !== null) {
+    if (!plain(listener) || !closed(listener, LISTENER_KEYS) || !GATEWAY_DICOM_LISTENER_RESULTS.includes(listener.result as any)
+      || !seconds(listener.ageSeconds) || (listener.ageSeconds as number) > uptime)
+      throw new GatewayHeartbeatInputError('dicomListener');
+    dicom = { result: listener.result as GatewayDicomListenerResult, ageSeconds: listener.ageSeconds as number };
+  }
   return { epoch, bootId, seq: seq as number, version, uptimeSeconds: uptime, queue: counts,
-    lastStowAgeSeconds: lastStowAgeSeconds as number | null, localOrthanc: local };
+    lastStowAgeSeconds: lastStowAgeSeconds as number | null, localOrthanc: local, dicomListener: dicom };
 }
 
 /** 받은 시각 R(서버 ms)에서 행을 만든다. 신원·기관은 검증된 토큰에서만 온다. */
@@ -103,7 +125,9 @@ export function gatewayHeartbeatRow(beat: GatewayHeartbeat, gateway: string, lab
     uptimeSeconds: beat.uptimeSeconds, startedAt: receivedAt - beat.uptimeSeconds * 1000, receivedAt, queue: beat.queue,
     lastStowAt: beat.lastStowAgeSeconds === null ? null : receivedAt - beat.lastStowAgeSeconds * 1000,
     localOrthanc: beat.localOrthanc && { answered: beat.localOrthanc.answered,
-      observedAt: receivedAt - beat.localOrthanc.ageSeconds * 1000 } };
+      observedAt: receivedAt - beat.localOrthanc.ageSeconds * 1000 },
+    dicomListener: beat.dicomListener && { result: beat.dicomListener.result,
+      observedAt: receivedAt - beat.dicomListener.ageSeconds * 1000 } };
 }
 
 export type GatewayHeartbeatDecision = 'stored' | 'stale' | 'conflict';
@@ -142,6 +166,7 @@ export function gatewayStatusAnswer(rows: Iterable<GatewayHeartbeatRow>, institu
       lastContactAt: iso(row.receivedAt), startedAt: iso(row.startedAt), version: row.version,
       queue: row.queue && { ...row.queue }, lastStowAt: iso(row.lastStowAt),
       localOrthanc: row.localOrthanc && { answered: row.localOrthanc.answered, observedAt: iso(row.localOrthanc.observedAt) },
+      dicomListener: row.dicomListener && { result: row.dicomListener.result, observedAt: iso(row.dicomListener.observedAt) },
     })),
   };
 }

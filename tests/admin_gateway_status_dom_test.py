@@ -248,18 +248,19 @@ HOSTS = {"institutionId": INSTITUTION, "generatedAt": at(6), "serverStartedAt": 
          "noContactAfterSeconds": 180, "gateways": [
              {"gateway": "gw-syn-a", "queueInstance": EPOCH, "contact": "recent", "lastContactAt": at(5),
               "startedAt": "2026-09-23T22:00:00.000Z", "version": "2026.11.1", "queue": {"waiting": 3, "retry": 1, "failed": 0},
-              "lastStowAt": at(4), "localOrthanc": {"answered": True, "observedAt": at(5)}},
+              "lastStowAt": at(4), "localOrthanc": {"answered": True, "observedAt": at(5)},
+              "dicomListener": {"result": "accepted", "observedAt": at(5)}},
              {"gateway": "gw-syn-a", "queueInstance": HOST_EPOCH, "contact": "no_contact", "lastContactAt": at(1),
               "startedAt": "2026-09-23T20:00:00.000Z", "version": "2026.10.2", "queue": None, "lastStowAt": None,
-              "localOrthanc": {"answered": False, "observedAt": at(1)}}]}
+              "localOrthanc": {"answered": False, "observedAt": at(1)}, "dicomListener": None}]}
 # (name, contact, facts) per line, in the server's order.
 EXPECTED_HOSTS = [
     ("gw-syn-a", "Last Contact " + shown(5),
      ["Queue 3 Waiting · 1 Retry · 0 Failed", "Last STOW " + shown(4), "Local Orthanc API Answered " + shown(5),
-      "Version 2026.11.1", "Running Since 2026-09-23 22:00:00", "Queue Instance 0a1b2c3d"]),
+      "DICOM Listener C-ECHO Accepted " + shown(5), "Version 2026.11.1", "Running Since 2026-09-23 22:00:00", "Queue Instance 0a1b2c3d"]),
     ("gw-syn-a", "No Contact since " + shown(1),
      ["Queue Unreadable", "No STOW Since Gateway Start", "Local Orthanc API No Answer " + shown(1),
-      "Version 2026.10.2", "Running Since 2026-09-23 20:00:00", "Queue Instance 1b2c3d4e"]),
+      "DICOM Listener Not Checked", "Version 2026.10.2", "Running Since 2026-09-23 20:00:00", "Queue Instance 1b2c3d4e"]),
 ]
 HOST_LINES = """() => [...document.querySelectorAll('#gateway-hosts-rows > li')].map(li => {
   const name = li.querySelector('.gw-host-name'), contact = li.querySelector('.gw-host-contact');
@@ -1203,7 +1204,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         self.refresh_hosts((200, HOSTS))
         lines = self.assert_hosts_drawn()
         self.assertEqual(["recent", "no_contact"], [line["contactKey"] for line in lines])
-        self.assertEqual(["queue", "stow", "orthanc", "version", "started", "instance"], lines[0]["keys"])
+        self.assertEqual(["queue", "stow", "orthanc", "dicom", "version", "started", "instance"], lines[0]["keys"])
         # No Contact is a word, never a warning colour: both contact words have one colour.
         self.assertEqual(lines[0]["contactColour"], lines[1]["contactColour"])
         for line in lines:
@@ -1212,14 +1213,21 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
                 self.assertEqual([], [t for t in [line["name"], line["contact"], *line["facts"]] if has_hangul(t)])
                 self.assertEqual([], [t for t in [line["contactTitle"], *line["factTitles"]] if not has_hangul(t)])
                 # The data (Gateway name, version, queue instance) is never machine-translated.
-                self.assertEqual([line["name"], line["facts"][3], line["facts"][5]], line["untranslated"])
+                self.assertEqual([line["name"], line["facts"][4], line["facts"][6]], line["untranslated"])
                 self.assertFalse(line["overflow"])
         self.assertIn("180초", lines[1]["contactTitle"])
         self.assertIn("사이트 기준이 아니라", lines[1]["contactTitle"])
         self.assertIn("DICOM 포트를 직접 시험한 값은 아닙니다", lines[0]["factTitles"][2])
         self.assertIn("추정 시각", lines[0]["factTitles"][1])
         self.assertIn("0건이 아닙니다", lines[1]["factTitles"][0])
-        self.assertIn("0a1b2c3d-0000-4000-8000-00000000000a", lines[0]["factTitles"][5])
+        self.assertIn("0a1b2c3d-0000-4000-8000-00000000000a", lines[0]["factTitles"][6])
+        # The DICOM receive self-check says what it tested (C-ECHO to the DICOM port) and what it does not cover;
+        # an old Gateway (no result) reads Not Checked, never filled from its contact or the REST answer.
+        self.assertIn("C-ECHO", lines[0]["factTitles"][3])
+        self.assertIn("DICOM 수신 포트", lines[0]["factTitles"][3])
+        self.assertIn("장비 쪽 네트워크", lines[0]["factTitles"][3])
+        self.assertIn("추정 시각", lines[0]["factTitles"][3])
+        self.assertIn("연락·REST 응답으로 채우지 않습니다", lines[1]["factTitles"][3])
         # The same press read the study list too, once each, with no query; the study rows are drawn as before.
         self.assertEqual([("GET", HOSTS_PATH, ""), ("GET", "/api/studies", "")],
                          sorted(c for c in self.api_calls() if c[1] in ("/api/studies", HOSTS_PATH)))
@@ -1313,7 +1321,10 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
             change({lastContactAt: '2026-09-24 01:05'}), change({lastStowAt: 5}), change({queue: {waiting: 1, retry: 0}}),
             change({queue: {waiting: 1.5, retry: 0, failed: 0}}), change({queue: {waiting: 1, retry: 0, failed: 0, complete: 3}}),
             change({localOrthanc: {answered: 'yes', observedAt: row.lastContactAt}}), change({localOrthanc: {answered: true}}),
-            change({extra: 'SYN'})].map(x => G.readAnswer(x));
+            change({extra: 'SYN'}), change({dicomListener: {result: 'answered', observedAt: row.lastContactAt}}),
+            change({dicomListener: {result: 'accepted'}}), change({dicomListener: {result: 'accepted', observedAt: 'now'}}),
+            change({dicomListener: 'accepted'}), change({dicomListener: {result: 'accepted', observedAt: row.lastContactAt, port: 1}}),
+            (() => { const { dicomListener, ...old } = row; return {...answer, gateways: [old]}; })()].map(x => G.readAnswer(x));
           const read = G.readAnswer(answer);
           const shown = read.gateways.map(r => { const d = G.display(r, read.noContactAfterSeconds, same);
             return [d.contact, d.contactText, d.facts.map(f => f.text)]; });
@@ -1321,14 +1332,16 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
             G.summary({observedAt: 'T1', failed: true}, same)].map(s => [s.key, s.text]);
           return {malformed, count: read.gateways.length, shown, summaries, empty: G.empty('T0', same).text,
             frozen: Object.isFrozen(G)}; }""", HOSTS)
-        self.assertEqual([None] * 21, result["malformed"], "an answer that does not prove itself is not drawn")
+        self.assertEqual([None] * 27, result["malformed"], "an answer that does not prove itself is not drawn")
         self.assertEqual(2, result["count"])
         self.assertEqual([
             ["recent", "Last Contact " + at(5), ["Queue 3 Waiting · 1 Retry · 0 Failed", "Last STOW " + at(4),
-                                                  "Local Orthanc API Answered " + at(5), "Version 2026.11.1",
+                                                  "Local Orthanc API Answered " + at(5),
+                                                  "DICOM Listener C-ECHO Accepted " + at(5), "Version 2026.11.1",
                                                   "Running Since 2026-09-23T22:00:00.000Z", "Queue Instance 0a1b2c3d"]],
             ["no_contact", "No Contact since " + at(1), ["Queue Unreadable", "No STOW Since Gateway Start",
-                                                          "Local Orthanc API No Answer " + at(1), "Version 2026.10.2",
+                                                          "Local Orthanc API No Answer " + at(1),
+                                                          "DICOM Listener Not Checked", "Version 2026.10.2",
                                                           "Running Since 2026-09-23T20:00:00.000Z", "Queue Instance 1b2c3d4e"]],
         ], result["shown"])
         self.assertEqual([

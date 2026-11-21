@@ -507,7 +507,8 @@ window.kinViewerTechNote=function(services,session=null){
       try{const id=code==='Digit7'?'kin-viewer-history':'kin-viewer-layout';target=code==='Digit2'?services.cornerstoneViewportService.getCornerstoneViewport(current.viewportId)?.element:document.querySelector('#kin-workspace-dock nav button[aria-controls="'+id+'"]')||document.querySelector('#'+id+' > summary');}catch(_){}
       if(!target||!target.isConnected||!target.getClientRects().length||target.closest('[inert]')){status.textContent='영상 도구 연결을 확인한 뒤 이동하세요.';return;}
       if(code==='Digit2'&&!target.hasAttribute('tabindex'))target.tabIndex=-1;
-      target.focus({preventScroll:true});target.scrollIntoView({block:'nearest'});
+      const dockFocus=code==='Digit2'?null:target.closest('#kin-workspace-dock')?.focusTab;
+      if(typeof dockFocus==='function')dockFocus(target,{preventScroll:true});else target.focus({preventScroll:true});target.scrollIntoView({block:'nearest'});
     }
     function refresh(){button.disabled=!live()||busy||!owner;arrange.disabled=!live()||!owner;retry.disabled=!live()||busy;for(const [code,b] of toolButtons){b.disabled=!live()||!owner||(code==='Digit4'&&(!readingChannel||!patientCopy.tracked()));if(code==='Digit4'){b.setAttribute('aria-busy',String(!!pendingReturn));b.setAttribute('aria-disabled',String(b.disabled||!!pendingReturn));}}patientCopy.refresh();}
     function end(){if(ended)return;ended=true;projection?.dispose();orientation?.dispose();windowLink?.dispose();owner=null;toolbarPreferences?.dispose();disposeNativeFocus();patientCopy.end();readingChannel?.close();readingChannel=null;clearTimeout(returnTimer);returnTimer=null;pendingReturn=null;returnStatus.textContent='세션이나 영상 창이 변경되었습니다.';window.removeEventListener('hashchange',bindReturn);window.removeEventListener('kin-reading-link-changed',bindReturn);dock?.end();for(const c of requests)c.abort();note.dispose();refresh();status.textContent='세션이나 영상창이 변경되었습니다. 뷰어를 새로 여세요.';}
