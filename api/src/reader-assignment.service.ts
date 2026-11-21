@@ -5,6 +5,7 @@ import { Injectable, BadRequestException, ConflictException, ForbiddenException,
 import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { KeycloakService, KeycloakUser } from './keycloak.service';
+import { institutionMembers, memberUser } from './member-rights';
 import type { Caller } from './pacs.service';
 import { resolveExamScope, prepareExamRead, lockExamStates, ResolvedExamScope } from './exam-merge.service';
 const uuid=(v:any)=>typeof v==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
@@ -56,7 +57,8 @@ export class ReaderAssignmentService {
   private manager(c:Caller){return c.roles.some(r=>['admin','technician'].includes(r));}
   private eligible(u:KeycloakUser|null,c:Caller){return !!u&&u.enabled&&!u.serviceAccountClientId&&u.groups.length===1&&u.groups[0]===c.institution&&u.roles.includes('radiologist')&&(u.email||u.username).length<=256;}
   private publicReader(u:KeycloakUser){return {sub:u.id,actor:u.email||u.username,name:([u.lastName,u.firstName].filter(Boolean).join(' ')||u.username).slice(0,256)};}
-  async candidates(c:Caller){this.member(c);return {owner:[c.institution,c.sub],canManage:this.manager(c),readers:(await this.keycloak.assignmentReaders(c.institution!)).filter(u=>this.eligible(u,c)&&(this.manager(c)||u.id===c.sub)).map(u=>this.publicReader(u))};}
+  // Who may be offered and named comes from the member table (member-rights.ts), not the provider roster.
+  async candidates(c:Caller){this.member(c);return {owner:[c.institution,c.sub],canManage:this.manager(c),readers:(await institutionMembers(this.prisma,c.institution!)).filter(u=>this.eligible(u,c)&&(this.manager(c)||u.id===c.sub)).map(u=>this.publicReader(u))};}
   private async run<T>(c:Caller,fn:(tx:any)=>Promise<T>,transaction?:Prisma.TransactionClient):Promise<T>{try{const execute=async (tx:Prisma.TransactionClient)=>{await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`; await this.studyAccess.snapshot(c,tx);return fn(tx);};return await (transaction?execute(transaction):this.prisma.$transaction(execute,{maxWait:4000,timeout:8000}));}catch(e:any){if(['P2028','P2034'].includes(e?.code)||e?.code==='P2010'&&['55P03','57014','40P01'].includes(e?.meta?.code))throw new ServiceUnavailableException('배정 처리 중입니다. 같은 요청으로 다시 시도하세요');throw e;}}
   private async study(tx:any,uid:string,c:Caller,lock:'share'|'update'|null=null,prepared?:ResolvedExamScope){
     if(typeof uid!=='string'||uid.length>64||!/^\d+(?:\.\d+)+$/.test(uid))throw new BadRequestException('검사 UID를 확인하세요');
@@ -100,7 +102,7 @@ export class ReaderAssignmentService {
     const fingerprint=createHash('sha256').update(JSON.stringify({subject:c.sub,institution:c.institution,uid,readerSub,revision:b.revision})).digest('hex');
     const previous=await this.prisma.readerAssignment.findUnique({where:key(uid,c.institution!)});
     const replay=previous?.lastRequest===requestId&&previous?.lastFingerprint===fingerprint;
-    const user=readerSub&&!replay?await this.keycloak.getUser(readerSub):null;
+    const user=readerSub&&!replay?await memberUser(this.prisma,readerSub):null;
     if(readerSub&&!replay&&!this.eligible(user,c))throw new BadRequestException('현재 같은 기관의 활성 판독의를 선택하세요');
     return this.run(c,async tx=>{
       const s=await this.study(tx,uid,c,'update',prepared),row=await tx.readerAssignment.findUnique({where:key(uid,c.institution!)});

@@ -42,7 +42,9 @@ const UID = '2.25.73001', OTHER_UID = '2.25.73002', Z_UID = '2.25.73003', UNKNOW
 const ACTION = 'reader.assignment';
 const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 
-// name -> [Keycloak groups, realm roles]. abDoc sits in two groups: never a candidate or an assignee anywhere.
+// name -> [institutions, roles]. Everyone else has one member row of that institution with those roles; abDoc is listed
+// by the login provider in two groups while its member row (the authority) has no institution: never a candidate or an
+// assignee anywhere.
 const PEOPLE = {
   aAdmin: [[A], ['admin']], aTech: [[A], ['technician']], aDoc: [[A], ['radiologist']], aDoc2: [[A], ['radiologist']],
   bAdmin: [[B], ['admin']], bTech: [[B], ['technician']], bDoc: [[B], ['radiologist']], bDoc2: [[B], ['radiologist']],
@@ -55,6 +57,12 @@ const caller = name => ({ kind: 'member', institution: PEOPLE[name][0][0], sub: 
 const kcUser = name => ({ id: SUB[name], username: 'syn-' + name.toLowerCase(), email: actorOf(name), emailVerified: true,
   firstName: 'SYNTHETIC', lastName: name, enabled: true, serviceAccountClientId: null, groups: [...PEOPLE[name][0]], roles: [...PEOPLE[name][1]] });
 const reader = name => ({ sub: SUB[name], actor: actorOf(name), name: name + ' SYNTHETIC' });
+// The member table row (api/prisma/schema.prisma MemberRights) the pickers and saves read.
+const memberRow = name => {
+  const [groups, roles] = PEOPLE[name], single = groups.length === 1;
+  return { sub: SUB[name], username: 'syn-' + name.toLowerCase(), email: actorOf(name), name: name + ' SYNTHETIC', emailVerified: true,
+    approved: single, suspended: false, institution: single ? groups[0] : null, roles: single ? [...roles] : [], version: 1 };
+};
 const status = n => e => typeof e?.getStatus === 'function' && e.getStatus() === n;
 const response = async promise => { try { await promise; } catch (e) { return JSON.stringify(e.getResponse()); } assert.fail('expected a refusal'); };
 
@@ -74,6 +82,7 @@ async function world() {
   // `held`: the records that keep a study from being deleted (removeState's refusals), seeded by a test; `Order`: the
   // orders a test links to a study.
   const t = { StudyState: new Map(), ReaderAssignment: new Map(), AuditLog: [], Order: new Map(),
+    MemberRights: new Map(Object.keys(PEOPLE).map(name => [SUB[name], memberRow(name)])),
     held: { ViewerItem: [], TechNoteRevision: [], ViewerJob: [], StudyQuestion: [], StudyImageRequest: [], CriticalResult: [], ReportVersion: [], ReportDraft: [] } };
   const log = [];
   let auditSeq = 0, txSeq = 0, clock = Date.parse('2026-09-28T00:00:00.000Z');
@@ -160,6 +169,11 @@ async function world() {
           if (!current) throw Object.assign(new Error('no row'), { code: 'P2025' });
           const next = { ...current, ...a.data, updatedAt: now() }; check(next); t.ReaderAssignment.set(key, next); return clone(next);
         },
+      },
+      memberRights: {
+        findUnique: async a => { record('MemberRights', 'findUnique', a); if (w.beforeMember) await w.beforeMember(a);
+          const row = t.MemberRights.get(a.where.sub); return row ? clone(row) : null; },
+        findMany: async a => { record('MemberRights', 'findMany', a); return [...t.MemberRights.values()].filter(r => matches(r, a?.where)).map(clone); },
       },
       auditLog: { create: async a => { record('AuditLog', 'create', a);
         if (w.failAudit?.(a.data)) throw new Error('SYNTHETIC audit failure');
@@ -326,15 +340,43 @@ test('owner and receiver keep their own rows: reads, writes, history and candida
   const stale = w.body('bTech', await w.read('bTech'), 'bDoc2');
   await assert.rejects(w.write('bTech', { ...stale, expectedOwner: [A, SUB.bTech] }), status(409));
   assert.deepEqual([w.row(UID, A).revision, w.row(UID, B).revision], [1, 3], 'no refused call moved a row');
-  // Candidates: the caller institution's single-group radiologists, asked of Keycloak for that institution only.
+  // Candidates: the caller institution's radiologists, asked of the member table for that institution only; the login
+  // provider is not asked.
   w.keycloak.calls.length = 0;
+  const asked = w.mark();
   const subs = async name => (await w.ra.candidates(caller(name))).readers.map(r => r.sub).sort();
   assert.deepEqual(await subs('aTech'), [SUB.aDoc, SUB.aDoc2].sort());
   assert.deepEqual(await subs('bTech'), [SUB.bDoc, SUB.bDoc2].sort());
   assert.deepEqual(await subs('bAdmin'), [SUB.bDoc, SUB.bDoc2].sort());
   assert.deepEqual(await subs('zTech'), [SUB.zDoc]);
   assert.deepEqual(await subs('bDoc'), [SUB.bDoc]);
-  assert.deepEqual(w.keycloak.calls.filter(c => c[0] === 'assignmentReaders').map(c => c[1]), [A, B, B, Z, B]);
+  assert.deepEqual(w.since(asked).filter(c => c.model === 'MemberRights' && c.op === 'findMany').map(c => c.args.where), [A, B, B, Z, B].map(institution => ({ institution })));
+  assert.deepEqual(w.keycloak.calls, []);
+});
+
+test('a reader the member table no longer allows is neither offered nor newly named; what was saved stays', async () => {
+  // Suspend, Revoke Approval (no institution, no roles), a role without radiologist, another institution: each written to
+  // the member table only, as the administrator's command writes it. The login provider still lists the person in A.
+  const changes = { suspended: { suspended: true }, revoked: { approved: false, suspended: true, institution: null, roles: [] },
+    role: { roles: ['technician'] }, moved: { institution: B } };
+  for (const [label, change] of Object.entries(changes)) {
+    const w = await world();
+    w.study(UID);
+    await w.assign('aTech', 'aDoc2');
+    const prepared = w.body('aTech', await w.read('aTech'), 'aDoc');
+    const before = w.snapshot();
+    Object.assign(w.t.MemberRights.get(SUB.aDoc2), change);
+    Object.assign(w.t.MemberRights.get(SUB.aDoc), change);
+    assert.deepEqual((await w.ra.candidates(caller('aTech'))).readers, [], label);
+    await assert.rejects(w.write('aTech', prepared), status(400), label);
+    assert.equal(JSON.parse(await response(w.write('aTech', prepared))).message, '현재 같은 기관의 활성 판독의를 선택하세요', label);
+    assert.deepEqual(w.snapshot(), before, label + ': a refused save wrote');
+    // The saved assignment still names its reader, and it can be cleared.
+    const now = await w.read('aTech');
+    assert.deepEqual([now.revision, now.reader], [1, reader('aDoc2')], label);
+    const cleared = await w.write('aTech', w.body('aTech', now, null));
+    assert.deepEqual([cleared.revision, cleared.reader], [2, null], label);
+  }
 });
 
 test('closing the channel closes the receiver row in the same transaction, with one audit entry; the owner row stays', async () => {
@@ -584,11 +626,10 @@ test('every path that takes the channel away closes the row: a new teleTo and a 
 test('a write whose check passed before the close cannot land after it', async () => {
   const w = await world();
   await channel(w, 'open');
-  const getUser = w.keycloak.getUser;
   let cancelled = false;
-  // The receiver's request passes its first study check; Keycloak's eligibility answer comes back only after the
-  // owner has cancelled the channel.
-  w.keycloak.getUser = async sub => { if (!cancelled) { cancelled = true; await w.tele({ ts: 'cancelled' }); } return getUser(sub); };
+  // The receiver's request passes its first study check; the member table's eligibility answer comes back only after
+  // the owner has cancelled the channel.
+  w.beforeMember = async () => { if (!cancelled) { cancelled = true; await w.tele({ ts: 'cancelled' }); } };
   await assert.rejects(w.assign('bTech', 'bDoc'), status(404));
   assert.equal(cancelled, true);
   // B's write never landed: its row is the one the close made (closed, revision 1, no reader), and the only assignment

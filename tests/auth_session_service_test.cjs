@@ -3660,7 +3660,11 @@ for(const source of ['consultation','colleagues'])test(`CORE_ROSTER_SOURCE_SPLIT
   if(source==='consultation'){
     const {ConsultationService}=require('/app/dist/consultation.service');
     const out=await new ConsultationService(w.I1.prisma,kcStub,null).candidates(caller);
-    assert.deepEqual(out.readers.map(x=>x.sub),[provider.id],'picker follows provider, including its stale member');
+    // The picker follows the member table: the provider's stale listing (suspended, moved to B) is not offered, the
+    // active member of A the provider does not list is.
+    const subs=out.readers.map(x=>x.sub);
+    assert.equal(subs.includes(provider.id),false,'a suspended member moved to another institution is not offered');
+    assert.equal(subs.includes('syn-db-only'),true,'an active member of the institution is offered');
   }else{
     const {PacsService}=require('/app/dist/pacs.service');
     const out=await new PacsService(w.I1.prisma,null,kcStub,null,null).colleagues(caller);
