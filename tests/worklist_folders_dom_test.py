@@ -1148,14 +1148,14 @@ class WorklistFoldersDOM(unittest.TestCase):
         self.context.unroute('**/api/**', hold)
         while waiting:
             self.site.handle(*waiting.pop(0))
-        expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Session Ended')
+        expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Draft Not Saved')
         if background_first:
             expect(self.page.locator('#m-refresh')).not_to_be_visible()
         else:
             ended(background)
             # Drain the late answers and their promise callbacks without reopening the document.
             self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
-            expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Session Ended')
+            expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Draft Not Saved')
 
     def waiting_request(self, waiting, matches):
         """The first held request that matches, once the page has sent it (bounded: 5 s)."""
@@ -1227,7 +1227,7 @@ class WorklistFoldersDOM(unittest.TestCase):
         expect(self.page.locator('#sfm-save')).to_be_disabled()
         self.assertEqual(1, len(pending))
         self.page.evaluate('KinAuth.replaced({session: KinWorkContext.session()})')
-        expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Session Ended')
+        expect(self.page.locator('dialog.kin-logout h2')).to_have_text('Draft Not Saved')
         expect(self.page.locator('#sfm-name')).to_have_value('')
         route, draft = pending.pop()
         self.site.answer(route, 201, dict(draft, id=41))

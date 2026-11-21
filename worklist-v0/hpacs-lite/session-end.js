@@ -75,7 +75,8 @@
       const note = document.createElement("p");
       note.className = "kin-closed-note";
       note.setAttribute("role", "status");
-      note.textContent = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…";
+      // 서버가 종료를 확인하기 전에도 참인 글만 쓴다: 닫힌 것은 이 업무 화면이고, 로그인 세션의 끝은 랜딩이 서버의 답으로 말한다.
+      kinWrite(note, kinSay("업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"));
       document.body.append(note);
     }
     onCommonEnd(closeWork);

@@ -222,6 +222,17 @@ class FailureServicesE2E(unittest.TestCase):
         # Images must have decoded, not merely acquired an <img> element.
         page.wait_for_function("""() => [...document.querySelectorAll('#thumbwrap img')]
             .some(img => img.complete && img.naturalWidth > 0)""")
+        # The fixture's first object, read from the healthy stack: the outage below asks the API's own DICOM read
+        # entries for it. The page's session binds these reads as it binds the page's own.
+        def bound(accept):
+            return {"X-KIN-Session": page.evaluate("KinAuth.sessionId()") or "", "Accept": accept}
+
+        described = page.request.get(self.stack.proxy + f"/dicom-web/studies/{fixture.uid}/metadata",
+                                     headers=bound("application/dicom+json"), timeout=30000)
+        self.assertEqual(described.status, 200)
+        first = next(row for row in described.json() if row.get("0020000E") and row.get("00080018"))
+        frame_path = (f"/dicom-web/studies/{fixture.uid}/series/{first['0020000E']['Value'][0]}"
+                      f"/instances/{first['00080018']['Value'][0]}/frames/1")
         admin = page.context.new_page()
         admin.set_default_timeout(30000)
         admin.goto(self.stack.proxy + "/worklist/hpacs-lite/admin.html")
@@ -258,11 +269,32 @@ class FailureServicesE2E(unittest.TestCase):
                 with page.expect_response(lambda r: f"/dicom-web/studies/{fixture.uid}/instances" in r.url) as response:
                     self.select(page, fixture)
                 # The DICOM auth_request boundary maps unavailable source identity
-                # to 403 (pacs/dicom-gateway.ts); it cannot forward a 503 body.
+                # to 403 (pacs/dicom-gateway.ts); it cannot forward a 503 body. Its one
+                # X-KIN-Auth-Code says the refusal is temporary (an archive the gate
+                # could not observe), and the product error page stays no-store.
                 self.assertEqual(response.value.status, 403)
+                codes = [h["value"] for h in response.value.headers_array() if h["name"].lower() == "x-kin-auth-code"]
+                self.assertEqual(codes, ["AUTH_SOURCE_UNAVAILABLE"])
+                self.assertEqual(response.value.headers.get("cache-control"), "no-store")
                 expect(page.locator("#thumbwrap")).to_contain_text("실패")
                 self.assertEqual(page.locator("#thumbwrap img").count(), 0)
                 event("orthanc_thumbnail", result="unavailable")
+            with self.subTest(boundary="dicom_read_entries"):
+                # The same answer whichever DICOM read entry meets the outage. Above, nginx's auth_request refused and
+                # the proxy's error page carried the code. Here the API answers for itself: the recorded relay's own
+                # admission (what a description read reaches once the auth_request has passed), the frame reader and
+                # the strip preview - each 403 with that one code, so a reader of the status and code alone (the
+                # preload worker, the viewer's check of a held copy) takes none of them for a refused study.
+                entries = {
+                    "relay": (f"/api/image-relay/dicom-web/studies/{fixture.uid}/instances", "application/dicom+json"),
+                    "frame": ("/api" + frame_path, 'multipart/related; type="application/octet-stream"; transfer-syntax=*'),
+                    "preview": (preview_url[len(self.stack.proxy):], "image/png"),
+                }
+                for name, (path, accept) in entries.items():
+                    answer = page.request.get(self.stack.proxy + path, headers=bound(accept), timeout=30000)
+                    codes = [h["value"] for h in answer.headers_array if h["name"].lower() == "x-kin-auth-code"]
+                    event("orthanc_dicom_read_entry", entry=name, status=answer.status, codes=codes)
+                    self.assertEqual((answer.status, codes), (403, ["AUTH_SOURCE_UNAVAILABLE"]), name)
             with self.subTest(boundary="admin_storage"):
                 lost = self.metrics(admin)
                 self.assertEqual((lost["state"], lost["value"]), ("unobservable", None))

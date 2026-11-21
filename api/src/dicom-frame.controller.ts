@@ -14,6 +14,7 @@ import type { TakeLease } from './dicom-frame.service';
 import { archiveRead, PRELOAD_USE, RECORDED_STUDY_HEADER, StudyImageDeliveryRecorder, readUse } from './image-delivery-record';
 import type { DeliveryLease, DeliveryUse } from './image-delivery-record';
 import { Caller, PacsService } from './pacs.service';
+import { admitDicomRead } from './auth.service';
 import { parseFrameList } from './dicom-frame-layout';
 
 const member = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: req.roles ?? [],
@@ -83,7 +84,7 @@ export class DicomFrameController {
     const list = parseFrameList(frames);
     if (!list) throw new BadRequestException('프레임 번호가 올바르지 않습니다');
     const uri = `/dicom-web/studies/${study}/series/${series}/instances/${sop}/frames/${frames}`;
-    const admitted = await this.pacs.authzDicom(uri, 'GET', member(req));
+    const admitted = await admitDicomRead(res, () => this.pacs.authzDicom(uri, 'GET', member(req)));
     const preload = preloadMode(req);
     // HEAD sends no image byte, so it is no delivery (image-delivery-record.ts lease()).
     await lifetime(req, res, () => this.deliveries.lease(req, FRAMES_SURFACE, uri, () => archiveRead(admitted), frameUse(req, preload)),
@@ -97,7 +98,7 @@ export class DicomFrameController {
     if (!ORTHANC_ID.test(id)) throw new BadRequestException('영상 식별자가 올바르지 않습니다');
     const uri = `/instances/${id}/preview`;
     // The gate resolves the object's study; the preview is a read of that study's delivery.
-    const admitted = await this.pacs.authzDicom(uri, 'GET', member(req));
+    const admitted = await admitDicomRead(res, () => this.pacs.authzDicom(uri, 'GET', member(req)));
     await lifetime(req, res, async () => {
       const lease = await this.deliveries.lease(req, PREVIEW_SURFACE, uri, () => archiveRead(admitted));
       if (lease) res.setHeader(RECORDED_STUDY_HEADER, admitted!.studyUid);
