@@ -96,6 +96,16 @@
             </tr>`;
           }).join("") || '<tr><td class="empty" colspan="7"></td></tr>')
         : '<tr><td class="empty" colspan="7"></td></tr>';
+      // The words of each row's first cell title and of its interval mark go through the screen language; the dates stay data.
+      for (const x of s ? rel.slice(relatedPage * 50, (relatedPage + 1) * 50) : []) {
+        const row = $("#relrows").querySelector(`tr[data-uid="${CSS.escape(String(x.uid))}"]`);
+        if (!row) continue;
+        const showing = x.uid === relatedUid || (x.uid === s.uid && !relatedUid);
+        kinWrite(row.cells[0], kinSayEn("{0} · {t1}", x.uid === s.uid ? kinSayEn("지금 판독하는 검사") : kinSayEn(relatedDateTitle(x)),
+          { t: showing ? kinSayEn("Showing: 지금 Related Report에 보이는 검사") : kinSayEn("Compare: 눌러서 비교해 볼 수 있는 검사") }), "title");
+        const interval = row.querySelector(".rel-interval");
+        if (interval) kinWrite(interval, kinSayEn("판독 대상 검사 날짜와의 간격"), "title");
+      }
       const emptyCell = $("#relrows td.empty");
       if (emptyCell) kinWrite(emptyCell, !s ? kinSay("검사를 선택하세요") :
         relatedModality || relatedBodyPart ? kinSay("조건에 맞는 관련 검사 없음") : kinSay("관련 검사 없음"));

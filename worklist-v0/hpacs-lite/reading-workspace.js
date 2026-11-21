@@ -5,7 +5,7 @@ window.KinReadingWorkspace = function (app) {
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
   let renewFrame=()=>{},renewReturn=()=>{};
   const $ = s => document.querySelector(s);
@@ -93,7 +93,7 @@ window.KinReadingWorkspace = function (app) {
     const label=text=>Object.assign(document.createElement('span'),{textContent:text}),parts=[];
     Object.entries(shortcutButtons).forEach(([id,b],i)=>{if(i)parts.push(' · ');parts.push(label(window.KinLanguage?window.KinLanguage.source(b):b.textContent),' '+KinWorkspaceShortcuts.display(map[id]));});
     // C-R01-008: Approve is in the same map (Ctrl+S by default); the summary names it too.
-    hints.replaceChildren(...parts,' (입력 중 검사 이동 제외)',' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize));
+    hints.replaceChildren(...parts,kinWrite(document.createTextNode(''),kinSayEn(' (입력 중 검사 이동 제외)')),' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize));
   }});
   /* C-R01-008: the summary also names the letter keys of the Viewer window. They are the saved viewer keys of the account
    * (/api/workspace-shortcuts viewerSettings), or the viewer defaults when none are saved, read from the viewer
@@ -126,7 +126,7 @@ window.KinReadingWorkspace = function (app) {
       if (!live()) return;
       const map = keys.current(settings);
       const shown = Object.keys(map).filter(id => map[id]).map(id => keys.display(map[id]) + ' ' + (keys.names[id] || id));
-      viewerKeys.textContent = 'Viewer 창 글자 키: ' + (shown.join(' · ') || '없음') + ' (입력 칸 밖에서)';
+      kinWrite(viewerKeys, kinSayEn("Viewer 창 글자 키: {0} (입력 칸 밖에서)", (shown.join(' · ') || kinSayEn('없음'))));
     } catch (_) {
       if (live()) kinWrite(viewerKeys, kinSay('Viewer 창 글자 키를 확인하지 못했습니다. Keyboard Shortcuts를 다시 열어 확인하세요.'));
     }
@@ -857,7 +857,7 @@ window.KinReadingWorkspace = function (app) {
           const keyMap=shortcuts.read();
           for(const [id,selector] of Object.entries({image:'#kin-viewer-focus-2',report:'#kin-viewer-focus-4',tools:'#kin-viewer-focus-7',nativeTools:'#kin-viewer-focus-9',note:'#kin-viewer-note-open'})){const button=doc.querySelector(selector);if(keyMap[id])button?.setAttribute('aria-keyshortcuts',KinWorkspaceShortcuts.display(keyMap[id]));else button?.removeAttribute('aria-keyshortcuts');}
           const toolHint=doc.querySelector('#kin-viewer-tool-focus > p');
-          if(toolHint){const key=id=>KinWorkspaceShortcuts.display(keyMap[id]);toolHint.textContent=key('tools')+' 측정 도구 · Control+Alt+8 비교 작업 도구 · '+key('nativeTools')+' 기본 영상 도구 (Tab 이동·Enter 선택) · '+key('image')+' 선택 영상 · '+key('report')+' 판독문으로';}
+          if(toolHint){const key=id=>KinWorkspaceShortcuts.display(keyMap[id]);const viewerWords=doc.defaultView&&doc.defaultView.KinLanguage;toolHint.textContent=viewerWords&&viewerWords.text?viewerWords.text("{0} 측정 도구 · Control+Alt+8 비교 작업 도구 · {1} 기본 영상 도구 (Tab 이동·Enter 선택) · {2} 선택 영상 · {3} 판독문으로", key('tools'), key('nativeTools'), key('image'), key('report')):key('tools')+' 측정 도구 · Control+Alt+8 비교 작업 도구 · '+key('nativeTools')+' 기본 영상 도구 (Tab 이동·Enter 선택) · '+key('image')+' 선택 영상 · '+key('report')+' 판독문으로';}
           if (!loaded) {
             loaded = true; failed = false; frame.inert = false;
             if (sameTarget()) { pending = null; recovery.hidden = true; kinWrite(status, kinSay('영상 작업공간 연결됨')); identify(); }

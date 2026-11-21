@@ -19,7 +19,7 @@
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
     function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
       // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
-      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
@@ -166,7 +166,7 @@
         const message = error && error.message ? error.message : TEXT.rejected;
         return parts.length ? `${message} (${parts.join(' · ')})` : message;
       };
-      const readDetail = error => `${error && error.status === 404 ? `${TEXT.notFound}\n` : ''}${describe(error)}`;
+      const readDetail = error => error && error.status === 404 ? kinSayEn('{t0}\n{1}', { t: kinSayEn(TEXT.notFound) }, describe(error)) : describe(error);
 
       /** 응답의 owner가 이 화면의 계정인가. 다르면 false(다른 계정의 답), 모양이 틀리면 null(형식 오류)이다. */
       function ownerOf(data) {
@@ -360,7 +360,7 @@
 
       function renderList() {
         const state = uid === null ? 'none' : listFailure ? 'failed' : listLoading || items === null ? 'loading' : items.length ? 'ready' : 'empty';
-        setState(listState, state, { none: TEXT.none, failed: TEXT.failed, loading: TEXT.loading, empty: TEXT.empty }[state]
+        setState(listState, state, { none: kinSayEn(TEXT.none), failed: kinSayEn(TEXT.failed), loading: kinSayEn(TEXT.loading), empty: kinSayEn(TEXT.empty) }[state]
           || TEXT.ready(items.length), listFailure ? readDetail(listFailure) : '');
         listRetry.hidden = !listFailure;
         list.replaceChildren(...(listFailure || !items ? [] : items).map(listItem));

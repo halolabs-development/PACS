@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
   // A sentence of the page built from its template and its parts ({t: words}); written so the screen language reads it.
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };  const defaults = Object.freeze({list:'Digit1',image:'Digit2',prior:'Digit3',report:'Digit4',context:'Digit5',note:'Digit6',tools:'Digit7',nativeTools:'Digit9',previous:'ArrowLeft',next:'ArrowRight'});
   const labels = {list:'Worklist',image:'Image',prior:'Related Report',report:'Report Editor',context:'Study Info & Templates',note:'Image Tech Note',tools:'Tool Panels',nativeTools:'Viewer Toolbar',previous:'Previous Study',next:'Next Study',finalize:'Finalize (Approve)'};
   const defaultsV2 = Object.freeze({version:2,...Object.fromEntries(Object.entries(defaults).map(([id,key])=>[id,'Control+Alt+'+key])),finalize:'Control+KeyS'});
@@ -62,7 +62,7 @@
     // Its place in the bar (one line kept for it, beside the buttons where the bar has room) is reading-workspace.css's.
     const dialog = el('dialog','',d.body); dialog.id='workspace-shortcuts-dialog'; dialog.style.cssText='max-height:85vh;overflow:auto;width:640px;max-width:95vw;box-sizing:border-box;padding:20px;background:#111c2f;color:#d6e6ff;border:1px solid #718eaa;border-radius:8px';
     const title = el('h2','Workspace Shortcuts',dialog); title.id='workspace-shortcuts-title'; dialog.setAttribute('aria-labelledby',title.id);
-    el('p','이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer의 새 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.',dialog);
+    el('p',kinSayEn('이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer의 새 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.'),dialog);
     const tabs=el('div','',dialog);tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Shortcut scope');
     const panels={},tabButtons={};
     function showTab(name,focus=false){for(const key of Object.keys(panels)){const active=key===name;panels[key].hidden=!active;tabButtons[key].setAttribute('aria-selected',String(active));tabButtons[key].tabIndex=active?0:-1;}if(focus)tabButtons[name].focus();}
@@ -92,7 +92,7 @@
     const fill=value=>{for(const id of ids){fields[id].dataset.code=value[id]||'';fields[id].value=display(value[id]);}};
     const close=()=>{cancelAccount();dialog.close();draftOwner=null;if(!ended)edit.focus();};
     const draft=()=>({version:2,...Object.fromEntries(ids.map(id=>[id,fields[id].dataset.code||null]))});
-    el('p','계정에서 불러오면 아래 입력란에 채워집니다. 계정 저장은 표시된 키를 보관하며, 현재 브라우저에는 Apply & Save로 적용하세요.',dialog);
+    el('p',kinSayEn('계정에서 불러오면 아래 입력란에 채워집니다. 계정 저장은 표시된 키를 보관하며, 현재 브라우저에는 Apply & Save로 적용하세요.'),dialog);
     const accountLoad=button(kinSay('Load from Account'),'workspace-shortcuts-account-load',()=>accountRun('load'));
     const accountSave=button(kinSay('Save to Account'),'workspace-shortcuts-account-save',()=>accountRun('save'));
     const accountStatus=el('p','',dialog);accountStatus.id='workspace-shortcuts-account-status';accountStatus.setAttribute('role','status');
@@ -105,7 +105,7 @@
       const snapshot=draft(), bound=draftOwner, ticket=++accountEpoch;
       if(action==='save'&&!valid(snapshot)){
         const conflicts=ids.filter(id=>snapshot[id]&&ids.some(other=>other!==id&&snapshot[other]===snapshot[id]));
-        accountStatus.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
+        kinWrite(accountStatus, kinSayEn("중복 단축키: {0}. 서로 다른 키로 지정하세요.", conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')));return;
       }
       const live=()=>!ended&&ticket===accountEpoch&&dialog.open&&allowed()&&owner()===bound&&draftOwner===bound;
       const controller=new AbortController();accountRequest=controller;accountBusy=true;interruptedAction=action;refreshAccount();
@@ -135,7 +135,7 @@
       const next=draft();
       if(!valid(next)){
         const conflicts=ids.filter(id=>next[id]&&ids.some(other=>other!==id&&next[other]===next[id]));
-        message.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
+        kinWrite(message, kinSayEn("중복 단축키: {0}. 서로 다른 키로 지정하세요.", conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')));return;
       }
       try {
         if(localBaseline(storage(),draftOwner)!==baseline){kinWrite(message, kinSay('다른 창에서 설정이 바뀌었습니다. 취소 후 다시 열어 확인하세요.'));return;}

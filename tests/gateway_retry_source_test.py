@@ -67,7 +67,9 @@ U3_RULE_SHA256 = "e038ba9382b21d536aa5a27a717b10dfd111fef1429abb51325cb7886e57ff
 # says why it did not compare exactly when that answer did not (count unknown, or the report arrived after the list read began).
 # It moved once more for the series count (a10685cc…bfd06f before): "compared" is the images' answer, so a series answer
 # alone never drops the "count unknown" title; the label text and keys are unchanged (study_observation_vectors.json).
-U1B_GATEWAY_LABEL_SHA256 = "4504020d7d3fee787a4a4f20bbe54d33cfd2142c05afde921278dc05041a328f"
+# Moved for the screen language (4504020d…a328f before): its words became sentences of the write path, data in their
+# slots; the text, the title and the keys read the same.
+U1B_GATEWAY_LABEL_SHA256 = "4548ce35646e2c8a403dc929812f16339ceffc7cd27c4fb45229498dada8859f"
 
 
 def sha(value):
@@ -727,7 +729,7 @@ class ClientPins(unittest.TestCase):
         # U3 client pins keep: the receipt key count and the observation functions stay free of requests.
         # 5 -> 6 at S4-F01V: one `row.gatewayReceipt ?? null` for the Not Observed item (F01VPins below).
         self.assertEqual(MAIN.count("gatewayReceipt"), 8)
-        self.assertIn('$("#receipt-gateway").title = labels.gateway.title;', js_function(MAIN, "renderObservation"))
+        self.assertIn('kinWrite($("#receipt-gateway"), labels.gateway.title, "title");', js_function(MAIN, "renderObservation"))
 
     def test_study_observation_inventory_names_exactly_these_additions(self):
         counts = {

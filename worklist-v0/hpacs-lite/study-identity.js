@@ -2,7 +2,7 @@
 (function(root){
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   /*
    * The server compares; this module only reads its answer. Each list row carries the tags the server read for that
    * row and, for an own-institution row linked both ways to an own-institution order, one relation per field. The
@@ -140,10 +140,10 @@
     });
     const patientMismatch=!!identity&&PATIENT_FIELDS.some(field=>identity[field]==='mismatch');
     const accessionMismatch=!!identity&&identity.accession==='mismatch';
-    const order=key==='linked'?{text:'Linked Order '+identity.oid+' · '+MARKER,title:ORDER_TITLE.linked}
-      :key==='tele'?{text:'Tele-received · Not Compared',title:ORDER_TITLE.tele}
-      :key==='no_linked_order'?{text:'No Linked Order',title:ORDER_TITLE.no_linked_order}
-      :{text:'Unknown',title:ORDER_TITLE.unknown};
+    const order=key==='linked'?{text:'Linked Order '+identity.oid+' · '+MARKER,title:kinSayEn(ORDER_TITLE.linked)}
+      :key==='tele'?{text:'Tele-received · Not Compared',title:kinSayEn(ORDER_TITLE.tele)}
+      :key==='no_linked_order'?{text:'No Linked Order',title:kinSayEn(ORDER_TITLE.no_linked_order)}
+      :{text:'Unknown',title:kinSayEn(ORDER_TITLE.unknown)};
     const summary={
     text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?kinSay(' · Patient Mismatch'):''},{t:accessionMismatch?kinSay(' · Accession Mismatch'):''},{t:tail}),
       title:kinSay('{t0}{t1}{t2}{t3}',{t:kinSay(SUMMARY_TITLE)},{t:patientMismatch?kinSay(PATIENT_MISMATCH_TITLE):''},{t:accessionMismatch?kinSay(ACCESSION_MISMATCH_TITLE):''},{t:unavailableTitle})};

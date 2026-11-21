@@ -16,7 +16,7 @@
     // 쓰던 note는 요청별로 이 문서의 메모리에만 두고, 잠그거나 끝나면 이전 계정의 글이라 버린다.
     function mountImageRequests({ api, apiBase, work, transport, owner, allowed, current, study, institution, can }) {
       // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
-      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+      const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const TEXT = {
         queueHint: '소속 기관 검사에 임상의가 남긴 외부영상(External Images)·영상전송(Send Images) 요청입니다. 요청은 처리 상태의 '
@@ -390,7 +390,7 @@
         queueView.hidden = ended || lock !== null;
         const state = unavailable ? 'offline' : queueLoading ? 'loading' : queueFailure ? 'failed' : !queueLoaded ? 'idle'
           : queueItems.length ? 'ready' : 'empty';
-        setState(queueLine, state, { offline: TEXT.offline, loading: TEXT.queueLoading, failed: TEXT.queueFailed, empty: TEXT.queueEmpty,
+        setState(queueLine, state, { offline: kinSayEn(TEXT.offline), loading: kinSayEn(TEXT.queueLoading), failed: kinSayEn(TEXT.queueFailed), empty: kinSayEn(TEXT.queueEmpty),
           idle: '' }[state] ?? TEXT.queueReady(queueItems.length, queueCursor !== null), queueFailure ? readDetail(queueFailure) : '');
         queueRetry.hidden = !queueFailure;
         queueMore.hidden = queueCursor === null || queueLoading || !!queueFailure;

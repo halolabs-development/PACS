@@ -31,7 +31,7 @@
       if (templatePreview.uid !== selectedUid) { closeTemplatePreview(false); return; }
       const s = cur(), why = templateInsertionBlock(templatePreview.template);
       $("#tpl-preview-target").dataset.uid = selectedUid ?? "";
-      $("#tpl-preview-target").textContent = s ? `삽입 대상: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}` : "삽입 대상: 검사 미선택";
+      kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
       $("#tpl-preview-status").textContent = why ?? (s?.rs === "A"
         ? "삽입은 개인 초안에 반영됩니다. 승인본에 추가하려면 Addendum을 사용하세요."
         : "삽입은 개인 초안에 반영됩니다. 확정하려면 Save 또는 Approve를 사용하세요.");
@@ -45,8 +45,8 @@
         ["title", "shortcut", "modality", "bodypart", ...RFIELDS].map(k => [k, String(t[k] ?? "")])) };
       templatePreviewReturn = button;
       const snapshot = templatePreview.template;
-      $("#tpl-preview-title").textContent = `상용구 미리보기 — ${snapshot.title}`;
-      $("#tpl-preview-meta").textContent = `단축어: ${snapshot.shortcut || "없음"} · Modality: ${snapshot.modality || "전체"} · Bodypart: ${snapshot.bodypart || "미지정"}`;
+      kinWrite($("#tpl-preview-title"), kinSayEn("상용구 미리보기 — {0}", snapshot.title));
+      kinWrite($("#tpl-preview-meta"), kinSayEn("단축어: {0} · Modality: {1} · Bodypart: {2}", snapshot.shortcut || kinSayEn("없음"), snapshot.modality || kinSayEn("전체"), snapshot.bodypart || kinSayEn("미지정")));
       for (const k of RFIELDS) $("#tpl-preview-" + k).textContent = snapshot[k] || "(내용 없음)";
       updateTemplatePreview();
       $("#tpl-preview").classList.add("show");
@@ -164,7 +164,7 @@
     function updateReportTemplateButton() {
       const why = reportTemplateBlock();
       $("#b-report-template").disabled = !!why;
-      $("#b-report-template").title = why ?? "현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다";
+      kinWrite($("#b-report-template"), kinSayEn(why ?? "현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
       if (templateEditor?.source && templateEditor.source.uid !== selectedUid) closeTemplateEditor(false);
       updateTemplateEditor();
     }
@@ -176,7 +176,7 @@
       for (const el of document.querySelectorAll("#tplmodal input, #tplmodal textarea")) el.disabled = session.pending;
       $("#tpl-cancel").disabled = session.pending;
       $("#tpl-save").disabled = session.pending || !!why;
-      $("#tpl-save").textContent = session.pending ? "저장 중…" : "저장";
+      kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
       $("#tpl-save").title = why ?? "";
       if (session.source) $("#tpl-source").textContent = session.source.label + "\n"
         + (why ?? "재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.");
@@ -189,7 +189,7 @@
       for (const el of document.querySelectorAll("#tplmodal input, #tplmodal textarea")) { el.value = ""; el.disabled = false; }
       $("#tpl-source").textContent = ""; $("#tpl-source").hidden = true;
       delete $("#tpl-source").dataset.uid;
-      $("#tpl-save").disabled = true; $("#tpl-save").textContent = "저장";
+      $("#tpl-save").disabled = true; kinWrite($("#tpl-save"), kinSayEn("저장"));
       $("#tpl-cancel").disabled = false;
       if (returnFocus) {
         const target = [session.returnFocus, $('#tpl-search'), $('#findings'), $('#quick')].find(el =>
@@ -201,7 +201,7 @@
     function editTemplate(t, source = null, seed = t) {
       if (!KinAuth.has("radiologist")) { toast("판독의만 상용구를 편집할 수 있습니다", "err"); return; }
       templateEditor = { editing: t, source, pending: false, returnFocus: document.activeElement };
-      $("#tpl-title").textContent = source ? "현재 판독문으로 새 상용구" : t ? `상용구 수정 — ${t.title}` : "새 상용구";
+      kinWrite($("#tpl-title"), source ? kinSayEn("현재 판독문으로 새 상용구") : t ? kinSayEn("상용구 수정 — {0}", t.title) : kinSayEn("새 상용구"));
       for (const [id, key] of [["t", "title"], ["s", "shortcut"], ["m", "modality"], ["b", "bodypart"],
                                ["f", "findings"], ["c", "conclusion"], ["r", "recommendation"]]) {
         $("#tpl-" + id).value = seed?.[key] ?? "";
@@ -215,7 +215,7 @@
     }
     $("#b-report-template").addEventListener("click", () => {
       const why = reportTemplateBlock();
-      if (why) { toast(why, why === "상용구로 저장할 내용이 없습니다" ? "info" : "err"); return; }
+      if (why) { toast(kinSayEn(why), why === "상용구로 저장할 내용이 없습니다" ? "info" : "err"); return; }
       const s = cur(), text = currentTemplateText();
       const modalities = String(s.modality ?? "").split(",").map(value => value.trim()).filter(Boolean);
       // 환자 식별은 출처 확인에만 쓴다. 재사용 문장/제목에 검사 식별을 자동으로 섞지 않는다.

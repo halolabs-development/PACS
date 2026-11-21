@@ -13,6 +13,9 @@
  * The rows T01-T27 of the contract are named where they are decided.
  */
 window.KinTechNote = function (app) {
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const work=window.KinWorkContext;
   const d = document.createElement('dialog'); d.id = 'tech-note-dialog';
   d.setAttribute('aria-labelledby', 'tech-note-title');
@@ -25,6 +28,7 @@ window.KinTechNote = function (app) {
     <button id="tech-note-history" type="button" aria-expanded="false" aria-controls="tech-note-history-items">History</button><button id="tech-note-close" type="button">Close</button></div>
     <div id="tech-note-history-items"></div><button id="tech-note-more" type="button" hidden>Load More</button>`;
   document.body.append(d);
+  window.KinLanguage?.markup?.(d);
   const $ = id => d.querySelector('#tech-note-' + id);
   let uid = null, seq = 0, busy = false, ended = false, writable = false, cursor = null, opener, openerDocument, innerOpener;
   let L = null, basis = 0, attempts = [], reasonGeneration = 0, interruptedRead = false, interruptedHistory = null, beforePreparation = null;
@@ -70,7 +74,7 @@ window.KinTechNote = function (app) {
     L = revision; app.changed?.(uid, L); meta();
   }
   function meta() {
-    $('meta').textContent = L ? `v${L.version} · ${L.author} · ${new Date(L.createdAt).toLocaleString()}` : '저장된 메모 없음';
+    kinWrite($('meta'), L ? `v${L.version} · ${L.author} · ${new Date(L.createdAt).toLocaleString()}` : kinSayEn("저장된 메모 없음"));
   }
   const status = sentence => { if ($('status').textContent !== sentence) $('status').textContent = sentence; };
   function controls() {

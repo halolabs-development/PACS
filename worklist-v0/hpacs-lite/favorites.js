@@ -3,7 +3,7 @@ window.KinFavorites = function (app) {
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const d=document.createElement('dialog');d.id='favorite-dialog';d.setAttribute('aria-labelledby','favorite-title');
   d.innerHTML=`<h2 id="favorite-title">Favorites</h2><p>검사 링크를 계정에 저장합니다. 폴더·링크를 제거해도 원검사와 판독문은 유지됩니다.</p>
     <div class="favorite-layout"><aside><label>새 폴더 이름<input id="favorite-new-name" maxlength="120"></label><button id="favorite-create" type="button" title="새 폴더 만들기">New Folder</button><div id="favorite-folders"></div></aside>
@@ -12,7 +12,7 @@ window.KinFavorites = function (app) {
     <p id="favorite-current"></p><button id="favorite-add" type="button" title="지금 선택한 검사를 이 폴더에 추가">Add Selected</button><p id="favorite-count"></p><div id="favorite-links"></div></section></div>
     <section id="favorite-view-editor" hidden><label>연결할 저장 보기<select id="favorite-view-choice"></select></label> <button id="favorite-view-save" type="button" title="저장 보기 연결 저장">Save Link</button> <button id="favorite-view-cancel" type="button" title="취소">Cancel</button><p>저장한 영상 배치·표시 상태에 연결합니다. 열 때 원본과 현재 접근 권한을 다시 확인합니다.</p></section>
     <p id="favorite-status" role="status"></p><footer><button id="favorite-retry" type="button" title="같은 요청 다시 시도" hidden>Retry</button><button id="favorite-reload" type="button" title="최신 목록 다시 읽기">Reload</button><button id="favorite-close" type="button" title="닫기">Close</button></footer>`;
-  document.body.append(d);const $=id=>d.querySelector('#favorite-'+id);
+  document.body.append(d);window.KinLanguage?.markup?.(d);const $=id=>d.querySelector('#favorite-'+id);
   let owner=null,state=null,selected=null,current=null,seq=0,busy=false,pending=null,abort=null,ended=false,opener=null,viewUid=null;
   const same=()=>work.state()==='active'&&!ended&&d.open&&app.allowed()&&JSON.stringify(owner)===JSON.stringify(app.identity());
   const folder=()=>state?.folders.find(f=>f.id===selected);
@@ -45,11 +45,11 @@ window.KinFavorites = function (app) {
     $('folders').replaceChildren();
     for(const f of state?.folders??[]){const b=button(f.name+' · '+f.uids.length+'건',()=>{selected=f.id;draw();},$('folders'));b.dataset.folderId=f.id;b.setAttribute('aria-pressed',String(f.id===selected));}
     const f=folder();if(!preserve||previous!==selected)$('name').value=names.get(selected)??f?.name??'';
-    $('links').replaceChildren();$('count').textContent=f?`접근 가능한 링크 ${f.uids.length}건`+(f.unavailable?` · 접근 불가 ${f.unavailable}건`:''):'폴더를 만들거나 선택하세요.';
+    $('links').replaceChildren();kinWrite($('count'), f ? kinSayEn("접근 가능한 링크 {n0}건{1}", f.uids.length, (f.unavailable?` · 접근 불가 ${f.unavailable}건`:'')) : kinSayEn("폴더를 만들거나 선택하세요."));
     for(const uid of f?.uids??[]){const row=document.createElement('div');row.className='favorite-link';row.dataset.uid=uid;
       const text=document.createElement('span');text.textContent=label(uid);text.translate=false;row.append(text);
       button('검사 선택',()=>choose(uid),row);button('보기 상태 연결',()=>editView(uid),row);if(f.views?.[uid]){button('저장 보기 열기',()=>openView(uid),row);button('보기 연결 해제',()=>command('view',{uid,jobId:null}),row);}button('링크 제거',()=>command('remove',{uid}),row);$('links').append(row);}
-    $('current').textContent=current?'추가할 선택 검사 · '+label(current):'목록에서 검사를 선택하면 폴더에 추가할 수 있습니다.';controls();
+    kinWrite($('current'), current ? kinSayEn("추가할 선택 검사 · {0}", label(current)) : kinSayEn("목록에서 검사를 선택하면 폴더에 추가할 수 있습니다."));controls();
   }
   async function request(method,body,path='/favorite-folders',at){const local=abort=new AbortController(),timer=setTimeout(()=>local.abort(),12000);try{return await app.api(method,path,body,local.signal,at);}finally{clearTimeout(timer);if(abort===local)abort=null;}}
   async function load(){
@@ -78,7 +78,7 @@ window.KinFavorites = function (app) {
     catch(e){work.commit(at,()=>{if(ticket===seq&&same()){
 
       if([400,403,404,409].includes(e.status))pending=null;
-message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.'}));
+message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?kinSayEn(' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.'):kinSayEn(' · 입력을 확인하거나 최신 목록을 읽으세요.')}));
     }});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }

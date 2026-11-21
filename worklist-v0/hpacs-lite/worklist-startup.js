@@ -1,6 +1,9 @@
 /* A single optional initial selection; never a policy for subsequent refreshes. */
 (function(root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   function normalize(value) {
     return value && typeof value==='object' && !Array.isArray(value)
       && Object.keys(value).sort().join()==='selectFirst,version' && value.version===1
@@ -25,7 +28,7 @@
       if(raw){const saved=raw.length<=100&&normalize(JSON.parse(raw));if(saved)state=saved;else note='저장된 시작 설정을 확인할 수 없어 자동 선택을 껐습니다.';}
     } catch(_){note='시작 설정을 읽지 못해 자동 선택을 껐습니다.';}
     const section=document.createElement('section');section.innerHTML='<label><input id="worklist-select-first" type="checkbox"> Select First Result on Sign In</label><p>로그인 후 첫 목록에서 현재 검색·정렬의 첫 검사만 선택합니다. 영상 창은 직접 열며, 이미 선택하거나 입력한 경우에는 자동 선택하지 않습니다.</p><p id="worklist-startup-status" role="status"></p>';
-    host.insertBefore(section,host.querySelector('.image-opening-actions'));
+    host.insertBefore(section,host.querySelector('.image-opening-actions'));window.KinLanguage?.markup?.(section);
     const checkbox=section.querySelector('input'),status=section.querySelector('[role=status]');
     checkbox.checked=state.selectFirst;checkbox.disabled=!bound;status.textContent=note;
     const active=()=>!ended&&!!bound&&owner()===bound&&allowed();
@@ -34,8 +37,8 @@
     checkbox.onchange=()=>{
       if(work.state()!=='active'||ended||!bound||owner()!==bound){checkbox.disabled=true;return;}
       state={version:1,selectFirst:checkbox.checked};
-      try{root.localStorage.setItem(key,JSON.stringify(state));status.textContent='설정을 저장했습니다. 다음 로그인부터 적용합니다.';}
-      catch(_){status.textContent='시작 설정을 저장하지 못했습니다. 다음 로그인에는 적용되지 않습니다.';}
+      try{root.localStorage.setItem(key,JSON.stringify(state));kinWrite(status, kinSayEn("설정을 저장했습니다. 다음 로그인부터 적용합니다."));}
+      catch(_){kinWrite(status, kinSayEn("시작 설정을 저장하지 못했습니다. 다음 로그인에는 적용되지 않습니다."));}
     };
     host.querySelector('#image-opening-reset').addEventListener('click',()=>{if(!ended&&bound&&owner()===bound){checkbox.checked=false;checkbox.onchange();}});
     const work = root.KinWorkContext;

@@ -2,14 +2,14 @@ window.KinStudyTags=function(app){
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const d=document.createElement('dialog');d.id='study-tag-dialog';d.setAttribute('aria-labelledby','study-tag-title');
   d.innerHTML=`<h2 id="study-tag-title">검사 태그 관리·검색</h2><p>개인 태그는 이 계정에서만 보입니다. 기관 태그 이름은 관리자가 관리하고, 검사 부여·해제는 기관 업무 사용자가 할 수 있습니다. 태그를 지워도 원검사·판독문은 유지됩니다.</p>
     <label>태그 범위<select id="study-tag-scope"><option value="personal">개인 태그</option><option value="institution">기관 태그</option></select></label>
     <div class="study-tag-layout"><aside><label>새 태그 이름<input id="study-tag-new" maxlength="120"></label><button id="study-tag-create" type="button">태그 만들기</button><div id="study-tag-list"></div></aside>
     <section><label>태그 이름<input id="study-tag-name" maxlength="120"></label><button id="study-tag-rename" type="button">이름 변경</button> <button id="study-tag-delete" type="button">태그 삭제</button>
     <p id="study-tag-current"></p><p id="study-tag-assigned"></p><button id="study-tag-add" type="button">선택 검사에 부여</button> <button id="study-tag-remove" type="button">선택 검사에서 해제</button><p id="study-tag-count"></p><button id="study-tag-apply" type="button">이 태그의 검사 목록 보기</button></section></div>
-    <p id="study-tag-status" role="status"></p><footer><button id="study-tag-retry" type="button" hidden>같은 요청 다시 시도</button><button id="study-tag-reload" type="button">최신 목록 다시 읽기</button><button id="study-tag-close" type="button">닫기</button></footer>`;document.body.append(d);
+    <p id="study-tag-status" role="status"></p><footer><button id="study-tag-retry" type="button" hidden>같은 요청 다시 시도</button><button id="study-tag-reload" type="button">최신 목록 다시 읽기</button><button id="study-tag-close" type="button">닫기</button></footer>`;document.body.append(d);window.KinLanguage?.markup?.(d);
   const $=id=>d.querySelector('#study-tag-'+id);let owner=null,state=null,scope='personal',selected=null,current=null,busy=false,pending=null,seq=0,abort=null,ended=false,opener=null;
   const same=()=>work.state()==='active'&&!ended&&d.open&&app.allowed()&&JSON.stringify(owner)===JSON.stringify(app.identity());
   const catalog=()=>state?.catalogs.find(x=>x.scope===scope),tag=()=>catalog()?.tags.find(x=>x.id===selected);
@@ -33,10 +33,10 @@ window.KinStudyTags=function(app){
     state=value;app.changed(value);
   }
   function draw(preserve=false){const previous=selected;if(!tag())selected=catalog()?.tags[0]?.id??null;$('scope').value=scope;$('list').replaceChildren();
-    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;const tagName=document.createElement('span');tagName.translate=false;tagName.textContent=t.name;b.append(tagName,' · '+t.uids.length+'건'+(current&&t.uids.includes(current)?' · 선택 검사에 부여됨':''));b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
-    const t=tag();if(!preserve||previous!==selected)$('name').value=names.get(nameKey())??t?.name??'';$('new').value=newNames.get(scope)??'';$('current').textContent=current?'대상 검사 · '+label(current):'목록에서 검사를 먼저 선택하세요.';
-    $('assigned').textContent=t&&current?(t.uids.includes(current)?'이 검사에 부여된 태그입니다.':'이 검사에는 아직 부여되지 않았습니다.'):'태그를 선택하세요.';
-    $('count').textContent=t?'접근 가능한 검사 '+t.uids.length+'건'+(t.unavailable?' · 접근 불가 '+t.unavailable+'건':''):'';controls();}
+    for(const t of catalog()?.tags??[]){const b=document.createElement('button');b.type='button';b.dataset.tagId=t.id;const tagName=document.createElement('span');tagName.translate=false;tagName.textContent=t.name;b.append(tagName,kinWrite(document.createTextNode(''),kinSayEn(' · {n0}건{t1}',t.uids.length,{t:current&&t.uids.includes(current)?kinSayEn(' · 선택 검사에 부여됨'):''})));b.setAttribute('aria-pressed',String(t.id===selected));b.onclick=()=>{selected=t.id;draw();};$('list').append(b);}
+    const t=tag();if(!preserve||previous!==selected)$('name').value=names.get(nameKey())??t?.name??'';$('new').value=newNames.get(scope)??'';kinWrite($('current'), current ? kinSayEn("대상 검사 · {0}", label(current)) : kinSayEn("목록에서 검사를 먼저 선택하세요."));
+    kinWrite($('assigned'), t&&current ? t.uids.includes(current) ? kinSayEn("이 검사에 부여된 태그입니다.") : kinSayEn("이 검사에는 아직 부여되지 않았습니다.") : kinSayEn("태그를 선택하세요."));
+    kinWrite($('count'), t ? kinSayEn("접근 가능한 검사 {n0}건{1}", t.uids.length, (t.unavailable?kinSayEn(" · 접근 불가 {0}건", t.unavailable):'')) : '');controls();}
   async function request(method,body,at){abort=new AbortController();const local=abort,timer=setTimeout(()=>local.abort(),12000);try{return await app.api(method,'/study-tags',body,local.signal,at);}finally{clearTimeout(timer);if(abort===local)abort=null;}}
   async function load(){
     const at=work.capture('document');if(busy||!same())return;const ticket=++seq,unresolved=pending;busy=true;controls();message('태그를 읽는 중…');
@@ -51,7 +51,7 @@ window.KinStudyTags=function(app){
     const at=work.capture('document');if(busy||!pending||!same())return;const ticket=++seq,body=pending;busy=true;controls();message('태그 변경을 저장하는 중…');
     try{const value=await request('POST',body,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=null;if(['rename','delete'].includes(body.action))names.delete(body.scope+':'+body.tagId);if(body.action==='create'){selected=body.tagId;newNames.delete(body.scope);$('new').value='';}draw(['add','remove'].includes(body.action));message('저장되었습니다.');});}
-    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){if([400,403,404,409].includes(e.status))pending=null;message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.':' · 입력을 확인하거나 최신 목록을 읽으세요.'}));}});}
+    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){if([400,403,404,409].includes(e.status))pending=null;message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e:e.message},{t:pending?kinSayEn(' · 같은 요청을 다시 시도하거나 최신 목록을 읽으세요.'):kinSayEn(' · 입력을 확인하거나 최신 목록을 읽으세요.')}));}});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
   async function apply(){
     const at=work.capture('document');if(busy||pending||!same()||!tag())return;const ticket=++seq,wanted=selected;busy=true;controls();
@@ -62,7 +62,7 @@ window.KinStudyTags=function(app){
     ++seq;abort?.abort();abort=null;busy=false;pending=null;owner=state=current=selected=null;$('list').replaceChildren();$('new').value=$('name').value='';$('current').textContent=$('assigned').textContent=$('count').textContent='';message('');if(d.open)d.close();if(!force&&opener?.isConnected)opener.focus();opener=null;}
   function end(){ended=true;names.clear();newNames.clear();draftOwner=null;close(true);app.ended();}
   $('scope').onchange=()=>{scope=$('scope').value;selected=null;draw();};
-  $('create').onclick=()=>command('create',{name:$('new').value});$('rename').onclick=()=>command('rename',{name:$('name').value});$('delete').onclick=()=>{if(tag()&&confirm('태그와 검사 연결만 삭제합니다. 원검사와 판독문은 유지됩니다. 계속할까요?'))command('delete');};
+  $('create').onclick=()=>command('create',{name:$('new').value});$('rename').onclick=()=>command('rename',{name:$('name').value});$('delete').onclick=()=>{if(tag()&&confirm(kinSayEn('태그와 검사 연결만 삭제합니다. 원검사와 판독문은 유지됩니다. 계속할까요?')))command('delete');};
   $('add').onclick=()=>command('add',{uid:current});$('remove').onclick=()=>command('remove',{uid:current});$('apply').onclick=apply;$('retry').onclick=send;$('reload').onclick=load;$('close').onclick=()=>close();d.addEventListener('cancel',e=>{e.preventDefault();close();});
   work.onInvalidate(event=>{
     if(event.reason==='lifecycle'&&!['active','preparing'].includes(event.state))end();
