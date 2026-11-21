@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.KinViewerPriorController = (() => {
   // Match the workspace calendar rule: an absent/invalid date is never a Prior.
   function validDate(value) {
@@ -36,7 +40,7 @@ window.KinViewerPriorController = (() => {
     const current = () => same(origin);
     // The patient's studies (one patient key, identity resolved) with their relation to the tab's current study.
     function listed(data, value) {
-      if (!Array.isArray(data?.studies)) throw new Error('검사 목록 응답을 확인할 수 없습니다.');
+      if (!Array.isArray(data?.studies)) throw kinError("검사 목록 응답을 확인할 수 없습니다.");
       const patient = viewer.snapshot();
       const studies = data.studies.flatMap(study => {
         if (study.sourcePatientKey !== value.patientKey) return [];
@@ -90,7 +94,7 @@ window.KinViewerPriorController = (() => {
       const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal: request.signal });
       if (window.KinSessionTransport.refusal(response)) throw window.KinSessionTransport.responseError(response);
       if (!response.ok) throw new Error(response.status === 403 || response.status === 404
-        ? '이 검사 또는 판독문을 조회할 수 없습니다.' : '연결을 확인한 뒤 다시 시도하세요.');
+        ? kinText("이 검사 또는 판독문을 조회할 수 없습니다.") : kinText("연결을 확인한 뒤 다시 시도하세요."));
       return response.json();
     }
     async function open(value) {
@@ -123,7 +127,7 @@ window.KinViewerPriorController = (() => {
       try {
         const versions = await read('/api/studies/' + encodeURIComponent(uid) + '/report/versions', request);
         if (!admitted()) return;
-        if (!Array.isArray(versions)) throw new Error('판독 이력 응답을 확인할 수 없습니다.');
+        if (!Array.isArray(versions)) throw kinError("판독 이력 응답을 확인할 수 없습니다.");
         const report = reportHead(versions);
         // C-R01-122: the same read is the study's report history; the panel's History shows every version it holds.
         showReport({ state: report ? 'ready' : 'none', origin, study: reportView.study, report,
@@ -138,14 +142,14 @@ window.KinViewerPriorController = (() => {
       const request = imageRequest = new AbortController();
       const value = { ...origin };
       const admitted = () => imageRequest === request && !request.signal.aborted && current();
-      onList({ state: 'ready', origin, studies: rows, message: '영상을 불러오는 중…' });
+      onList({ state: 'ready', origin, studies: rows, message: kinText("영상을 불러오는 중…") });
       try {
         const sets = await loadStudy(uid, value, rows.find(row=>row.uid===uid),{signal:request.signal,valid:admitted});
         if (sets?.reopened) { close(); return; }
         if (!admitted()) return;
-        if (!sets.length) throw new Error('표시할 영상 시리즈가 없습니다.');
+        if (!sets.length) throw kinError("표시할 영상 시리즈가 없습니다.");
         if (!await viewer.compare(value, [sets[0].displaySetInstanceUID], { signal: request.signal, studies: rows })) {
-          if (admitted()) throw new Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+          if (admitted()) throw kinError("저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.");
           return;
         }
         close();
@@ -171,7 +175,7 @@ window.KinViewerPriorController = (() => {
         if (sets?.reopened) return true;
         if (signal?.aborted || !same(value)) return false;
         const set = seriesUid ? sets.find(item => item.SeriesInstanceUID === seriesUid) : sets[0];
-        if (!set) throw new Error('표시할 영상 시리즈가 없습니다.');
+        if (!set) throw kinError("표시할 영상 시리즈가 없습니다.");
         // The cell's own exam goes into the cell; for a split original that is the cell's own part, told by its series
         // (KinExamScope.imagePlace) - the other part of the same original is another exam and goes beside it.
         const place = window.KinExamScope?.imagePlace?.(studies, value.studyUid, value.seriesUid) ?? value.studyUid;
@@ -188,7 +192,7 @@ window.KinViewerPriorController = (() => {
           const sets = await loadStudy(entry.uid, entry.value, studies.find(row=>row.uid===entry.uid),{signal,valid:()=>!signal?.aborted&&entries.every(item=>same(item.value))});
           if (sets?.reopened) return true;
           if (signal?.aborted || entries.some(item => !same(item.value))) return false;
-          if (!sets.length) throw new Error('표시할 영상 시리즈가 없습니다.');
+          if (!sets.length) throw kinError("표시할 영상 시리즈가 없습니다.");
           plan.push({ value: entry.value, displaySetInstanceUIDs: [sets[0].displaySetInstanceUID] });
         }
         return viewer.replace(plan, { signal, studies });

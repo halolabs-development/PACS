@@ -10,6 +10,9 @@
 //   values are in pixels and say so. A spacing that is known but not the one shown is refused, not turned into pixels.
 // - The values a mark holds are checked again before it is saved (the frame's verify) and when it is drawn: a mark whose
 //   stored values are not those of its points now says "재확인 필요" instead of its values.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   const cs = window.cornerstone, ct = window.cornerstoneTools;
   if (!cs?.utilities || !ct?.annotation?.state) return undefined;
@@ -37,15 +40,15 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   // a shown spacing that is not the original's) are refused, not turned into pixels.
   function spacingOf(imageId, points, tags) {
     const found = frame().geometry(imageId, points, tags);
-    if (!model.hasSpacingTags(tags) && (found.basis === 'us' || found.reason === '이 영상에서는 간격을 확인할 수 없습니다' || found.reason === '초음파 보정 영역 안에서만 mm로 잴 수 있습니다'))
+    if (!model.hasSpacingTags(tags) && (found.basis === 'us' || found.reason === kinText('이 영상에서는 간격을 확인할 수 없습니다') || found.reason === kinText('초음파 보정 영역 안에서만 mm로 잴 수 있습니다')))
       return { spacing: null, basis: 'px', label: '' };
-    if (found.basis === 'us') return { reason: '간격 태그가 있는 초음파 영상은 이 도구로 재지 않습니다' };
-    if (found.reason) return { reason: found.reason === '이 영상에서는 간격을 확인할 수 없습니다' ? '간격 태그를 쓸 수 없어 재지 않습니다(영상 방향·간격 확인 불가)' : found.reason };
+    if (found.basis === 'us') return { reason: kinText("간격 태그가 있는 초음파 영상은 이 도구로 재지 않습니다") };
+    if (found.reason) return { reason: found.reason === kinText('이 영상에서는 간격을 확인할 수 없습니다') ? kinText("간격 태그를 쓸 수 없어 재지 않습니다(영상 방향·간격 확인 불가)") : found.reason };
     return found;
   }
   // { values, calculator, basis, label } or { reason }. points: image pixel coordinates.
   function measure(kind, imageId, points, backSide, tags = instance(imageId)) {
-    if (!model || !frame()) return { reason: '측정 계산을 불러오는 중입니다' };
+    if (!model || !frame()) return { reason: kinText("측정 계산을 불러오는 중입니다") };
     const found = spacingOf(imageId, points, tags);
     if (found.reason) return { reason: found.reason };
     const result = model.compute(kind, points, found.spacing, { backSide });
@@ -55,7 +58,7 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   // The values of a saved or drawn mark's points now, on its image.
   function remeasure(kind, imageId, worldPoints, calculator, tags) {
     const parsed = model?.parseCalculator(calculator);
-    if (!parsed || parsed.kind !== kind) return { reason: '측정 종류를 확인할 수 없습니다' };
+    if (!parsed || parsed.kind !== kind) return { reason: kinText("측정 종류를 확인할 수 없습니다") };
     return measure(kind, imageId, worldPoints.map(p => frame().toImage(imageId, p)), parsed.backSide, tags);
   }
   const same = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
@@ -69,10 +72,10 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
     let result;
     try {
       const now = remeasure(kind, imageId, a.data.handles.points, stored?.calculator);
-      if (now.reason) result = { reason: '재확인 필요: ' + now.reason };
-      else if (now.calculator !== stored.calculator || !same(now.values, stored.values)) result = { reason: '재확인 필요: 저장 당시 값과 다릅니다' };
+      if (now.reason) result = { reason: kinText("재확인 필요: {0}", now.reason) };
+      else if (now.calculator !== stored.calculator || !same(now.values, stored.values)) result = { reason: kinText("재확인 필요: 저장 당시 값과 다릅니다") };
       else result = { values: now.values, basis: now.basis, label: now.label, spacing: now.spacing, backSide: model.parseCalculator(stored.calculator).backSide };
-    } catch (error) { result = { reason: '재확인 필요: ' + error.message }; }
+    } catch (error) { result = { reason: kinText("재확인 필요: {e0}", error.message) }; }
     checks.set(a.annotationUID, { key, result });
     return result;
   }
@@ -157,17 +160,17 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
     const f = frame(), layer = event.target.closest?.('[data-kin-measure-layer]');
     const v = viewports().find(view => layer?.dataset.kinMeasureLayer === view.id && imageOf(view) === a.metadata.referencedImageId);
     const imageId = v && imageOf(v);
-    const reason = !f ? '측정 틀을 찾을 수 없습니다' : locked(a) ? '저장한 표식은 측정 기록의 Edit를 누른 뒤 고칩니다' : f.gate(v, imageId);
+    const reason = !f ? kinText("측정 틀을 찾을 수 없습니다") : locked(a) ? kinText("저장한 표식은 측정 기록의 Edit를 누른 뒤 고칩니다") : f.gate(v, imageId);
     if (reason) { say(reason); return; }
     drag = { a, v, imageId, index, start: clone(a.data.handles.points), baseline: clone(a.data.kinBaseline), moved: false };
   }
   function dragTo(event, done) {
     const { a, v, imageId, index } = drag, f = frame();
-    const reason = !f ? '측정 틀을 찾을 수 없습니다' : !ct.annotation.state.getAnnotation(a.annotationUID) ? '표식이 없어졌습니다' : locked(a) ? '표식이 잠겼습니다' :
-      imageOf(v) !== imageId ? '영상이 바뀌어 옮기기를 멈췄습니다' : f.gate(v, imageId);
+    const reason = !f ? kinText("측정 틀을 찾을 수 없습니다") : !ct.annotation.state.getAnnotation(a.annotationUID) ? kinText("표식이 없어졌습니다") : locked(a) ? kinText("표식이 잠겼습니다") :
+      imageOf(v) !== imageId ? kinText("영상이 바뀌어 옮기기를 멈췄습니다") : f.gate(v, imageId);
     if (reason) return cancelDrag(reason);
     const at = f.toImage(imageId, v.canvasToWorld(canvasPoint(v, event)));
-    if (!insideImage(imageId, at)) return done ? cancelDrag('영상 밖으로는 옮기지 않습니다') : undefined;
+    if (!insideImage(imageId, at)) return done ? cancelDrag(kinText("영상 밖으로는 옮기지 않습니다")) : undefined;
     const points = drag.start.map((p, i) => i === index ? f.toWorld(imageId, at) : p);
     const now = remeasure(KINDS[a.metadata.toolName], imageId, points, drag.baseline?.calculator);
     // A place where the values cannot be calculated is not taken: the point stays where it last could.
@@ -232,23 +235,23 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   const specs = {
     limbLength: {
       id: 'measure-limb-length', title: 'Limb Length Discrepancy',
-      note: '기준선을 긋고, 좌우의 같은 골반 표지와 좌우의 같은 대퇴 표지를 찍습니다. 쪽마다 골반 표지에서 대퇴 표지까지를 기준선의 수직 방향으로 잰 거리와, 두 값의 차를 냅니다(좌우는 찍은 순서가 아니라 영상의 자리로 짝짓습니다).',
-      steps: [{ text: '①② 기준선의 두 끝', points: 2 }, { text: '③④ 좌우의 같은 골반 표지(예: 좌골결절)', points: 2 }, { text: '⑤⑥ 좌우의 같은 대퇴 표지(예: 소전자 중점)', points: 2 }],
+      note: kinText("기준선을 긋고, 좌우의 같은 골반 표지와 좌우의 같은 대퇴 표지를 찍습니다. 쪽마다 골반 표지에서 대퇴 표지까지를 기준선의 수직 방향으로 잰 거리와, 두 값의 차를 냅니다(좌우는 찍은 순서가 아니라 영상의 자리로 짝짓습니다)."),
+      steps: [{ text: kinText("①② 기준선의 두 끝"), points: 2 }, { text: kinText("③④ 좌우의 같은 골반 표지(예: 좌골결절)"), points: 2 }, { text: kinText("⑤⑥ 좌우의 같은 대퇴 표지(예: 소전자 중점)"), points: 2 }],
     },
     acetabular: {
       id: 'measure-acetabular', title: 'Acetabular Angle',
-      note: '좌우를 잇는 기준선 A를 긋고, 양쪽 비구의 선을 긋습니다. A의 양 끝에 그쪽 비구 선과 A가 이루는 각과 보각을 냅니다(괄호는 360°에서 뺀 값).',
-      steps: [{ text: '①② 기준선 A의 두 끝(좌우)', points: 2 }, { text: '③④ 한쪽 비구의 선', points: 2 }, { text: '⑤⑥ 다른 쪽 비구의 선', points: 2 }],
+      note: kinText("좌우를 잇는 기준선 A를 긋고, 양쪽 비구의 선을 긋습니다. A의 양 끝에 그쪽 비구 선과 A가 이루는 각과 보각을 냅니다(괄호는 360°에서 뺀 값)."),
+      steps: [{ text: kinText("①② 기준선 A의 두 끝(좌우)"), points: 2 }, { text: kinText("③④ 한쪽 비구의 선"), points: 2 }, { text: kinText("⑤⑥ 다른 쪽 비구의 선"), points: 2 }],
     },
     spineBalance: {
       id: 'measure-spine-balance', title: 'Spine Balance',
-      note: '정면(PA) 전척추 영상에서 위쪽 척추체의 네 모서리와 골반 높이의 좌우 두 점을 찍습니다. 척추체 중심에서 내린 수직선과 골반 두 점의 가운데에서 세운 수직선 사이의 가로 거리를 냅니다.',
-      steps: [{ text: '①②③④ 위쪽 척추체의 네 모서리', points: 4 }, { text: '⑤⑥ 골반 높이의 좌우 두 점', points: 2 }],
+      note: kinText("정면(PA) 전척추 영상에서 위쪽 척추체의 네 모서리와 골반 높이의 좌우 두 점을 찍습니다. 척추체 중심에서 내린 수직선과 골반 두 점의 가운데에서 세운 수직선 사이의 가로 거리를 냅니다."),
+      steps: [{ text: kinText("①②③④ 위쪽 척추체의 네 모서리"), points: 4 }, { text: kinText("⑤⑥ 골반 높이의 좌우 두 점"), points: 2 }],
     },
     spineCobb: {
       id: 'measure-cobb', title: 'Cobb Angle (Lordosis / Kyphosis)',
-      note: '측면 영상에서 위·아래 끝 척추의 종판 선을 긋고 등의 위치를 고릅니다(선을 그은 뒤 바꾸면 방금 그린 표식에 적용됩니다). 두 선이 등 쪽으로 모이면 Lordosis(−), 앞쪽으로 모이면 Kyphosis(+)입니다. 괄호는 360°에서 뺀 값입니다.',
-      steps: [{ text: '①② 한 끝 척추의 종판 선', points: 2 }, { text: '③④ 다른 끝 척추의 종판 선', points: 2 }],
+      note: kinText("측면 영상에서 위·아래 끝 척추의 종판 선을 긋고 등의 위치를 고릅니다(선을 그은 뒤 바꾸면 방금 그린 표식에 적용됩니다). 두 선이 등 쪽으로 모이면 Lordosis(−), 앞쪽으로 모이면 Kyphosis(+)입니다. 괄호는 360°에서 뺀 값입니다."),
+      steps: [{ text: kinText("①② 한 끝 척추의 종판 선"), points: 2 }, { text: kinText("③④ 다른 끝 척추의 종판 선"), points: 2 }],
       fields(body, tool) {
         const wrap = el('label', '', body); wrap.style.cssText = 'display:flex;gap:.5em;align-items:center;margin:.3em 0';
         const select = el('select', '', null, { 'aria-label': 'Back side' });
@@ -277,7 +280,7 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
           if (!a || locked(a) || !tool.marks.includes(a.annotationUID)) return;
           const v = cellOfMade(), imageId = v && imageOf(v);
           const refuse = reason => { tool.status.textContent = reason; s.choice = previous; select.value = previous; };
-          const reason = !v ? '표식을 만든 칸에 그 영상이 없어 등의 위치를 바꾸지 않습니다' : frame().gate(v, imageId);
+          const reason = !v ? kinText("표식을 만든 칸에 그 영상이 없어 등의 위치를 바꾸지 않습니다") : frame().gate(v, imageId);
           if (reason) return refuse(reason);
           const backSide = imageSide(s.choice, screenAxis(v));
           const now = measure('spineCobb', imageId, a.data.handles.points.map(p => frame().toImage(imageId, p)), backSide);
@@ -299,8 +302,8 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
     },
     pelvicIncidence: {
       id: 'measure-pelvic-incidence', title: 'Pelvic Incidence',
-      note: '측면 영상에서 차례대로 찍습니다(차례가 틀리면 값이 틀립니다): 좌우 대퇴골두 중심, S1 위 종판의 앞 끝, 뒤 끝. PI = PT + SS.',
-      steps: [{ text: '①② 좌우 대퇴골두의 중심', points: 2 }, { text: '③ S1 위 종판의 앞 끝', points: 1 }, { text: '④ S1 위 종판의 뒤 끝', points: 1 }],
+      note: kinText("측면 영상에서 차례대로 찍습니다(차례가 틀리면 값이 틀립니다): 좌우 대퇴골두 중심, S1 위 종판의 앞 끝, 뒤 끝. PI = PT + SS."),
+      steps: [{ text: kinText("①② 좌우 대퇴골두의 중심"), points: 2 }, { text: kinText("③ S1 위 종판의 앞 끝"), points: 1 }, { text: kinText("④ S1 위 종판의 뒤 끝"), points: 1 }],
     },
   };
   for (const [kind, spec] of Object.entries(specs)) {
@@ -310,7 +313,7 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   }
   for (const [order, kind] of [[70, 'limbLength'], [80, 'acetabular'], [90, 'spineBalance'], [100, 'spineCobb'], [110, 'pelvicIncidence']])
     ui.menuItem('Measure', { id: specs[kind].id, label: specs[kind].title, order, run: () => {
-      if (!attach()) { ui.toast('측정 틀을 불러오는 중입니다. 잠시 뒤 다시 누르세요.', 'warning'); return; }
+      if (!attach()) { ui.toast(kinText("측정 틀을 불러오는 중입니다. 잠시 뒤 다시 누르세요."), 'warning'); return; }
       frame().open(specs[kind]);
     } });
 
@@ -330,7 +333,7 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   // The Job print checks a saved mark on its own copy of the image: item = the saved item (world points, baseline).
   window.KinMeasureOrtho = {
     kinds: () => Object.keys(TOOLS),
-    values: (imageId, item, tags) => model && frame() ? remeasure(item.kind, imageId, item.points, item.baseline?.calculator, tags) : { reason: '측정 계산을 불러오지 못했습니다' },
+    values: (imageId, item, tags) => model && frame() ? remeasure(item.kind, imageId, item.points, item.baseline?.calculator, tags) : { reason: kinText("측정 계산을 불러오지 못했습니다") },
     lines: (item, tags) => { const parsed = model?.parseCalculator(item.baseline?.calculator);
       return model ? model.lines(item.kind, item.baseline?.values, { basis: parsed?.basis, sides: model.sideNames(tags), backSide: parsed?.backSide }) : []; },
   };
