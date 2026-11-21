@@ -1624,6 +1624,64 @@ class FindingAPI(unittest.TestCase):
         self.revise(head, sources=[dict(itemId=length['id'], revision=2)], status=409)
         self.assertEqual(self.snapshot(FINDING_TABLES), before)
 
+    # ---- TEST-B23-API-15 (version 4 size; Insert Selected into Report: one array, one write) -------------
+    def test_15_version_four_size_and_insert_selected_into_report(self):
+        # A run-owned study of its own, so this case meets no report or draft another case left on the anchor.
+        study = self.comparison(label='b23-batch')
+        first_mark = self.item_in(study, self.length_item(slices=study.slices))
+        second_mark = self.item_in(study, self.key_item(0, title='두 번째 키', slices=study.slices))
+        def v4(sources, size, title, location='RLL', characteristics='solid'):
+            body = self.v3(sources, location, characteristics=characteristics, title=title)
+            body['item'] = dict(body['item'], schemaVersion=4, size=size)
+            return body
+        created = v4([first_mark], '8mm', '폐결절')
+        status, header, first = self.schema_call('POST', study.path, body=created, schema='4')
+        self.assertEqual((status, header), (200, '4'), first)
+        self.assertEqual((first['item']['schemaVersion'], first['item']['size'], first['item']['lesionLocation']), (4, '8mm', 'RLL'))
+        self.assertEqual(psql(f'''SELECT snapshot->>'size' FROM "FindingRevision" WHERE "findingId"={literal(first['id'])}::uuid'''), ['8mm'])
+        # A client that names version 3 (or none) cannot read a page holding version 4: it would drop the size.
+        for schema in ('3', None):
+            status, header, body = self.schema_call('GET', study.path+'?includeHidden=true', schema=schema)
+            self.assertEqual((status, header, body['code']), (409, '4', 'FINDING_CLIENT_OUTDATED'), schema)
+        for bad in (dict(created['item'], size=None), {k: v for k, v in created['item'].items() if k != 'size'}, dict(created['item'], size='😀'*41)):
+            status, _, refused = self.schema_call('POST', study.path, body=dict(requestId=str(uuid.uuid4()), item=bad), schema='4')
+            self.assertEqual(status, 400, refused)
+        # A hide keeps the size exactly; one that changes it is refused.
+        moved = dict(requestId=str(uuid.uuid4()), expectedRevision=1, action='hide', reason='숨김', item=dict(created['item'], size='9mm'))
+        status, _, refused = self.schema_call('POST', study.path+'/'+first['id']+'/revisions', body=moved, schema='4')
+        self.assertEqual((status, refused['code']), (409, 'FINDING_SCHEMA_VERSION'))
+        status, _, second = self.schema_call('POST', study.path, body=v4([second_mark], '6mm', '두 번째 결절', location='LLL'), schema='4')
+        self.assertEqual(status, 200, second)
+
+        report = '/studies/'+study.uid+'/report'
+        listed = {item['id']: item for item in self.call(method='GET', user='xauthor', path=study.path+'?includeHidden=true&limit=100')['items']}
+        def element(finding, text, revision=None):
+            link = listed[finding['id']]['links'][0]
+            return dict(field='findings', findingId=finding['id'], findingRevision=revision or finding['revision'], sourceIndex=0,
+                        insertedText=text, expectedLinkState=link['linkState'], expectedHeadRevision=link['headRevision'])
+        one, two = '폐결절\n위치: RLL\n크기: 8mm\n특성: solid', 'LLL 두 번째 결절, 6mm, solid.'
+        body = lambda findings, insert: dict(findings=findings, conclusion='', recommendation='', baseVersion=0, insert=insert)
+        # One element refused (a revision the finding never had): nothing of the array is written.
+        before = self.draft_rows_of(study.uid)
+        refused = self.call('PUT', body(one + '\n' + two, [element(first, one), element(second, two, revision=9)]), 'xauthor', report, 409)
+        self.assertEqual(refused['code'], 'REPORT_CITATION_STALE')
+        self.assertEqual(self.draft_rows_of(study.uid), before)
+        # Both texts present but not as one run in request order: refused as well.
+        self.call('PUT', body(two + '\n' + one, [element(first, one), element(second, two)]), 'xauthor', report, 409)
+        self.assertEqual(self.draft_rows_of(study.uid), before)
+        answer = self.call('PUT', body(one + '\n' + two, [element(first, one), element(second, two)]), 'xauthor', report)
+        self.assertNotIn('inserted', answer)
+        receipts = answer['insertedAll']
+        self.assertEqual([sorted(r) for r in receipts], [['cid', 'field', 'insertedAt']] * 2)
+        self.assertEqual(len({r['cid'] for r in receipts}), 2)
+        draft = self.call(method='GET', user='xauthor', path=report+'/citations')['draft']
+        self.assertEqual([(e['cid'], e['findingId'], e['sourceRef']['itemId'], e['insertedText']) for e in draft],
+                         [(receipts[0]['cid'], first['id'], first_mark['id'], one), (receipts[1]['cid'], second['id'], second_mark['id'], two)])
+        self.assertEqual({e['field'] for e in draft}, {'findings'})
+
+    def draft_rows_of(self, uid):
+        return psql(f'SELECT to_jsonb(t)::text FROM "ReportDraft" t WHERE uid={literal(uid)} ORDER BY author')
+
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     unittest.main(defaultTest=[f'FindingAPI.{n}' for n in FindingAPI.__dict__ if n.startswith('test_')], verbosity=2)

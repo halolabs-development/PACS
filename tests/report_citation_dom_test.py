@@ -282,7 +282,8 @@ window.fetch = async (url, options = {}) => {
   if (holdCount > 0) { holdCount -= 1; return new Promise(resolve => { heldAnswers.push(() => resolve(answer())); }); }
   return answer();
 };
-function toast(message, kind) { toasts.push({ message, kind }); }
+// A sentence of the page may be the language module's text object (the product's toast writes it); the record keeps its words.
+function toast(message, kind) { toasts.push({ message: String(message), kind }); }
 function apiFail(e) { toast("서버 저장 실패: " + e.message, "err"); }
 APIFN
 WRITEBLOCKFN
@@ -1378,6 +1379,109 @@ class ReportCitationDOMTest(unittest.TestCase):
         value = self.page.evaluate("snapshot()")
         self.assertEqual([EXISTING, "", ""], value["text"])
         self.assertIn("Reload Findings", value["toasts"][-1]["message"])
+
+    # ── Write as Sentence: an opt-in second form of the same stored fields ──
+
+    def test_write_as_sentence_starts_off_and_on_shows_sends_and_inserts_the_sentence(self):
+        sentence = "RLL 폐결절, 8mm, solid."
+        self.open(citations={"version": 1, "head": [], "draft": []})
+        self.open_pane(sentence=sentence)
+        box = self.page.locator("#cite-preview-sentence")
+        self.assertFalse(box.is_checked())
+        self.assertEqual(BLOCK, self.page.evaluate("snapshot()")["pane"]["block"], "off shows the labelled block")
+        box.click()
+        self.assertEqual(sentence, self.page.evaluate("snapshot()")["pane"]["block"])
+        self.page.evaluate("reply({status: 200, body: {inserted: {cid: 'cid-s', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        value = self.page.evaluate("snapshot()")
+        put = value["calls"][0]
+        self.assertEqual(sentence, put["body"]["insert"]["insertedText"], "one text: shown, sent, inserted, attested")
+        self.assertEqual(EXISTING + "\n" + sentence, put["body"]["findings"])
+        self.assertEqual(EXISTING + "\n" + sentence, value["text"][0])
+        # Opened again, the box is off: the shipped bytes until the person turns it on.
+        self.open_pane(sentence=sentence)
+        self.assertFalse(self.page.locator("#cite-preview-sentence").is_checked())
+
+    # ── Insert Selected into Report: several findings, one preview, one write ──
+
+    def batch(self, *items):
+        return {"uid": UID, "items": [request(**item) for item in items]}
+
+    def open_batch(self, *items):
+        self.assertTrue(self.page.evaluate("cite(%s)" % json.dumps(self.batch(*items), ensure_ascii=False)))
+        expect(self.page.locator("#cite-preview")).to_be_visible()
+
+    SECOND = {"findingId": "f-2", "findingRevision": 1, "sourceIndex": 1, "sourceLabel": "Ellipse ROI · 프레임 9 · r1",
+              "headRevision": 4, "block": "좌하엽 결절\n크기: 6mm"}
+
+    def test_insert_selected_sends_one_array_and_moves_the_report_once_in_list_order(self):
+        self.open(citations={"version": 1, "head": [], "draft": []})
+        self.open_batch({}, self.SECOND)
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual(BLOCK + "\n" + self.SECOND["block"], value["pane"]["block"], "the preview shows every block, in list order")
+        self.assertIn("소견 2건", value["pane"]["source"])
+        self.assertEqual([EXISTING, "", ""], value["text"])
+        self.page.evaluate("citeReply({version: 1, head: [], draft: []})")
+        self.page.evaluate("reply({status: 200, body: {insertedAll: [{cid: 'c-1', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'},"
+                           " {cid: 'c-2', field: 'findings', insertedAt: '2026-09-20T02:00:00.000Z'}]}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual(1, len(value["calls"]), "one write")
+        put = value["calls"][0]
+        self.assertEqual([{"field": "findings", "findingId": "f-1", "findingRevision": 2, "sourceIndex": 0, "insertedText": BLOCK,
+                           "expectedLinkState": "current", "expectedHeadRevision": None},
+                          {"field": "findings", "findingId": "f-2", "findingRevision": 1, "sourceIndex": 1, "insertedText": self.SECOND["block"],
+                           "expectedLinkState": "current", "expectedHeadRevision": 4}], put["body"]["insert"])
+        joined = EXISTING + "\n" + BLOCK + "\n" + self.SECOND["block"]
+        self.assertEqual(joined, put["body"]["findings"])
+        self.assertEqual(joined, value["text"][0], "the screen holds exactly what was written")
+        self.assertIn("소견 2건", value["toasts"][-1]["message"])
+        # The new entries are not invented on the screen: the dedicated read fills them from the server.
+        self.page.wait_for_function("()=>citeCalls.length>=2")
+
+    def test_a_short_or_reordered_batch_answer_is_not_taken_as_saved(self):
+        for answer in ("[{cid: 'c-1', field: 'findings', insertedAt: 't'}]",
+                       "[{cid: 'c-1', field: 'findings', insertedAt: 't'}, {cid: 'c-1', field: 'findings', insertedAt: 't'}]",
+                       "[{cid: 'c-1', field: 'findings', insertedAt: 't'}, {cid: 'c-2', field: 'conclusion', insertedAt: 't'}]"):
+            self.open(citations={"version": 1, "head": [], "draft": []})
+            self.open_batch({}, self.SECOND)
+            self.page.evaluate("reply({status: 200, body: {insertedAll: %s}})" % answer)
+            self.press_insert()
+            self.page.wait_for_function("()=>$('#cite-preview-status').textContent.includes('인용하지 못했습니다')")
+            value = self.page.evaluate("snapshot()")
+            self.assertEqual([EXISTING, "", ""], value["text"], answer)
+            self.page.close()
+        self.page = self.browser.new_page()
+
+    def test_a_refused_batch_leaves_the_report_as_it_was(self):
+        self.open(citations={"version": 1, "head": [], "draft": []})
+        self.open_batch({}, self.SECOND)
+        self.page.evaluate("reply({status: 409, body: {code: 'REPORT_CITATION_STALE', message: '소견이 그 사이 바뀌었습니다 — 소견 패널을 다시 불러온 뒤 인용하세요'}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>$('#cite-preview-status').textContent.includes('인용하지 못했습니다')")
+        value = self.page.evaluate("snapshot()")
+        self.assertEqual([EXISTING, "", ""], value["text"], "neither block is inserted")
+        self.assertIn("Reload Findings", value["toasts"][-1]["message"])
+
+    def test_a_batch_with_measurements_gives_each_finding_its_own_line_and_sources(self):
+        self.open(citations={"version": 1, "head": [], "draft": [], "measurementLines": True})
+        second = dict(self.SECOND, measurements=[MEASUREMENTS[1]])
+        self.open_batch({"measurements": MEASUREMENTS}, second)
+        self.reply_numbers(NUMBERS, NUMBERS, NUMBERS)
+        self.turn_measure(True)
+        self.page.wait_for_function("()=>$('#cite-preview-measure-note').textContent.includes('화면이 붙인 글')")
+        line2 = "측정: Key Image (Series 2 / Image 41)"
+        self.assertEqual(BLOCK + "\n" + MLINE + "\n" + self.SECOND["block"] + "\n" + line2, self.page.evaluate("snapshot()")["pane"]["block"])
+        self.page.evaluate("reply({status: 200, body: {insertedAll: [{cid: 'c-1', field: 'findings', insertedAt: 't', measurementRecorded: true},"
+                           " {cid: 'c-2', field: 'findings', insertedAt: 't', measurementRecorded: true}]}})")
+        self.press_insert()
+        self.page.wait_for_function("()=>!$('#cite-preview').classList.contains('show')")
+        put = self.page.evaluate("snapshot()")["calls"][0]
+        first, other = put["body"]["insert"]
+        self.assertEqual((BLOCK + "\n" + MLINE, MLINE, [0, 1]), (first["insertedText"], first["measurementLine"], first["measurementSources"]))
+        self.assertEqual((self.SECOND["block"] + "\n" + line2, line2, [1]), (other["insertedText"], other["measurementLine"], other["measurementSources"]))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
