@@ -258,6 +258,12 @@
                */
               appState[uid] = mergeObservedReportState(uid, st);
             }
+            // Modality changes when a series of another modality arrives (an attached document, too): written like Count and
+            // Series, as the list read draws it (fromApi, then applyState's display overlay over the server's value).
+            if (existing) {
+              const overlay = appState[uid]?.ov?.modality, modality = typeof overlay === 'string' ? overlay : s.modality;
+              if (typeof modality === 'string') existing.modality = modality;
+            }
             syncStudy(uid);
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }
           }

@@ -11,7 +11,7 @@ import { lockMemberRights, rightsAllow, rosterOverlap, rightsAccessEvent, Rights
 import { AuthService, lockWaitExceeded } from './auth.service';
 // 역할 목록은 clinician-policy 한 곳에서 온다. 여기서 별도 literal을 두면 guard와 어긋난다.
 import { APP_ROLES } from './clinician-policy';
-import { KeycloakService, KeycloakUser, RosterWriteFailure, within } from './keycloak.service';
+import { KeycloakService, KeycloakUser, MemberExists, RosterWriteFailure, within } from './keycloak.service';
 import {
   adminInstitution, inScope, memberInstitution, memberNotFound, requireInScope, requireOwnAssignment,
 } from './member-scope';
@@ -35,6 +35,15 @@ export interface FirstAdminOperator { institution: string; name: string; reason:
 export class FirstAdminRefusal extends ConflictException {
   constructor(code: string, message: string) { super({ code, message }); }
 }
+
+/** Create Member with a username or email that already has an account: nothing was created, the form keeps its input. */
+const MEMBER_EXISTS_MESSAGE = {
+  username: '같은 아이디의 계정이 이미 있습니다. 다른 아이디로 만드세요.',
+  email: '같은 이메일의 계정이 이미 있습니다. 다른 이메일로 만드세요.',
+  either: '같은 아이디 또는 이메일의 계정이 이미 있습니다. 아이디나 이메일을 바꿔 다시 만드세요.',
+} as const;
+const memberExists = (field: 'username' | 'email' | null) =>
+  new ConflictException({ code: 'MEMBER_EXISTS', field, message: MEMBER_EXISTS_MESSAGE[field ?? 'either'] });
 
 /** The ledger event of an operator command, as for the realm import's service job (member-rights-import.ts). */
 const OPERATOR_EVENT = {
@@ -221,6 +230,7 @@ export class AdminService {
       });
       return { ...after, temporaryPassword };
     } catch (error) {
+      if (error instanceof MemberExists) throw memberExists(error.field);
       if (!created) throw error;
       let after: any = null;
       try { after = this.row(await this.member(created.id)); } catch {}
