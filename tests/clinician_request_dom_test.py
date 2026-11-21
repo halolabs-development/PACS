@@ -122,7 +122,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "clinical-signature.js")}
 MAIN = read_page_source(HPACS / "main.html")
 
 # The commit this unit (and S5-U4b) started from (main after S5-UI3) and the main commit that merged the S5-U4b/U4c
@@ -976,6 +976,15 @@ class ClinicianRequestDOMTest(Harness):
         if method == "POST" and path == "/api/auth/logout":
             self.logout_posts.append(request.url)
             route.fulfill(status=204, body="")
+            return
+        # In-app unread (unread-badges.js): the page reads its unread views with the list; answered with nothing unread
+        # for this session (tests/in_app_unread_dom_test.py has the marks) and logged apart.
+        if method == "GET" and path == "/api/unread":
+            account = self.me if isinstance(self.me, dict) else {}
+            self.unread_reads = [*getattr(self, "unread_reads", []), request.url]
+            route.fulfill(json={"owner": [account.get("institution"), account.get("sub")],
+                                "view": parse_qs(url.query).get("view", [None])[0], "available": True, "count": 0, "items": [],
+                                "nextCursor": None})
             return
         # S7-U2a: the Critical Results area reads its pending list when the page boots (and every 60 s while shown). It is
         # answered empty for this session and logged apart; any other critical-result request stays unexpected.

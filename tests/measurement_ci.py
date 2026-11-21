@@ -690,6 +690,15 @@ PROFILES = {
         'suite_timeout': 900,
         'suites': (('e2e/test_auto_save_view.py', 'AutoSaveViewE2E', 'ci-auto-save-view'),),
     },
+    'in-app-unread': {
+        'out': ROOT / 'tests/e2e/artifacts/in-app-unread-ci',
+        'project_prefix': 'kin-in-app-unread-ci-',
+        # Dispatch only (Focused integration): the in-app unread rule on PostgreSQL through the real guard and services - a
+        # question for the pool, its answer for the asker, an image request's processing for its requester, each person's
+        # own seen mark, and the marks refused outside a person's view. API level, one class.
+        'suite_timeout': 900,
+        'suites': (('e2e/test_in_app_unread.py', 'InAppUnreadE2E', 'ci-in-app-unread'),),
+    },
     'mark-autosave': {
         'out': ROOT / 'tests/e2e/artifacts/mark-autosave-ci',
         'project_prefix': 'kin-mark-autosave-ci-',

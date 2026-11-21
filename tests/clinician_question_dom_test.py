@@ -691,7 +691,12 @@ class QuestionServer:
                 return self.error("QUESTION_INPUT_INVALID")
         page = rows[start:start + 50]
         following = b64({"at": page[-1]["createdAt"], "i": start + 50, "r": 0}) if start + 50 < len(rows) else None
-        return 200, {"owner": owner, "items": [self.summary(t) for t in page], "nextCursor": following}
+        # Each pool row names the row the server answers its study on now (openUid; a never-grouped study is itself).
+        return 200, {"owner": owner, "items": [{**self.summary(t), "openUid": self.open_uid(t["studyUid"])} for t in page],
+                     "nextCursor": following}
+
+    # The server's openUid rule (exam-merge.service.ts examOpenUids); a case with grouped studies replaces it.
+    open_uid = staticmethod(lambda u: u)
 
     def create(self, caller, owner, u, body):
         if "clinician" not in caller["roles"]:

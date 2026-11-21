@@ -72,6 +72,10 @@ export const CLINICIAN_BUSINESS_ROUTES: readonly string[] = Object.freeze([
   'GET studies/:uid/image-requests',
   'POST studies/:uid/image-requests',
   'POST image-requests/:id',
+  // In-app unread: the view's count and items, and the seen mark of the person's own thread or request.
+  'GET unread',
+  'POST questions/:id/seen',
+  'POST image-requests/:id/seen',
   'GET critical-results',
   'GET critical-results/:id',
   'POST critical-results/:id/ack',
