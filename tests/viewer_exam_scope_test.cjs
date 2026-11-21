@@ -88,7 +88,9 @@ test('adding a logical comparison reopens current and prior through the existing
   KinViewerHangingSettings:{rank:sets=>sets},
   kinViewerOpenPatient:async(href,options)=>{gates.push({href,options});return allowed;}};
  const kinSeriesOrder=vm.runInNewContext(fs.readFileSync('config/ohif/series-order.js','utf8')+';kinSeriesOrder');
- const sandbox={window:root,URL,location:new URL('https://pacs.test/ohif/viewer#kin-window-group=keep'),kinSeriesOrder,
+ // The method alone has no kinError of its function (config/ohif/viewer-prior.js): the plain fill, as written.
+ const kinError=(t,...p)=>Object.assign(new Error(t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]))),{kinWords:true});
+ const sandbox={window:root,URL,location:new URL('https://pacs.test/ohif/viewer#kin-window-group=keep'),kinSeriesOrder,kinError,
   viewer:{snapshot:()=>({studyUIDs:[A]})},
   extensions:{getActiveDataSource:()=>[{retrieve:{series:{metadata:async value=>retrieved.push(value)}},deleteStudyMetadataPromise(){}}]},
   services:{displaySetService:{getActiveDisplaySets:()=>[{StudyInstanceUID:P,SeriesInstanceUID:T,images:[{}]}]}}};
