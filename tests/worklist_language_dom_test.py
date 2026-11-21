@@ -236,9 +236,14 @@ class WorklistLanguageDOM(unittest.TestCase):
             chip.click()
             page.locator('[data-tab="Radiology"]').dispatch_event("click")
 
+        def by_itself_for_reading():
+            # The reading workspace opening the note by itself (its automatic opening): the last pointer was on the list.
+            page.locator('[data-tab="Technician"]').dispatch_event("pointerdown")
+            page.evaluate("() => KinLanguage.opensOn('reading', () => document.getElementById('tech-note-open').click())")
+
         for worklist, reading in (("en", "ko"), ("ko", "en")):
             page.evaluate("([w, r]) => KinLanguage.restore({version: 1, worklist: w, reading: r})", [worklist, reading])
-            for opened, lang in ((from_reading, reading), (from_list, worklist)):
+            for opened, lang in ((from_reading, reading), (from_list, worklist), (by_itself_for_reading, reading)):
                 with self.subTest(worklist=worklist, reading=reading, opened=opened.__name__):
                     opened()
                     expect(page.locator("#tech-note-dialog")).to_be_visible()

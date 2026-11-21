@@ -669,7 +669,10 @@ window.KinReadingWorkspace = function (app) {
     updateNote(); if (note.disabled) return false;
     const selected = noteTarget();
     if (!selected) { app.notice(kinSayEn('원본 검사가 확인되는 영상 칸을 선택하세요. 메모 대상을 확인할 수 없습니다.')); return false; }
-    app.openNote(selected.uid); autoLast = JSON.stringify([epoch, shown.reportUid, shown.uid]); return true;
+    // Opened for the reading screen, also when the workspace opens it by itself: the note reads in that screen's language.
+    const open = () => app.openNote(selected.uid);
+    if (window.KinLanguage?.opensOn) window.KinLanguage.opensOn('reading', open); else open();
+    autoLast = JSON.stringify([epoch, shown.reportUid, shown.uid]); return true;
   }
   function redrawRetainedViewer() {
     const retained = frame;

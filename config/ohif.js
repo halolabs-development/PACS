@@ -9596,6 +9596,14 @@ window.KinLanguageTerms = {
 
   window.KinLanguage = {
     tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
+    /** A dialog the page opens by itself for one screen (no pointer or key on that screen first, such as the reading
+     * workspace opening Tech Note): it opens in that screen's language. */
+    opensOn(region, open) {
+      if (!REGIONS.includes(region)) return open();
+      const was = lastRegion;
+      lastRegion = region;
+      try { return open(); } finally { lastRegion = was; }
+    },
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */
