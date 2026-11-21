@@ -107,9 +107,15 @@ function world() {
   const ledger = { begin: () => ({
     resolveRequestIdentity: async () => '00000000-0000-4000-8000-000000000001',
     resolveIdentity: async () => { identities++; return '00000000-0000-4000-8000-00000000000' + (identities % 10); },
-    transactionWithRecords: async work => work(db, async (event, mutation) => { events.push(event); return mutation(); }),
+    transactionWithRecords: async work => {
+      const out = await work(db, async (event, mutation) => { events.push(event); return mutation(); });
+      // A test's commit outcome after the work returned (Change Name / Email: a lost commit answer).
+      if (commitHook) await commitHook();
+      return out;
+    },
     end() {},
   }) };
+  let commitHook = null;
   const service = new AdminService(db, kc, null, { publishCredentials() {} });
   const requests = createRequestContext(createRequestIngress({ proxyPeers: [] }), ledger);
   const controller = new AdminController(service, null, requests.source);
@@ -135,6 +141,7 @@ function world() {
     service.replaceSoleAdmin(from, to, institution, operator, ledger.begin());
   return { rows, audits, kcCalls, kc, db, service, controller, keys, adminA, call, writes: () => writes, designate, changes, sessions, events, factsMade: () => factsMade, kcOnly, identityOverride: f => { identityHook = f; },
     replace, raws, identities: () => identities, put, standingOverride: f => { standingHook = f; },
+    commitOutcome: f => { commitHook = f; }, ledger,
     // The reset route through the request context, as AuthGuard admits it.
     reset: (id, body, who = adminA, current) => call('admin/users/:id/reset-password', 'POST', req => controller.resetPassword(id, body, req), who, current) };
 }
@@ -1032,5 +1039,373 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
     fs.rmSync(base, { recursive: true, force: true });
   }
 
+  // 13. Change Name / Email: an administrator corrects an approved member's email and name in the login account (the
+  //     identity provider) and the member row together. The provider below is a store of its own (not the member row),
+  //     so one side changing without the other is seen.
+  {
+    const { LedgerFailure } = require('../api/src/emr-runtime/store.ts');
+    const { PacsPreferences } = require('../api/src/pacs/preferences.ts');
+    const { draftOf } = require('../api/src/owner-identity.ts');
+    const glossary = fs.readFileSync(path.join(root, 'worklist-v0/hpacs-lite/worklist-language-terms.js'), 'utf8');
+
+    // 13a. The provider client: only the given fields are sent; the answer is the status code's; the send is bounded and
+    //      the caller's last check runs just before it (a refusal sends nothing).
+    {
+      const provider = new KeycloakService();
+      provider.secret = 'synthetic';
+      provider.token = { value: 'synthetic-token', exp: Date.now() + 3600_000 };
+      const realFetch = global.fetch;
+      try {
+        const seen = [];
+        global.fetch = async (url, init) => { seen.push([init.method, String(url), init.body, !!init.signal]); return new Response(null, { status: 204 }); };
+        const done = await provider.updateIdentity('m-1', { firstName: 'Given', lastName: 'Family' }, AbortSignal.timeout(1000), async () => {});
+        assert.deepEqual(done, { state: 'done', outcome: 'http_204' });
+        assert.equal(seen.length, 1);
+        assert.equal(seen[0][0], 'PUT');
+        assert.match(seen[0][1], /\/users\/m-1$/);
+        assert.deepEqual(JSON.parse(seen[0][2]), { firstName: 'Given', lastName: 'Family' }, 'a name change sends no email or verification');
+        assert.ok(seen[0][3], 'the send is bounded');
+        for (const [code, state] of [[409, 'void'], [400, 'void'], [500, 'unknown'], [503, 'unknown']]) {
+          global.fetch = async () => new Response(null, { status: code });
+          assert.equal((await provider.updateIdentity('m-1', { email: 'n@example.test', emailVerified: false },
+            AbortSignal.timeout(1000), async () => {})).state, state, String(code));
+        }
+        global.fetch = (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+        // AbortSignal.timeout's timer does not hold the process open by itself; this one does, for the bound's length.
+        const alive = setTimeout(() => {}, 1000);
+        assert.deepEqual(await provider.updateIdentity('m-1', { email: 'n@example.test' }, AbortSignal.timeout(20), async () => {}),
+          { state: 'unknown', outcome: 'transport' }, 'a send cut by its bound has an unknown outcome');
+        clearTimeout(alive);
+        let sent = 0;
+        global.fetch = async () => { sent++; return new Response(null, { status: 204 }); };
+        await assert.rejects(provider.updateIdentity('m-1', { email: 'n@example.test' }, AbortSignal.timeout(1000),
+          async () => { throw new Error('synthetic authorization ended'); }), /synthetic authorization ended/);
+        assert.equal(sent, 0, 'a refused last check sends nothing');
+        const asked = [];
+        global.fetch = async url => { asked.push(String(url)); return new Response(JSON.stringify([
+          { id: 'x', email: 'Same@Example.test' }, { id: 'y', email: 'same@example.test.other' }]), { status: 200 }); };
+        assert.deepEqual(await provider.accountsWithEmail('same@example.test'), ['x'], 'exact, ignoring case');
+        assert.match(asked[0], /email=same%40example\.test&exact=true/);
+        global.fetch = async () => new Response(JSON.stringify({ not: 'a list' }), { status: 200 });
+        await assert.rejects(provider.accountsWithEmail('same@example.test'), RosterWriteFailure, 'an unreadable answer is a failed read');
+      } finally { global.fetch = realFetch; }
+    }
+
+    // The world with a provider of its own: each member's login account, separate from the member row.
+    const separate = w => {
+      const accounts = new Map();
+      for (const row of w.rows.values()) accounts.set(row.sub, { id: row.sub, username: row.username, email: row.email,
+        emailVerified: row.emailVerified, firstName: row.name.replace(/^Synthetic /, ''), lastName: 'Synthetic', enabled: true,
+        serviceAccountClientId: null, groups: row.institution ? [row.institution] : [], roles: [] });
+      const writes = [];
+      const plan = { answer: null, reread: null, refuse: null };
+      w.kc.getUser = async id => {
+        if (plan.reread) { const forced = plan.reread(id); if (forced !== undefined) return forced; }
+        return accounts.has(id) ? { ...accounts.get(id), groups: [...accounts.get(id).groups] } : null;
+      };
+      w.kc.listUsers = async page => { const users = [...accounts.values()].map(u => ({ ...u }));
+        return { page, pageSize: 25, total: users.length, pendingCount: 0, users, realmUsers: users }; };
+      w.kc.accountsWithEmail = async email => [...accounts.values()].filter(u => u.email.toLowerCase() === email.toLowerCase()).map(u => u.id);
+      w.kc.updateIdentity = async (id, fields, within, beforeSend) => {
+        assert.ok(within instanceof AbortSignal, 'bounded');
+        await beforeSend();
+        // The member's lock is held when the provider is written.
+        assert.ok(w.raws.filter(r => r[0].includes('pg_advisory_xact_lock')).length >= 2, 'institution and member locks before the write');
+        writes.push([id, { ...fields }]);
+        w.kcCalls.push(['identity', id, { ...fields }]);
+        const answer = plan.answer ? plan.answer(writes.length) : { state: 'done', outcome: 'http_204' };
+        if (answer.state !== 'void' && !answer.skip) Object.assign(accounts.get(id), fields);
+        return answer;
+      };
+      return { accounts, writes, plan };
+    };
+    const change = (w, id, identity, version = w.rows.get(id)?.version ?? 1, who = w.adminA) =>
+      w.call('admin/users/:id', 'PATCH', req => w.controller.patch(id, { identity, version }, req), who);
+    const answerOf = code => error => { assert.ok(error.getResponse, String(error)); assert.equal(error.getResponse().code, code); return true; };
+
+    // 13b. Email (B1): both sides take the new address, unverified; one version; the member's sessions end; one audit row.
+    {
+      const w = world(), p = separate(w);
+      w.sessions.push({ sid: 'sid-reader-a', sub: 'reader-a', auditRef: 'authref:00000000-0000-4000-8000-0000000000a1', institution: A });
+      const after = await change(w, 'reader-a', { email: 'corrected@example.test' });
+      assert.equal(after.email, 'corrected@example.test');
+      assert.equal(after.version, 2);
+      assert.deepEqual(p.writes, [['reader-a', { email: 'corrected@example.test', emailVerified: false }]]);
+      const row = w.rows.get('reader-a'), account = p.accounts.get('reader-a');
+      assert.equal(row.email, 'corrected@example.test');
+      assert.equal(row.emailVerified, false);
+      assert.equal(account.email, 'corrected@example.test');
+      assert.equal(account.emailVerified, false);
+      assert.deepEqual([row.institution, row.roles, row.approved, row.suspended], [A, ['radiologist'], true, false], 'rights unchanged');
+      assert.equal(w.sessions.filter(s => s.sub === 'reader-a').length, 0, 'the member signs in again');
+      const rows = w.audits.filter(a => a.action === 'admin.user.identity');
+      assert.equal(rows.length, 1);
+      const detail = JSON.parse(rows[0].detail);
+      assert.deepEqual(detail.identity, { email: { from: 'reader-a@example.test', to: 'corrected@example.test' } });
+      assert.equal(detail.before.email, 'reader-a@example.test');
+      assert.equal(rows[0].actor, 'admin-a@example.test');
+      assert.equal(w.changes.length, 0, 'no roster intent: institution and roles are untouched');
+      assert.ok(w.events.some(e => e.surface === 'PATCH admin/users/:id'), 'the member change ledger event');
+      const list = await w.controller.list('1', w.adminA);
+      const shown = list.users.find(u => u.id === 'reader-a');
+      assert.equal(shown.email, 'corrected@example.test');
+      assert.equal(shown.identityUnconfirmed, false);
+    }
+
+    // 13c. Name (B2): only the names are sent; the verification state stays; both at once is one row with two changes;
+    //      a suspended member is corrected and stays suspended.
+    {
+      const w = world(), p = separate(w);
+      await change(w, 'reader-a', { lastName: 'Kim', firstName: 'Corrected' });
+      assert.deepEqual(p.writes, [['reader-a', { firstName: 'Corrected', lastName: 'Kim' }]]);
+      assert.equal(w.rows.get('reader-a').name, 'Kim Corrected');
+      assert.equal(w.rows.get('reader-a').emailVerified, true, 'a name change keeps the verification');
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { name: { from: 'Synthetic reader-a', to: 'Kim Corrected' } });
+      w.rows.get('reader-a').suspended = true;
+      await change(w, 'reader-a', { email: 'both@example.test', lastName: 'Lee', firstName: 'Both' });
+      const detail = JSON.parse(w.audits.at(-1).detail);
+      assert.deepEqual(Object.keys(detail.identity).sort(), ['email', 'name']);
+      assert.equal(w.rows.get('reader-a').suspended, true, 'still suspended');
+      assert.equal(w.rows.get('reader-a').version, 3);
+    }
+
+    // 13d. Ownership (B3): after the change the same account — a new token naming the new email — opens the same drafts,
+    //      saved searches and templates; an account that now has the old email gets none of them.
+    {
+      const w = world(); separate(w);
+      const templates = [{ id: 11, ownerSub: 'reader-a', owner: 'reader-a@example.test', name: 'Mine', ord: 0 }];
+      const filters = [{ id: 21, ownerSub: 'reader-a', owner: 'reader-a@example.test', name: 'My search', cols: '{}', createdAt: new Date() }];
+      const drafts = [{ uid: '1.2.3', author: 'reader-a@example.test', authorSub: 'reader-a', findings: 'kept' }];
+      const prisma = {
+        readingTemplate: { count: async ({ where }) => templates.filter(t => t.ownerSub === where.ownerSub).length,
+          createMany: async () => { throw new Error('no seed: the account has its templates'); },
+          findMany: async ({ where }) => templates.filter(t => t.ownerSub === where.ownerSub) },
+        userFilter: { findMany: async ({ where }) => filters.filter(f => f.ownerSub === where.ownerSub) },
+        reportDraft: { findFirst: async ({ where }) => drafts.find(d => d.uid === where.uid && d.authorSub === where.authorSub) ?? null },
+      };
+      await change(w, 'reader-a', { email: 'renamed@example.test' });
+      const prefs = new PacsPreferences(prisma);
+      const again = { sub: 'reader-a', actor: 'renamed@example.test', roles: ['radiologist'], institution: A, kind: 'member' };
+      const mine = await prefs.prefs(again);
+      assert.deepEqual(mine.templates.map(t => t.id), [11]);
+      assert.deepEqual(mine.filters.map(f => f.id), [21]);
+      assert.equal((await draftOf(prisma, '1.2.3', again)).findings, 'kept');
+      const other = { sub: 'someone-else', actor: 'reader-a@example.test', roles: ['technician'], institution: A, kind: 'member' };
+      const theirs = await prefs.prefs(other);
+      assert.deepEqual([theirs.templates.length, theirs.filters.length], [0, 0]);
+      assert.equal(await draftOf(prisma, '1.2.3', other), null);
+      assert.equal(templates[0].owner, 'reader-a@example.test', 'the stored old email text is not rewritten');
+    }
+
+    // 13e. An address another account has (B4): 409 MEMBER_EXISTS with Create Member's code, nothing sent or written; the
+    //      write's own 409 to an email change says the same; to a name change it says nothing changed.
+    {
+      const w = world(), p = separate(w);
+      const before = w.writes();
+      await assert.rejects(change(w, 'reader-a', { email: 'ADMIN-A@example.test' }), error => {
+        assert.equal(error.getStatus(), 409);
+        assert.deepEqual(error.getResponse(), { code: 'MEMBER_EXISTS', field: 'email', message: '같은 이메일의 계정이 이미 있습니다. 다른 이메일로 바꾸세요.' });
+        return true;
+      });
+      assert.deepEqual([p.writes.length, w.writes(), w.audits.length], [0, before, 0]);
+      p.plan.answer = () => ({ state: 'void', outcome: 'http_409' });
+      await assert.rejects(change(w, 'reader-a', { email: 'raced@example.test' }), answerOf('MEMBER_EXISTS'));
+      await assert.rejects(change(w, 'reader-a', { lastName: 'X', firstName: 'Y' }), answerOf('MEMBER_IDENTITY_NOT_CHANGED'));
+      assert.equal(p.writes.length, 2);
+      assert.deepEqual([w.rows.get('reader-a').email, w.rows.get('reader-a').version, w.writes()], ['reader-a@example.test', 1, before]);
+      assert.equal(w.audits.length, 0, 'a refused write is no success and no failure to record');
+    }
+
+    // 13f. Scope and input (B5): another institution and an unknown id answer alike with no provider call; the waiting
+    //      room, a mixed request, a bad version, no change are 400; a non-administrator 403. Nothing written.
+    {
+      const w = world(), p = separate(w);
+      const before = w.writes();
+      for (const id of ['reader-b', 'kc-b', 'no-such-member'])
+        await assert.rejects(change(w, id, { email: 'x@example.test' }, 1), sameAsUnknown, id);
+      for (const [id, body] of [['waiting', { identity: { email: 'x@example.test' }, version: 1 }],
+        ['reader-a', { identity: { email: 'x@example.test' }, version: 1, roles: ['clinician'] }],
+        ['reader-a', { identity: { email: 'x@example.test' }, version: '1' }],
+        ['reader-a', { identity: { email: 'x@example.test' } }],
+        ['reader-a', { identity: null, version: 1 }],
+        ['reader-a', { identity: {}, version: 1 }],
+        ['reader-a', { identity: { username: 'other' }, version: 1 }],
+        ['reader-a', { identity: { firstName: 'Only' }, version: 1 }],
+        ['reader-a', { identity: { email: 'no-at-sign' }, version: 1 }],
+        ['reader-a', { identity: { email: 'line\nbreak@example.test' }, version: 1 }],
+        ['reader-a', { identity: { email: 'READER-A@example.test' }, version: 1 }]])
+        await assert.rejects(w.call('admin/users/:id', 'PATCH', req => w.controller.patch(id, body, req)), status(400), JSON.stringify(body));
+      const reader = { sub: 'reader-a', actor: 'reader-a@example.test', roles: ['radiologist'], institution: A, kind: 'member' };
+      await assert.rejects(change(w, 'reader-a', { email: 'x@example.test' }, 1, reader), status(403));
+      assert.deepEqual([p.writes.length, w.writes(), w.audits.length], [0, before, 0]);
+      assert.deepEqual(w.kcCalls, []);
+      for (const words of ['이메일·이름 변경은 다른 회원 변경과 함께 보낼 수 없습니다', '성과 이름을 함께 보내세요', '바뀐 값이 없습니다',
+        '이 기관의 승인된 회원만 이메일·이름을 바꿀 수 있습니다', '같은 이메일의 계정이 이미 있습니다. 다른 이메일로 바꾸세요.',
+        '이메일·이름을 바꾸지 못했습니다. 아무것도 바뀌지 않았습니다. 다시 시도하세요.',
+        '바뀌었는지 확인하지 못했습니다. Refresh로 목록을 다시 읽고, 바뀌지 않았으면 같은 값으로 다시 저장하세요.',
+        '명부의 이메일이 이 화면의 이메일과 다릅니다. Change Name / Email로 주소를 확인해 저장한 뒤 다시 보내세요.'])
+        assert.ok(glossary.includes(JSON.stringify(words)), words);
+    }
+
+    // 13g. A version the dialog opened on is stale (B6, before the locks): 409 and nothing sent.
+    {
+      const w = world(), p = separate(w);
+      await assert.rejects(change(w, 'reader-a', { email: 'late@example.test' }, 7), answerOf('MEMBER_VERSION_CONFLICT'));
+      assert.equal(p.writes.length, 0);
+    }
+
+    // 13h. Provider outcomes (B7): a refusal changes nothing; a lost answer the read-back confirms goes on; a lost answer
+    //      the read-back does not settle is unconfirmed — no success, no version, nothing put back.
+    {
+      const w = world(), p = separate(w);
+      p.plan.answer = () => ({ state: 'void', outcome: 'http_400' });
+      await assert.rejects(change(w, 'reader-a', { email: 'refused@example.test' }), error => {
+        assert.equal(error.getStatus(), 503); assert.equal(error.getResponse().code, 'MEMBER_IDENTITY_NOT_CHANGED'); return true; });
+      assert.equal(w.rows.get('reader-a').version, 1);
+      p.plan.answer = () => ({ state: 'unknown', outcome: 'transport' });
+      const after = await change(w, 'reader-a', { email: 'landed@example.test' });
+      assert.equal(after.email, 'landed@example.test', 'the read-back settles a lost answer');
+      p.plan.answer = () => ({ state: 'unknown', outcome: 'transport', skip: true });
+      await assert.rejects(change(w, 'reader-a', { email: 'unsettled@example.test' }), answerOf('MEMBER_IDENTITY_UNCONFIRMED'));
+      p.plan.answer = () => ({ state: 'done', outcome: 'http_204' });
+      // The read after the write fails (the first read, before the locks, succeeds).
+      p.plan.reread = () => p.writes.length >= 4 ? null : undefined;
+      await assert.rejects(change(w, 'reader-a', { lastName: 'Unread', firstName: 'Back' }), answerOf('MEMBER_IDENTITY_UNCONFIRMED'));
+      p.plan.reread = null;
+      assert.equal(w.rows.get('reader-a').email, 'landed@example.test');
+      assert.equal(w.rows.get('reader-a').version, 2, 'only the confirmed change committed');
+      assert.equal(p.writes.length, 4, 'nothing put back while the outcome is unknown');
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.identity').length, 1);
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.patch.failed').length, 0);
+    }
+
+    // 13i. The database does not commit (B8): what this request wrote is put back — under the locks, only while the row and
+    //      the provider are as it left them — and the failure is recorded. A lost commit answer is settled by the own
+    //      audit row: committed stays committed; not found is unconfirmed and nothing is put back.
+    {
+      const w = world(), p = separate(w);
+      const updateMany = w.db.memberRights.updateMany;
+      w.db.memberRights.updateMany = async () => { throw new Error('synthetic database failure'); };
+      await assert.rejects(change(w, 'reader-a', { email: 'rolled@example.test' }), /synthetic database failure/);
+      assert.deepEqual(p.writes, [['reader-a', { email: 'rolled@example.test', emailVerified: false }],
+        ['reader-a', { email: 'reader-a@example.test', emailVerified: true }]], 'put back with its verification');
+      assert.equal(p.accounts.get('reader-a').email, 'reader-a@example.test');
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.patch.failed').length, 1);
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.identity').length, 0);
+      // Another administrator's change committed meanwhile (the row's version moved): nothing is put back.
+      w.db.memberRights.updateMany = async () => { w.rows.get('reader-a').version = 9; throw new Error('synthetic database failure'); };
+      await assert.rejects(change(w, 'reader-a', { email: 'other-won@example.test' }), /synthetic database failure/);
+      assert.equal(p.writes.length, 3, 'no write back over a later change');
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.patch.failed').length, 2, 'this request\'s failure is still recorded');
+      w.rows.get('reader-a').version = 1;
+      w.db.memberRights.updateMany = updateMany;
+      // A lost commit answer whose own audit row exists: the change stands, nothing is put back.
+      w.db.auditLog.findFirst = async ({ where }) => {
+        const row = w.audits[where.id - 1];
+        return row && row.target === where.target && row.action === where.action ? { id: where.id, ...row } : null;
+      };
+      w.commitOutcome(() => { throw new LedgerFailure('CommitUnknown'); });
+      const stood = await change(w, 'reader-a', { email: 'stood@example.test' });
+      assert.equal(stood.email, 'stood@example.test');
+      assert.equal(p.writes.length, 4);
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.patch.failed').length, 2, 'no failure row over a committed change');
+      // A lost commit answer without its audit row: unconfirmed, nothing put back.
+      w.commitOutcome(() => { w.audits.splice(0, w.audits.length, ...w.audits.filter(a => a.action !== 'admin.user.identity' || !a.detail.includes('lost@'))); throw new LedgerFailure('CommitUnknown'); });
+      await assert.rejects(change(w, 'reader-a', { email: 'lost@example.test' }), answerOf('MEMBER_IDENTITY_UNCONFIRMED'));
+      assert.equal(p.writes.length, 5, 'nothing put back while the commit is unknown');
+      w.commitOutcome(null);
+    }
+
+    // 13j. The provider changed and the row did not (B9): the list marks it and opens on the provider's values; saving
+    //      them makes the two one with one audit row (no provider write); saving again changes nothing.
+    {
+      const w = world(), p = separate(w);
+      p.accounts.get('reader-a').email = 'provider-only@example.test';
+      const list = await w.controller.list('1', w.adminA);
+      const shown = list.users.find(u => u.id === 'reader-a');
+      assert.equal(shown.email, 'reader-a@example.test', 'the row shows the member row');
+      assert.equal(shown.identityUnconfirmed, true);
+      assert.deepEqual(shown.provider, { email: 'provider-only@example.test', firstName: 'reader-a', lastName: 'Synthetic' });
+      assert.equal(list.users.find(u => u.id === 'waiting').provider, undefined, 'no provider values for a member it may not change');
+      await change(w, 'reader-a', { email: 'provider-only@example.test' });
+      assert.equal(p.writes.length, 0, 'the provider already holds them');
+      assert.equal(w.rows.get('reader-a').email, 'provider-only@example.test');
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { email: { from: 'reader-a@example.test', to: 'provider-only@example.test' } });
+      await assert.rejects(change(w, 'reader-a', { email: 'provider-only@example.test' }), status(400));
+      assert.equal(w.rows.get('reader-a').version, 2, 'no version, session end or audit for no change');
+      assert.equal((await w.controller.list('1', w.adminA)).users.find(u => u.id === 'reader-a').identityUnconfirmed, false);
+    }
+
+    // 13k. Another member change never takes a differing provider identity silently (it stays marked for the explicit,
+    //      audited change); the same address's verification is still refreshed.
+    {
+      const w = world(), p = separate(w);
+      p.accounts.get('reader-a').email = 'console-edit@example.test';
+      p.accounts.get('reader-a').firstName = 'Elsewhere';
+      await w.call('admin/users/:id', 'PATCH', req => w.controller.patch('reader-a', { roles: ['radiologist', 'clinician'], version: 1 }, req));
+      assert.deepEqual([w.rows.get('reader-a').email, w.rows.get('reader-a').name], ['reader-a@example.test', 'Synthetic reader-a']);
+      assert.equal((await w.controller.list('1', w.adminA)).users.find(u => u.id === 'reader-a').identityUnconfirmed, true);
+      p.accounts.get('admin-a').emailVerified = false;
+      await w.call('admin/users/:id', 'PATCH', req => w.controller.patch('admin-a', { roles: ['admin', 'radiologist'], version: 1 }, req));
+      assert.equal(w.rows.get('admin-a').emailVerified, false, 'the same address keeps the provider verification');
+    }
+
+    // 13l. The reset mail goes to the provider's address: while it differs from the shown one nothing is sent; a name
+    //      difference or a temporary password is not held back.
+    {
+      const w = world(), p = separate(w);
+      p.accounts.get('reader-a').email = 'elsewhere@example.test';
+      await assert.rejects(w.reset('reader-a', { mode: 'email' }), answerOf('RESET_MAIL_ADDRESS_UNCONFIRMED'));
+      assert.ok(!w.kcCalls.some(call => call[0] === 'reset'), 'no mail');
+      assert.equal(w.audits.at(-1).action, 'admin.user.reset-password.failed');
+      await w.reset('reader-a', { mode: 'temp' });
+      p.accounts.get('reader-a').email = 'reader-a@example.test';
+      p.accounts.get('reader-a').firstName = 'Renamed elsewhere';
+      await w.reset('reader-a', { mode: 'email' });
+      assert.deepEqual(w.kcCalls.filter(call => call[0] === 'reset').map(call => call[2]), ['temp', 'email']);
+    }
+
+    // 13n. The audit row names every field that changed in either store: the login account corrected back to the row's
+    //      value, or only the family/given split moved (the shown name the same); a commit that fails on a save that
+    //      needed no provider write is still this request's failure to record.
+    {
+      const w = world(), p = separate(w);
+      p.accounts.get('reader-a').email = 'typo@example.test';
+      await change(w, 'reader-a', { email: 'reader-a@example.test' });
+      assert.deepEqual(p.writes, [['reader-a', { email: 'reader-a@example.test', emailVerified: false }]]);
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { email: { from: 'typo@example.test', to: 'reader-a@example.test' } },
+        'a correction of the login account alone is recorded');
+      // Shown "Synthetic reader-a" either way: family "Synthetic reader-a", given "" -> family "Synthetic", given "reader-a".
+      p.accounts.get('reader-a').lastName = 'Synthetic reader-a';
+      p.accounts.get('reader-a').firstName = '';
+      await change(w, 'reader-a', { lastName: 'Synthetic', firstName: 'reader-a' });
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { name: { from: 'Synthetic reader-a / ', to: 'Synthetic / reader-a' } });
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.identity').every(a => Object.keys(JSON.parse(a.detail).identity).length), true);
+      // The row differs, the provider already holds the values (no write), and the commit fails: recorded, nothing put back.
+      p.accounts.get('reader-a').email = 'provider-ahead@example.test';
+      const updateMany = w.db.memberRights.updateMany;
+      w.db.memberRights.updateMany = async () => { throw new Error('synthetic database failure'); };
+      const writes = p.writes.length;
+      await assert.rejects(change(w, 'reader-a', { email: 'provider-ahead@example.test' }), /synthetic database failure/);
+      w.db.memberRights.updateMany = updateMany;
+      assert.equal(p.writes.length, writes, 'no provider write to put back');
+      assert.equal(w.audits.at(-1).action, 'admin.user.patch.failed');
+    }
+
+    // 13m. The administrator corrects their own email: saved, and their own sessions end too (they sign in again).
+    {
+      const w = world(), p = separate(w);
+      w.sessions.push({ sid: 'sid-admin-a', sub: 'admin-a', auditRef: 'authref:00000000-0000-4000-8000-0000000000a2', institution: A });
+      await change(w, 'admin-a', { email: 'me-corrected@example.test' });
+      assert.equal(p.accounts.get('admin-a').email, 'me-corrected@example.test');
+      assert.equal(w.rows.get('admin-a').email, 'me-corrected@example.test');
+      assert.equal(w.sessions.length, 0);
+    }
+  }
+
   process.stdout.write('Member institution scope contracts passed\n');
+  finished = true;
 })().catch(e => { console.error(e); process.exitCode = 1; });
+// A wait that never settles empties the event loop and would end the run with code 0 before the last line: that is a failure.
+let finished = false;
+process.on('exit', code => { if (!finished && code === 0) { console.error('Member scope contracts did not finish'); process.exitCode = 1; } });

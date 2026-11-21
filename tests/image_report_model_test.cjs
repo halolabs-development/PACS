@@ -35,6 +35,14 @@ test('native signatures retain legacy bytes and bind both drawings and their sav
   assert.equal(native.nativeReportMatches(row,bytes),true);
   assert.equal(native.nativeReportMatches({...row,groupId:null},bytes),false);
   assert.equal(native.nativeReportMatches({...row,drawings:null},bytes),false);
+  // The member name a version was written under is kept beside the row, never in its signed bytes: the old and the new
+  // format sign the same bytes with it, without it, or with it NULL, and a stored signature still matches the row.
+  for (const signed of [upgraded, row]) {
+    const before = native.nativeReportSnapshot(signed);
+    for (const authorName of ['SYN Kim Reader', null])
+      assert.equal(native.nativeReportSnapshot({...signed,authorSub:'syn-sub',authorName}),before);
+    assert.equal(native.nativeReportMatches({...signed,authorName:'SYN Kim Reader'},before),true);
+  }
 });
 
 test('server: a drawing request keeps strokes as 0..1 fractions and reads the PNG size', () => {

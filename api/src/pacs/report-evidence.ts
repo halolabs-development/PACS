@@ -16,7 +16,7 @@ import { applyStructureKeepList, isStructureEntry, projectStructure, structureAp
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
 import { draftToken, keptVersionTime, refuseDestroyed, visibleDraftAuthor } from './values';
-import { memberNames } from '../member-rights';
+import { versionWriterName } from '../member-rights';
 import { draftOf, sameAccount } from '../owner-identity';
 import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
@@ -359,7 +359,7 @@ export class PacsReportEvidence {
      */
     const rows = await tx.reportVersion.findMany({ where: { uid }, orderBy: { version: 'desc' },
       select: { id: true, uid: true, version: true, action: true, findings: true, conclusion: true,
-        recommendation: true, reason: true, author: true, authorSub: true, at: true, drawings: true, groupId: true } });
+        recommendation: true, reason: true, author: true, authorSub: true, authorName: true, at: true, drawings: true, groupId: true } });
     // Merge Exam: a version written on an exam group says which studies it was written on; its text is shown only to a caller
     // who may read every one of them now. A version of the study alone keeps its shape (no group key).
     // Versions written on the same exam share one answer in this snapshot: it is resolved once, not once per version.
@@ -381,8 +381,9 @@ export class PacsReportEvidence {
     const signer = (row: { author: string; authorSub?: string | null }) => `${row.authorSub ?? ''}\u0000${row.author}`;
     const signers = new Set(scoped.filter(row => row.action !== 'discarded').map(signer));
     const resets = new Map(scoped.filter(row => row.action === 'reset').map(row => [row.version, row.author]));
-    // The account id of each version stays here: it judges whose text it is (below), and is not shown.
-    const shown = scoped.map(({ authorSub, ...stored }) => {
+    // The account id of each version stays here: it judges whose text it is (below), and is not shown; nor is the name it was
+    // written under, which is shown only as below.
+    const shown = scoped.map(({ authorSub, authorName: _kept, ...stored }) => {
       const row = { ...stored, mine: sameAccount(authorSub, c) };
       if (row.action !== 'discarded') return row;
       const disclosed = signers.has(signer({ author: row.author, authorSub }));
@@ -397,13 +398,12 @@ export class PacsReportEvidence {
     });
     // The state table (report-visibility.ts): a Save/Defer version outside a Preliminary, and a discarded copy of one or of a
     // private draft, keeps its text for its writer. The row (number, action, who, when) stays, marked so the screen says why it is empty.
-    // Who signed a version is shown by the member's name on its account (member-rights.ts memberNames), only on a row whose
-    // writer is shown as is; a version of the current cycle's kept events is shown at the time the study keeps for it
+    // Who signed a version is shown by the member name it was written under (member-rights.ts versionWriterName; a version
+    // without one shows its login as before), only on a row whose writer is shown as is; a version of the current cycle's kept events is shown at the time the study keeps for it
     // (values.ts keptVersionTime). `author`, `at` and the account id stay as stored.
-    const names = await memberNames(tx, scoped.map(row => row.authorSub));
     const signed = shown.map((row, i) => {
       const raw = scoped[i];
-      const name = row.author === raw.author && raw.authorSub ? names.get(raw.authorSub) : undefined;
+      const name = row.author === raw.author && raw.authorSub ? versionWriterName(raw) : undefined;
       return { ...row, ...(name ? { authorName: name } : {}), ...keptVersionTime(prev, raw, scoped) };
     });
     const classes = versionClasses(scoped);

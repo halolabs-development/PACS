@@ -995,6 +995,22 @@ class ReportFlowPage(unittest.TestCase):
         for leaked in ('syn.second@', 'syn.reader@', '2026-11-17 18:0', '2026-11-18 01:30', 'T18:', ':59'):
             self.assertNotIn(leaked, shown)
 
+    def test_history_names_a_version_without_a_kept_name_by_its_stored_login(self):
+        """A version signed before signing names were kept (the server sends no authorName) shows the login it stored, as
+        is - not the name the screen knows for that account now (the signed-in reader's display name here), so renaming a
+        member never changes who an already signed version names."""
+        self.open(); self.open_study(h.PATIENT)
+        versions = [dict(version=2, action='addendum', author=h.RAD['actor'], authorName='SYN Kim Renamed', at='2026-11-18T01:30:00.000Z'),
+                    dict(version=1, action='approve', author=h.RAD['actor'], at='2026-11-17T17:00:00.000Z')]
+        self.page.route('**/api/studies/*/report/versions', lambda route: route.fulfill(json=versions))
+        self.page.locator('#report-more > summary').click()
+        self.page.locator('#b-history').click()
+        heads = self.page.locator('#hist-body .ver .vh')
+        expect(heads).to_have_count(2)
+        expect(heads.nth(0)).to_contain_text('SYN Kim Renamed')
+        expect(heads.nth(1)).to_contain_text(h.RAD['actor'])
+        self.assertNotIn(h.RAD['displayName'], heads.nth(1).inner_text())
+
     def test_existing_report_recommendation_is_a_read_only_line(self):
         self.site.store[h.UID]['report'].update(version=1, rs='A', findings='SYN existing findings',
             conclusion='SYN existing conclusion', recommendation='SYN existing recommendation')
