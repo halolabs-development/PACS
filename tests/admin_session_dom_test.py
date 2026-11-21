@@ -174,6 +174,9 @@ class PageSessionDOMTest(unittest.TestCase):
             route.fulfill(json={'studies':rows,'pagination':{'limit':100,'offset':0,'total':len(rows),'next':None}})
         elif path.endswith('/report'):
             uid = path.split('/')[-2]; route.fulfill(json=REPORTS[uid])
+        elif path.endswith('/report/citations'):
+            # The head version's citations Clinician Home reads after a report it shows (none here).
+            route.fulfill(json={'version':0,'head':[],'draft':[]})
         elif path.endswith('/questions') or path.endswith('/image-requests'):
             route.fulfill(json={'owner':OWNER,'items':[]})
         elif path == '/api/critical-results':

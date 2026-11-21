@@ -116,6 +116,7 @@ REGRESSION_SUITES = {
         tests/viewer_hanging_protocol_monitors_dom_test.py
         tests/viewer_monitor_hanging_dom_test.py
         tests/viewer_compare_dom_test.py
+        tests/viewer_hotkey_table_dom_test.py
         tests/viewer_mg_dom_test.py
         tests/viewer_clinician_entry_dom_test.py
         tests/viewer_context_loss_dom_test.py

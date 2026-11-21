@@ -91,7 +91,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
                                                     "critical-result-inbox.js", "clinical-signature.js")}
 MAIN_HTML = read_page_source(HPACS / "main.html")
 AUTH_CONTROLLER = lf_text(ROOT / "api" / "src" / "auth.controller.ts")
@@ -490,6 +490,11 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                 self.held_lists.append(route)
                 return
             route.fulfill(**self.list_reply(query))
+            return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
             return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
         # A stored version (?version=n, the Exam Reports buttons) is answered from "<uid>?version=n".

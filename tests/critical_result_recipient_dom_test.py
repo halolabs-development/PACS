@@ -103,7 +103,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from playwright.sync_api import Error as PlaywrightError, expect, sync_playwright
 from module_session_harness import CORE, STANDIN, setup_standin
@@ -122,7 +122,7 @@ def lf_text(path):
 
 MAIN = read_page_source(HPACS / "main.html")
 INBOX_JS = lf_text(HPACS / INBOX)
-HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
+HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
 ORIGIN = "https://recipient.test"
 BASE = "/worklist/hpacs-lite/"
 
@@ -892,6 +892,11 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
             rows = sorted(self.rows, key=lambda row: row["uid"])
             route.fulfill(json={"studies": copy.deepcopy(rows), "serverTime": "2026-09-28T00:00:00.000Z",
                                 "pagination": {"next": None, "total": len(rows), "offset": 0, "limit": 100}})
+            return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
             return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
         if self.host == "home" and method == "GET" and found and not url.query:

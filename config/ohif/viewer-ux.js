@@ -55,6 +55,7 @@ function kinCreateViewerUX() {
       shortcuts = window.KinViewerUXShortcuts.mount({
         getBindings: () => toolbar?.bindings() || {}, invoke: id => toolbar?.invoke(id),
         allowed: () => !kinViewerSession.ended(),
+        workspace: kinViewerWorkspaceClaims,
       });
       kinViewerOnEnd(() => { shortcuts?.dispose(); window.KinViewerUXToolbar.clear(); });
     },
@@ -82,6 +83,13 @@ function kinCreateViewerUX() {
     },
     onModeExit: stop,
   };
+}
+
+// The work page's chords this Viewer window acts on, as its executors answer them (viewer-tech-note.js): patient ID
+// copy (Ctrl+Alt+C) while the window has it, and the chords of the map that window read when it connected.
+function kinViewerWorkspaceClaims({ ctrlKey, altKey, code }) {
+  const chord = { ctrlKey, altKey, code, shiftKey: false, metaKey: false };
+  return !!code && (!!window.kinViewerPatientCopyChord?.(chord) || !!window.kinViewerWorkspaceChord?.(chord));
 }
 
 // OHIF's resize restores a stack's current frame through setViewReference ->

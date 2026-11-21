@@ -127,6 +127,9 @@
     .meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 14px; margin: 0 0 6px; }
     #report, #keys { margin-bottom: 14px; }
     .body-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .cited-line { display: inline; min-height: 0; margin: 0; padding: 0 2px; border: 0; border-bottom: 1px solid currentColor; border-radius: 0; background: transparent; color: var(--accent); font: inherit; line-height: inherit; vertical-align: baseline; text-align: left; white-space: pre-wrap; cursor: pointer; }
+    .cited-line:hover:not(:disabled), .cited-line:focus-visible { background: #8ab4c833; }
+    .key-open { margin-top: 4px; }
     #key-list { margin: 0; padding-left: 20px; }
     .key { margin-bottom: 8px; }
     .key p { margin: 0; }
@@ -302,6 +305,7 @@
   <script src="critical-result-inbox.js"></script>
   <script src="clinical-signature.js"></script>
   <script src="report-preview.js"></script>
+<script src="report-citation.js"></script>
   <script src="physician-name.js"></script>
   <script src="worklist-folder-tree.js"></script>
   <script src="work-mode.js"></script>

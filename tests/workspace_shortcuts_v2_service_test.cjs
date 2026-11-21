@@ -188,3 +188,33 @@ test('invalid stored versions and shapes can be repaired only at the current rev
     assert.deepEqual(await f.service.workspaceShortcuts(caller),repaired);
   }
 });
+
+// The one shortcut tab saves the work-page keys and the viewer tool keys at one revision; Finalize & Next is an optional
+// slot of the version 2 map, and a map from a page that predates it keeps the stored Finalize & Next key.
+test('work-page keys and viewer settings save together at one revision; either invalid saves nothing',async()=>{
+  const f=fixture(), tools={version:2,bar:['Zoom'],shortcuts:{Zoom:'z',Length:'k'},mammography:{layout:'current',kind:null}};
+  const first=await f.service.saveWorkspaceShortcuts({expectedOwner:owner(caller),revision:0,viewerSettings:tools},caller);
+  const keys={...v2(),finalizeNext:'Control+Alt+KeyN'};
+  const both=await f.service.saveWorkspaceShortcuts({expectedOwner:owner(caller),revision:first.revision,bindings:keys,viewerSettings:{...tools,shortcuts:{Zoom:'j'}}},caller);
+  assert.equal(both.revision,first.revision+1);assert.deepEqual(both.bindings,keys);assert.deepEqual(both.viewerSettings,{...tools,shortcuts:{Zoom:'j'}});
+  const before=f.snapshot();
+  for(const body of [{bindings:{...keys,list:'bad'},viewerSettings:tools},{bindings:keys,viewerSettings:{...tools,shortcuts:{Zoom:'z',Pan:'z'}}}])
+    await assert.rejects(f.service.saveWorkspaceShortcuts({expectedOwner:owner(caller),revision:both.revision,...body},caller),status(400));
+  await assert.rejects(f.service.saveWorkspaceShortcuts({expectedOwner:owner(caller),revision:first.revision,bindings:keys,viewerSettings:tools},caller),status(409));
+  assert.deepEqual(f.snapshot(),before);
+  // A record with only viewer settings reads as no work-page keys, not as an unreadable record.
+  const only=fixture(), saved=await only.service.saveWorkspaceShortcuts({expectedOwner:owner(caller),revision:0,viewerSettings:tools},caller);
+  assert.equal(saved.bindings,null);assert.equal(saved.invalid,false);
+  assert.equal(client.valid(keys),true);assert.equal(client.valid(v2()),true);
+});
+test('a map without Finalize & Next keeps the stored Finalize & Next key and may not take it',async()=>{
+  const f=fixture(), keys={...v2(),finalizeNext:'Control+Alt+KeyN'};
+  const first=await f.service.saveWorkspaceShortcuts(request(keys,0),caller);
+  const older=await f.service.saveWorkspaceShortcuts(request({...v2(),report:'Control+Alt+KeyR'},first.revision),caller);
+  assert.equal(older.bindings.finalizeNext,'Control+Alt+KeyN');assert.equal(older.bindings.report,'Control+Alt+KeyR');
+  const before=f.snapshot();
+  await assert.rejects(f.service.saveWorkspaceShortcuts(request({...v2(),report:'Control+Alt+KeyN'},older.revision),caller),status(409));
+  assert.deepEqual(f.snapshot(),before);
+  const cleared=await f.service.saveWorkspaceShortcuts(request({...v2(),finalizeNext:null},older.revision),caller);
+  assert.equal(cleared.bindings.finalizeNext,null);
+});

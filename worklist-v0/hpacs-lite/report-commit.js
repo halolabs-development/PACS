@@ -617,6 +617,16 @@
       commitReport("approve");
       return true;
     }
+    /**
+     * 단축키 목록의 "Finalize & Next (Approve & Next)"(기본 미배정). Approve & Next 단추와 같은 approveAndNext()다 — 잠기는 때와
+     * 그 까닭, 승인이 받아들여져 그려진 뒤에만 옮기는 것이 단추와 같다. 승인을 시작했으면 true(막혔으면 까닭을 말하고 false).
+     */
+    function finalizeNextCommand() {
+      if (mode !== "Radiology" || commitInFlight || insertInFlight) return false;
+      const started = !reportCommandBlocked("finalize-next");
+      approveAndNext();
+      return started;
+    }
 
     /**
      * FC-028 Batch Reading·FC-029 Batch Approve의 페이지 쪽(분류기·실행기·대화상자는 worklist-batch-report.js). 묶음은 검사마다

@@ -107,7 +107,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
 MAIN = read_page_source(HPACS / "main.html")
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 INDEX_STAND_IN = ('<!doctype html><html><head><meta charset="utf-8"><title>SYN index stand-in</title></head>'
@@ -945,6 +945,11 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             ordered = sorted(self.rows, key=lambda row: row["uid"])
             route.fulfill(json={"studies": copy.deepcopy(ordered), "serverTime": "2026-09-26T00:00:00.000Z",
                                 "pagination": {"next": None, "total": len(ordered), "offset": 0, "limit": 100}})
+            return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
             return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
         if method == "GET" and found:

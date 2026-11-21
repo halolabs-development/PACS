@@ -86,6 +86,17 @@
     compareNone: '같은 환자 키의 다른 검사가 목록에 없어 나란히 비교할 검사가 없습니다.',
     compareNoKey: '이 검사에는 서버 환자 키가 없어 비교할 검사를 찾지 않습니다.',
     close: '이 검사를 패널에서 내립니다. 검사 목록은 그대로 남습니다.',
+    // a key image or a cited line opens its original frame with its mark in the read-only viewer.
+    openAnnotated: 'Open Annotated Image',
+    annotatedAsked: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.',
+    keyTarget: '키 이미지의 원본 식별(시리즈·영상·프레임)을 확인할 수 없어 열지 않았습니다.',
+    citedTitle: '이 문장이 가리키는 원본 영상과 표식을 엽니다.',
+    citedLooking: '인용한 표식의 원본 영상을 확인하는 중입니다…',
+    citedGone: '인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.',
+    citedSource: '인용한 표식의 원본 식별을 확인할 수 없어 영상을 열지 않았습니다.',
+    citedElsewhere: '인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.',
+    citedRevised: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r{0}, 지금 표시하는 표식은 r{1}입니다.',
+    citedUnread: '판독문의 인용 기록을 읽지 못해 문장에 영상 연결을 붙이지 않았습니다.',
     closeBack: label => `이 검사를 닫고 타임라인에서 옮기기 전 검사(${label})로 돌아갑니다.`,
   };
   // C-R02-120 사용자 단추의 역할 칸. /api/me의 역할 중 KIN 업무 역할만 영어 이름으로 보인다(Keycloak 기본 역할은 뺀다).
@@ -293,11 +304,11 @@
     line.textContent = notice;
   });
 
-  async function request(path) {
+  async function request(path, headers = null) {
     const context = KinWorkContext.capture('document');
     try {
       const response = await KinSessionTransport.page().request(API + path,
-        { context, deadlineMs: TIMEOUT_MS });
+        { context, deadlineMs: TIMEOUT_MS, ...(headers ? { headers } : {}) });
       if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
       if (!response.ok) throw failure(response.status, response.body);
       return response.body;
@@ -932,14 +943,21 @@
    * 골랐으면 다른 환자의 검사를 나란히 열 수 있다. 그 창이 읽기 전용인지는 창의 문서(config/ohif.js)가 서버 /me로 정하고, 쓰기는
    * 서버가 거절한다. 이 화면은 역할을 보고 여기서 무엇을 막지 않는다.
    */
-  function openViewer(otherUid) {
-    if (leaving || selected === null) return;
+  /** A window taken at a click that ends up opening nothing: a blank one is closed, a viewer already there is left as it is. */
+  function dropWindow(popup) {
+    try { if (popup && !popup.closed && popup.location.href === 'about:blank') popup.close(); } catch (_) {}
+  }
+
+  // `part`: the stored report part of the comparison row an image belongs to (imageExam), opened beside as that version.
+  function openViewer(otherUid, image = null, held = null, asked = null, part = null) {
+    if (leaving || selected === null) { dropWindow(held); return; }
     const row = byUid.get(selected);
-    if (!row) return;
+    if (!row) { dropWindow(held); return; }
     const note = $('#viewer-note');
+    const refuse = text => { note.textContent = text; dropWindow(held); };
     const other = otherUid === null ? null : byUid.get(otherUid);
     if (otherUid !== null && (!other || other.uid === row.uid || patientKey(row) === null || patientKey(other) !== patientKey(row))) {
-      note.textContent = TEXT.compareGone;
+      refuse(TEXT.compareGone);
       return;
     }
     const at=++viewerSequence,mine=reportSeq,scope=displayedExam,target=displayedReport;
@@ -947,26 +965,28 @@
     // comparison alike, whether or not the row names its exam. A stored version the server let this panel read keeps its
     // own stored scope (that read already answered for it).
     const lost=(selectedReportTarget&&scope?null:root.KinExamScope.unavailable(row))||(other?root.KinExamScope.unavailable(other):null);
-    if(lost){note.textContent=lost.message;return;}
-    if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
+    if(lost){refuse(lost.message);return;}
+    const priorUid=part&&other?part.uid:other?.uid,priorVersion=part&&other?part.version:other?.report?.final?other.report.version:null;
+    if(![target?.uid||row.uid,...(other?[other.uid,priorUid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){refuse(TEXT.viewerUid);return;}
     const expectedSession=KinAuth.sessionId();
-    if(!expectedSession){note.textContent='세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.';return;}
+    if(!expectedSession){refuse('세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.');return;}
     let input;
     try {
       if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
       input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
-        other&&(other.report?.scope||other.exam?.scope||other),target?.version??null,other?.report?.final?other.report.version:null);
-    } catch(error) { note.textContent=describe(error);return; }
-    let popup=null;try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}
+        other&&(part?part.scope:other.report?.scope||other.exam?.scope||other),target?.version??null,priorVersion);
+    } catch(error) { refuse(describe(error));return; }
+    // a cited line took the window at its click (its lookups came after); the address is then put in like a scoped one.
+    let popup=held;if(!popup){try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}}
     if(!popup){note.textContent=TEXT.viewerBlocked;return;}
+    const replace=!!held||input.scoped;
     const fresh=()=>!leaving&&selected===row.uid&&mine===reportSeq&&at===viewerSequence&&KinAuth.sessionId()===expectedSession;
     const apiRead=(_method,path)=>request(path);
     (async()=>{
       try {
-        const priorVersion=other?.report?.final?other.report.version:null;
         if(input.scoped){
           const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
-          const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+          const prior=other?await root.KinExamScope.fetch(apiRead,priorUid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
           if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
           input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
         }
@@ -974,10 +994,11 @@
         // B14: a viewer opened from the Physician screen is read-only for every account that opens it here (config/ohif
         // session.js keeps this mode for the window's reloads): a radiologist who also holds the clinician role annotates
         // from the Radiologist screen.
-        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician'});popup.opener=null;
-        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
-        note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
-      }catch(error){if(fresh())note.textContent=describe(error);}
+        // the original image to open first (a key image, a cited line), as the server named it.
+        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician',...(image?{target:image}:{})});popup.opener=null;
+        if(replace)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
+        note.textContent=asked||(image?say(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked);
+      }catch(error){if(fresh()){note.textContent=describe(error);dropWindow(held);}}
     })();
   }
 
@@ -1108,20 +1129,48 @@
     return section;
   }
 
-  function bodySection(title, text) {
+  function bodySection(title, text, field) {
     const section = node('section', 'body-section');
+    if (field) section.dataset.field = field;
     section.append(node('h4', null, title));
     section.append(text.trim() ? node('p', 'body-text', text) : node('p', 'muted', TEXT.emptyField));
     return section;
   }
 
+  /**
+   * the original image a saved item names, as the server gave it (its own study, series, SOP and frame, and its id);
+   * null when one of them cannot be read. The viewer opens there and highlights that item (config/ohif/session.js).
+   */
+  function imageTarget(studyUid, item, itemId) {
+    if (![studyUid, item?.seriesUid, item?.sopUid].every(uid => typeof uid === 'string' && uid.length <= 64 && STUDY_UID.test(uid))
+        || !Number.isSafeInteger(item.frame) || item.frame < 1 || typeof itemId !== 'string' || !/^[0-9a-f-]{36}$/.test(itemId)) return null;
+    return { studyUid, seriesUid: item.seriesUid, sopUid: item.sopUid, frame: item.frame, itemId };
+  }
+
   function keyItem(key) {
     const item = key && typeof key.item === 'object' && key.item ? key.item : {};
     const entry = node('li', 'key');
-    entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
-    if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
+    const titled = typeof item.title === 'string' && item.title.trim();
+    const title = node('p', 'key-title', titled ? item.title : TEXT.untitled);
+    if (titled) title.setAttribute('translate', 'no');
+    entry.append(title);
+    if (typeof item.description === 'string' && item.description.trim()) {
+      const description = node('p', 'key-description', item.description);
+      description.setAttribute('translate', 'no');
+      entry.append(description);
+    }
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
     entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
+    const open = node('button', 'key-open', say(TEXT.openAnnotated));
+    open.type = 'button';
+    open.addEventListener('click', () => {
+      const target = imageTarget(key?.sourceUid || selected, item, key?.id);
+      if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
+      let place;
+      try { place = imageExam(selected, target); } catch (error) { $('#viewer-note').textContent = describe(error); return; }
+      openViewer(place.other, target, null, null, place.part);
+    });
+    entry.append(open);
     return entry;
   }
 
@@ -1141,8 +1190,8 @@
         meta.replaceChildren(field('Version', view.version === null ? '—' : String(view.version)), field('Status', statusName(status)));
         meta.hidden = false;
         const text = view.text || { findings: '', conclusion: '', recommendation: '' };
-        $('#report-body').replaceChildren(bodySection('Findings', text.findings), bodySection('Conclusion', text.conclusion),
-          ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', text.recommendation));
+        $('#report-body').replaceChildren(bodySection('Findings', text.findings, 'findings'), bodySection('Conclusion', text.conclusion, 'conclusion'),
+          ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', text.recommendation, 'recommendation'));
         $('#report-body').hidden = false;
       } else {
         // A destroyed report has no final version to wait for: its line says only what happened to it.
@@ -1158,8 +1207,8 @@
       field('Signed On', window.KinReportPaper.versionStamp(view) || day(view.confirm)));
     meta.hidden = false;
     const body = $('#report-body');
-    body.replaceChildren(bodySection('Findings', view.findings), bodySection('Conclusion', view.conclusion),
-      ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation));
+    body.replaceChildren(bodySection('Findings', view.findings, 'findings'), bodySection('Conclusion', view.conclusion, 'conclusion'),
+      ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation, 'recommendation'));
     // FC-034: 고친 글로 바뀐 판독문은 머리에 그 사실과 시각을 한 줄 붙인다(목록의 상태 표기는 그대로).
     if (view.action === 'amend') {
       // The amendment shown is this version: its time is the one Signed On and History show for it.
@@ -1169,6 +1218,138 @@
     }
     body.hidden = false;
     paintKeys(view.keys);
+  }
+
+  /**
+   * the cited lines of the report shown. The server's citations of the head version (GET report/citations — the
+   * one read that carries each line's text and its source) are matched to the text this panel shows, by the same line-block
+   * rule the reading screen uses (report-citation.js blockSpans). A line is linked only when the read is of the very version
+   * shown, the citation's source is a saved image item, its text is cited once (sameTextCount 1) and stands at exactly one
+   * place of that field, and no other citation claims the same lines; everything else stays plain text. The text itself is
+   * written line for line as the server sent it (the comparison form only finds the lines).
+   */
+  let citeSequence = 0;
+  function citedLinks(text, entries) {
+    const C = root.KinReportCitation;
+    // Every citation whose text stands in this field claims its lines, whatever its source; only an image item cited once
+    // that stands at exactly one place, sharing no line with any other claim, becomes a link.
+    const claims = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry.insertedText !== 'string') continue;
+      const spans = C.blockSpans(text, entry.insertedText);
+      for (const [from, to] of spans) claims.push({ from, to, entry, single: spans.length === 1 });
+    }
+    const linkable = claim => claim.single && claim.entry.sameTextCount === 1 && claim.entry.sourceRef?.kind === 'item'
+      && typeof claim.entry.sourceRef.itemId === 'string' && typeof claim.entry.findingId === 'string'
+      && Number.isSafeInteger(claim.entry.findingRevision) && Number.isSafeInteger(claim.entry.sourceIndex) && claim.entry.sourceIndex >= 0;
+    return claims.filter(a => linkable(a) && !claims.some(b => b !== a && b.from < a.to && a.from < b.to)).sort((a, b) => a.from - b.from);
+  }
+  function linkedBody(text, links, reportUid) {
+    const p = node('p', 'body-text'), lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    let at = 0;
+    const plain = (from, to) => { if (from < to) p.append(document.createTextNode(lines.slice(from, to).join('\n') + (to < lines.length ? '\n' : ''))); };
+    for (const link of links) {
+      plain(at, link.from);
+      const line = node('button', 'cited-line', lines.slice(link.from, link.to).join('\n'));
+      line.type = 'button'; line.title = say(TEXT.citedTitle); line.setAttribute('translate', 'no');
+      line.dataset.citation = link.entry.cid || '';
+      line.addEventListener('click', () => openCited(link.entry, reportUid));
+      p.append(line);
+      if (link.to < lines.length) p.append(document.createTextNode('\n'));
+      at = link.to;
+    }
+    plain(at, lines.length);
+    return p;
+  }
+  function paintCitations(mine, uid, reportUid, view) {
+    const shown = view.final ? view : view.text;
+    if (!shown || !Number.isSafeInteger(view.version) || !root.KinReportCitation) return;
+    request(`/studies/${encodeURIComponent(reportUid)}/report/citations`).then(body => {
+      if (!reportFresh(mine, uid)) return;
+      if (!body || body.version !== view.version || !Array.isArray(body.head)) return;
+      for (const field of ['findings', 'conclusion', 'recommendation']) {
+        const text = typeof shown[field] === 'string' ? shown[field] : '';
+        const links = text.trim() ? citedLinks(text, body.head.filter(e => e && e.field === field)) : [];
+        const section = $(`#report-body section[data-field="${field}"]`);
+        const old = section && section.querySelector('.body-text');
+        if (links.length && old) old.replaceWith(linkedBody(text, links, reportUid));
+      }
+    }, () => {
+      if (!reportFresh(mine, uid)) return;
+      const line = node('p', 'muted', say(TEXT.citedUnread)); line.id = 'report-citations-unread';
+      $('#report-body').append(line);
+    });
+  }
+  /**
+   * Which viewer opens an original image (a key image, a cited line): the exam shown when its scope holds that study and
+   * series, otherwise the listed exam of the same patient whose scope holds it (a split part by its series,
+   * KinExamScope.listedExam), opened beside it. One rule for both; anything else is refused.
+   */
+  // The list answers a split original as one row: its first part is the row's exam, the other part is only one of the
+  // row's `exam.reports` (a stored report version with its own scope). A peer row's own exam is asked first, as before;
+  // only when none holds the image is a part reported on a peer row asked, and that part opens beside this exam as its
+  // stored version (`part`: { uid, version }).
+  function imageExam(rowUid, image) {
+    const shown = displayedExam && Array.isArray(displayedExam.sources) ? displayedExam : null;
+    if (shown ? shown.sources.some(source => source.studyUid === image.studyUid && root.KinExamScope.allows(source, image.seriesUid))
+      : image.studyUid === rowUid) return { other: null, part: null };
+    const row = byUid.get(rowUid), key = row ? patientKey(row) : null;
+    const peerRows = key === null ? [] : studies.filter(other => other.uid !== rowUid && patientKey(other) === key);
+    const own = peerRows.map(other => ({ ...other, examScope: other.exam?.scope || other.report?.scope || undefined }));
+    const parts = peerRows.filter(other => !other.examUnavailable).flatMap(other => (Array.isArray(other.exam?.reports) ? other.exam.reports : [])
+      .filter(report => report && report.scope && typeof report.uid === 'string' && Number.isSafeInteger(report.version))
+      .map(report => ({ ...other, examScope: report.scope, part: { uid: report.uid, version: report.version, scope: report.scope } })));
+    const peer = root.KinExamScope.listedExam(own, image.studyUid, image.seriesUid)
+      || root.KinExamScope.listedExam(parts, image.studyUid, image.seriesUid);
+    if (!peer) throw new Error(say(TEXT.citedElsewhere));
+    return { other: peer.uid, part: peer.part || null };
+  }
+  /**
+   * The image a cited line points at: the finding revision it was cited from names the saved item and that item's own study
+   * (GET findings/:id/revisions, read as the record versions this page knows), and the study's current list says whether
+   * the item is still there and where it is (GET viewer-items?recheck=).
+   */
+  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '3' };
+  async function citedImage(rowUid, reportUid, entry) {
+    let revision = null, cursor = null;
+    for (let n = 0; n < 100 && !revision; n++) {
+      const page = await request(`/studies/${encodeURIComponent(reportUid)}/findings/${encodeURIComponent(entry.findingId)}/revisions?limit=100`
+        + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`), FINDING_SCHEMA);
+      if (!page || !Array.isArray(page.revisions)) throw new Error(say(TEXT.citedSource));
+      revision = page.revisions.find(r => r && r.revision === entry.findingRevision) || null;
+      if (revision || page.nextCursor === null || page.nextCursor === undefined || page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
+    }
+    const source = Array.isArray(revision?.item?.sources) ? revision.item.sources[entry.sourceIndex] : null;
+    if (!source || source.itemId !== entry.sourceRef.itemId || typeof source.studyUid !== 'string' || !STUDY_UID.test(source.studyUid))
+      throw new Error(say(TEXT.citedSource));
+    const list = await request(`/studies/${encodeURIComponent(source.studyUid)}/viewer-items?limit=100&recheck=${encodeURIComponent(source.itemId)}`);
+    if (!list || !Array.isArray(list.items)) throw new Error(say(TEXT.citedSource));
+    const item = list.items.find(h => h && h.id === source.itemId && h.hidden !== true);
+    if (!item) throw new Error(say(TEXT.citedGone));
+    const image = imageTarget(source.studyUid, item.item, item.id);
+    if (!image) throw new Error(say(TEXT.citedSource));
+    const { other, part } = imageExam(rowUid, image);
+    const then = entry.sourceRef.sourceRevision;
+    return { image, other, part, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
+  }
+  function openCited(entry, reportUid) {
+    if (leaving || selected === null) return;
+    // `opened`: any other opening of the viewer meanwhile (Open Viewer, Compare, a key image) is newer than this press.
+    const note = $('#viewer-note'), uid = selected, mine = reportSeq, at = ++citeSequence, opened = viewerSequence;
+    // The window is taken at the click, before the lookups (a later open would be a pop-up the browser may refuse).
+    let held = null; try { held = root.open('', VIEWER_WINDOW); } catch (_) {}
+    if (!held) { note.textContent = TEXT.viewerBlocked; return; }
+    note.textContent = say(TEXT.citedLooking);
+    const newest = () => at === citeSequence && opened === viewerSequence;
+    const fresh = () => !leaving && selected === uid && mine === reportSeq && newest();
+    citedImage(uid, reportUid, entry).then(found => {
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
+      openViewer(found.other, found.image, held, found.asked, found.part);
+    }, error => {
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
+      note.textContent = describe(error); dropWindow(held);
+    });
   }
 
   /** Key images as the server sent them: null is "not sent for this state", [] is "none". */
@@ -1252,6 +1433,8 @@
         return;
       }
       paintReport(view);
+      // Links only when the citation read (the head of that report) is of the very version shown (paintCitations).
+      paintCitations(mine, uid, reportUid, view);
       // A stored version opens its own images (purpose stored, that version), signed or not; the latest read opens the
       // exam as it is now.
       if (version) displayedReport = { uid: reportUid, version: view.version };

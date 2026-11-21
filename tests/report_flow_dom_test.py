@@ -1365,6 +1365,63 @@ class ReportFlowPage(unittest.TestCase):
         self.assertEqual([("approve", "SYN A from the top document")],
                          [(body["action"], body["findings"]) for _, body in self.site.flow_commits], "exactly one commit")
 
+    # ── Finalize & Next (Approve & Next) by its key (FA-154 "두 동작 모두 단축키 필요"; unassigned until the reader gives one) ──
+    APPROVE_NEXT_KEY = """([selector, frame]) => { const doc = frame ? document.querySelector('#reading-frame').contentDocument : document;
+      const e = new KeyboardEvent('keydown', { key: 'n', code: 'KeyN', ctrlKey: true, altKey: true, bubbles: true, cancelable: true });
+      doc.querySelector(selector).dispatchEvent(e); return e.defaultPrevented; }"""
+
+    def give_approve_next_a_key(self):
+        """As a reader does: Edit Shortcuts › Worklist › Finalize & Next, Ctrl+Alt+N, Apply & Save."""
+        # The button stands in the reading workspace bar (hidden outside it); its dialog is the same.
+        self.page.locator("#workspace-shortcuts-edit").dispatch_event("click")
+        field = self.page.locator("#workspace-shortcut-finalizeNext")
+        expect(field).to_have_value("Unassigned")
+        field.focus(); self.page.keyboard.press("Control+Alt+KeyN")
+        expect(field).to_have_value("Control+Alt+N")
+        self.page.locator("#workspace-shortcuts-apply").click()
+        expect(self.page.locator("#workspace-shortcuts-dialog")).to_be_hidden()
+
+    def test_the_approve_and_next_key_is_the_button_and_never_moves_from_other_writing(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.type("SYN A by the Approve & Next key")
+        self.assertFalse(self.page.evaluate(self.APPROVE_NEXT_KEY, ["#findings", False]), "no key by default")
+        self.settle()
+        self.assertEqual([], self.site.flow_commits)
+        self.give_approve_next_a_key()
+        # A field of other writing (the worklist search) does not move the reader on.
+        self.assertFalse(self.page.evaluate(self.APPROVE_NEXT_KEY, ["#quick", False]))
+        self.settle()
+        self.assertEqual([], self.site.flow_commits)
+        self.assertTrue(self.page.evaluate(self.APPROVE_NEXT_KEY, ["#findings", False]), "started from the report text")
+        self.wait(lambda: self.site.flow_commits, "the approval by the key")
+        self.assertEqual(("approve", "SYN A by the Approve & Next key"),
+                         (self.site.flow_commits[-1][1]["action"], self.site.flow_commits[-1][1]["findings"]))
+        self.wait(lambda: self.selected() != h.PATIENT, "the move to the next study after the accepted approval")
+        self.settle()
+        self.assertEqual(1, len(self.site.flow_commits))
+        # Approved and moved: back on it, the button is locked, and so is the key (its reason is said, nothing is sent).
+        self.open_study(h.PATIENT)
+        expect(self.page.locator("#b-approve-next")).to_be_disabled()
+        self.assertFalse(self.page.evaluate(self.APPROVE_NEXT_KEY, ["#findings", False]))
+        self.settle()
+        self.assertEqual(1, len(self.site.flow_commits))
+        self.assertEqual(h.PATIENT, self.selected())
+        expect(self.page.locator("#b-approve-next")).to_have_attribute("aria-keyshortcuts", "Control+Alt+N")
+
+    def test_the_approve_and_next_key_in_the_bound_viewer_frame_approves_once_and_moves(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.type("SYN A from the frame's Approve & Next key")
+        self.give_approve_next_a_key()
+        self.enter_reading_with_a_bound_viewer()
+        self.assertTrue(self.page.evaluate(self.APPROVE_NEXT_KEY, [".cornerstone-canvas", True]))
+        self.wait(lambda: self.site.flow_commits, "the approval by the frame's key")
+        self.wait(lambda: self.selected() != h.PATIENT, "the move after the accepted approval")
+        self.settle()
+        self.assertEqual([("approve", "SYN A from the frame's Approve & Next key")],
+                         [(body["action"], body["findings"]) for _, body in self.site.flow_commits], "exactly one commit")
+
     # ── Unit 5 (C-R01-109#2, C-R01-008#1) ──
     def test_c_r01_109_an_unverified_study_says_beside_read_only_that_it_waits_for_verify(self):
         """C-R01-109#2: the editor of a study still being acquired is Read Only and says why (Verify first), with the
