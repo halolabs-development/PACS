@@ -51,6 +51,9 @@ function notSent(error: any): boolean {
     && cause.errors.every((inner: any) => NOT_SENT.has(inner?.code)));
 }
 
+/** The identity fields an administrator's correction writes (each only when it changes). */
+export type IdentityFields = { email?: string; emailVerified?: boolean; firstName?: string; lastName?: string };
+
 export interface KeycloakUser {
   id: string;
   username: string;
@@ -167,18 +170,23 @@ export class KeycloakService {
    * 코드로 돌려줄 수 있고(오류 처리기가 예외의 상태를 그대로 쓴다) 이 답만으로는 둘을 가르지 못한다 — 처리 전 거절이라고
    * 믿으면 실제로 수행된 변경을 "하지 않았다"로 지운다. 토큰 취득의 503은 다르다: 변경 요청이 나가지 않았다(void).
    */
-  private async change(path: string, method: 'PUT' | 'DELETE', body: any, signal: AbortSignal | undefined, absentIsDone: boolean)
-    : Promise<ChangeAnswer> {
+  private async change(path: string, method: 'PUT' | 'DELETE', body: any, signal: AbortSignal | undefined, absentIsDone: boolean,
+    held?: { send: AbortSignal; beforeSend: () => Promise<void> }): Promise<ChangeAnswer> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let token: string;
       try { token = await this.admToken(signal); }
       catch { return { state: 'void', outcome: 'not_sent' }; }
+      // `held` (a change made while the caller holds a database lock): the caller's last check runs after the token wait,
+      // just before each send (a refusal sends nothing and is thrown), and the request itself is bounded — an aborted
+      // request's outcome is unknown, as any lost answer.
+      if (held) await held.beforeSend();
       let res: Response;
       try {
         res = await fetch(`${this.base}/admin/realms/${this.realm}${path}`, {
           method,
           headers: { Authorization: 'Bearer ' + token, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
           body: body === undefined ? undefined : JSON.stringify(body),
+          ...(held ? { signal: held.send } : {}),
         });
       } catch (error) {
         return notSent(error) ? { state: 'void', outcome: 'not_sent' } : { state: 'unknown', outcome: 'transport' };
@@ -360,6 +368,31 @@ export class KeycloakService {
     const smtp = realm.smtpServer && typeof realm.smtpServer === 'object' ? realm.smtpServer : {};
     const present = (value: unknown) => typeof value === 'string' && value.trim().length > 0;
     return { configured: present(smtp.host) && present(smtp.from) };
+  }
+
+  /**
+   * A member's email and/or name (an administrator's correction, admin.service.ts changeIdentity): one change call
+   * (`change`) on the user itself — only the given fields are sent, so the username, enabled state, groups and roles stay.
+   * It runs under the member's database lock, so the whole call is bounded by `within` (token wait included) and
+   * `beforeSend` runs just before the request leaves. The answer is the provider's: `done`, `void` (refused or not sent)
+   * or `unknown` (lost or aborted — the caller reads the user again). The reader caches are cleared either way.
+   */
+  async updateIdentity(id: string, fields: IdentityFields, within: AbortSignal, beforeSend: () => Promise<void>)
+    : Promise<ChangeAnswer> {
+    const body: Record<string, unknown> = {};
+    for (const key of ['email', 'emailVerified', 'firstName', 'lastName'] as const) if (fields[key] !== undefined) body[key] = fields[key];
+    try {
+      return await this.change(`/users/${encodeURIComponent(id)}`, 'PUT', body, within, false, { send: within, beforeSend });
+    } finally { this.cache.clear(); }
+  }
+
+  /** The ids of the accounts whose email is this one (the provider compares it exactly, ignoring case). Read strictly. */
+  async accountsWithEmail(email: string): Promise<string[]> {
+    const found = await this.adm(`/users?email=${encodeURIComponent(email)}&exact=true&max=5`);
+    if (!Array.isArray(found)) throw new RosterWriteFailure({ state: 'unknown', outcome: 'unreadable' });
+    const wanted = email.toLowerCase();
+    return found.filter((user: any) => typeof user?.email === 'string' && user.email.toLowerCase() === wanted)
+      .map((user: any) => String(user.id));
   }
 
   /** Creation and the recorded post-commit credentials write may enable an account; rights stay in the DB. */

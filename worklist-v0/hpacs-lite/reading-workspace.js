@@ -504,7 +504,12 @@ window.KinReadingWorkspace = function (app) {
       }
       if (which === 'tools' && (!tool || !tool.getClientRects().length)) { kinWrite(status, kinSay('영상 도구 연결을 확인한 뒤 이동하세요.')); return; }
       closeList(); frame.focus(); frame.contentWindow.focus();
-      if (tool) { tool.focus({ preventScroll: true }); tool.scrollIntoView({ block: 'nearest' }); }
+      if (tool) {
+        // The dock's own entry: Tools reveals an auto-hidden panel also when the tab already had focus.
+        const dock = tool.closest('#kin-workspace-dock');
+        if (typeof dock?.focusTab === 'function') dock.focusTab(tool, { preventScroll: true }); else tool.focus({ preventScroll: true });
+        tool.scrollIntoView({ block: 'nearest' });
+      }
     } else {
       if (which === 'report') closeContext();
       const pane = $(which === 'prior' ? '.prior-report-pane' : '#findings');

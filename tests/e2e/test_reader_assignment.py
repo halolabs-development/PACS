@@ -47,9 +47,10 @@ class ReaderAssignmentE2E(WorklistE2E):
   own=self.read(a,'doctor');own=self.change(a,self.body(own,None),'doctor');self.assertIsNone(own['reader']);own=self.change(a,self.body(own,'doctor'),'doctor');self.assertEqual(own['reader']['sub'],self.stack.user_ids['doctor'])
   s=self.read(a)
   for who in ['tech','kdoctor']:self.change(a,self.body(s,who),status=400)
-  target=self.stack.user_ids['doctor2'];self.assertEqual(self.stack.kc_admin('PUT',f'/users/{target}',{'enabled':False}).status,204)
+  # Suspended through the product's member command (the member table is the authority; the provider account stays).
+  target=self.stack.user_ids['doctor2'];self.assertFalse(self.stack.set_member_rights(target,enabled=False)['enabled'])
   try:self.change(a,self.body(s,'doctor2'),status=400)
-  finally:self.assertEqual(self.stack.kc_admin('PUT',f'/users/{target}',{'enabled':True}).status,204)
+  finally:self.assertTrue(self.stack.set_member_rights(target,enabled=True)['enabled'])
   self.assertEqual(self.stack.request('GET',f'/studies/{a.uid}/reader-assignment','kdoctor').status,404)
   self.assertEqual(psql('SELECT to_jsonb(t)::text FROM "StudyState" t WHERE uid='+lit(a.uid)),before)
   self.assertEqual(len(self.read(a)['history']),3)

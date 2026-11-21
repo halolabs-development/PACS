@@ -1,13 +1,19 @@
 """Read-only API deployment preflight. This never authorizes or executes deployment.
 
 python scripts/ops_deploy_preflight.py request.json --request-sha256 <sha256>
-The separately supplied hash binds bytes, not the identity/authority of an approver.
+python scripts/ops_deploy_preflight.py --storage-only [--backup-root <directory>]
+The separately supplied hash binds bytes, not the identity/authority of an approver. Both report storage and backup
+encryption (one line on stderr, the report in the JSON); that report is a warning, never a refusal. The backup key is
+called `configured` only where the backup itself would accept its destination and key: by the storage-only form,
+given the backup root and run as the account that owns it (the daily backup's account); otherwise it is `unknown`,
+`absent` or `invalid`.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -165,11 +171,162 @@ def observe(body):
         check_image(inspect_one(["image", "inspect", identity]), identity, trees[body[prefix + "_sha"]])
     # check_repository refused an EMR introduction, so previous and target agree on the storage shape.
     check_running_api(inspect_one(["inspect", "kin-api"]), body["previous_api_image"], has_emr_storage(body["previous_sha"]))
+    # Reported, never a refusal: the runbook (Storage encryption) says what the operator does about it.
+    storage = storage_encryption()
+    print(storage_line(storage), file=sys.stderr, flush=True)
     return {"preflight_passed": True, "deployment_authorized": False,
             "automatic_rollback_authorized": False, "schema_unchanged": True,
             "previous_sha": body["previous_sha"], "target_sha": body["target_sha"],
             "previous_api_image": body["previous_api_image"],
-            "target_api_image": body["target_api_image"], "compose_files": list(COMPOSE)}
+            "target_api_image": body["target_api_image"], "compose_files": list(COMPOSE),
+            "storage_encryption": storage}
+
+
+# ── Storage encryption (read-only report; a warning, never a refusal) ──
+# One rule: a location counts as encrypted only when every block device under its file system reaches a dm-crypt layer;
+# a device seen without one is "not-detected"; anything this host cannot see that way (no such path, a file system not
+# on a local block device, a volume driver other than local, a failed command, not Linux) is "unknown". The locations
+# are the site's actual data: every writable volume or bind of the database, Orthanc and the API (PGDATA, the EMR
+# tablespace, the Orthanc storage, the EMR state, the retention ledgers and their mirror), and the backup root.
+STORAGE_CONTAINERS = ("kin-db", "kin-orthanc", "kin-api")
+STORAGE_STATES = ("encrypted", "not-detected", "unknown")
+BACKUP_KEY_STATES = ("configured", "absent", "invalid", "unknown")
+
+
+def _read(args):
+    """One read of the report, through the caller's command channel. Whatever refuses or fails it (a missing tool, a
+    protected entry that admits only its fixed commands) makes that answer unknown; the report never raises."""
+    try:
+        result = ops.run(args, check=False, timeout=30)
+        return result.stdout.decode("utf-8", "replace") if result.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def _device_encrypted(device, seen):
+    """True when every dependency path of the block device passes a crypt layer, False when one does not, None when
+    unreadable. lsblk --inverse lists a device with what it is built on as its children."""
+    if device not in seen:
+        try:
+            nodes = json.loads(_read(["lsblk", "--json", "--inverse", "--output", "NAME,TYPE", device]) or "")["blockdevices"]
+        except (ValueError, TypeError, KeyError):
+            nodes = None
+
+        def through_crypt(node):
+            if node.get("type") == "crypt":
+                return True
+            children = node.get("children") or []
+            return bool(children) and all(through_crypt(child) for child in children)
+        seen[device] = all(through_crypt(node) for node in nodes) if type(nodes) is list and nodes else None
+    return seen[device]
+
+
+def location_encryption(path, seen):
+    """(status, detail) of one host path."""
+    if not path:
+        return "unknown", "no host path"
+    try:
+        filesystems = json.loads(_read(["findmnt", "--json", "--output", "SOURCE,FSTYPE,UUID", "--target", path]) or "")["filesystems"]
+        source, fstype, identity = (filesystems[0].get(key) for key in ("source", "fstype", "uuid"))
+    except (ValueError, TypeError, KeyError, IndexError):
+        return "unknown", "file system not readable"
+    if fstype == "btrfs":
+        # A Btrfs file system may span several devices; findmnt names one (with its subvolume as [/path]).
+        try:
+            devices = sorted("/dev/" + name for name in os.listdir("/sys/fs/btrfs/" + str(identity) + "/devices"))
+        except OSError:
+            return "unknown", "btrfs devices not readable"
+    else:
+        source = re.sub(r"\[[^\]]*\]$", "", source or "")
+        if not source.startswith("/dev/"):
+            return "unknown", (fstype or "file system") + " not on a local block device"
+        devices = [source]
+    states = [_device_encrypted(device, seen) for device in devices]
+    if states and all(state is True for state in states):
+        return "encrypted", ",".join(devices)
+    if any(state is False for state in states):
+        return "not-detected", ",".join(devices)
+    return "unknown", "block device not readable"
+
+
+def data_locations():
+    """(label, host path or None) of every writable volume and bind of the site's data containers."""
+    rows = []
+    for name in STORAGE_CONTAINERS:
+        try:
+            items = json.loads(_read(["docker", "inspect", name]) or "")
+            mounts = items[0].get("Mounts") or []
+        except (ValueError, TypeError, IndexError, AttributeError):
+            rows.append((name, None))
+            continue
+        for mount in mounts:
+            if type(mount) is not dict or mount.get("RW") is not True or mount.get("Type") not in ("volume", "bind"):
+                continue
+            local = mount["Type"] == "bind" or mount.get("Driver") in (None, "", "local")
+            rows.append((name + ":" + str(mount.get("Destination")), mount.get("Source") if local else None))
+    return rows
+
+
+def backup_key_state(backup_root=None, checkout=None):
+    """What the daily backup into backup_root would say of its destination and key, by the backup's own admission
+    (ops.backup_admission: the destination outside the checkout and, where it exists, this account's private
+    directory; the same configuration and paths; age encrypting and decrypting with the key). configured: the backup,
+    run by this account, gets past that admission; absent: no configuration file; invalid: the admission refuses, or
+    the configuration cannot be looked at; unknown: this call cannot speak for the backup - no backup root was given
+    (the configuration and key file are then only read, nothing is run), or the backup root belongs to another
+    account (the backup runs as its owner, which may not read what this account reads). checkout: the installation's
+    checkout when this code runs from another copy."""
+    try:
+        if not Path(os.environ.get("KIN_BACKUP_ENCRYPTION") or ops.BACKUP_ENCRYPTION_CONFIG).exists():
+            return "absent"
+        if backup_root is None:
+            ops.backup_key()
+            return "unknown"
+    except Exception:
+        return "invalid"
+    try:
+        root = Path(backup_root)
+        if os.name == "posix" and root.exists() and root.stat().st_uid != os.geteuid():
+            return "unknown"
+    except Exception:
+        return "unknown"
+    try:
+        ops.backup_admission(backup_root, checkout=checkout)
+    except Exception:
+        return "invalid"
+    return "configured"
+
+
+def storage_encryption(backup_root=None, checkout=None):
+    """The report: {"status", "locations": [{"location", "status", "detail"}], "backup_encryption"}. backup_root: the
+    actual backup root (its storage is reported, and the backup key is judged for a backup into it); checkout: the
+    installation's checkout when this code runs from another copy (see backup_key_state)."""
+    if not sys.platform.startswith("linux"):
+        locations = [{"location": "host", "status": "unknown", "detail": "not Linux"}]
+    else:
+        seen, locations = {}, []
+        for label, path in [*data_locations(), ("backup root", str(backup_root) if backup_root else None)]:
+            status, detail = location_encryption(path, seen)
+            locations.append({"location": label, "status": status, "detail": detail})
+    states = {row["status"] for row in locations}
+    status = "encrypted" if states == {"encrypted"} else "not-detected" if "not-detected" in states else "unknown"
+    return {"status": status, "locations": locations,
+            "backup_encryption": backup_key_state(backup_root or None, checkout)}
+
+
+def storage_valid(report):
+    """The report's shape, as the deployment runner accepts it in an observation."""
+    return (type(report) is dict and set(report) == {"status", "locations", "backup_encryption"}
+            and report["status"] in STORAGE_STATES and report["backup_encryption"] in BACKUP_KEY_STATES
+            and type(report["locations"]) is list and report["locations"]
+            and all(type(row) is dict and set(row) == {"location", "status", "detail"} and row["status"] in STORAGE_STATES
+                    and type(row["location"]) is str and type(row["detail"]) is str for row in report["locations"]))
+
+
+def storage_line(report):
+    return ("storage encryption: " + report["status"] + " ("
+            + ", ".join(row["location"] + "=" + row["status"] for row in report["locations"])
+            + "); backup encryption: " + report["backup_encryption"])
 
 
 def preflight(body):
@@ -488,6 +645,16 @@ def check_served_bytes(observed, expected):
 
 
 def main():
+    if "--storage-only" in sys.argv[1:]:
+        # The storage report alone: read-only, no request, no lock (the release preparation runs it).
+        parser = argparse.ArgumentParser(description="Report storage and backup encryption; read-only")
+        parser.add_argument("--storage-only", action="store_true", required=True)
+        parser.add_argument("--backup-root", type=Path)
+        args = parser.parse_args()
+        report = storage_encryption(args.backup_root)
+        print(storage_line(report), file=sys.stderr, flush=True)
+        print(json.dumps(report))
+        return 0
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("request", type=Path)
     parser.add_argument("--request-sha256", required=True)

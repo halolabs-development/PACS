@@ -833,6 +833,8 @@ export class PacsReportDraft {
      */
     return { ...draftEnvelope(uid, owner, state.draftEpoch, saved),
       ...(cited.inserted ? { inserted: cited.inserted } : {}),
+      // Insert Selected into Report: the request's array, in its order — one receipt per finding.
+      ...(cited.insertedAll ? { insertedAll: cited.insertedAll } : {}),
       // 요청이 `structure`를 실어 보냈을 때만 이 칸이 있다(P9). 화면은 이 `sid` 하나로 유지 목록을 넓힌다.
       ...(structure.applied ? { applied: structure.applied } : {}),
       // 요청이 그림 attach·remove를 실었을 때만: 지은·바꾼·뺀 id와 그 뒤의 목록. 화면은 이것으로 기대 스냅숏을 세운다.

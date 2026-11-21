@@ -79,7 +79,7 @@ PAGE_PATH = BASE + "admin.html"
 ARRIVALS_PATH = BASE + "study-arrivals.js"
 # study-arrivals.js is served only once a case asks for Gateway Status (serve_arrivals): anywhere else a request for it
 # is unexpected and fails the case.
-SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in ("worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js", "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js", "gateway-rules-admin.js",
+SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in ("worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js", "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js", "gateway-rules-admin.js", "gateway-support-admin.js",
     # CD-01: the shared Product Information panel and its embedded facts.
     "product-info-data.js", "product-info.js")}
 INDEX = "<!doctype html><title>SYN index</title><p id=index>SYN INDEX</p>"
@@ -175,8 +175,38 @@ ROWS = [
 ]
 
 
-def answer(second=1, rows=None, institution=INSTITUTION):
-    return {"institutionId": institution, "generatedAt": generated(second), "metrics": deepcopy(ROWS if rows is None else rows)}
+# Server Status rows (api/src/pacs/server-status.ts): every component answered in this request; the login server reports
+# no uptime and Orthanc no start.
+SERVER_SRC = {"api": ["HALO PACS API process", "HALO PACS API process (performance.now, performance.timeOrigin)"],
+              "image_store": ["Orthanc GET /statistics, GET /tools/metrics-prometheus", "Orthanc orthanc_up_time_s"],
+              "database": ["HALO PACS DB", "PostgreSQL now() - pg_postmaster_start_time()"],
+              "login_server": ["Keycloak realm discovery (issuer)", None]}
+
+
+def server_row(component, answer="answered", checked=NOW, **uptime):
+    up = {"state": "unobservable", "reason": None, "seconds": None, "startedAt": None, **uptime,
+          "source": SERVER_SRC[component][1]}
+    return {"component": component, "answer": answer, "checkedAt": checked, "source": SERVER_SRC[component][0], "uptime": up}
+
+
+DB_STARTED = "2026-09-25T22:00:00.000Z"
+T0_SERVER = "2026-09-26 00:00:00"   # NOW in the page's (UTC) local time
+SERVER_ROWS = [server_row("api", state="observed", seconds=UPTIME, startedAt=STARTED),
+               server_row("image_store", state="observed", seconds=3600),
+               server_row("database", state="observed", seconds=7200, startedAt=DB_STARTED),
+               server_row("login_server", reason="no_source")]
+# (component, answer, checked, uptime, running since, source) in page order.
+SERVER_EXPECTED = [
+    ["HALO PACS API", "Answered", T0_SERVER, "3 d 04 h 05 min", "2026-09-22 19:55:00", SERVER_SRC["api"][0]],
+    ["Image Store (Orthanc)", "Answered", T0_SERVER, "1 h 00 min", "Not Reported", SERVER_SRC["image_store"][0]],
+    ["Database (PostgreSQL)", "Answered", T0_SERVER, "2 h 00 min", "2026-09-25 22:00:00", SERVER_SRC["database"][0]],
+    ["Login Server (Keycloak)", "Answered", T0_SERVER, "Uptime No Source", "Not Reported", SERVER_SRC["login_server"][0]],
+]
+
+
+def answer(second=1, rows=None, institution=INSTITUTION, server=None):
+    return {"institutionId": institution, "generatedAt": generated(second), "metrics": deepcopy(ROWS if rows is None else rows),
+            "server": deepcopy(SERVER_ROWS if server is None else server)}
 
 
 def replace(rows, target, /, **change):
@@ -691,7 +721,8 @@ class AdminMetricsDOMTest(unittest.TestCase):
         static = self.page.evaluate("""() => [...document.querySelectorAll('#metrics h2, #metrics button, #metrics .mstate, #metrics th')]
           .map(e => e.textContent)""")
         self.assertEqual(["Operations", "Not Loaded", "Refresh Operations", "Metric", "State", "Value", "Unit", "Denominator",
-                          "Scope", "Source", "Observed At"], static)
+                          "Scope", "Source", "Observed At", "Component", "Answer", "Checked At", "Uptime", "Running Since",
+                         "Source"], static)
         tiny_and_huge = replace(replace(ROWS, "tat.emergency", value=60, max=120), "waiting.normal", value=900000, max=3600000)
         tiny_and_huge = replace(tiny_and_huge, "tat.normal", **duration("tat.normal", None, None, 0, 0, state="empty", window=WEEK))
         # Keyboard: the control is a real button.
@@ -744,6 +775,52 @@ class AdminMetricsDOMTest(unittest.TestCase):
         self.assertEqual(["col"] * 8, table.get_by_role('columnheader').evaluate_all("cells => cells.map(c => c.scope)"))
         expect(table.locator('tbody').get_by_role('columnheader')).to_have_count(0)
 
+    def server_table(self):
+        return self.page.evaluate("""() => ({hidden: document.querySelector('#server-wrap').hidden,
+          stale: document.querySelector('#server-table').classList.contains('stale'),
+          heading: document.querySelector('#server-title').textContent, headingTitle: document.querySelector('#server-title').title,
+          rows: [...document.querySelectorAll('#server-rows > tr')].map(tr => { const cells = [...tr.children],
+            chip = cells[1].querySelector('.mstate');
+            return {component: tr.dataset.component, answer: tr.dataset.answer, chipClass: chip.className,
+              cells: cells.map((td, i) => i === 1 ? chip.textContent : td.textContent),
+              titles: cells.map((td, i) => i === 1 ? chip.title : td.title)}; })})""")
+
+    def test_09_server_status_from_the_same_press(self):
+        self.open()
+        self.assertTrue(self.server_table()["hidden"], "nothing before the press")
+        self.refresh((200, answer()))
+        table = self.server_table()
+        self.assertEqual((False, False, "Server Status (Server-wide)"), (table["hidden"], table["stale"], table["heading"]))
+        self.assertIn("가용률(%)은 재지 않습니다", table["headingTitle"])
+        self.assertEqual(SERVER_EXPECTED, [r["cells"] for r in table["rows"]])
+        self.assertEqual(["api", "image_store", "database", "login_server"], [r["component"] for r in table["rows"]])
+        self.assertEqual(["mstate row-observed"] * 4, [r["chipClass"] for r in table["rows"]])
+        for r in table["rows"]:
+            with self.subTest(component=r["component"]):
+                self.assertEqual([], [t for t in r["cells"] if has_hangul(t)], "words in English")
+                self.assertEqual([], [t for t in r["titles"] if not has_hangul(t)], "every cell explains itself in Korean")
+        self.assertEqual(1, len([c for c in self.calls if c["path"] == METRICS_PATH]), "one read for both tables")
+        # A component that did not answer has no uptime; one row the page cannot prove reads Answer Unreadable.
+        silent = deepcopy(SERVER_ROWS)
+        silent[1] = server_row("image_store", "source_failed", reason="source_failed")
+        silent[2] = dict(silent[2], answer="answered", checkedAt=None)
+        self.refresh((200, answer(second=2, server=silent)))
+        rows = self.server_table()["rows"]
+        self.assertEqual(["No Answer", NOW_LOCAL := T0_SERVER, "Unobservable", "Not Reported"], [rows[1]["cells"][i] for i in (1, 2, 3, 4)])
+        self.assertEqual(["Answer Unreadable", "Not Checked", "Unobservable", "Not Reported"], [rows[2]["cells"][i] for i in (1, 2, 3, 4)])
+        self.assertEqual(["mstate row-unobservable"] * 2, [rows[i]["chipClass"] for i in (1, 2)])
+        # An answer without the rows (an older server) draws four unreadable rows, never Answered.
+        self.refresh((200, {k: v for k, v in answer(second=3).items() if k != "server"}))
+        self.assertEqual(["Answer Unreadable"] * 4, [r["cells"][1] for r in self.server_table()["rows"]])
+        # A failed read keeps the last reading dimmed; a refusal empties it with the metrics table.
+        self.refresh((200, answer(second=4)))
+        self.refresh((503, {"message": SERVER_WORDING}))
+        table = self.server_table()
+        self.assertEqual((False, True, SERVER_EXPECTED), (table["hidden"], table["stale"], [r["cells"] for r in table["rows"]]))
+        self.refresh((403, {"message": SERVER_WORDING}))
+        table = self.server_table()
+        self.assertEqual((True, 0), (table["hidden"], len(table["rows"])))
+        self.assertFalse(any(SERVER_WORDING in text for text in self.section_texts()))
     def hold_reads(self, n):
         """n metrics reads in flight, oldest first."""
         self.replies += ["hold"] * n

@@ -1,4 +1,4 @@
-import { planarGeometry } from './planar-geometry';
+import { manualGeometry } from './planar-geometry';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { mgGeometry } from './mg-geometry';
@@ -37,7 +37,7 @@ function srPixels(raw: Buffer, rows: number, cols: number): (i: number) => numbe
 
 export function srMeasurement(item: any, tags: any, pixels?: Buffer) {
   if (item.baseline?.calculator?.startsWith('kin-planar-manual-v1:')) {
-    const geometry = planarGeometry(tags, item.frame), value = geometry.measure(item.kind, item.points);
+    const geometry = manualGeometry(tags, item.frame, item.kind), value = geometry.measure(item.kind, item.points);
     if (geometry.calculator !== item.baseline.calculator || Math.abs(value - item.baseline.values[0]) > (item.kind === 'ellipse' ? .01 : .001))
       throw new ConflictException('재확인 필요: 원본으로 계산한 값이 저장한 측정과 다릅니다');
     let points = item.points;

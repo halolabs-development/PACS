@@ -1970,6 +1970,26 @@ window.KinLanguageTerms = {
     ["통합 작업공간", "Integrated workspace", "l"],
     ["특성:", "Characteristics:", "l"],
     ["위치:", "Location:", "l"],
+    ["크기:", "Size:", "l"],
+    // Finding size (record version 4), Write as Sentence and Insert Selected into Report.
+    ["Size (크기): {0}", "Size: {0}", "m", "병변 크기: {0}"],
+    ["병변 크기는 {0}자 이하여야 합니다.", "The lesion size must be {0} characters or fewer.", "m"],
+    ["Write as Sentence", "문장으로 넣기", "l"],
+    ["Insert Selected into Report", "고른 소견을 판독문에 넣기", "l"],
+    ["Insert Selected into Report ({n0})", "고른 소견을 판독문에 넣기 ({n0})", "l"],
+    ["고른 소견들을 목록 순서대로 판독문 초안에 한 번에 넣습니다. 미리보기에서 확인한 뒤 서버가 한 번에 기록합니다.", "Inserts the selected findings into the report draft at once, in list order. The server records them together after you check the preview.", "m"],
+    ["판독문에 함께 넣을 소견으로 고르기", "Select this finding to insert with others", "l"],
+    ["한 번에 {n0}건까지 고를 수 있습니다.", "You can select up to {n0} findings at a time.", "m"],
+    ["소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 고르세요.", "The findings list changed in the meantime. Check again with Reload Findings, then select.", "m"],
+    ["{0} (대표 출처를 쓸 수 없어 이 출처로 인용)", "{0} (cited from this source because the primary source cannot be used)", "m"],
+    ["고른 소견들에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.", "The selected findings have no image marks of this study that can be included.", "m"],
+    ["출처: 소견 {n0}건 — {1}", "Sources: {n0} findings — {1}", "m"],
+    ["{n0}. {1} · 소견 r{2} · 인용 당시 연결 {3}", "{n0}. {1} · finding r{2} · link when cited {3}", "m"],
+    ["판독문에 넣을 소견을 다시 고르세요 (1~20건, 같은 소견은 한 번)", "Select the findings to insert again (1 to 20, each finding once)", "m"],
+    ["판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", "Inserted {n0} findings into the report — each finding's source record was saved in the same save", "m"],
+    ["insert 배열은 1~{0}건이어야 합니다", "The insert list must hold 1 to {0} entries.", "m"],
+    ["insert 배열의 건은 모두 같은 칸이어야 합니다", "Every entry of the insert list must be for the same field.", "m"],
+    ["insert 배열에 같은 소견을 두 번 실을 수 없습니다", "The insert list cannot hold the same finding twice.", "m"],
     ["판독 대상 · {0}", "Reading target · {0}", "l"],
     ["판독 대상 검사 정보", "Target Study Information", "l"],
     ["판독 뷰어 — HALO PACS", "Reading Viewer — HALO PACS", "l"],
@@ -4622,6 +4642,8 @@ window.KinLanguageTerms = {
     ["다른 곳에서 Gateway 규칙이 바뀌었습니다. 다시 불러온 뒤 저장하세요.", "Gateway rules have changed elsewhere. Reload before saving.", "s"],
     ["Gateway 규칙이 이 상대 PACS로 보내고 있습니다. Gateway Rules에서 먼저 빼세요.", "A Gateway rule sends to this peer PACS. Remove it from Gateway Rules first.", "s"],
     ["Gateway 신원이 없습니다", "No Gateway identity", "s"],
+    ["검사 접근 범위가 제한된 계정은 Gateway 원격 지원을 쓸 수 없습니다", "Accounts with restricted study access cannot use Gateway remote support", "s"],
+    ["이 Gateway에 아직 끝나지 않은 요청이 있습니다", "This Gateway already has a request that has not finished", "s"],
     ["검사 접근 범위가 제한된 계정은 접속기록을 조회할 수 없습니다.", "Accounts with restricted study access cannot view access logs.", "s"],
     ["검사 접근 조건 형식을 확인하세요", "Check the study access condition format", "s"],
     ["검사 접근 조건을 확인하지 못했습니다. 잠시 후 다시 시도하세요", "Could not verify study access conditions. Try again shortly", "s"],
@@ -4951,6 +4973,10 @@ window.KinLanguageTerms = {
     ["정규 CT 볼륨의 전체 원본과 좌표를 확인할 수 없습니다", "Cannot verify the full source and coordinates of the standard CT volume", "s"],
     ["제목이 필요합니다", "Title is required", "s"],
     ["조회 기간과 이어보기 조건을 확인하세요.", "Check the query period and continuation conditions.", "s"],
+    ["조회 기간을 확인하세요.", "Check the query period.", "s"],
+    ["경보 기준 설정값이 올바르지 않습니다. 운영자에게 알리세요.", "The alert threshold setting is not valid. Tell the operator.", "s"],
+    ["기간 안의 열람 기록이 너무 많아 경보를 판정하지 못했습니다. 기간을 줄여 다시 조회하세요.", "Too many access records in the period to judge alerts. Shorten the period and query again.", "s"],
+    ["이상 접근 경보", "Access alerts", "l"],
     ["존재하는 시리즈 중 일부를 선택하세요. 전체 시리즈를 옮길 수 없습니다", "Select some of the existing series. All of the series cannot be moved", "s"],
     ["종류는 PACS·장비(store) 또는 필름 프린터(printer)여야 합니다", "Type must be PACS/device (store) or film printer (printer)", "s"],
     ["주석 {0} (r{n1})의 측정 원본이 달라졌습니다. 해당 영상을 비교에서 제외하거나 영상만 저장하세요. 주석을 포함하려면 저장 당시 원본이 복구되어야 합니다", "The measurement source of annotation {0} (r{n1}) has changed. Exclude that image from the comparison or save the image only. To include the annotation, the source at save time must be restored", "s"],
@@ -5072,6 +5098,16 @@ window.KinLanguageTerms = {
     ["후임의 소속 그룹이 이 기관과 다릅니다", "The successor's group differs from this institution", "s"],
     ["{0}가 올바르지 않습니다", "Invalid {0}", "s"],
     ["전임과 후임이 같습니다", "The predecessor and the successor are the same", "s"],
+    ["같은 이메일의 계정이 이미 있습니다. 다른 이메일로 바꾸세요.", "An account with the same email already exists. Change to another email.", "s"],
+    ["이메일·이름을 바꾸지 못했습니다. 아무것도 바뀌지 않았습니다. 다시 시도하세요.", "The email and name could not be changed. Nothing was changed. Try again.", "s"],
+    ["바뀌었는지 확인하지 못했습니다. Refresh로 목록을 다시 읽고, 바뀌지 않았으면 같은 값으로 다시 저장하세요.", "Whether it changed could not be confirmed. Read the list again with Refresh, and if it did not change, save the same values again.", "s"],
+    ["이메일·이름 변경은 다른 회원 변경과 함께 보낼 수 없습니다", "An email and name change cannot be sent with another member change", "s"],
+    ["성과 이름을 함께 보내세요", "Send the family and given name together", "s"],
+    ["version이 올바르지 않습니다", "Invalid version", "s"],
+    ["identity가 올바르지 않습니다", "Invalid identity", "s"],
+    ["바뀐 값이 없습니다", "Nothing changed", "s"],
+    ["이 기관의 승인된 회원만 이메일·이름을 바꿀 수 있습니다", "Only an approved member of this institution can have the email and name changed", "s"],
+    ["명부의 이메일이 이 화면의 이메일과 다릅니다. Change Name / Email로 주소를 확인해 저장한 뒤 다시 보내세요.", "The login account's email differs from the email on this screen. Confirm and save the address with Change Name / Email, then send again.", "s"],
     ["회원 상태가 바뀌었습니다. 다시 실행하세요", "The member's state changed. Run again", "s"],
     ["다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 실행하세요", "Another request is changing the member's state. Run again shortly", "s"],
     ["같은 명령을 같은 인자로 다시 실행하세요.", "Run the same command again with the same arguments.", "s"],
@@ -5809,6 +5845,17 @@ window.KinLanguageTerms = {
     ["이 기관에 귀속된 감사 기록이 없습니다.", "No audit log entries attributed to this institution.", "m"],
     ["기록 당시 관리 기관이 이 기관으로 확인된 접속기록을 발생 시각 기준으로 조회합니다. 기관 미확인 기록은 포함되지 않습니다. UTC 기간은 시작을 포함하고 끝을 제외합니다. 같은 사건의 원장 복제와 여러 대상은 사건 한 건으로 표시합니다.", "Queries, by event time, access records whose managing institution at the time of recording is confirmed as this institution. Records with an unconfirmed institution are not included. The UTC period includes the start and excludes the end. Ledger duplicates and multiple targets of the same event are shown as one event.", "m"],
     ["다운로드·파일 제공 후보에는 준비·허가·시도·실패도 포함됩니다. prepared·reported·succeeded는 기록된 단계의 결과이며 파일 저장 완료를 뜻하지 않습니다. 업무 맥락과 결과를 함께 확인하고, 사유 확인·미확인 사항·사후조치는 기존 운영 기록에 남기세요.", "Download and file-delivery candidates also include preparation, permission, attempts, and failures. prepared, reported, and succeeded are the results of the recorded step and do not mean the file was saved. Review the work context and results together, and record reason checks, unconfirmed items, and follow-up actions in your existing operations records.", "m"],
+    ["한 계정이 짧은 시간에 서로 다른 검사를 많이 연 구간을 경보 한 줄로 보입니다. 기록 당시 관리 기관이 이 기관으로 확인된 접속기록 가운데 영상 열기·비교 검사 열기·판독문 표시만 셉니다. 목록 조회·미리받기·감사 조회는 세지 않습니다. 경보 기준은 서버 설정값이며 확인 결과에 함께 보입니다. 경보는 이 버튼을 누를 때만 확인합니다.", "Shows, as one alert row, a span in which one account opened many different studies in a short time. Of the access records whose managing institution at the time of recording is confirmed as this institution, only image openings, comparison study openings, and report displays are counted. List queries, preloads, and audit queries are not counted. The alert threshold is a server setting and is shown with the result. Alerts are checked only when you press this button.", "m"],
+    ["이 기관의 같은 시간대 접속기록을 Access Review에서 엽니다. 그 시간대의 다른 사용자 기록도 함께 보일 수 있습니다.", "Opens this institution's access records for the same time span in Access Review. Records of other users in that span may also appear.", "m"],
+    ["{0} · {1} ≤ 발생 시각 < {2} · 기준: {3}분 안에 서로 다른 검사 {4}건 이상 · 경보 {5}건", "{0} · {1} ≤ event time < {2} · threshold: {4} or more different studies within {3} min · alerts: {5}", "l"],
+    ["경보는 확인할 단서입니다. 업무상 열람인지는 Review로 그 시간대의 접속기록을 보고 담당자가 확인하세요.", "An alert is a lead to check. Whether the access was for work is for the person in charge to confirm, using Review to see the access records of that time span.", "m"],
+    ["선택한 기간에 경보 기준에 닿은 열람이 없습니다.", "No access in the selected period reached the alert threshold.", "m"],
+    ["경보 확인에 실패했습니다: {e0}", "Alert check failed: {e0}", "m"],
+    ["경보 확인에 실패했습니다. 기간과 권한을 확인하고 다시 확인하세요.", "Alert check failed. Check the period and your permissions, then check again.", "m"],
+    ["Alerts Found", "경보 있음", "l"],
+    ["No Alerts", "경보 없음", "l"],
+    ["Check Failed", "확인 실패", "l"],
+    ["Review", "기록 보기", "l"],
     ["이메일", "Email", "l"],
     ["성", "Last Name", "l"],
     ["이름", "First Name", "l"],
@@ -8178,6 +8225,11 @@ window.KinLanguageTerms = {
     ["Gateway 규칙 조회", "View Gateway rules", "l"],
     ["Gateway 규칙 저장", "Gateway rules saving", "l"],
     ["Gateway 설정 조회", "Gateway settings lookup", "l"],
+    ["Gateway 원격 지원 조회", "View Gateway remote support", "l"],
+    ["Gateway 원격 지원 요청", "Gateway remote support request", "l"],
+    ["Gateway 원격 지원 결과", "Gateway remote support result", "l"],
+    ["Gateway 진단 받기", "Gateway diagnostics download", "l"],
+    ["Gateway 갱신 파일 받기", "Gateway update file download", "l"],
     ["영상 열람 기록을 저장하지 못해 영상을 보낼 수 없습니다. 잠시 후 다시 시도하세요.", "Could not save the image viewing record, so the images cannot be sent. Try again shortly.", "m"],
     ["검사의 현재 환자 정보가 바뀌었습니다. 영상을 다시 열어 주세요.", "The study's current patient information has changed. Reopen the images.", "m"],
     ["그림 자료의 모양이 올바르지 않습니다: {0}", "The drawing data is malformed: {0}", "m"],
@@ -10561,11 +10613,52 @@ function kinUsRegionGeometry(tags) {
   }
   if (!usable.length) return null;
   const inside = (r, [x, y]) => x >= r.x0 - .5 && x <= r.x1 + .5 && y >= r.y0 - .5 && y <= r.y1 + .5;
-  // The region that holds every point, or null.
-  const region = points => usable.find(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p))) || null;
+  // Every region that holds every point; the first of them, or null.
+  const holding = points => usable.filter(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p)));
+  const region = points => holding(points)[0] || null;
   const spacing = points => { const r = region(points); if (!r) throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); return r.spacing; };
   const length = (a, b) => { const s = spacing([a, b]); return Math.hypot((b[0] - a[0]) * s[1], (b[1] - a[1]) * s[0]); };
-  return { regions: usable, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+  return { regions: usable, holding, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+}
+
+// The geometry a toolbar Length, Angle or Ellipse is measured with (as api/src/planar-geometry.ts manualGeometry). A Length
+// on an ultrasound image that gives no spacing, orientation or functional groups of its own, with at least one usable
+// region (kinUsRegionGeometry), is measured in the viewer's plane — rows along [0,1,0], columns along [0,0,-1], display
+// spacing 1, origin its ImagePositionPatient or else [0,0,0] for one frame and [0,0,f] for frame f of a multi-frame image
+// (the pinned OHIF combineFrameInstance) — with the deltas of the region that holds both points. Regions of different
+// deltas that both hold them, or none, give no length. Everything else is kinPlanarGeometry's.
+function kinManualGeometry(tags, frame, kind) {
+  const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
+  const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
+  if (!us) return kinPlanarGeometry(tags, frame);
+  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  const outside = () => { throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); };
+  const numbers = (v, n) => {
+    const a = typeof v === 'string' ? v.split('\\') : v;
+    if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();
+    return a.map(Number);
+  };
+  const frames = Number(tags.NumberOfFrames ?? 1);
+  if (!Number.isSafeInteger(frame) || frame < 1 || !Number.isSafeInteger(frames) || frame > frames) return fail();
+  const rows = Number(tags.Rows), columns = Number(tags.Columns);
+  if (![rows, columns].every(n => Number.isSafeInteger(n) && n > 0)) return fail();
+  const origin = tags.ImagePositionPatient !== undefined ? numbers(tags.ImagePositionPatient, 3) : [0, 0, frames > 1 ? frame : 0];
+  const orientation = [0, 1, 0, 0, 0, -1], normal = [-1, 0, 0];
+  const imagePoint = point => {
+    const d = numbers(point, 3).map((n, i) => n - origin[i]), x = d[1], y = -d[2];
+    if (Math.abs(d[0]) > .001 || x < -.501 || y < -.501 || x > columns - .499 || y > rows - .499) return fail();
+    return [x, y];
+  };
+  const measure = (kind, points) => {
+    if (kind !== 'length' || !Array.isArray(points) || points.length !== 2) return fail();
+    const p = points.map(imagePoint);
+    if (Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]) <= 1e-6) return fail();
+    const held = us.holding(p), s = held[0]?.spacing;
+    if (!s || held.some(r => r.spacing[0] !== s[0] || r.spacing[1] !== s[1])) return outside();
+    return Math.hypot((p[1][0] - p[0][0]) * s[1], (p[1][1] - p[0][1]) * s[0]);
+  };
+  return { origin, orientation, spacing: [1, 1], normal, imagePoint, measure, label: us.label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
+    calculator: 'kin-planar-manual-v1:us', viewerPlane: true };
 }
 
 function kinCreateViewerHistory() {
@@ -10668,7 +10761,7 @@ function kinCreateViewerHistory() {
     function planar(imageId, kind) {
       const image = cs.metaData.get('instance', imageId);
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
-      return kinPlanarGeometry(image, reference(imageId)?.frame);
+      return kinManualGeometry(image, reference(imageId)?.frame, kind);
     }
     // ── Screen calibration (the Calibration tool) ──
     // An image whose original gives no pixel spacing at all (a scanned film, an outside CR) has no mm of its own. The reader may
@@ -10787,7 +10880,12 @@ function kinCreateViewerHistory() {
           // A projection X-ray measured in the viewer's plane (geometry.viewerPlane): the Calibration tool writes its
           // calibrated-spacing metadata before the image is loaded again, and the viewer then places new points with it.
           let calibrated; try { calibrated = geometry.viewerPlane && cs.metaData.get('calibratedPixelSpacing', imageId)?.type; } catch (_) { calibrated = undefined; }
-          if (cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
+          // An ultrasound region's Length (kinManualGeometry) is shown in pixels: each display spacing reads as 1 (none
+          // given counts as 1, as the Measure menu reads it), and only a region or "uncalibrated" answer is no calibration.
+          const shown = n => Number(n) > 0 ? Number(n) : 1;
+          if (geometry.calculator === 'kin-planar-manual-v1:us' ? cs.cache.getImage(imageId)?.calibration?.type || calibrated && !['Region', 'Uncalibrated'].includes(calibrated) ||
+                shown(plane?.rowPixelSpacing) !== 1 || shown(plane?.columnPixelSpacing) !== 1 :
+              cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
             return '표시 간격과 원본 간격이 일치하지 않습니다';
           if (geometry.viewerPlane && points?.some(point => unconfirmedPoints.has(pointKey(imageId, point)))) return PLANE_UNCONFIRMED;
           if (points) geometry.measure(kind, points);
@@ -10829,6 +10927,10 @@ function kinCreateViewerHistory() {
       })) return '측정이 원본 영상 범위를 벗어났습니다';
       return '';
     }
+    // A value of the planar geometry in one decimal on the cell and in the Measurements panel. An ultrasound region's Length
+    // is rounded as its saved value is said (finding-link-model.js valueText), so the cell, the panel, the History and the
+    // Findings give the same number; the others keep the words they had.
+    const planarText = (geometry, value) => geometry.calculator === 'kin-planar-manual-v1:us' ? (Math.round(value * 10) / 10).toFixed(1) : value.toFixed(1);
     const calculatedGeometry = new WeakMap(), trackedMeasurements = new WeakSet();
     const geometry = data => JSON.stringify(data.handles.points);
     const freshStats = (data, target) => {
@@ -10896,8 +10998,11 @@ function kinCreateViewerHistory() {
         const kind = kinds[a.metadata.toolName], geometry = planar(a.metadata.referencedImageId, kind);
         if (geometry) {
           const value = geometry.measure(kind, a.data.handles.points), unit = kind === 'angle' ? '°' : kind === 'ellipse' ? 'mm²' : 'mm';
-          checked.displayText = { primary: [value.toFixed(1) + ' ' + unit, geometry.label], secondary: [] };
-          checked.getReport = () => ({ columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] });
+          checked.displayText = { primary: [planarText(geometry, value) + ' ' + unit, geometry.label], secondary: [] };
+          // An ultrasound region's Length names its original frame too (a cine's frames share the SOP).
+          const frame = geometry.calculator === 'kin-planar-manual-v1:us' ? reference(a.metadata.referencedImageId)?.frame : undefined;
+          checked.getReport = () => frame === undefined ? { columns: [kind, 'Unit', 'Measurement basis'], values: [value, unit, geometry.label] } :
+            { columns: [kind, 'Unit', 'Measurement basis', 'Frame'], values: [value, unit, geometry.label, frame] };
         }
         return checked;
       } catch (_) { return null; } // Display sets may disappear before their metadata.
@@ -11915,15 +12020,18 @@ function kinCreateViewerHistory() {
           if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
           if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
-          const reason = data.kinUnverified ? '재확인 필요: 저장 당시 측정과 다릅니다' :
-            id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          const current = id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          // A saved mark being edited says why its current points give no value (moved out of an ultrasound region, off the
+          // image) rather than only that it differs from its saved value.
+          const edited = current && [...entries.values()].some(e => e.editing && e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID)?.data === data);
+          const reason = data.kinUnverified && !edited ? '재확인 필요: 저장 당시 측정과 다릅니다' : current;
           // A shape still being drawn (an ellipse stretched one way only, an angle with one arm) is not judged until it is finished.
           if (reason) return [[...drawing.values()].some(w => w.annotation.data === data && unfinished(w.annotation)) ? '측정을 완료하세요' : reason];
           if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
-            return [value.toFixed(1) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
+            return [planarText(geometry, value) + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm'), ...geometry.label.split(' · ')];
           }
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);

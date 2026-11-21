@@ -51,8 +51,9 @@ export async function lockInstitution(tx: any, institution: string): Promise<voi
 
 /**
  * The one place a report screen's signer name comes from: the member's name on the account row (the identity provider's
- * family and given name, or the username when it has none), by account id. It is shown only - the stored login, the account
- * id, the audit and the signed content stay as they are. An account without a row or with a blank name is left out, and the
+ * family and given name, or the username when it has none), by account id, read when a version is written and kept with it
+ * (report-commit.ts; shown through versionWriterName). It is shown only - the stored login, the account id, the audit and
+ * the signed content stay as they are. An account without a row or with a blank name is left out, and the
  * caller keeps what it showed before.
  */
 export async function memberNames(db: any, subs: readonly (string | null | undefined)[]): Promise<Map<string, string>> {
@@ -62,6 +63,18 @@ export async function memberNames(db: any, subs: readonly (string | null | undef
     select: { sub: true, name: true } });
   return new Map(rows.filter(row => typeof row.name === 'string' && row.name.trim())
     .map(row => [row.sub, (row.name as string).trim()] as [string, string]));
+}
+
+/**
+ * The one rule for the name a report version shows for its writer: the member name it was written under
+ * (`ReportVersion.authorName`, kept by report-commit.ts from memberNames when the version is written - the login before the @
+ * for an account without a name), so renaming the member
+ * later does not change who a signed version names. A version without one (written before the name was kept, or a copy kept
+ * by Reset or a forced discard) names none, and the screen shows its stored login as before - the account's current name and
+ * the time of a rename never stand in for it.
+ */
+export function versionWriterName(row: { authorName?: unknown } | null | undefined): string | undefined {
+  return typeof row?.authorName === 'string' && row.authorName.trim() ? row.authorName.trim() : undefined;
 }
 
 export function rightsAllow(row: any): boolean {
@@ -74,6 +87,22 @@ export function rightsUser(row: any) {
   return row && { id: row.sub, username: row.username, email: row.email, emailVerified: row.emailVerified,
     firstName: row.name, lastName: '', enabled: rightsAllow(row), serviceAccountClientId: null,
     groups: row.institution ? [row.institution] : [], roles: row.approved ? row.roles : [] };
+}
+
+/**
+ * The colleague a picker offers (Assign Reader, Consultation) and a new save names, read from the member table: the
+ * authority an administrator's Suspend, Revoke Approval, role and institution changes write. The provider roster is not
+ * asked - those commands leave it as it was. No row is no member. Callers judge the person with their own rule over
+ * this shape (enabled = rightsAllow, the one institution, the roles of an approved member).
+ */
+export async function memberUser(db: any, sub: string) {
+  return rightsUser(await db.memberRights.findUnique({ where: { sub } })) ?? null;
+}
+
+/** Every member row of one institution in that shape, by name; the caller's rule keeps whom it may offer. */
+export async function institutionMembers(db: any, institution: string) {
+  const rows: any[] = await db.memberRights.findMany({ where: { institution } });
+  return rows.map(rightsUser).sort((a, b) => a.firstName.localeCompare(b.firstName) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 /** An older ordinary publication may have landed after the latest intent was created. */

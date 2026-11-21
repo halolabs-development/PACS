@@ -24,6 +24,10 @@ services:
     restart: unless-stopped
     environment:
       LOCAL_ORTHANC_URL: http://gw-orthanc:8042
+      # The DICOM listener the heartbeat checks with C-ECHO: gw-orthanc's own DICOM port and AE title (orthanc.json).
+      LOCAL_DICOM_HOST: gw-orthanc
+      LOCAL_DICOM_PORT: "4242"
+      LOCAL_DICOM_AET: KINGW
       LOCAL_ORTHANC_USER: ${GW_ORTHANC_USER:-agent}
       LOCAL_ORTHANC_PASS: ${GW_ORTHANC_PASS:?GW_ORTHANC_PASS를 gateway/.env에 설정하세요}
       KIN_BASE_URL: ${KIN_BASE_URL:?KIN_BASE_URL을 gateway/.env에 설정하세요}
@@ -37,6 +41,12 @@ services:
       STOW_TIMEOUT_SECONDS: ${GW_STOW_TIMEOUT_SECONDS:-300}
       BACKOFF_BASE_SECONDS: ${GW_BACKOFF_BASE_SECONDS:-5}
       BACKOFF_MAX_SECONDS: ${GW_BACKOFF_MAX_SECONDS:-300}
+      # Signed updates: the public keys this host trusts (base64 Ed25519, comma separated; empty = no update installs).
+      GW_UPDATE_KEYS: ${GW_UPDATE_KEYS:-}
+      # Remote support (diagnostics, restart, update) over the agent's own outbound calls; off = every request refused.
+      GW_REMOTE_SUPPORT: ${GW_REMOTE_SUPPORT:-on}
+    # An update or a remote restart lets the agent finish the pass it is in (a STOW may take STOW_TIMEOUT_SECONDS).
+    stop_grace_period: 6m
     depends_on:
       - gw-orthanc
     volumes:

@@ -120,6 +120,14 @@
     .gw-hosts-rows li[data-contact="no_contact"] .gw-host-contact { text-decoration: underline dotted; }
     .gw-host-fact { color: var(--muted); }
     .gw-hosts-empty { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+    /* Gateway Support: one line per Gateway queue with its newest request; actions wrap on a narrow window. */
+    .gw-support-rows { list-style: none; margin: 0 0 8px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+    .gw-support-rows:empty { display: none; }
+    .gw-support-rows li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; border-bottom: 1px solid #b4b4b426; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; }
+    .gw-support-rows li:last-child { border-bottom: 0; }
+    .gw-support-rows.stale li { opacity: .72; }
+    .gw-support-request { color: var(--muted); }
+    .gw-support-actions { display: flex; flex-wrap: wrap; gap: 6px; }
     /* S5-U6b Operations: every state is a word as well as a colour; no value is coloured by its size (no sourced threshold). */
     .ops { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
     .ops-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -138,6 +146,11 @@
     #metrics-table th { font-size: 12px; }
     #metrics-table.stale #metrics-rows { opacity: .72; }
     #metrics-table .metric-name { font-weight: 650; }
+    .ops-sub { margin: 16px 0 8px; font-size: 14px; }
+    #server-table th, #server-table td { padding: 9px 10px; font-size: 13px; overflow-wrap: anywhere; vertical-align: top; }
+    #server-table th { font-size: 12px; }
+    #server-table.stale #server-rows { opacity: .72; }
+    #server-table .metric-name { font-weight: 650; }
     /* S5-U5b Audit / Security: every state is a word as well as a colour; nothing below 12px. */
     .audit { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 18px; }
     .audit-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -249,6 +262,18 @@
       <p class="message" id="gateway-rules-message" role="alert"></p>
     </section>
 
+    <section class="gateway" id="gateway-support" aria-labelledby="gateway-support-title">
+      <div class="gateway-head">
+        <h2 id="gateway-support-title">Gateway Support</h2>
+        <span class="gstate not_loaded" id="gateway-support-state" role="status">Not Loaded</span>
+        <div class="spacer"></div>
+        <button type="button" id="gateway-support-refresh" disabled>Load Gateway Support</button>
+      </div>
+      <p class="gateway-hint">병원에 가지 않고 이 기관 Gateway를 돕습니다. Gateway는 자기가 바깥으로 거는 연결로 요청을 가져가며(약 30초마다), 병원 안으로 새로 여는 통로는 없습니다. Request Diagnostics는 Gateway의 버전·큐 상태·최근 기록(검사 UID와 숫자·오류 코드만, 환자 이름 없음)을 받아 내려받게 합니다. Restart Gateway는 Gateway 프로그램을 다시 시작합니다(받은 영상은 그대로 남고 이어서 보냅니다). Update Gateway는 이 서버에 있는 판을 보내며, 설치 여부는 Gateway가 병원 호스트에 설정된 서명 키로 정합니다 — 새 판이 3분 안에 정상으로 돌지 않으면 이전 판으로 돌아갑니다. 병원 IT가 Gateway에서 원격 지원을 꺼 두었으면 요청은 Refused로 끝납니다. 요청과 받은 진단은 서버 메모리에만 있어 서버가 다시 시작하면 사라집니다(요청 기록은 감사 기록에 남습니다).</p>
+      <ul class="gw-support-rows" id="gateway-support-rows"></ul>
+      <p class="gateway-empty" id="gateway-support-empty" hidden></p>
+      <p class="message" id="gateway-support-message" role="alert"></p>
+    </section>
     <section class="gateway" id="held-sources" aria-labelledby="held-title">
       <div class="gateway-head">
         <h2 id="held-title">Held Studies</h2>
@@ -333,7 +358,7 @@
         <div class="spacer"></div>
         <button type="button" id="metrics-refresh" disabled>Refresh Operations</button>
       </div>
-      <p class="ops-hint">저장 사용량·검사량·판독 TAT와 API 가동 시간입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
+      <p class="ops-hint">저장 사용량·검사량·판독 TAT와 서버 구성요소(API·영상 저장소·DB·로그인 서버)의 가동 상태입니다. 값마다 출처·관측 시각·단위·분모·범위를 함께 보이고, 읽지 못한 값은 0이 아니라 Unobservable로 보입니다. 출처 있는 사이트 기준이 없어 기준선·경고 색은 두지 않습니다. 지표는 이 버튼을 누를 때만 읽습니다.</p>
       <p class="message" id="metrics-message" role="alert"></p>
       <div class="ops-table" id="metrics-wrap" hidden>
         <table id="metrics-table">
@@ -342,6 +367,17 @@
           </thead>
           <tbody id="metrics-rows"></tbody>
         </table>
+      </div>
+      <div id="server-wrap" hidden>
+        <h3 class="ops-sub" id="server-title" title="서버 구성요소마다 이번 조회에서 직접 물어 받은 답입니다. 모든 기관이 함께 쓰는 서버의 값이며, 답하지 않은 구성요소는 가동 시간을 보이지 않습니다. 기록이 없어 가용률(%)은 재지 않습니다.">Server Status (Server-wide)</h3>
+        <div class="ops-table">
+          <table id="server-table" aria-labelledby="server-title">
+            <thead class="ops-columns">
+              <tr><th scope="col">Component</th><th scope="col">Answer</th><th scope="col">Checked At</th><th scope="col">Uptime</th><th scope="col">Running Since</th><th scope="col">Source</th></tr>
+            </thead>
+            <tbody id="server-rows"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -368,6 +404,24 @@
       </div>
       <p class="audit-empty" id="audit-empty" hidden>이 기관에 귀속된 감사 기록이 없습니다.</p>
       <div class="audit-pager"><button type="button" id="audit-more" hidden disabled>Load More</button></div>
+    </section>
+    <section class="audit" id="access-alerts" aria-labelledby="access-alerts-title">
+      <div class="audit-head">
+        <h2 id="access-alerts-title">Access Alerts</h2>
+        <span class="astate" id="access-alerts-state" role="status">Not Loaded</span>
+      </div>
+      <p class="audit-hint">한 계정이 짧은 시간에 서로 다른 검사를 많이 연 구간을 경보 한 줄로 보입니다. 기록 당시 관리 기관이 이 기관으로 확인된 접속기록 가운데 영상 열기·비교 검사 열기·판독문 표시만 셉니다. 목록 조회·미리받기·감사 조회는 세지 않습니다. 경보 기준은 서버 설정값이며 확인 결과에 함께 보입니다. 경보는 이 버튼을 누를 때만 확인합니다.</p>
+      <form id="access-alerts-form" class="audit-head">
+        <label>Alert Period From (UTC) <input id="access-alerts-from" type="datetime-local" required step="1"></label>
+        <label>Alert Period Until (UTC, exclusive) <input id="access-alerts-until" type="datetime-local" required step="1"></label>
+        <button id="access-alerts-load" type="submit" disabled>Check Alerts</button>
+      </form>
+      <p class="audit-fixed" id="access-alerts-scope"></p>
+      <p class="message" id="access-alerts-message" role="alert"></p>
+      <div class="audit-table" id="access-alerts-wrap" hidden>
+        <table><thead><tr><th scope="col">Account</th><th scope="col">First Opened (UTC)</th><th scope="col">Last Opened (UTC)</th><th scope="col">Different Studies</th><th scope="col">Events</th><th scope="col">Access Review</th></tr></thead>
+          <tbody id="access-alerts-rows"></tbody></table>
+      </div>
     </section>
     <section class="audit" id="access-review" aria-labelledby="access-review-title">
       <div class="audit-head">
@@ -433,6 +487,26 @@
       </div>
       <div class="dialog-actions">
         <button type="button" data-close="membership-dialog">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="identity-dialog">
+    <form class="dialog-body" id="identity-form">
+      <h2>Change Name / Email</h2>
+      <p id="identity-target" translate="no"></p>
+      <p class="message" id="identity-message" role="alert"></p>
+      <div class="form-grid">
+        <label>성<input name="lastName" maxlength="128" autocomplete="off" translate="no"></label>
+        <label>이름<input name="firstName" maxlength="128" autocomplete="off" translate="no"></label>
+        <label class="full">이메일<input name="email" type="email" maxlength="254" autocomplete="off" translate="no"></label>
+        <p class="full" id="identity-unconfirmed" hidden>명부(로그인 계정)의 값이 회원 표와 다릅니다. 칸에는 명부의 값이 들어 있습니다 — Save하면 두 곳 모두 칸의 값으로 맞춥니다.</p>
+        <p class="full">바꾸면 이 회원은 다시 로그인합니다. 지난 기록의 옛 이메일은 그대로 남습니다.</p>
+        <p class="full" id="identity-self" hidden>본인 계정입니다. Save하면 이 화면에서 로그아웃되고, 다시 로그인하면 새 값이 보입니다.</p>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" data-close="identity-dialog">Cancel</button>
         <button type="submit" class="primary">Save</button>
       </div>
     </form>
@@ -617,6 +691,13 @@
           note.textContent = "명부 반영 미확인";
           cell.append(note);
         }
+        if (user.identityUnconfirmed) {
+          const note = document.createElement("div");
+          note.className = "identity-unconfirmed";
+          note.textContent = "이메일·이름 반영 미확인";
+          note.title = "로그인 계정(명부)의 이메일·이름이 이 표와 다릅니다. Change Name / Email에서 값을 확인해 Save하면 맞춰집니다.";
+          cell.append(note);
+        }
         row.append(cell);
       }
 
@@ -746,6 +827,8 @@
             : action("Activate", () => mutate(user, { enabled: true })));
           if(user.enabled && user.institution===KinAuth.session()?.institution && user.approvalState==="APPROVED")actions.append(action("Study Access",()=>KinStudyAccessAdmin.open(user)));
           if (KinSigningKeyAdmin.eligible(user)) actions.append(action("Signing Key", () => KinSigningKeyAdmin.open(user)));
+          // The server sends `provider` only for a member it lets this administrator change (approved, own institution).
+          if (user.provider && user.approvalState === "APPROVED") actions.append(action("Change Name / Email", () => openIdentity(user)));
           row.append(actions);
           body.append(row);
         });
@@ -890,6 +973,72 @@
       $("#membership-dialog").addEventListener("close", () => { state.editing = null; });
 
       /*
+       * Change Name / Email. The fields open on the login account's current values (the server's `provider`), and Save
+       * sends only what differs from them, with the version the dialog opened on. The server writes the login account and
+       * the member row together (admin.service.ts changeIdentity); a failure is shown in the dialog with the input kept.
+       * Each opening has its own number: a late answer of an earlier opening neither closes nor writes into a later one.
+       */
+      let identitySeq = 0, identityBase = null;
+      function openIdentity(user) {
+        if (membersDenied || !user.provider) return;
+        identitySeq++;
+        identityBase = { id: user.id, version: user.version, provider: { ...user.provider }, unconfirmed: !!user.identityUnconfirmed };
+        const form = $("#identity-form");
+        form.elements.lastName.value = user.provider.lastName || "";
+        form.elements.firstName.value = user.provider.firstName || "";
+        form.elements.email.value = user.provider.email || "";
+        $("#identity-target").textContent = user.username;
+        $("#identity-unconfirmed").hidden = !identityBase.unconfirmed;
+        $("#identity-self").hidden = user.id !== KinAuth.session()?.sub;
+        setDialogMessage("#identity-message", "");
+        $("#identity-dialog").showModal();
+      }
+
+      function closeIdentity() {
+        identitySeq++;
+        identityBase = null;
+        $("#identity-dialog").close();
+        $("#identity-form").reset();
+        $("#identity-target").textContent = "";
+        setDialogMessage("#identity-message", "");
+      }
+
+      $("#identity-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        const base = identityBase, seq = identitySeq;
+        if (!base) { setDialogMessage("#identity-message", "회원 정보를 다시 불러오세요."); return; }
+        const form = event.currentTarget;
+        const value = { lastName: form.elements.lastName.value.trim(), firstName: form.elements.firstName.value.trim(),
+          email: form.elements.email.value.trim() };
+        const identity = {};
+        if (value.email !== (base.provider.email || "")) identity.email = value.email;
+        if (value.lastName !== (base.provider.lastName || "") || value.firstName !== (base.provider.firstName || "")) {
+          identity.lastName = value.lastName;
+          identity.firstName = value.firstName;
+        }
+        // Unchanged fields but a member row that differs: saving these values makes the two one.
+        if (!Object.keys(identity).length && base.unconfirmed) {
+          if (value.email) identity.email = value.email;
+          else { identity.lastName = value.lastName; identity.firstName = value.firstName; }
+        }
+        if (!Object.keys(identity).length) {
+          setDialogMessage("#identity-message", "변경된 내용이 없어 저장하지 않았습니다.");
+          return;
+        }
+        setDialogMessage("#identity-message", "");
+        try {
+          await request("PATCH", `/admin/users/${encodeURIComponent(base.id)}`, { identity, version: base.version });
+          if (KinConsoleSession.ended() || seq !== identitySeq) return;
+          closeIdentity();
+          await loadUsers();
+        } catch (error) {
+          if (KinConsoleSession.ended() || error.stale || membersDenied || seq !== identitySeq) return;
+          setDialogMessage("#identity-message", error.message);
+        }
+      });
+      $("#identity-dialog").addEventListener("close", () => { identitySeq++; identityBase = null; });
+
+      /*
        * The page session ended (Log out, a confirmed session end, or a matching notice). Runs before anything is awaited
        * (S5-U6a-F03): the members, the institutions they named, the edit in progress, both forms, the search and a
        * temporary password go, every dialog of this console closes and its controls turn off. An answer still out is
@@ -902,6 +1051,7 @@
         Object.assign(state, { page: 1, total: 0, users: [], editing: null, institutions: new Set() });
         $("#create-dialog").close();
         $("#membership-dialog").close();
+        closeIdentity();
         closeTemporaryPassword();
         $("#create-form").reset();
         $("#membership-form").reset();
@@ -1179,7 +1329,8 @@
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
       const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
-      const ROW_KEYS = ["contact", "gateway", "lastContactAt", "lastStowAt", "localOrthanc", "queue", "queueInstance", "startedAt", "version"];
+      const ROW_KEYS = ["contact", "dicomListener", "gateway", "lastContactAt", "lastStowAt", "localOrthanc", "queue", "queueInstance", "startedAt", "version"];
+      const LISTENER_RESULTS = ["accepted", "rejected", "no_answer"];
       const ANSWER_KEYS = ["gateways", "generatedAt", "institutionId", "noContactAfterSeconds", "serverStartedAt"];
       const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
       const closed = (value, keys) => { const own = Object.keys(value).sort(); return own.length === keys.length && own.every((key, i) => key === keys[i]); };
@@ -1201,10 +1352,14 @@
         const local = raw.localOrthanc;
         if (local !== null && (!plain(local) || !closed(local, ["answered", "observedAt"]) || typeof local.answered !== "boolean"
           || !time(local.observedAt))) return null;
+        const dicom = raw.dicomListener;
+        if (dicom !== null && (!plain(dicom) || !closed(dicom, ["observedAt", "result"]) || !LISTENER_RESULTS.includes(dicom.result)
+          || !time(dicom.observedAt))) return null;
         return { gateway: raw.gateway, queueInstance: raw.queueInstance, contact: raw.contact, lastContactAt: raw.lastContactAt,
           startedAt: raw.startedAt, version: raw.version, lastStowAt: raw.lastStowAt,
           queue: raw.queue && { waiting: raw.queue.waiting, retry: raw.queue.retry, failed: raw.queue.failed },
-          localOrthanc: local && { answered: local.answered, observedAt: local.observedAt } };
+          localOrthanc: local && { answered: local.answered, observedAt: local.observedAt },
+          dicomListener: dicom && { result: dicom.result, observedAt: dicom.observedAt } };
       }
 
       /** The whole answer, or null when any part of it cannot be read. */
@@ -1217,6 +1372,15 @@
         return { institutionId: answer.institutionId, generatedAt: answer.generatedAt, serverStartedAt: answer.serverStartedAt,
           noContactAfterSeconds: answer.noContactAfterSeconds, gateways };
       }
+
+      // The DICOM receive self-check: what was tested is said with the result; it is never worded as "receiving works".
+      const LISTENER_TEXT = Object.freeze({ accepted: "C-ECHO Accepted", rejected: "C-ECHO Rejected", no_answer: "No Answer" });
+      const LISTENER_TITLE = Object.freeze({
+        accepted: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 직접 DICOM 연결을 열어 C-ECHO(연결 시험)를 보냈고 성공(Status 0000) 응답을 받았습니다.",
+        rejected: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 C-ECHO를 보냈지만 연결 또는 C-ECHO가 거절되었습니다.",
+        no_answer: "Gateway가 병원 쪽 Orthanc의 DICOM 수신 포트에 연결하지 못했거나 제한 시간(5초) 안에 C-ECHO 응답을 받지 못했습니다.",
+      });
+      const LISTENER_SCOPE = "장비 쪽 네트워크·방화벽·장비별 저장 허용은 이 시험에 들어가지 않습니다. 실제 수신은 도착한 검사로 확인합니다.";
 
       /** Words for one Gateway line: its contact first, then each fact with what it is and where its time comes from. */
       function display(row, noContactAfterSeconds, format = localTime) {
@@ -1233,6 +1397,11 @@
             : `Local Orthanc API ${row.localOrthanc.answered ? "Answered" : "No Answer"} ${format(row.localOrthanc.observedAt)}`,
             title: "Gateway 안의 Orthanc REST API가 마지막 요청에 응답했는지입니다. 장비가 보내는 DICOM 포트를 직접 시험한 값은 아닙니다." +
               (row.localOrthanc ? ` ${derived}` : "") },
+          { key: "dicom", data: false, text: !row.dicomListener ? "DICOM Listener Not Checked"
+            : `DICOM Listener ${LISTENER_TEXT[row.dicomListener.result]} ${format(row.dicomListener.observedAt)}`,
+            title: !row.dicomListener
+              ? "Gateway가 병원 쪽 DICOM 수신 포트를 직접 시험한 결과가 아직 없습니다. 이 점검이 없는 이전 Gateway 버전이거나 막 시작했습니다. 연락·REST 응답으로 채우지 않습니다."
+              : `${LISTENER_TITLE[row.dicomListener.result]} ${LISTENER_SCOPE} ${derived}` },
           { key: "version", data: true, text: `Version ${row.version}`, title: "Gateway 프로그램의 버전입니다." },
           { key: "started", data: false, text: `Running Since ${format(row.startedAt)}`, title: `Gateway 프로그램이 이번에 시작한 때입니다. ${derived}` },
           { key: "instance", data: true, text: `Queue Instance ${row.queueInstance.slice(0, 8)}`,
@@ -1399,7 +1568,7 @@
         ["storage.server", "Storage Used (Server-wide)", "byte", "server", null,
           "Orthanc 서버 전체가 쓰는 디스크 용량입니다. 모든 기관의 영상이 함께 담긴 값이며 이 기관 몫이 아닙니다."],
         ["storage.institution", "Storage Used (This Institution)", "byte", "institution", null,
-          "기관별 저장량은 제품에 잴 원천이 없어 관측할 수 없습니다."],
+          "이 기관이 소유한 검사의 Orthanc 저장 용량 합입니다(검사마다 Orthanc가 알려 준 디스크 크기). 원격판독으로 받은 검사는 소유 기관 몫이라 넣지 않고, HALO PACS에 아직 등록되지 않은 검사는 어느 기관 몫에도 넣지 않습니다. 검사 하나라도 읽지 못하면 일부 합계 대신 Unobservable로 보입니다."],
         ["studies.own", "Studies Owned", "study", "institution", null,
           "이 기관이 소유한 검사 수입니다. HALO PACS에 등록된 검사만 셉니다 — 워크리스트에 아직 한 번도 나오지 않은 검사는 등록 전입니다."],
         ["studies.tele", "Studies Received for Tele-reading", "study", "institution", null,
@@ -1433,6 +1602,8 @@
         invalid_answer: "응답 형식을 확인할 수 없습니다.",
         timeout: "원천이 제한 시간 안에 답하지 않았습니다.",
         no_source: "제품에 이 값을 잴 원천이 없습니다.",
+        unattributed: "한 검사 UID에 Orthanc 검사가 여럿(환자 둘)이라 어느 기관 몫인지 정하지 못했습니다.",
+        incomplete: "Orthanc가 준 검사 목록이 전부인지 확인하지 못했습니다(검색 결과 상한이나 읽는 사이의 새 도착). 일부만 더하지 않습니다.",
       });
       const UNITS = Object.freeze({
         byte: ["Bytes (1 GiB = 1024³ B)", "원천 값은 바이트입니다. 화면은 2의 거듭제곱 단위(KiB·MiB·GiB·TiB)로 줄여 보입니다."],
@@ -1505,7 +1676,82 @@
           byKey.set(key, raw);
         }
         return { institutionId: answer.institutionId, generatedAt: answer.generatedAt,
-          rows: METRICS.map(spec => readRow(spec, byKey.get(spec.key))) };
+          rows: METRICS.map(spec => readRow(spec, byKey.get(spec.key))), server: readServer(answer.server) };
+      }
+
+      /*
+       * Server Status (api/src/pacs/server-status.ts serverComponentRows): one row per component, fixed order. A component
+       * answered only when this request got its answer; its uptime is only what it reports itself. A row that does not
+       * prove this reads Answer Unreadable with no uptime, never Answered.
+       */
+      const SERVER = Object.freeze([
+        ["api", "HALO PACS API", "이 응답을 만든 HALO PACS API 프로세스입니다."],
+        ["image_store", "Image Store (Orthanc)", "영상을 저장하고 내주는 Orthanc 서버입니다."],
+        ["database", "Database (PostgreSQL)", "검사·판독·회원 기록을 담는 HALO PACS 데이터베이스입니다."],
+        ["login_server", "Login Server (Keycloak)", "로그인과 계정을 맡는 Keycloak 서버입니다."],
+      ].map(([key, label, title]) => Object.freeze({ key, label, title })));
+      const ANSWERS = Object.freeze({
+        answered: Object.freeze({ text: "Answered", title: "이번 조회에서 이 구성요소가 직접 답했습니다." }),
+        source_failed: Object.freeze({ text: "No Answer", title: "이번 조회에서 이 구성요소에 연결하지 못했거나 오류로 답했습니다." }),
+        timeout: Object.freeze({ text: "No Answer in Time", title: "제한 시간 안에 답하지 않았습니다." }),
+        invalid_answer: Object.freeze({ text: "Answer Unreadable", title: "답의 형식을 확인할 수 없어 답한 것으로 보지 않습니다." }),
+      });
+      const SERVER_KEYS = ["answer", "checkedAt", "component", "source", "uptime"];
+      const UPTIME_KEYS = ["reason", "seconds", "source", "startedAt", "state"];
+      const closedKeys = (value, keys) => { const own = Object.keys(value).sort(); return own.length === keys.length && own.every((k, i) => k === keys[i]); };
+
+      function readServerRow(spec, raw) {
+        const unread = { component: spec.key, answer: "invalid_answer", checkedAt: null, source: null,
+          uptime: { state: "unobservable", reason: "invalid_answer", seconds: null, startedAt: null, source: null } };
+        if (!plain(raw) || !closedKeys(raw, SERVER_KEYS) || raw.component !== spec.key || !owns(ANSWERS, raw.answer)
+          || !plain(raw.uptime) || !closedKeys(raw.uptime, UPTIME_KEYS)) return unread;
+        const source = typeof raw.source === "string" && raw.source.trim() ? raw.source : null;
+        const u = raw.uptime, uptimeSource = typeof u.source === "string" && u.source.trim() ? u.source : null;
+        if (raw.checkedAt !== null && !time(raw.checkedAt)) return unread;
+        if (raw.answer === "answered" && (!source || raw.checkedAt === null)) return unread;
+        let uptime;
+        if (u.state === "observed") {
+          if (raw.answer !== "answered" || !uptimeSource || u.reason !== null || !count(u.seconds)
+            || (u.startedAt !== null && !time(u.startedAt))) return unread;
+          uptime = { state: "observed", reason: null, seconds: u.seconds, startedAt: u.startedAt, source: uptimeSource };
+        } else if (u.state === "unobservable") {
+          if (typeof u.reason !== "string" || !owns(REASONS, u.reason) || u.seconds !== null || u.startedAt !== null) return unread;
+          uptime = { state: "unobservable", reason: u.reason, seconds: null, startedAt: null, source: uptimeSource };
+        } else return unread;
+        return { component: spec.key, answer: raw.answer, checkedAt: raw.checkedAt, source, uptime };
+      }
+
+      /** The four rows in their fixed order; a missing, repeated or malformed one reads Answer Unreadable. */
+      function readServer(list) {
+        const byKey = new Map(), repeated = new Set();
+        for (const raw of Array.isArray(list) ? list : []) {
+          const key = plain(raw) && typeof raw.component === "string" ? raw.component : null;
+          if (key === null) continue;
+          if (byKey.has(key)) repeated.add(key); else byKey.set(key, raw);
+        }
+        return SERVER.map(spec => readServerRow(spec, repeated.has(spec.key) ? null : byKey.get(spec.key)));
+      }
+
+      /** Words for one Server Status row. */
+      function displayServer(row, format = localTime) {
+        const spec = SERVER.find(item => item.key === row.component), answer = ANSWERS[row.answer];
+        const u = row.uptime, answered = row.answer === "answered";
+        let uptime, uptimeTitle;
+        if (u.state === "observed") { uptime = formatUptime(u.seconds); uptimeTitle = `구성요소가 스스로 알려 준 가동 시간 ${u.seconds}초입니다.`; }
+        else if (u.reason === "no_source") { uptime = "Uptime No Source"; uptimeTitle = "이 구성요소는 가동 시간을 알려 주지 않습니다."; }
+        else { uptime = "Unobservable"; uptimeTitle = `가동 시간을 관측하지 못했습니다. ${REASONS[u.reason]}`; }
+        return {
+          key: row.component, answerKey: row.answer, label: spec.label, labelTitle: spec.title + " 모든 기관이 함께 쓰는 서버의 값입니다.",
+          answer: answer.text, answerTitle: answer.title,
+          checked: row.checkedAt ? format(row.checkedAt) : "Not Checked",
+          checkedTitle: row.checkedAt ? `이 구성요소를 이번에 점검한 서버 시각 ${row.checkedAt}.` : "점검한 시각이 없습니다.",
+          uptime, uptimeTitle,
+          started: u.startedAt ? format(u.startedAt) : "Not Reported",
+          startedTitle: u.startedAt ? `구성요소가 알려 준 시작 시각 ${u.startedAt}. 재시작하면 바뀝니다.`
+            : answered ? "이 구성요소는 시작 시각을 알려 주지 않습니다." : "답하지 않아 시작 시각이 없습니다.",
+          source: row.source ?? "Unknown", sourceTitle: [row.source ? "답을 읽은 원천입니다." : "원천을 확인할 수 없습니다.",
+            u.source ? `가동 시간 원천: ${u.source}` : ""].filter(Boolean).join(" "),
+        };
       }
 
       function formatBytes(bytes) {
@@ -1562,6 +1808,7 @@
           value, valueTitle, unit: UNITS[spec.unit][0], unitTitle: UNITS[spec.unit][1], denominator, denominatorTitle,
           scope: spec.scope === "server" ? "Server-wide" : `Institution ${institutionId}`,
           scopeTitle: spec.scope === "server" ? SERVER_SCOPE[spec.unit]
+            : spec.key === "storage.institution" ? "이 기관이 소유한 검사만입니다. 원격판독으로 받은 검사는 소유 기관의 값에 들어갑니다."
             : "이 기관이 소유한 검사와 원격판독으로 받은 검사(워크리스트와 같은 범위)입니다.",
           source: row.source ?? (row.reason === "no_source" ? "No Source" : "Unknown"),
           sourceTitle: !row.source ? reason : row.state === "unobservable" ? `값을 읽으려 한 원천입니다. ${reason}` : "값을 읽은 원천입니다.",
@@ -1582,8 +1829,8 @@
           title: "서버가 이 응답을 만든 시각입니다. 줄마다 원천이 답한 시각이 따로 있습니다." };
       }
 
-      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, readAnswer, display, summary,
-        formatBytes, formatDuration, formatUptime, formatTime: localTime });
+      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, SERVER, ANSWERS, readAnswer, readServer, display,
+        displayServer, summary, formatBytes, formatDuration, formatUptime, formatTime: localTime });
     })(typeof globalThis === "object" ? globalThis : this);
   </script>
   <script>
@@ -1660,6 +1907,26 @@
         $("#metrics-rows").replaceChildren(...rows);
         $("#metrics-wrap").hidden = !read;
         $("#metrics-table").classList.toggle("stale", ops.failed && !!read);
+        // Server Status: the same reading, its own table (server-wide, every component from this request's own answer).
+        const servers = (read ? read.server : []).map(row => {
+          const shown = M.displayServer(row), tr = document.createElement("tr");
+          Object.assign(tr.dataset, { component: shown.key, answer: shown.answerKey });
+          cell(tr, shown.label, shown.labelTitle, "metric-name");
+          const answerCell = document.createElement("td"), chip = document.createElement("span");
+          chip.className = `mstate row-${shown.answerKey === "answered" ? "observed" : "unobservable"}`;
+          chip.textContent = shown.answer;
+          chip.title = shown.answerTitle;
+          answerCell.append(chip);
+          tr.append(answerCell);
+          cell(tr, shown.checked, shown.checkedTitle);
+          cell(tr, shown.uptime, shown.uptimeTitle, "metric-value");
+          cell(tr, shown.started, shown.startedTitle);
+          cell(tr, shown.source, shown.sourceTitle);
+          return tr;
+        });
+        $("#server-rows").replaceChildren(...servers);
+        $("#server-wrap").hidden = !read;
+        $("#server-table").classList.toggle("stale", ops.failed && !!read);
         const line = M.summary({ observedAt: read ? read.generatedAt : null, failed: ops.failed });
         const state = $("#metrics-state");
         state.className = `mstate ${line.key}`;
@@ -1733,7 +2000,12 @@
         none: "기록된 값이 비어 있습니다.",
       });
       const SNAPSHOT_FIELDS = Object.freeze(["id", "username", "name", "roles", "enabled", "approvalState", "emailVerified", "institution"]);
-      const EVENT_FIELDS = Object.freeze(["verificationOverride", "mode", "failed"]);
+      const EVENT_FIELDS = Object.freeze(["verificationOverride", "mode", "failed", "identity"]);
+      /** Change Name / Email's `identity`: only `email` and `name`, each exactly {from, to} strings, at least one. */
+      const identityChange = value => plain(value) && Object.keys(value).length > 0
+        && Object.keys(value).every(key => (key === "email" || key === "name") && plain(value[key])
+          && Object.keys(value[key]).sort().join() === "from,to"
+          && typeof value[key].from === "string" && typeof value[key].to === "string");
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
       const plain = value => !!value && typeof value === "object" && !Array.isArray(value);
       const owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -1763,10 +2035,15 @@
             || Object.keys(raw.detail).some(key => key !== "before" && key !== "after" && !EVENT_FIELDS.includes(key))) return null;
           const before = side(raw.detail.before), after = side(raw.detail.after);
           if (!before || !after) return null;
+          // Change Name / Email: its `identity`, on both sides a snapshot of one same institution; `identity` nowhere else.
+          if (raw.action === "admin.user.identity") {
+            if (!identityChange(raw.detail.identity) || before.kind !== "snapshot" || after.kind !== "snapshot"
+              || before.value.institution === null || before.value.institution !== after.value.institution) return null;
+          } else if (owns(raw.detail, "identity")) return null;
           return { ...base, member: true, before, after,
             events: EVENT_FIELDS.filter(key => owns(raw.detail, key)).map(key => [key, raw.detail[key]]) };
         }
-        if (!raw.rule.startsWith("field:")) return null;
+        if (!raw.rule.startsWith("field:") || owns(raw.detail, "identity")) return null;
         return { ...base, member: false, detail: raw.detail };
       }
 
@@ -1809,7 +2086,10 @@
         const reason = !row.member && typeof row.detail.reason === "string"
           ? [{ label: null, text: row.detail.reason, state: "value", title: "" }] : [notRecorded(null)];
         const detail = row.member
-          ? [...sideLines("after", row.after), ...row.events.map(([key, value]) => valueLine(key, value))]
+          ? [...sideLines("after", row.after), ...row.events.flatMap(([key, value]) => key === "identity"
+            // One line per changed field: old -> new, as recorded.
+            ? Object.keys(value).map(field => ({ label: field, text: `${value[field].from} → ${value[field].to}`, state: "value", title: "" }))
+            : [valueLine(key, value)])]
           : Object.keys(row.detail).filter(key => key !== "reason").map(key => valueLine(key, row.detail[key]));
         return { time: format(row.at), timeTitle: `기록한 서버 시각 ${row.at}`, actor: row.actor, action: row.action,
           target: row.target, previous, reason, detail: detail.length ? detail : [notRecorded(null)] };
@@ -2048,6 +2328,7 @@
   <script src="critical-result-inbox-admin.js"></script>
   <script src="dicom-peers-admin.js"></script>
   <script src="gateway-rules-admin.js"></script>
+  <script src="gateway-support-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>
 </body>

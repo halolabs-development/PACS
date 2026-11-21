@@ -51,6 +51,13 @@ export class GatewayStatusService {
     return { result: 'stored' };
   }
 
+  /** 이 기관의 행(사본) — 원격 지원이 요청을 묶을 줄을 찾는다(`gateway-support.service.ts`). 권한 판정은 부르는 쪽이 한다. */
+  rowsOf(institutionId: string): GatewayHeartbeatRow[] {
+    return [...this.rows.values()].filter(row => row.institutionId === institutionId)
+      .sort((a, b) => b.receivedAt - a.receivedAt || a.gateway.localeCompare(b.gateway) || a.epoch.localeCompare(b.epoch))
+      .map(row => ({ ...row }));
+  }
+
   /**
    * `GET /api/admin/gateway-status`. admin, 자기 기관 행만. 큐 수는 검사 활동을 세는 값이라, 검사 접근이 제한된 계정에는
    * 운영 지표(`/api/admin/metrics`)와 같은 이유로 주지 않고, 읽는 동안 접근 조건이 바뀌었으면 그 답을 내보내지 않는다.

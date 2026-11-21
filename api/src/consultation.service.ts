@@ -5,6 +5,7 @@ import { Injectable, BadRequestException, ConflictException, ForbiddenException,
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { KeycloakService, KeycloakUser } from './keycloak.service';
+import { institutionMembers, memberUser } from './member-rights';
 import type { Caller } from './pacs.service';
 
 const uuid = (value:any) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -27,9 +28,10 @@ export class ConsultationService {
     return !!u && u.enabled && !u.serviceAccountClientId && u.id !== c.sub && u.groups.length===1
       && u.groups[0]===c.institution && u.roles.includes('radiologist') && (u.email||u.username).length>0 && (u.email||u.username).length<=256;
   }
+  // Who may be offered and named comes from the member table (member-rights.ts), not the provider roster.
   async candidates(c:Caller) {
     this.member(c);
-    return {owner:[c.institution,c.sub],readers:(await this.keycloak.assignmentReaders(c.institution!))
+    return {owner:[c.institution,c.sub],readers:(await institutionMembers(this.prisma,c.institution!))
       .filter(u=>this.eligible(u,c)).map(u=>({sub:u.id,actor:u.email||u.username,
         name:([u.lastName,u.firstName].filter(Boolean).join(' ')||u.username).slice(0,256)}))};
   }
@@ -116,7 +118,7 @@ export class ConsultationService {
       this.access(previous,c); if (previous.creationFingerprint!==mark) throw conflict();
       return this.result(previous,c);
     }
-    const recipient=await this.keycloak.getUser(recipientSub);
+    const recipient=await memberUser(this.prisma,recipientSub);
     if (!this.eligible(recipient,c) || recipient!.id!==recipientSub) throw new BadRequestException('본인을 제외한 같은 기관의 활성 판독의를 선택하세요');
     return this.run(c,async tx=>{
       await this.study(tx,uid,c,true);

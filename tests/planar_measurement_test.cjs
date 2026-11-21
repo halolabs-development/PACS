@@ -4,7 +4,7 @@ const {test}=require('node:test'), assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 const {viewerCommand,verifyViewerReference}=require('/app/dist/viewer-input.js');
 const {srMeasurement,srDataset,srFile}=require('/app/dist/manual-sr-dicom.js');
-const {planarGeometry,viewerPlaneImage}=require('/app/dist/planar-geometry.js');
+const {planarGeometry,manualGeometry,viewerPlaneImage}=require('/app/dist/planar-geometry.js');
 const context=vm.createContext({});
 for(const file of ['mg-length','planar-geometry'])vm.runInContext(fs.readFileSync('config/ohif/'+file+'.js','utf8'),context);
 const base={StudyInstanceUID:'2.25.1',SeriesInstanceUID:'2.25.2',SOPInstanceUID:'2.25.3',SOPClassUID:'1.2.840.10008.5.1.4.1.1.4',Rows:128,Columns:128,PixelSpacing:[.5,.25],ImagePositionPatient:[0,0,0],ImageOrientationPatient:[1,0,0,0,1,0]};
@@ -124,6 +124,84 @@ test('projection images without a usable spacing still measure nothing',()=>{
   assert.throws(()=>context.kinPlanarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
   assert.throws(()=>planarGeometry(tags,1),/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/);
  }
+});
+// A Length on an ultrasound image without spacing, orientation or functional groups: the viewer shows pixel (x, y) of frame
+// f at [0, x, z0 - y] (z0 = 0 for one frame, f for a multi-frame image: the pinned OHIF combineFrameInstance), and the mm
+// come from the deltas (cm) of the Region Calibration that holds both points (DICOM PS3.3 C.8.5.5). Hand-computed values.
+test('Length inside an ultrasound region is measured with that region\'s deltas, the same in the browser, on the server and in the SR',()=>{
+ const region=(x0,x1,dx,dy,extra={})=>({RegionSpatialFormat:1,RegionDataType:1,PhysicalUnitsXDirection:3,PhysicalUnitsYDirection:3,PhysicalDeltaX:dx,PhysicalDeltaY:dy,
+  RegionLocationMinX0:x0,RegionLocationMinY0:0,RegionLocationMaxX1:x1,RegionLocationMaxY1:199,...extra});
+ const us={...projection,Modality:'US',SOPClassUID:'1.2.840.10008.5.1.4.1.1.6.1',SequenceOfUltrasoundRegions:[region(0,149,.02,.03),region(150,299,'0.05','0.04')]};
+ const at=(x,y,z0=0)=>[0,x,z0-y];
+ const ask=(tags,frame,kind,points,value)=>viewerCommand(Buffer.from(JSON.stringify({requestId:'00000000-0000-4000-8000-000000000003',item:{schemaVersion:1,kind,seriesUid:tags.SeriesInstanceUID,sopUid:tags.SOPInstanceUID,
+  frame,frameOfReferenceUid:null,label:'Manual',points,viewPlaneNormal:[-1,0,0],viewUp:[0,0,1],baseline:{calculator:'kin-planar-manual-v1:us',values:[value]}}})),true).item;
+ const cases=[
+  // One frame, the left region: (20,20)→(50,60) → hypot(30×0.2, 40×0.3) = hypot(6, 12) mm.
+  [us,1,[at(20,20),at(50,60)],Math.hypot(6,12),[20.5,20.5,50.5,60.5]],
+  // The right region, its own deltas: (160,10)→(190,50) → hypot(30×0.5, 40×0.4) = hypot(15, 16) mm.
+  [us,1,[at(160,10),at(190,50)],Math.hypot(15,16),[160.5,10.5,190.5,50.5]],
+  // Frame 2 of a cine without a position: the frame's origin [0,0,2].
+  [{...us,SOPClassUID:'1.2.840.10008.5.1.4.1.1.3.1',NumberOfFrames:'2'},2,[at(20,20,2),at(50,60,2)],Math.hypot(6,12),[20.5,20.5,50.5,60.5]],
+  // A position of its own (the browser's combined instance carries the frame origin so): that origin.
+  [{...us,ImagePositionPatient:'0\\0\\7'},1,[at(20,20,7),at(50,60,7)],Math.hypot(6,12),[20.5,20.5,50.5,60.5]],
+  // Two regions over the same pixels with the same deltas: the same value.
+  [{...us,SequenceOfUltrasoundRegions:[region(0,299,.02,.03),region(0,149,'0.020','0.030')]},1,[at(20,20),at(50,60)],Math.hypot(6,12),[20.5,20.5,50.5,60.5]],
+ ];
+ for(const [tags,frame,points,expected,graphic] of cases){
+  const browser=context.kinManualGeometry(tags,frame,'length'),server=manualGeometry(tags,frame,'length');
+  for(const geometry of [browser,server]){
+   assert.equal(geometry.calculator,'kin-planar-manual-v1:us');assert.equal(geometry.label,'US Region Calibration');assert.equal(geometry.viewerPlane,true);
+   assert.ok(Math.abs(geometry.measure('length',points)-expected)<1e-9,JSON.stringify([tags.NumberOfFrames,points]));
+  }
+  const item=ask(tags,frame,'length',points,expected);
+  verifyViewerReference(tags.StudyInstanceUID,item,tags);
+  assert.throws(()=>verifyViewerReference(tags.StudyInstanceUID,{...item,baseline:{...item.baseline,values:[expected+.01]}},tags),/저장값이 일치하지 않습니다/);
+  const computed=srMeasurement(item,tags);
+  assert.ok(Math.abs(computed.values[0]-expected)<1e-9);assert.equal(computed.basis,'US Region Calibration');
+  computed.graphic.forEach((n,i)=>assert.ok(Math.abs(n-graphic[i])<1e-9,'graphic '+JSON.stringify(computed.graphic)));
+  const dataset=srDataset('sr-us',tags.StudyInstanceUID,'Reader','reader',new Date('2026-11-21'),[{head:{id:'m-us',revision:1,snapshot:item},tags,computed}],1);
+  const numeric=dataset.ContentSequence.at(-1).ContentSequence[0].ContentSequence.filter(node=>node.ValueType==='NUM');
+  assert.equal(numeric[0].MeasuredValueSequence.MeasurementUnitsCodeSequence.CodeValue,'mm');
+ }
+ // Frame 2's points read on frame 1 (origin [0,0,1]) are a row off.
+ const cine={...us,SOPClassUID:'1.2.840.10008.5.1.4.1.1.3.1',NumberOfFrames:'2'};
+ for(const geometry of [context.kinManualGeometry(cine,1,'length'),manualGeometry(cine,1,'length')])
+  assert.deepEqual([...geometry.imagePoint(at(20,20,2))],[20,19]);
+ // Refused: one end in each region, a point outside every region, regions of different deltas over the same pixels, the
+ // same point twice, a point off the plane.
+ const refused=[
+  [us,[at(100,20),at(200,20)],/초음파 보정 영역 안에서만 mm로 잴 수 있습니다/],
+  [{...us,SequenceOfUltrasoundRegions:[region(0,149,.02,.03)]},[at(100,20),at(200,20)],/초음파 보정 영역 안에서만 mm로 잴 수 있습니다/],
+  [{...us,SequenceOfUltrasoundRegions:[region(0,299,.02,.03),region(0,149,.02,.04)]},[at(20,20),at(50,60)],/초음파 보정 영역 안에서만 mm로 잴 수 있습니다/],
+  [us,[at(20,20),at(20,20)],/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/],
+  [us,[[1,20,-20],at(50,60)],/원본 프레임의 좌표·간격·보정을 확인할 수 없습니다/],
+ ];
+ for(const [tags,points,reason] of refused){
+  assert.throws(()=>context.kinManualGeometry(tags,1,'length').measure('length',points),reason,JSON.stringify(points));
+  assert.throws(()=>manualGeometry(tags,1,'length').measure('length',points),reason,JSON.stringify(points));
+  assert.throws(()=>verifyViewerReference(tags.StudyInstanceUID,ask(tags,1,'length',points,10),tags));
+ }
+ // No usable region (deltas missing, a Doppler / M-mode region, units other than cm), spacing or an orientation of its own,
+ // another tool: the rules it had (kinPlanarGeometry), the same in the browser and on the server.
+ const planarOnly=[
+  [{...us,SequenceOfUltrasoundRegions:[region(0,299,undefined,undefined)]},'length'],
+  [{...us,SequenceOfUltrasoundRegions:[region(0,299,.02,.03,{RegionSpatialFormat:3,PhysicalUnitsYDirection:7})]},'length'],
+  [{...us,SequenceOfUltrasoundRegions:[region(0,299,.02,.03,{RegionSpatialFormat:2,PhysicalUnitsXDirection:4})]},'length'],
+  [{...us,PixelSpacing:[.5,.5]},'length'],
+  [{...us,ImagerPixelSpacing:[.5,.5]},'length'],
+  [{...us,ImageOrientationPatient:[1,0,0,0,1,0]},'length'],
+  [us,'angle'],[us,'ellipse'],
+ ];
+ for(const [tags,kind] of planarOnly){
+  const built=[()=>context.kinManualGeometry(tags,1,kind),()=>manualGeometry(tags,1,kind)].map(f=>{try{return f();}catch(error){return error.message;}});
+  const before=[()=>context.kinPlanarGeometry(tags,1),()=>planarGeometry(tags,1)].map(f=>{try{return f();}catch(error){return error.message;}});
+  for(const i of [0,1]){
+   if(typeof before[i]==='string')assert.equal(built[i],before[i],JSON.stringify([kind,tags]));
+   else assert.equal(built[i].calculator,before[i].calculator,JSON.stringify([kind,tags]));
+  }
+ }
+ // The server takes an ultrasound region's calculator for a Length only.
+ assert.throws(()=>ask(us,1,'angle',[at(20,20),at(30,20),at(30,40)],90),/완료된 측정값이 필요합니다/);
 });
 test('selected multiframe spacing and detector calibration remain explicit',()=>{
  const tags={...base,Modality:'XA',NumberOfFrames:2401,PerFrameFunctionalGroupsSequence:Array.from({length:2401},()=>({PixelMeasuresSequence:[{PixelSpacing:[1,2]}],PlanePositionSequence:[{ImagePositionPatient:[0,0,0]}],PlaneOrientationSequence:[{ImageOrientationPatient:[1,0,0,0,1,0]}]}))};

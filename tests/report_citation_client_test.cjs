@@ -383,3 +383,27 @@ test('TEST-B23-MEASUREMENT-NOTE: an entry says when it carried a machine-added l
   state.confirm('1.2.3', { version: 1, head: [], draft: [] });
   assert.equal(state.measurementLines(), false, 'the latest read no longer says it');
 });
+test('TEST-B23-SIZE: the version 4 size is one exact line after the location; an empty size keeps the version 3 bytes', () => {
+  assert.equal(C.assembleBlock({ title: '폐결절', text: '', lesionLocation: 'RLL', size: '8mm', characteristics: 'solid' }), '폐결절\n위치: RLL\n크기: 8mm\n특성: solid');
+  assert.equal(C.assembleBlock({ title: '폐결절', text: '본문', lesionLocation: 'RLL', size: '', characteristics: 'solid' }),
+    C.assembleBlock({ title: '폐결절', text: '본문', lesionLocation: 'RLL', characteristics: 'solid' }));
+  assert.equal(C.assembleBlock({ title: '', text: '', lesionLocation: '', size: '12 x 8 mm', characteristics: '' }), '크기: 12 x 8 mm');
+});
+
+test('TEST-B23-SENTENCE: Write as Sentence joins only the stored fields; anything it could change keeps the labelled block', () => {
+  const S = C.sentenceBlock;
+  assert.equal(S({ title: '폐결절', text: '', lesionLocation: 'RLL', size: '8mm', characteristics: 'solid' }), 'RLL 폐결절, 8mm, solid.');
+  assert.equal(S({ title: '폐결절', text: '추적 관찰 권함.\n둘째 줄', lesionLocation: 'RLL', size: '8mm', characteristics: '' }), 'RLL 폐결절, 8mm.\n추적 관찰 권함.\n둘째 줄');
+  assert.equal(S({ title: ' nodule ', text: '', lesionLocation: '', size: '', characteristics: 'solid, spiculated' }), 'nodule, solid, spiculated.', 'edge spaces of a field are dropped');
+  // Text only: the text alone, no empty first line or lone '.'.
+  assert.equal(S({ title: '', text: '본문만', lesionLocation: '', size: '', characteristics: '' }), '본문만');
+  assert.equal(S({ title: '', text: '', lesionLocation: '', size: '', characteristics: '' }), null);
+  // A field already ending a sentence, or spanning lines: the labelled block, byte for byte.
+  for (const source of [{ title: '폐결절.', text: '', lesionLocation: 'RLL', size: '8mm', characteristics: '' },
+    { title: '폐결절', text: '', lesionLocation: 'RLL', size: '', characteristics: '고형\n분엽상' },
+    { title: 'Nodule?', text: '', lesionLocation: '', size: '', characteristics: '' }])
+    assert.equal(S(source), C.assembleBlock(source), JSON.stringify(source));
+  // Nothing else is added: no word, no number, no unit.
+  const built = S({ title: '결절', text: '', lesionLocation: '우하엽', size: '8', characteristics: '' });
+  assert.equal(built, '우하엽 결절, 8.');
+});

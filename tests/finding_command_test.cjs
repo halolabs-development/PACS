@@ -648,7 +648,7 @@ function worklist(options) {
   // S3-U2b: the panel now refuses to mount without the citation module, because a half-updated tab
   // would otherwise assemble a block under a rule the server does not share.
   for (const name of ['finding-link-model.js', 'viewer-windows.js', 'finding-command.js', 'report-citation.js', 'reading-findings.js']) vm.runInContext(shipped(name), ctx, { filename: name });
-  const s = { selected: X, allowed: true, owner: OWNER, sub: SUB, target: null, rows: () => [], api: [], popups: [], opened: [], fetched: [], schema: '3',
+  const s = { selected: X, allowed: true, owner: OWNER, sub: SUB, target: null, rows: () => [], api: [], popups: [], opened: [], fetched: [], schema: '4',
     // S3-U2b: what the worklist was handed, and whether it opened its preview for it.
     cited: [], citeAccepts: true,
     respond: p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding()]) : page([])) };
@@ -667,7 +667,7 @@ function worklist(options) {
     api: (method, p) => { s.api.push([method, p]); return s.respond(p); },
     workspace: { viewerTarget: () => typeof s.target === 'function' ? s.target() : s.target },
     windows: () => s.rows(), popup: (...args) => { s.popups.push(args); }, open: uid => { s.opened.push(uid); },
-    cite: (request, origin) => { s.cited.push({ request: plain(request), origin: origin ? origin.textContent : null }); return s.citeAccepts; },
+    cite: (request, origin) => { s.cited.push({ request: plain(request), origin: origin ? origin.textContent : null, inserted: request.inserted }); return s.citeAccepts; },
   };
   const ui = sandbox.KinReadingFindings(app);
   const all = () => document.body.all();
@@ -1536,6 +1536,53 @@ test('adapter comparison: a document replaced, an account change or a withdrawn 
   for (const secret of ['비교 키', P_SOP, P_SERIES, ITEM2]) assert.equal(h.panel().textContent.includes(secret), false, secret);
 });
 
+test('adapter: Insert Selected into Report hands every selected finding over in list order, with its revision and usable source', async () => {
+  const h = worklist();
+  // Two findings: the second one's primary source is hidden, so its first usable source is cited and the preview says so.
+  const v4 = finding({ id: ID2, revision: 3, item: { schemaVersion: 4, title: '폐결절', text: '', characteristics: 'solid', lesionLocation: 'RLL', size: '8mm',
+    hidden: false, primary: 1, sources: [source(), source({ itemId: ITEM2, kind: 'key', sopUid: SOP2, label: '키 영상', values: null, revision: 2 })] },
+    links: [{ itemId: ITEM1, linkState: 'current', headRevision: 1, headHidden: false }, { itemId: ITEM2, linkState: 'hidden', headRevision: 2, headHidden: true }] });
+  h.s.respond = p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding(), v4]) : page([]));
+  await h.open();
+  const insertSelected = h.byId('reading-findings-insert-selected');
+  assert.equal(insertSelected.textContent, 'Insert Selected into Report'); assert.equal(insertSelected.disabled, true, 'nothing selected yet');
+  const box = id => h.articles().find(e => e.dataset.findingId === id).all().find(e => e.tagName === 'input' && e.dataset.kinSelectFinding === '');
+  assert.ok(h.articles().find(e => e.dataset.findingId === ID2).all().some(e => e.dataset.kinLesionSize === '' && e.textContent === 'Size (크기): 8mm'));
+  // Ticked second-first: the request is in list order all the same.
+  for (const id of [ID2, ID1]) { const b = box(id); b.checked = true; b.dispatchEvent(new h.sandbox.Event('change')); await flush(); }
+  assert.equal(insertSelected.textContent, 'Insert Selected into Report (2)'); assert.equal(insertSelected.disabled, false);
+  await h.click(insertSelected);
+  assert.equal(h.s.cited.length, 1);
+  const { request } = h.s.cited[0];
+  assert.equal(request.uid, X);
+  assert.deepEqual(request.items.map(i => [i.findingId, i.findingRevision, i.sourceIndex, i.linkState, i.headRevision]),
+    [[ID1, 1, 0, 'current', 1], [ID2, 3, 0, 'current', 1]]);
+  assert.equal(request.items[0].sourceLabel, 'Length · 길이 · 프레임 1 · r1 · 20.0 mm');
+  assert.ok(request.items[1].sourceLabel.endsWith('(대표 출처를 쓸 수 없어 이 출처로 인용)'), request.items[1].sourceLabel);
+  assert.equal(request.items[1].block, '폐결절\n위치: RLL\n크기: 8mm\n특성: solid');
+  assert.equal(request.items[1].sentence, 'RLL 폐결절, 8mm, solid.');
+  // Include Measurements: each finding's own usable image marks of this study (the hidden one is not among them).
+  assert.deepEqual(request.items[1].measurements.map(m => m.sourceIndex), [0]);
+  assert.deepEqual(request.items[0].measurements.map(m => m.sourceIndex), [0, 1]);
+  assert.deepEqual(h.s.api.filter(([method]) => method !== 'GET'), [], 'the panel writes nothing itself');
+  // An accepted insertion clears the choice: reopened, no box is ticked and the button counts nothing.
+  h.s.cited[0].inserted(); await flush();
+  await h.open();
+  assert.deepEqual([box(ID1).checked, box(ID2).checked, insertSelected.textContent, insertSelected.disabled], [false, false, 'Insert Selected into Report', true]);
+  for (const id of [ID2, ID1]) { const b = box(id); b.checked = true; b.dispatchEvent(new h.sandbox.Event('change')); await flush(); }
+  // A reload where the first finding moved to another revision drops it from the choice; it is never swapped for the new one.
+  h.s.respond = p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding({ revision: 2 }), v4]) : page([])) ;
+  await h.click(h.named(h.panel(), 'Reload Findings')[0]);
+  assert.equal(insertSelected.textContent, 'Insert Selected into Report (1)');
+  assert.equal(box(ID1).checked, false); assert.equal(box(ID2).checked, true);
+  // A hidden finding (listed with Show Hidden) cannot be selected.
+  h.s.respond = p => Promise.resolve(p.includes(encodeURIComponent(X)) ? page([finding({ hidden: true }), v4]) : page([]));
+  const hidden = h.byId('reading-findings-hidden'); hidden.checked = true; hidden.dispatchEvent(new h.sandbox.Event('change')); await flush();
+  assert.equal(h.articles().find(e => e.dataset.findingId === ID1).dataset.hidden, 'true');
+  assert.equal(box(ID1).disabled, true);
+  h.ui.end();
+});
+
 test('adapter: Insert into Report hands the assembled block and the source identity over, and writes nothing itself', async () => {
   const h = worklist();
   await h.open();
@@ -1551,6 +1598,8 @@ test('adapter: Insert into Report hands the assembled block and the source ident
     // R5: the finding's own title and text, in that order, nothing added. schemaVersion 1 has no
     // characteristics field, so there is no third block.
     block: '결절 <img src=x onerror=alert(1)>\n본문\n둘째 줄',
+    // Write as Sentence (opt-in in the preview): the stored title made a sentence, the text kept below it.
+    sentence: '결절 <img src=x onerror=alert(1)>.\n본문\n둘째 줄',
     // Include Measurements (opt-in in the preview): every image source of this study, in order, with the name and the value
     // text the source line shows - whichever source's button was pressed.
     measurements: [
@@ -1705,7 +1754,7 @@ test('S2-L target: a saved location needs a viewer whose study list is exactly t
   assert.deepEqual(command.chooseTarget({ uid: X, exact: [X], comparison: P, windows: [win()] }), { kind: 'refused', reason: 'invalid' });
   assert.ok(command.reasonText('saved-view-viewer').includes('자동으로 열지 않습니다'));
   assert.equal(command.retryable('saved-view-viewer'), true); assert.equal(command.openable('saved-view-viewer'), false);
-  assert.equal(command.SCHEMA, 3);
+  assert.equal(command.SCHEMA, 4);
 });
 
 test('S2-L pre-call: a saved location needs the exact scope and the location API, not history navigation or a loaded history', () => {
@@ -1862,7 +1911,7 @@ test('adapter locations: the list read names the record format; characteristics 
   h.s.respond = () => Promise.resolve(page([v2Finding()]));
   await h.open();
   assert.deepEqual(h.s.fetched.map(f => [f.url, f.init.method, new Headers(f.init.headers).get('X-KIN-Finding-Schema'), new Headers(f.init.headers).get('X-KIN-CSRF'), f.init.credentials ?? 'same-origin']),
-    [['/api/studies/' + X + '/findings?includeHidden=false&limit=100', 'GET', '3', null, 'same-origin']]);
+    [['/api/studies/' + X + '/findings?includeHidden=false&limit=100', 'GET', '4', null, 'same-origin']]);
   const article = h.articles()[0];
   assert.ok(article.all().some(e => e.dataset.kinCharacteristics === '' && e.textContent === 'Characteristics (병변 특성): 경계 불명확'));
   const list = () => h.articles()[0].children.find(e => e.tagName === 'ul').children;
@@ -1912,7 +1961,7 @@ test('adapter locations: an older API answer is marked, still read-only; a plain
   await h.open();
   assert.equal(h.articles().length, 1);
   assert.ok(h.byId('reading-findings-status').textContent.endsWith(links.OLD_API_TEXT));
-  h.s.schema = '3';
+  h.s.schema = '4';
   await h.click(h.named(h.panel(), 'Reload Findings')[0]);
   assert.equal(h.byId('reading-findings-status').textContent.includes(links.OLD_API_TEXT), false);
   const reads = h.s.api.length;

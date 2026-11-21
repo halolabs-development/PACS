@@ -91,9 +91,11 @@
     if (!item || typeof item !== 'object' || !uuid(item.id) || item.studyUid !== study || !count(item.revision) ||
         typeof item.hidden !== 'boolean' || !item.item || typeof item.item !== 'object') throw INVALID;
     const body = item.item, sources = body.sources, primary = body.primary === undefined ? 0 : body.primary;
-    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations; version 3 the lesion location.
+    // Version 1 is the shipped shape; version 2 adds the free-text characteristics and saved locations; version 3 the lesion location;
+    // version 4 the lesion size.
     const version = body.schemaVersion === undefined ? 1 : body.schemaVersion;
-    if (![1, 2, 3].includes(version) || (version >= 2 && !text(body.characteristics)) || (version === 3 && !text(body.lesionLocation))) throw INVALID;
+    if (![1, 2, 3, 4].includes(version) || (version >= 2 && !text(body.characteristics)) || (version >= 3 && !text(body.lesionLocation)) ||
+        (version === 4 && !text(body.size))) throw INVALID;
     if (!text(body.title) || !text(body.text) || !Array.isArray(sources) || sources.length < 1 ||
         !Number.isSafeInteger(primary) || primary < 0 || primary >= sources.length) throw INVALID;
     const serverLinks = Array.isArray(item.links) ? item.links : [];
@@ -103,7 +105,8 @@
     if (comparisons.size > 1) throw INVALID;
     return {
       id: item.id, revision: item.revision, hidden: item.hidden, title: body.title, text: body.text, primary,
-      schemaVersion: version, characteristics: version >= 2 ? body.characteristics : null, lesionLocation: version === 3 ? body.lesionLocation : null,
+      schemaVersion: version, characteristics: version >= 2 ? body.characteristics : null, lesionLocation: version >= 3 ? body.lesionLocation : null,
+      size: version === 4 ? body.size : null,
       author: text(item.authorActor) ? item.authorActor : '', updated: timeText(item.updatedAt),
       comparison: comparisons.size ? [...comparisons][0] : null,
       sources: sources.map((s, index) => {
@@ -452,7 +455,7 @@
 
   const api = { reasonText, resultText, retryable, openable, arrivalText, readinessText, describeSource, measurementOf, timeText, rowOf, listPath, createListStore,
     chooseTarget, precheck, sameIdentity, validResult, crossResult, targetOf, pinSource, samePin, createNavigator, LOCAL_REASONS: Object.freeze(Object.keys(TEXT)),
-    SCHEMA: 3, locationOf, locationText, locationResult: links.locationResult };
+    SCHEMA: 4, locationOf, locationText, locationResult: links.locationResult };
   if (typeof module === 'object' && module.exports) module.exports = api;
   root.kinFindingCommand = api;
 })(globalThis);

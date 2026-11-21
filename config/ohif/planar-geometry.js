@@ -123,9 +123,50 @@ function kinUsRegionGeometry(tags) {
   }
   if (!usable.length) return null;
   const inside = (r, [x, y]) => x >= r.x0 - .5 && x <= r.x1 + .5 && y >= r.y0 - .5 && y <= r.y1 + .5;
-  // The region that holds every point, or null.
-  const region = points => usable.find(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p))) || null;
+  // Every region that holds every point; the first of them, or null.
+  const holding = points => usable.filter(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p)));
+  const region = points => holding(points)[0] || null;
   const spacing = points => { const r = region(points); if (!r) throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); return r.spacing; };
   const length = (a, b) => { const s = spacing([a, b]); return Math.hypot((b[0] - a[0]) * s[1], (b[1] - a[1]) * s[0]); };
-  return { regions: usable, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+  return { regions: usable, holding, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
+}
+
+// The geometry a toolbar Length, Angle or Ellipse is measured with (as api/src/planar-geometry.ts manualGeometry). A Length
+// on an ultrasound image that gives no spacing, orientation or functional groups of its own, with at least one usable
+// region (kinUsRegionGeometry), is measured in the viewer's plane — rows along [0,1,0], columns along [0,0,-1], display
+// spacing 1, origin its ImagePositionPatient or else [0,0,0] for one frame and [0,0,f] for frame f of a multi-frame image
+// (the pinned OHIF combineFrameInstance) — with the deltas of the region that holds both points. Regions of different
+// deltas that both hold them, or none, give no length. Everything else is kinPlanarGeometry's.
+function kinManualGeometry(tags, frame, kind) {
+  const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
+  const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
+  if (!us) return kinPlanarGeometry(tags, frame);
+  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  const outside = () => { throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); };
+  const numbers = (v, n) => {
+    const a = typeof v === 'string' ? v.split('\\') : v;
+    if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();
+    return a.map(Number);
+  };
+  const frames = Number(tags.NumberOfFrames ?? 1);
+  if (!Number.isSafeInteger(frame) || frame < 1 || !Number.isSafeInteger(frames) || frame > frames) return fail();
+  const rows = Number(tags.Rows), columns = Number(tags.Columns);
+  if (![rows, columns].every(n => Number.isSafeInteger(n) && n > 0)) return fail();
+  const origin = tags.ImagePositionPatient !== undefined ? numbers(tags.ImagePositionPatient, 3) : [0, 0, frames > 1 ? frame : 0];
+  const orientation = [0, 1, 0, 0, 0, -1], normal = [-1, 0, 0];
+  const imagePoint = point => {
+    const d = numbers(point, 3).map((n, i) => n - origin[i]), x = d[1], y = -d[2];
+    if (Math.abs(d[0]) > .001 || x < -.501 || y < -.501 || x > columns - .499 || y > rows - .499) return fail();
+    return [x, y];
+  };
+  const measure = (kind, points) => {
+    if (kind !== 'length' || !Array.isArray(points) || points.length !== 2) return fail();
+    const p = points.map(imagePoint);
+    if (Math.hypot(p[1][0] - p[0][0], p[1][1] - p[0][1]) <= 1e-6) return fail();
+    const held = us.holding(p), s = held[0]?.spacing;
+    if (!s || held.some(r => r.spacing[0] !== s[0] || r.spacing[1] !== s[1])) return outside();
+    return Math.hypot((p[1][0] - p[0][0]) * s[1], (p[1][1] - p[0][1]) * s[0]);
+  };
+  return { origin, orientation, spacing: [1, 1], normal, imagePoint, measure, label: us.label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
+    calculator: 'kin-planar-manual-v1:us', viewerPlane: true };
 }

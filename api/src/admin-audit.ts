@@ -20,8 +20,25 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 export const AUDIT_MEMBER_ACTIONS: readonly string[] = Object.freeze([
   "admin.user.create", "admin.user.create.failed", "admin.user.approve", "admin.user.update",
   "admin.user.unapprove", "admin.user.suspend", "admin.user.activate", "admin.user.reset-password", "admin.user.reset-password.failed",
-  "admin.user.patch.failed",
+  "admin.user.patch.failed", "admin.user.identity",
 ]);
+
+/** Change Name / Email's row: its `identity` (old -> new of each changed field) is projected only from this action. */
+const IDENTITY_ACTION = "admin.user.identity";
+/** `{ email?: {from, to}, name?: {from, to} }` with at least one field and nothing else, or undefined. */
+function identityChange(value: unknown): Record<string, { from: string; to: string }> | undefined {
+  if (!plain(value)) return undefined;
+  const keys = Object.keys(value);
+  if (!keys.length || keys.some(key => key !== 'email' && key !== 'name')) return undefined;
+  const out: Record<string, { from: string; to: string }> = {};
+  for (const key of keys) {
+    const pair = value[key];
+    if (!plain(pair) || Object.keys(pair).sort().join() !== 'from,to' || typeof pair.from !== 'string' || typeof pair.to !== 'string')
+      return undefined;
+    out[key] = { from: pair.from, to: pair.to };
+  }
+  return out;
+}
 
 export type AuditFieldSource = 'detail.institutionId' | 'detail.by' | 'detail.institution' | 'target';
 
@@ -55,6 +72,7 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "institution.critical-result-inbox.save": 'target', // target is the institution whose hospital inbox the administrator set
   "institution.dicom-peer.register": 'detail.institution',  // FC-070: 상대 PACS를 자기 기관에 등록한 관리자의 기관
   "institution.dicom-peer.remove": 'detail.institution',    // FC-070: 상대 PACS를 자기 기관에서 지운 관리자의 기관
+  "gateway.support.request": 'detail.institution',  // Gateway remote support: the requesting administrator's institution
   "institution.gateway-settings.save": 'detail.institution',  // Gateway 규칙(목적지·보관·압축)을 저장한 관리자의 기관
   "query-retrieve.search": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS를 검색한 회원의 기관(조건 이름·건수만)
   "query-retrieve.retrieve": 'detail.institution',  // FC-070: 자기 기관의 상대 PACS에서 가져오기를 건 회원의 기관
@@ -264,6 +282,13 @@ function memberAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'd
   if (typeof detail.verificationOverride === 'boolean') events.verificationOverride = detail.verificationOverride;
   if (detail.mode === 'temp' || detail.mode === 'email') events.mode = detail.mode;
   if (detail.failed === true) events.failed = true;
+  if (base.action === IDENTITY_ACTION) {
+    // The old and new email are shown only to the one institution both sides recorded; any other shape hides the row.
+    const change = identityChange(detail.identity);
+    if (!change || !before.recorded || !after.recorded || before.institution === null || before.institution !== after.institution)
+      return hidden(rule, 'ambiguous_identity');
+    events.identity = change;
+  }
   const projection_by_side = new Map<string, AuditProjection>();
   for (const reader of sides)
     projection_by_side.set(reader, { ...base, rule, detail: { before: side(before, reader), after: side(after, reader), ...events } });
@@ -275,6 +300,8 @@ function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'de
   const key = source.startsWith('detail.') ? source.slice('detail.'.length) : null;
   const value = key === null ? base.target : own(detail, key) ? detail[key] : undefined;
   if (typeof value !== 'string' || !value) return hidden(rule, 'no_institution_recorded');
+  // A member's old and new email travel only on Change Name / Email's own member row: no other action projects them.
+  if (own(detail, 'identity')) { const { identity: _identity, ...rest } = detail; detail = rest; }
   // A local administrator may release a foreign writer. Attribution of the
   // action does not grant access to that writer's identity. Never alter storage.
   if (base.action === 'hold.force-release') {

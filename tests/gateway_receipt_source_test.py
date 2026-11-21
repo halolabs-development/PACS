@@ -389,7 +389,9 @@ class AgentPins(unittest.TestCase):
         # 29 -> 44: HeartbeatTests (15 cases), the operational heartbeat thread.
         # 44 -> 70: RoutingTests (including upgrade from a pre-routing queue) and LogLineTests.
         # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
-        self.assertEqual(count, 76)
+        # 76 -> 82: the DICOM receive self-check (DicomListenerCheckTests, six cases against a real DICOM SCP).
+        # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
+        self.assertEqual(count, 95)
 
 
 class ServerPins(unittest.TestCase):
