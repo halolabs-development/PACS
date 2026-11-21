@@ -9,6 +9,9 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
     const entry = JSON.parse(raw);
     window.name = typeof entry.name === 'string' ? entry.name : '';
     const expected = typeof entry.session === 'string' && entry.session ? entry.session : null;
+    // B14: the screen that opened this window. Opened from Clinician Home (the Physician mode) it is read-only for every
+    // account (kinViewerClinicianOnly); every hand-off says it again and a reload of this tab keeps the last one.
+    try { sessionStorage.setItem('kin-viewer-mode', entry.mode === 'physician' ? 'physician' : ''); } catch (_) {}
     // A fresh list action may reuse the named window and its URL. It starts a new
     // verification; a reload has no handoff and retains the previous entry instead.
     history.replaceState({ ...history.state, kinViewerSession: {

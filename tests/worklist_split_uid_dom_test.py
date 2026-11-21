@@ -331,6 +331,9 @@ class WorklistSplitUidDOMTest(unittest.TestCase):
         self.site.account = auth.CLINICIAN
         self.site.split = {auth.UID_B}
         self.page.goto(auth.ORIGIN + auth.BASE + "clinician.html")
+        # B14: Clinician Home opens on My Studies; these synthetic rows name no requesting physician.
+        self.page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+        self.page.locator("#folder-tree button", has_text="All Studies").first.click()
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         expect(self.page.locator("#list-state .state-detail")).to_have_text(TITLE + " " + NOTICE)
         self.assertNotIn(auth.UID_B, self.page.locator("body").inner_text())

@@ -3374,6 +3374,33 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertTrue(after_row.startswith(self.stack.actor("doctor") + "|"))
             self.assertEqual(self.audit_count(fixture, "report.hold"), 1)
 
+    def test_qc_flag_audit_rows_stay_with_the_marking_institution_and_ts_rows_are_unchanged(self) -> None:
+        """QC Flag (api/src/pacs/qc-flag.ts): the owner's technician marks and clears; both /audit reads (one study, all
+        studies) give those two state.patch rows to the owner only, while the tele request's state.patch row stays visible
+        to the receiving institution as before. The receiver sees the mark's reason in the state, never who made it."""
+        with self.stack.fixture() as fixture:
+            path = f"/studies/{quote(fixture.uid)}"
+            self.assert_status(self.stack.request("PATCH", path, "doctor", {"ts": "wait", "teleTo": "kin-center"}), 200)
+            seen = self.state(fixture, "tech")
+            marked = self.stack.request("PATCH", path, "tech", {"qc": {"reason": "SYN motion artefact"},
+                                                                "qcRevision": seen["qc"]["revision"], "epoch": seen["draftEpoch"]})
+            self.assert_status(marked, 200)
+            self.assertEqual((marked.body["qc"]["reason"], marked.body["qc"]["revision"]), ("SYN motion artefact", 1))
+            self.assertEqual(self.state(fixture, "kdoctor")["qc"], {**marked.body["qc"], "by": None})
+            refused = self.stack.request("PATCH", path, "ktech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
+            self.assert_status(refused, 403)
+            cleared = self.stack.request("PATCH", path, "tech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
+            self.assert_status(cleared, 200)
+            self.assertEqual(cleared.body["qc"], {"reason": None, "by": None, "at": None, "revision": 2})
+            for user, qc_rows in [("doctor", 2), ("kdoctor", 0)]:
+                for audit_path in [f"/audit?uid={quote(fixture.uid)}&take=500", "/audit?take=500"]:
+                    audited = self.stack.request("GET", audit_path, user)
+                    self.assert_status(audited, 200)
+                    patches = [json.loads(row["detail"]) for row in audited.body
+                               if row["target"] == fixture.uid and row["action"] == "state.patch"]
+                    self.assertEqual(sum(1 for detail in patches if "qc" in detail), qc_rows, (user, audit_path, patches))
+                    self.assertEqual(sum(1 for detail in patches if detail.get("ts") == "wait"), 1, (user, audit_path, patches))
+
     def test_hold_is_visible_and_enforced_across_tele_boundary_both_ways(self) -> None:
         with self.stack.fixture() as fixture:
             path = f"/studies/{quote(fixture.uid)}"

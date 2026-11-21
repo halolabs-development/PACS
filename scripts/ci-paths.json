@@ -1255,6 +1255,8 @@
       "worklist-v0/legal/**",
       "worklist-v0/hpacs-lite/product-info.js",
       "scripts/build-product-info.py",
+      "worklist-v0/hpacs-lite/physician-name.js",
+      "worklist-v0/hpacs-lite/work-mode.js",
       "config/product-info.json",
       "worklist-v0/hpacs-lite/product-info-data.js",
       "scripts/ops_soup_vulns.py",
@@ -1968,6 +1970,7 @@
       "tests/unavailable_controls_dom_test.py",
       "tests/row_menu_rights_dom_test.py",
       "tests/unsaved_study_writes_dom_test.py",
+      "tests/technician_qc_dose_dom_test.py",
       "config/ohif.js",
       "config/ohif/configuration.js"
     ],

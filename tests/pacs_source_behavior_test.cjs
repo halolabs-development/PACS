@@ -260,19 +260,28 @@ test('U0B-CLINICIAN-VIEWER current items and revisions use the radiologist read 
   }
 });
 
-test('U0B-CLINICIAN-PREVIEW reads non-final text with an access target and refuses P and other institutions', async () => {
+test('U0B-CLINICIAN-PREVIEW withholds another physician\'s Save, reads approved text with an access target, and refuses P and other institutions', async () => {
   const { ReportPreviewController } = require('/app/dist/report-preview.controller');
   let state = { uid: UID, institutionId: 'syn-a', rs: 'T', preDoc: 'other-author', preReviewer: 'other-reviewer' };
-  const report = { version: 2, findings: 'SYN non-final body', conclusion: '', recommendation: '' };
+  // The head is another radiologist's Save (the report state table: its writer's alone, for a clinician as for another radiologist).
+  const report = { version: 2, findings: 'SYN non-final body', conclusion: '', recommendation: '', updatedBy: 'other-author', updatedBySub: 'sub-other-author' };
+  let head = { version: 2, action: 'save', author: 'other-author', authorSub: 'sub-other-author' };
   const db = { studyGroupMember:{findMany:async()=>[]}, studyState: { findUnique: async () => state }, report: { findUnique: async () => report },
-    reportVersion: { findUnique: async () => ({ version: 2, action: 'save', author: 'other-author' }) },
+    reportVersion: { findUnique: async () => head },
     viewerItem: { findMany: async () => [] } };
   db.$transaction = async fn => fn(db);
   const controller = new ReportPreviewController(db, { reportPreviewStudy: async () => ({}) }, { prepare:async()=>{},prepareSourceIdentity:async()=>{},require: async () => {}, assertIdentifiedSource:()=>({sourcePatientId:'SYN-P',sourceInstitution:null}) }, {});
   const req = caller(['clinician']);
+  const withheld = await controller.read(UID, req), shown = readBody(withheld);
+  assert.deepEqual([shown.report.rs, shown.report.findings, shown.report.bodyLock], ['T', '', 'in-progress']);
+  assert.equal(withheld.json.includes(report.findings), false, 'the saved text is not in the answer');
+  assert.equal(shown.canPreviewEditor, false);
+  assert.equal(withheld.sources.some(s => s.target.kind === 'report-head'), false, 'no report text was provided');
+  // approved: the clinician reads it, with its access target
+  state = { ...state, rs: 'A' };
+  head = { version: 2, action: 'approve', author: 'other-author', authorSub: 'sub-other-author' };
   const selected = await controller.read(UID, req);
   assert.equal(readBody(selected).report.findings, report.findings);
-  assert.equal(readBody(selected).canPreviewEditor, false);
   assert.equal(selected.sources.find(s => s.target.kind === 'report-head').target.versionId.value, '2');
   state = { ...state, rs: 'P' };
   await refused(controller.read(UID, req), 403);

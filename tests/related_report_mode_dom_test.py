@@ -2431,7 +2431,8 @@ class RelatedModePage(unittest.TestCase):
         original_api = self.site.api
 
         def api(route, request, method, path, query):
-            if outage["active"] and method == "GET" and path == "/api/bootstrap":
+            # The connection check two failed polls ask (the member's access policy) is unanswered in the outage too.
+            if outage["active"] and method == "GET" and path in ("/api/bootstrap", "/api/study-access"):
                 outage["bootstrap_refused"] += 1
                 return self.site.answer(route, 503, {"code": "SYN_OUTAGE"})
             return original_api(route, request, method, path, query)

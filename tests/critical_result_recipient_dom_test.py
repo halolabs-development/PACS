@@ -122,7 +122,7 @@ def lf_text(path):
 
 MAIN = read_page_source(HPACS / "main.html")
 INBOX_JS = lf_text(HPACS / INBOX)
-HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
+HOME_FILES = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", INBOX)}
 ORIGIN = "https://recipient.test"
 BASE = "/worklist/hpacs-lite/"
 
@@ -739,6 +739,13 @@ def differences(want, seen, area):
     return out
 
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
+
+
 class CriticalResultRecipientDOMTest(unittest.TestCase):
     # A failing oracle comparison shows every difference (which forbidden value showed where), not a cut diff.
     maxDiff = None
@@ -1064,6 +1071,7 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
             self.rows = rows
         self.page.goto(ORIGIN + BASE + "clinician.html")
         if wait:
+            all_studies(self.page)
             expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
             self.wait_until(lambda: self.requests("list"), "the Critical Results read")
             self.reads_settled()
@@ -1812,6 +1820,7 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
         self.assertEqual(ORIGIN + BASE + "index.html", self.page.url)
         self.page.get_by_role("button", name="HALO PACS 계정으로 로그인").click()
         self.page.wait_for_url(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         self.wait_until(lambda: self.requests("list"), "the Critical Results read")
         self.reads_settled()
@@ -2531,6 +2540,11 @@ class CriticalResultRecipientDOMTest(unittest.TestCase):
         self.page.keyboard.press("Tab")
         while len(stops) < 40 and self.page.evaluate(FOCUS, self.root)["inside"]:
             stops.append(self.page.evaluate(FOCUS, self.root)["text"])
+            self.page.keyboard.press("Tab")
+        # B14: then the Folders column left of the list (the folder tree's own buttons).
+        for _ in range(40):
+            if not self.page.evaluate("() => !!document.activeElement.closest('#folder-tree')"):
+                break
             self.page.keyboard.press("Tab")
         self.assertEqual("refresh", self.page.evaluate("() => document.activeElement.id"))
         for name in ("Show All", "Refresh", "Acknowledge", "Check Again", "Open Replacement"):

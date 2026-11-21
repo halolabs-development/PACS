@@ -17,6 +17,7 @@ import type { Caller, PacsAccess } from './access';
 import type { PacsInstitutions } from './institutions';
 import type { PacsAudit } from './audit';
 import { resolveExamScope, readableExamRecord, prepareExamRead, requireUngroupedSource, hasExamReference } from '../exam-merge.service';
+import { isQcCommand, qcCommand, qcChange } from './qc-flag';
 
 /**
  * Why an Unmatch was done (the Unmatch… window's Reason). Absent, null or blank is no reason (the right-click Unmatch);
@@ -29,7 +30,7 @@ export function unmatchReason(value: unknown): string | null {
   return value.trim() || null;
 }
 
-const TECHNICIAN_FIELDS = ['ss', 'ward', 'reqHosp', 'em', 'ov'];
+const TECHNICIAN_FIELDS = ['ss', 'ward', 'reqHosp', 'em', 'ov', 'qc'];
 
 /**
  * PATCH로 바꿀 수 있는 필드.
@@ -80,7 +81,9 @@ export class PacsStudyState {
 
   /** 검사 상태 부분 수정 (RS 토글, Verify, Switch EM/ReqHosp, TS 전이 …) */
   async patchState(uid: string, body: any, c: Caller, workflow?: ClinicalWorkflow) {
-    const purpose = body.ts === undefined ? 'source' as const : 'current' as const;
+    // QC Flag (pacs/qc-flag.ts): a command of its own, judged on the listed row (the current exam), never mixed with other changes.
+    const qc = isQcCommand(body) ? qcCommand(body) : null;
+    const purpose = body.ts === undefined && !qc ? 'source' as const : 'current' as const;
     await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     const prepared = await resolveExamScope(this.prisma,this.studyAccess,c,{uid,purpose,phase:'prepare'});
     return this.access.scopeWrite(uid,c,async(tx,audit)=>{
@@ -122,6 +125,17 @@ export class PacsStudyState {
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
         `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 다룰 수 있습니다.`);
+
+    if (qc) {
+      // Judged on the row read under the write's lock: its generation and QC revision, then one update and one audit row.
+      const change = qcChange(prev, qc, c, new Date());
+      if (!change) return this.response(tx, prev, c);   // clearing a row that is not flagged: as it is, nothing written
+      const saved = await tx.studyState.update({ where: { uid }, data: change });
+      const row = await audit(c.actor, 'state.patch', uid,
+        { qc: saved.qcReason === null ? null : { reason: saved.qcReason }, qcRevision: saved.qcRevision, by: me });
+      await workflow?.record(studyChange('PATCH studies/:uid', saved, 'study-metadata', row));
+      return this.response(tx, saved, c);
+    }
 
     const data: any = {};
     for (const k of STATE_FIELDS) if (body[k] !== undefined) data[k] = body[k];
@@ -388,6 +402,10 @@ export class PacsStudyState {
       throw new ConflictException('표시 이력이 있는 검사는 삭제할 수 없습니다');
     if (await tx.techNoteRevision.findFirst({ where: { studyUid: uid }, select: { version: true } }))
       throw new ConflictException('Tech 메모 이력이 있는 검사는 삭제할 수 없습니다');
+    // QC Flag history (a mark, even one cleared since) is kept with its row: a study made again under this UID would start
+    // its revision at 0 and an earlier screen's answer could pass for a newer one.
+    if ((prev.qcRevision ?? 0) > 0)
+      throw new ConflictException({ code: 'STUDY_HAS_QC_HISTORY', message: 'QC 표시 이력이 있는 검사는 삭제할 수 없습니다' });
     if (await tx.viewerJob.findFirst({ where: { studies: { has: uid } }, select: { id: true } }))
       throw new ConflictException('저장한 비교 작업에서 참조하는 검사는 삭제할 수 없습니다');
     // S5-U4a: 질문 스레드와 그 영수증은 검사에 묶인 기록이라 함께 지우지 않는다(FK Restrict). 처리되지 않은 FK 오류

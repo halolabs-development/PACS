@@ -1492,6 +1492,58 @@ test('ordinary ended draft records do not prevent study deletion',async()=>{
  assert.deepEqual(await unit.removeState(A,tech),{ok:true});assert.equal(deleted,true);
 });
 
+test('QC Flag across Merge and Split: the base keeps its mark, a mark that would leave the list refuses, the second part starts unmarked', async () => {
+  const { PacsStudyState } = require('/app/dist/pacs/study-state');
+  const { PacsAccess } = require('/app/dist/pacs/access');
+  const unitOf = f => {
+    f.prisma.report = { findUnique: async () => null };
+    f.prisma.reportDraft.findUnique = async () => null;
+    f.prisma.reportDraft.findFirst = async () => null;
+    const query = f.prisma.$queryRaw;
+    f.prisma.$queryRaw = async (strings, ...values) => strings.join('').includes('FOR NO KEY UPDATE')
+      ? [f.db.states.get(values[0])] : query(strings, ...values);
+    return new PacsStudyState(f.prisma, f.access, new PacsAccess(f.prisma, f.access), { institutions: [] }, {});
+  };
+  const qc = (f, uid, reason) => ({ qc: reason === null ? null : { reason }, qcRevision: f.db.states.get(uid).qcRevision ?? 0,
+    epoch: f.db.states.get(uid).draftEpoch });
+  // Merge: a study other than the base with an unresolved mark is refused and named; nothing is grouped.
+  const flagged = (uid, extra = {}) => state(uid, uid === B ? { qcReason: 'SYN blur', qcBy: 'syn-tech', qcAt: new Date(), qcRevision: 1, ...extra } : {});
+  const f = fixture({ states: [A, B, C, D, E, F].map(uid => flagged(uid)) });
+  await assert.rejects(f.svc.merge(tech, { baseUid: A, uids: [A, B] }),
+    e => status(e) === 409 && body(e).code === EXAM_GROUP_REFUSED && rulesOf(e).some(([uid, rule]) => uid === B && rule === 'qc-flagged'));
+  assert.deepEqual([f.db.groups.length, f.db.audits.length], [0, 0]);
+  // The marked study as the base merges and keeps its mark and revision; the hidden original refuses a QC write.
+  const made = await f.svc.merge(tech, { baseUid: B, uids: [A, B] });
+  assert.deepEqual([f.db.states.get(B).qcReason, f.db.states.get(B).qcRevision], ['SYN blur', 1]);
+  const unit = unitOf(f);
+  await assert.rejects(unit.patchState(A, qc(f, A, 'SYN hidden'), tech), e => status(e) === 409 && body(e).code === STUDY_MERGED);
+  assert.equal(f.db.states.get(A).qcReason ?? null, null);
+  // the merged exam's own row takes the command (the listed exam), with the epoch the merge gave it
+  const cleared = await unit.patchState(B, qc(f, B, null), tech);
+  assert.deepEqual([cleared.qc.reason, cleared.qc.revision], [null, 2]);
+  await f.svc.dissolve(tech, made.group.id);
+
+  // Split: the first part keeps its mark; the second part is its own row, unmarked at revision 0.
+  const s = fixture({ states: [A, B, C, D, E, F].map(uid => uid === A ? state(A, { qcReason: 'SYN first', qcRevision: 3 }) : state(uid)) });
+  const out = await s.svc.split(tech, { uid: A, seriesUids: ['2.25.701'] });
+  const second = out.group.members.find(m => m.part === 1).logicalUid;
+  assert.deepEqual([s.db.states.get(A).qcReason, s.db.states.get(A).qcRevision], ['SYN first', 3]);
+  assert.deepEqual([s.db.states.get(second).qcReason ?? null, s.db.states.get(second).qcRevision ?? 0], [null, 0]);
+  const splitUnit = unitOf(s);
+  const marked = await splitUnit.patchState(second, qc(s, second, 'SYN second part'), tech);
+  assert.deepEqual([marked.qc.reason, marked.qc.revision], ['SYN second part', 1]);
+  assert.equal(s.db.states.get(A).qcReason, 'SYN first', 'the second part\'s mark is its own');
+  // Unsplit would end the marked second part's row in the list: refused, naming it; the Checks list says so.
+  await assert.rejects(s.svc.dissolve(tech, out.group.id), e => rulesOf(e).some(([uid, rule]) => uid === second && rule === 'qc-flagged'));
+  const checks = (await s.svc.group(tech, A)).checks;
+  assert.ok(checks.some(c => c.rule === 'qc-flagged' && !c.ok && c.uids.includes(second)), JSON.stringify(checks));
+  await splitUnit.patchState(second, qc(s, second, null), tech);
+  assert.ok(!(await s.svc.group(tech, A)).checks.some(c => c.rule === 'qc-flagged'), 'the rule is listed only when it refuses');
+  await s.svc.dissolve(tech, out.group.id);
+  // the retired second part takes no later QC write
+  await assert.rejects(splitUnit.patchState(second, qc(s, second, 'SYN late'), tech), e => status(e) === 409);
+});
+
 test('a selected exam with an inconsistent original is omitted only from display metadata', () => {
   const { viewerStudyDisplay } = require('/app/dist/pacs/viewer-study-display');
   const sources = [A, B].map(studyUid => ({ studyUid, series: { mode: 'all', uids: [] } }));

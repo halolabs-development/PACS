@@ -16,6 +16,13 @@ from invariants_live import psql, ROOT
 from document_session import document_request
 
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies (Requesting Physician = the account's name). These synthetic studies name no
+    requesting physician, so the case reads All Studies."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)", timeout=30000)
+    page.locator('#folder-tree button', has_text='All Studies').first.click()
+
+
 class PatientlessHeldE2E(HeldSourceE2E):
     def clinician_page(self, owner):
         self.stack.create_test_identity('clinician', ['clinician'], owner)
@@ -28,6 +35,7 @@ class PatientlessHeldE2E(HeldSourceE2E):
         page.locator('#password').fill(self.stack.passwords['clinician'])
         page.locator('#kc-login').click()
         page.wait_for_url('**/clinician.html')
+        all_studies(page)
         return page
 
     def test_patientless_hold_and_original_correction(self):

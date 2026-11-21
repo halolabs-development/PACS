@@ -715,3 +715,23 @@ test('TEST-WS3-LIFECYCLE: caller data stays intact and destroy removes the owned
   api.destroy(); api.destroy(); assert.equal(host.children.length,0);
   assert.throws(() => api.select('all')); assert.throws(() => api.update({rows:[]}));
 });
+
+test('TEST-WS3-FIXED-FOLDER: a page folder sits after All Studies, counts and filters, and never widens on an unknown match', () => {
+  const rows = [{ uid: 'a', modality: 'CT', mine: true }, { uid: 'b', modality: 'MR', mine: false }, { uid: 'c', modality: 'CT', mine: true }];
+  const folders = [{ id: 'my-studies', name: 'My Studies', matches: row => row.mine === undefined ? null : row.mine }];
+  const { host, api, selections } = setup({ rows, loadState: 'complete', folders });
+  const top = host.children[0].children[0].children[0];
+  assert.deepEqual(top.children.slice(0, 2).map(li => li.children[0].textContent), ['All Studies (3)', 'My Studies (2)']);
+  button(host, 'My Studies (2)').click();
+  assert.equal(api.snapshot().selectedId, 'folder:my-studies');
+  assert.deepEqual(api.filter(rows).map(row => row.uid), ['a', 'c']);
+  assert.equal(selections.at(-1)[0].kind, 'folder');
+  api.update({ rows: [...rows, { uid: 'd', modality: 'CT' }] });
+  assert.equal(get(api, 'folder:my-studies').count, '—');
+  assert.deepEqual(api.filter([...rows, { uid: 'd', modality: 'CT' }]).map(row => row.uid), ['a', 'c']);
+  api.select('all');
+  assert.equal(api.filter(rows).length, 3);
+  assert.throws(() => api.add({ id: 's1', name: 'my studies', searchId: 'ct' }), /이미 사용 중/);
+  assert.throws(() => setup({ folders: [{ id: 'x', name: 'X' }] }), /형식/);
+  assert.throws(() => setup({ folders: [{ id: 'x', name: 'X', matches() {} }, { id: 'x', name: 'Y', matches() {} }] }), /형식/);
+});

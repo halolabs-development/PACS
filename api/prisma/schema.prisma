@@ -281,6 +281,13 @@ model StudyState {
   rs        String   @default("W")            // Reading Status: W(대기) T(임시저장) A(승인) D(보존 기간 만료로 파기)
   holdReason String?
   ss        String   @default("Verified")     // Study Status: Verified / Unverified (기사 확인)
+  /// QC Flag (기사의 영상 품질 표시). qcReason이 있으면 표시된 것이고, 지우면 qcReason·qcBy·qcAt이 함께 NULL이 된다.
+  /// qcRevision은 표시·사유 바꿈·지움마다 1씩 오르고 내려가지 않는다(이력은 AuditLog state.patch). SS·RS·오더·수신 누락과
+  /// 섞지 않는다 — 값은 PATCH studies/:uid {qc} 한 길(pacs/qc-flag.ts)로만 바뀐다.
+  qcReason  String?  @db.VarChar(500)
+  qcBy      String?
+  qcAt      DateTime?
+  qcRevision Int     @default(0)
   em        String   @default("N")            // Emergency: E / N
   ts        String   @default("none")         // Tele Status: none→wait→sending→sent→inReading→completed
   matched   String   @default("U")            // RIS 오더 매칭: M / U

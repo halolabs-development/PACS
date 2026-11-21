@@ -23,6 +23,9 @@ from playwright.sync_api import expect
 import test_worklist as base
 from invariants_live import Fixture
 
+# The end mark of a counted request window: a path nothing serves, refused by the test's own route before it leaves.
+BARRIER = "/__selection-barrier"
+
 
 def synthetic_ct(stack, patient, label, date, slices=16, body_part=None):
     """D00's asymmetric 256px phantom, with real StudyDate before C-STORE."""
@@ -157,14 +160,39 @@ class PriorSelectionE2E(base.WorklistE2E):
             page.wait_for_function("() => { const p = document.querySelector('#clinical-context'), s = document.querySelector("
                                    "'#clinical-context-status'); return !p || p.hidden || (!!s && s.textContent !== 'Loading…'); }",
                                    timeout=15000)
-            requests = []
-            listener = lambda request: requests.append(request.url)
-            page.on("request", listener)
+            # The worklist's critical-result inbox reads its received list on a 60 s timer, which may fall inside the window
+            # below. Its own Refresh read is started first and held: while one list read is out the timer starts no other,
+            # so every request in the window is still counted and must be none. (Refresh is disabled, or the inbox hidden,
+            # exactly when its timer reads nothing either.)
+            inbox, received = [], re.compile(r"/api/critical-results\?view=received")
+            page.route(received, lambda route: inbox.append(route))
+            page.route("**" + BARRIER, lambda route: route.abort())
             try:
-                self.assertEqual(page.evaluate("uid => autoPrior(uid)", selected.uid), expected[1].uid if len(expected) == 2 else None)
+                if page.evaluate("""() => { const p = document.getElementById('cvr-inbox-p'), b = document.getElementById('cvr-inbox-refresh');
+                                       if (!p || p.hidden || !b || b.disabled) return false; b.click(); return true; }"""):
+                    deadline = time.monotonic() + 10
+                    while not inbox and time.monotonic() < deadline: page.wait_for_timeout(100)
+                    self.assertTrue(inbox, "the inbox's own list read is out")
+                requests = []
+                listener = lambda request: requests.append(request.url)
+                page.on("request", listener)
+                try:
+                    self.assertEqual(page.evaluate("uid => autoPrior(uid)", selected.uid), expected[1].uid if len(expected) == 2 else None)
+                    # A request autoPrior started may be reported after it returned: one later request of the page's own
+                    # (refused before it leaves) marks the end, and the window stays open until that one is seen.
+                    page.evaluate("b => { fetch(b, {cache: 'no-store'}).catch(() => {}); }", BARRIER)
+                    deadline = time.monotonic() + 10
+                    while BARRIER not in "".join(requests) and time.monotonic() < deadline: page.wait_for_timeout(20)
+                    self.assertIn(BARRIER, "".join(requests), "the window's end mark was seen")
+                finally:
+                    page.remove_listener("request", listener)
             finally:
-                page.remove_listener("request", listener)
-            self.assertEqual(requests, [], "Selecting from already visible studies must not fetch")
+                page.unroute(received)
+                page.unroute("**" + BARRIER)
+                for route in inbox:
+                    try: route.continue_()
+                    except Exception: pass  # The page that asked is gone.
+            self.assertEqual([url for url in requests if BARRIER not in url], [], "Selecting from already visible studies must not fetch")
             self.viewer(page, row, expected)
             self.assertEqual(self.state(selected)["rs"], "W")
             self.assertEqual(self.versions(selected), [])

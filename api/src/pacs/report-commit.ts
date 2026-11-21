@@ -81,7 +81,8 @@ export class PacsReportCommit {
     const wanted = action === 'preliminary' ? String(body.reviewer ?? '').trim() : '';
     let candidate: { sub: string } | null = null;
 
-    // CD-09-P: the work this commit ends by its own signed result, or by the author's Reset that keeps none of it.
+    // CD-09-P: the work this commit ends by its own signed result, or by the author's Reset that keeps none of it (a Reset
+    // of another reader's in-progress reading ends none - FC-040, keepCallerDraft).
     let ended: EndedWork | null = null;
     try {
       // The answer follows the commit judgement of the end (settleEnding), never the transaction's promise alone.
@@ -518,9 +519,13 @@ export class PacsReportCommit {
         // 이 확정보다 앞서 보낸 초안 쓰기가 뒤늦게 닿아 확정 뒤에 초안을 만들지 못한다.
         if ((action === 'approve' || action === 'amend' || action === 'addendum') && signature)
           ended = await this.reportDraft.endWork(tx, mine, c, { trigger: 'result-version-signed', action: action as 'approve' | 'amend' | 'addendum', signed: signature });
-        else if (action === 'reset')
+        else if (action === 'reset' && !takeover)
           ended = await this.reportDraft.endWork(tx, mine, c, { trigger: 'explicit-discard' });
-        const cleared = await this.reportDraft.storeDraft(tx, uid, c, mine, null);
+        // FC-040: taking another reader's in-progress reading back to Unread is not cancelling my own - my draft stays mine,
+        // on the version this Reset made (keepCallerDraft). Every other commit ends it here.
+        const cleared = action === 'reset' && takeover
+          ? await this.reportDraft.keepCallerDraft(tx, uid, c, mine, savedVersion.version)
+          : await this.reportDraft.storeDraft(tx, uid, c, mine, null);
 
         /**
          * 감사 행은 **같은 트랜잭션에서** 쓴다(U5S-REQ-03). 밖에서 쓰면 확정은 남고 감사만 실패한 판이 생긴다 —
