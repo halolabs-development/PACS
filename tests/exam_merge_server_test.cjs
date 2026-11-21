@@ -513,6 +513,8 @@ function reportingFixture(grouped, alteration) {
     create: async ({ data }) => { versions.push(clone(data)); return data; },
     createMany: async ({ data }) => { versions.push(...clone(data)); return { count: data.length }; },
   };
+  // The member name a version is written under (none here: the version keeps NULL).
+  f.prisma.memberRights ??= { findMany: async () => [] };
   const access = new StudyAccessService(f.prisma, { studyIdentityResources: async uid => {
     if (uid === A && alteration === 'missing') return [];
     return [qido(uid, 'SYN', 2, 1, uid === A && alteration === 'patient' ? '' : 'SYN-P1')];

@@ -662,6 +662,9 @@ model ReportVersion {
   /// The account (sub) whose text this version is (a Reset or release copy: the writer of the copied text). `author` keeps
   /// the login email as it was; whose version it is is judged by this.
   authorSub      String?
+  /// The member name the version was written under (report-commit.ts), kept so a later rename does not change who a signed
+  /// version shows; NULL on a version written before it was kept (shown by the account's current name). Not signed.
+  authorName     String?
   /// 확정 시 1회 기록되고 이후 불변이다. 머리 판에서 이월된 건은 원래 작성자·시각을
   /// 바이트 그대로 유지한다 — 이월은 새 증언이 아니라 같은 증언의 계속이기 때문이다.
   citations      Json?

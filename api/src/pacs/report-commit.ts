@@ -4,7 +4,7 @@
  */
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
 import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
-import { rightsAllow, lockMemberRights, memberNames } from '../member-rights';
+import { rightsAllow, lockMemberRights, memberNames, versionWriterName } from '../member-rights';
 import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, ServiceUnavailableException } from '@nestjs/common';
 import type { NativeReportSigning } from '../emr-report/native-signing';
@@ -24,12 +24,15 @@ import { nativeReportScope } from '../emr-report/native-snapshot';
 import { sameAccount, shownActor, draftOf, PRIVATE_WRITER } from '../owner-identity';
 
 /**
- * The approved head a stale-draft answer shows names its writer by the member's name on the account (member-rights.ts
- * memberNames) - only when that writer is shown as is (shownActor). Nothing else changes.
+ * The approved head a stale-draft answer shows names its writer by the name that head version was written under
+ * (member-rights.ts versionWriterName) - only when that writer is shown as is (shownActor). Nothing else changes.
  */
-async function signerName(tx: any, cur: { updatedBy?: string | null; updatedBySub?: string | null }, c: Caller): Promise<{ updatedByName?: string }> {
+async function signerName(tx: any, uid: string, cur: { version?: number; updatedBy?: string | null; updatedBySub?: string | null },
+  c: Caller): Promise<{ updatedByName?: string }> {
   if (!cur.updatedBy || !cur.updatedBySub || shownActor(cur.updatedBy, cur.updatedBySub, c) === PRIVATE_WRITER) return {};
-  const name = (await memberNames(tx, [cur.updatedBySub])).get(cur.updatedBySub);
+  const head = typeof cur.version === 'number' ? await tx.reportVersion.findUnique({
+    where: { uid_version: { uid, version: cur.version } }, select: { authorName: true } }) : null;
+  const name = versionWriterName(head);
   return name ? { updatedByName: name } : {};
 }
 export class PacsReportCommit {
@@ -343,7 +346,7 @@ export class PacsReportCommit {
               `v${cur.version}입니다 — 승인본을 확인한 뒤 기준을 다시 잡아 주세요.`,
             head: {
               version: cur.version, updatedBy: cur.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : null,
-              ...await signerName(tx, cur, c),
+              ...await signerName(tx, uid, cur, c),
               findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             },
             draftBaseVersion: draft.baseVersion,
@@ -482,11 +485,14 @@ export class PacsReportCommit {
           update: { ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId } });
         // 인용은 **`ReportVersion` 행에만** 쓴다. `Report`에는 칸이 없다 — 거울을 두면
         // 같은 사실이 두 곳에서 엇갈릴 수 있고, 그 순간 어느 쪽이 기록인지 말할 수 없다.
+        // The member name this version is written under stays with it (member-rights.ts versionWriterName), so a later rename
+        // does not change who a signed version names. Not signed (image-report.ts signedReportRow).
+        const authorName = (await memberNames(tx, [c.sub])).get(c.sub) ?? null;
         const savedVersion = await tx.reportVersion.create({ data: {
           uid, version, action, ...content, citations,
           ...(structured.length ? { structured } : {}),
           ...(drawings.length ? { drawings } : {}),
-          reason, author: c.actor, authorSub: c.sub, ...nativeReportScope(scope.groupId, scope.hasMembership) } });
+          reason, author: c.actor, authorSub: c.sub, authorName, ...nativeReportScope(scope.groupId, scope.hasMembership) } });
         let signature = null;
         // An empty reset before any report exists is only a state change. C2
         // cancellation refers to a real previous version; never invent one.

@@ -1527,14 +1527,58 @@ test('SPLIT-16b a signer is shown by the member name on the account; the approva
   assert.equal(plain.state.repDoc, RAD_B.actor.split('@')[0]);
   assert.equal(w.db.rows('studyState').find(r => r.uid === s.uid).repDoc, 'SYN Lee Second');
 
-  // A writer the history does not show (a discarded copy of someone's private draft) is not named either.
+  // A writer the history does not show (a discarded copy of someone's private draft) is not named either, even by a name
+  // kept on the row.
   const hidden = w.study();
   w.db.seed('reportVersion', { uid: hidden.uid, version: 1, action: 'discarded', findings: 'SYN private', conclusion: '', recommendation: '',
-    author: RAD_A2.actor, authorSub: RAD_A2.sub, reason: '관리자 강제 초안 해제' });
+    author: RAD_A2.actor, authorSub: RAD_A2.sub, authorName: 'SYN Lee Second', reason: '관리자 강제 초안 해제' });
   const [copy] = readBody(await w.evidence.versions(hidden.uid, RAD_A));
   assert.notEqual(copy.author, RAD_A2.actor);
   assert.equal(copy.authorName, undefined);
   assert.equal(readBody(await w.evidence.versions(hidden.uid, RAD_A2))[0].authorName, 'SYN Lee Second');
+});
+
+test('SPLIT-16c after the member is renamed, a version already signed keeps the name it was signed with; a new one is signed with the new name', async () => {
+  const w = world();
+  await w.boot();
+  w.db.seed('memberRights', { sub: RAD_A.sub, username: RAD_A.actor.split('@')[0], email: RAD_A.actor, name: 'SYN Kim Reader',
+    emailVerified: true, approved: true, suspended: false, institution: RAD_A.institution, roles: RAD_A.roles, version: 1 });
+  const rename = name => { w.db.rows('memberRights').find(r => r.sub === RAD_A.sub).name = name; };
+  const s = w.study();
+  const epoch = s.draftEpoch;
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 0, 0, { findings: 'SYN approved' }), RAD_A, null);
+  // The administrator changes the member's name (the member row is what the rename writes).
+  rename('SYN Kim Renamed');
+  const before = readBody(await w.evidence.versions(s.uid, RAD_A));
+  assert.deepEqual(before.map(v => [v.version, v.authorName]), [[1, 'SYN Kim Reader']], 'the signed version keeps its signing name');
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report.signedBy, 'SYN Kim Reader');
+  // A version signed after the rename carries the new name; the first keeps the old one.
+  const revision = () => w.db.rows('reportDraft').find(d => d.uid === s.uid && d.authorSub === RAD_A.sub)?.revision ?? 0;
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', epoch, revision(), 1, { findings: 'SYN approved + more' }), RAD_A, null);
+  assert.equal(w.db.rows('studyState').find(r => r.uid === s.uid).repDoc, 'SYN Kim Renamed');
+  rename('SYN Kim Third');
+  assert.deepEqual(readBody(await w.evidence.versions(s.uid, RAD_A)).map(v => [v.version, v.authorName]),
+    [[2, 'SYN Kim Renamed'], [1, 'SYN Kim Reader']]);
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report.signedBy, 'SYN Kim Renamed');
+  assert.equal(readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '1')).report.signedBy, 'SYN Kim Reader');
+  // A stale draft's answer names the approved head by the name it was signed with too.
+  const draft = w.db.rows('reportDraft').find(d => d.uid === s.uid && d.authorSub === RAD_A.sub);
+  Object.assign(draft, { present: true, baseVersion: 1, findings: 'SYN stale' });
+  const stale = await w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', epoch, draft.revision, 2, { findings: 'SYN stale' }), RAD_A, null)
+    .then(() => null, error => error);
+  assert.equal(stale?.getResponse?.().code, 'REPORT_DRAFT_STALE', String(stale?.message));
+  assert.equal(stale.getResponse().head.updatedByName, 'SYN Kim Renamed');
+  // A version signed before signing names were kept has none of its own: it names none (the screen shows its login), never
+  // the account's current name; the clinician read names its login before the @.
+  const legacy = w.study({ rs: 'A', repDoc: 'syn-rad-a', confirm: '2026-11-17' });
+  w.db.seed('report', { uid: legacy.uid, findings: 'SYN old', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor, updatedBySub: RAD_A.sub });
+  w.db.seed('reportVersion', { uid: legacy.uid, version: 1, action: 'approve', findings: 'SYN old', conclusion: '', recommendation: '',
+    author: RAD_A.actor, authorSub: RAD_A.sub, at: new Date('2026-11-17T18:05:00.000Z') });
+  const [old] = readBody(await w.evidence.versions(legacy.uid, RAD_A));
+  assert.deepEqual([old.author, old.authorName], [RAD_A.actor, undefined]);
+  assert.equal(w.db.rows('reportVersion').find(v => v.uid === s.uid && v.version === 1).authorName, 'SYN Kim Reader',
+    'the name is kept on the version row itself');
 });
 
 // ── SPLIT-17 Tech Note attempts (M19, M20) ──

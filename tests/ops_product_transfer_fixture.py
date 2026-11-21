@@ -154,7 +154,8 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261120120000_study_referred_at/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
               'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
-              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql']
+              'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql',
+              'api/prisma/migrations/20261121160000_report_version_signer_name/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -346,6 +347,8 @@ def expected_rows(uid):
     rows['ReportVersion'] = [dict(id=number, uid=uid, version=number, action='approve' if number == 1 else 'addendum',
         findings='SYNTHETIC history '+str(number), conclusion='', recommendation='', reason=None,
         author='SYNTHETIC-reader', authorSub='SYNTHETIC-reader-sub', citations=citation if number == 2 else None,
+        # The member name each version was written under: a real value on the addendum, NULL on the older approval.
+        authorName='SYNTHETIC Reader' if number == 2 else None,
         structured=structured if number == 2 else None,
         drawings=[dict(id=DRAWING_ID, background='breast', source=None, sha256='d' * 64)] if number == 2 else None, at=STAMP,
         groupId=EXAM_GROUP if number == 2 else None, snapshotFormat=number) for number in (1, 2)]
