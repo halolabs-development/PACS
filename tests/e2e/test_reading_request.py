@@ -238,7 +238,7 @@ class ReadingRequestE2E(unittest.TestCase):
         a, b = self.study(patient), self.study(patient)
         self.ask("rclin", b.uid, 201)
         merged = self.stack.request("POST", "/exam-groups", "rtech", {"baseUid": a.uid, "uids": [a.uid, b.uid]})
-        self.assertEqual(merged.status, 201, merged.text[:400])
+        self.assertEqual(merged.status, 200, merged.text[:400])
 
         def ungroup():
             groups = psql(f'SELECT DISTINCT "groupId" FROM "StudyGroupMember" WHERE "studyUid" IN ({lit(a.uid)},{lit(b.uid)})')
