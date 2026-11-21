@@ -62,7 +62,7 @@ function kinCreateSessionBoundary() {
         const script = document.createElement('script');
         script.src = '/worklist/hpacs-lite/' + name;
         script.onload = resolve;
-        script.onerror = () => reject(new Error('뷰어 세션 연결을 불러오지 못했습니다.'));
+        script.onerror = () => reject(kinError("뷰어 세션 연결을 불러오지 못했습니다."));
         document.head.append(script);
       });
     }
@@ -112,7 +112,7 @@ async function kinPrepareExamViewer(href) {
       if (window[global]) continue;
       await new Promise((resolve,reject)=>{
         const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
-        script.onload=resolve;script.onerror=()=>reject(Error('검사 범위 도구를 불러오지 못했습니다.'));document.head.append(script);
+        script.onload=resolve;script.onerror=()=>reject(kinError("검사 범위 도구를 불러오지 못했습니다."));document.head.append(script);
       });
     }
   })().catch(error=>{kinExamViewerLoading=null;throw error;}));

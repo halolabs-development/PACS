@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.KinViewerUXToolbar = (() => {
   // A3 C-R01-029 #52: Pointer is added at the end of the default bar. A bar already saved to an account is not
   // changed, so there it is offered in More.
@@ -41,15 +45,15 @@ window.KinViewerUXToolbar = (() => {
     try {
       const response = await fetch('/api/workspace-shortcuts', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(10000) });
       if (window.KinSessionTransport.refusal(response)) throw window.KinSessionTransport.responseError(response);
-      if (!response.ok) throw new Error('설정을 불러오지 못했습니다. 연결을 확인한 뒤 다시 불러오세요.');
+      if (!response.ok) throw kinError("설정을 불러오지 못했습니다. 연결을 확인한 뒤 다시 불러오세요.");
       const record = await response.json();
-      if (JSON.stringify(record.owner) !== owner) throw new Error('계정이 변경되었습니다. 뷰어를 다시 여세요.');
+      if (JSON.stringify(record.owner) !== owner) throw kinError("계정이 변경되었습니다. 뷰어를 다시 여세요.");
       if (!session.ended() && JSON.stringify(session.owner()) === owner) cached = record;
     } catch (error) {
       // Refusal and account messages are written for readers; fetch, timeout and
       // JSON failures carry browser text, which the connection guidance replaces.
       if (!session.ended() && JSON.stringify(session.owner()) === owner)
-        preparedFailure = { owner, message: error?.constructor === Error ? error.message : '설정을 불러오지 못했습니다. 연결을 확인한 뒤 다시 불러오세요.' };
+        preparedFailure = { owner, message: error?.constructor === Error ? error.message : kinText("설정을 불러오지 못했습니다. 연결을 확인한 뒤 다시 불러오세요.") };
     }
     window.kinMammographyHanging?.registerPreferenceProvider(() =>
       JSON.stringify(cached?.owner) === JSON.stringify(session.owner()) ? cached?.viewerSettings?.mammography || { layout: 'compare', kind: null } : null);
@@ -77,7 +81,7 @@ window.KinViewerUXToolbar = (() => {
     // The one-line row has no room for a scrollbar track. Where the frequent tools do not fit (a portrait
     // screen with both side panels open), arrows like the series strip's page through them; they stay in
     // the bar the reader chose rather than moving to More.
-    const pagers = [['Previous Tools', -1, '‹', '앞의 도구를 보여 줍니다.'], ['Next Tools', 1, '›', '뒤의 도구를 보여 줍니다.']].map(([name, direction, text, tip]) => {
+    const pagers = [['Previous Tools', -1, '‹', kinText("앞의 도구를 보여 줍니다.")], ['Next Tools', 1, '›', kinText("뒤의 도구를 보여 줍니다.")]].map(([name, direction, text, tip]) => {
       const node = button(text, null, () => bar.scrollBy(upright() ? { top: direction * bar.clientHeight, behavior: 'smooth' } : { left: direction * bar.clientWidth, behavior: 'smooth' }));
       node.className = 'kin-ux-tools-scroll'; node.setAttribute('aria-label', name); node.title = tip; node.hidden = true; return node;
     });
@@ -95,7 +99,7 @@ window.KinViewerUXToolbar = (() => {
     }
     const resized = new ResizeObserver(overflow); resized.observe(toolbar); resized.observe(bar);
     const more = element('details', '', toolbar); more.className = 'kin-ux-more';
-    const summary = element('summary', 'More', more); summary.title = '도구를 도구 모음과 More 사이로 끌어 옮길 수 있습니다.';
+    const summary = element('summary', 'More', more); summary.title = kinText("도구를 도구 모음과 More 사이로 끌어 옮길 수 있습니다.");
     const menu = element('div', '', more); menu.setAttribute('role', 'group'); menu.setAttribute('aria-label', 'More Tools');
     const dismissMore = event => {
       if (event.type === 'keydown') {
@@ -122,11 +126,11 @@ window.KinViewerUXToolbar = (() => {
     const retry = button('Reload Settings', settings, () => load()); retry.hidden = true;
     const dialog = element('dialog', '', document.body); dialog.className = 'kin-ux-settings';
     dialog.setAttribute('aria-label', 'Viewer Settings'); element('h2', 'Viewer Settings', dialog);
-    element('p', '자주 쓰는 도구는 표시하고 나머지는 More에서 사용합니다. 단축키는 영문자·숫자 한 개 또는 Shift+영문자이며, 입력 중에는 실행하지 않습니다. 설정은 계정에 저장됩니다.', dialog);
+    element('p', kinText("자주 쓰는 도구는 표시하고 나머지는 More에서 사용합니다. 단축키는 영문자·숫자 한 개 또는 Shift+영문자이며, 입력 중에는 실행하지 않습니다. 설정은 계정에 저장됩니다."), dialog);
     const rows = element('div', '', dialog), inputs = new Map(), checks = new Map();
     const mgSection = element('fieldset', '', dialog), mgInputs = new Map();
     element('legend', 'Mammography', mgSection);
-    element('p', '유방영상 배치와 영상 종류를 계정에 저장합니다. 비교할 이전 검사가 없으면 현재 검사만 표시합니다.', mgSection);
+    element('p', kinText("유방영상 배치와 영상 종류를 계정에 저장합니다. 비교할 이전 검사가 없으면 현재 검사만 표시합니다."), mgSection);
     for (const [key, title, options] of [
       ['layout', 'MG Layout', [['compare', 'Current vs Prior'], ['current', 'Current']]],
       ['kind', 'MG Image Type', [['', 'Automatic'], ['conventional', 'Conventional'], ['generated2d', 'Synthetic 2D'], ['dbt', 'DBT']]],
@@ -158,7 +162,7 @@ window.KinViewerUXToolbar = (() => {
     mgInputs.get('priorPosition').onchange = updateMGGridChoices;
     const hanging = window.KinViewerHangingSettings, hangingInputs = new Map();
     const hangingSection = element('fieldset', '', dialog); element('legend', 'Hanging & Layout', hangingSection);
-    element('p', '모달리티별 기본 배치와 비교 위치를 계정에 저장합니다. 워크리스트에서 이전 검사와 함께 여는 비교에도 적용됩니다. Automatic은 기존 Hanging Protocol의 배치를 사용합니다. Hanging Protocol 편집기에서 지정한 프로토콜과 유방영상 배치는 유지됩니다. Series 메뉴에서 비교 시리즈를 직접 바꿀 수 있습니다.', hangingSection);
+    element('p', kinText("모달리티별 기본 배치와 비교 위치를 계정에 저장합니다. 워크리스트에서 이전 검사와 함께 여는 비교에도 적용됩니다. Automatic은 기존 Hanging Protocol의 배치를 사용합니다. Hanging Protocol 편집기에서 지정한 프로토콜과 유방영상 배치는 유지됩니다. Series 메뉴에서 비교 시리즈를 직접 바꿀 수 있습니다."), hangingSection);
     for (const modality of hanging.modalities) {
       const group = element('fieldset', '', hangingSection); element('legend', modality, group);
       const fields = new Map(); hangingInputs.set(modality, fields);
@@ -183,7 +187,7 @@ window.KinViewerUXToolbar = (() => {
     }
     // 2026-11-10 owner: rows on the second display are the default; this one choice turns them off (account setting).
     const displaySection = element('fieldset', '', dialog); element('legend', 'Second Display', displaySection);
-    element('p', '두 화면에 걸친 영상 창의 둘째 화면과 둘째 영상 창에 Patient 탭·도구·시리즈 줄을 표시합니다. 끄면 그 화면에는 영상만 표시하며, 첫 영상 창의 Viewer Settings에서 다시 켤 수 있습니다.', displaySection);
+    element('p', kinText("두 화면에 걸친 영상 창의 둘째 화면과 둘째 영상 창에 Patient 탭·도구·시리즈 줄을 표시합니다. 끄면 그 화면에는 영상만 표시하며, 첫 영상 창의 Viewer Settings에서 다시 켤 수 있습니다."), displaySection);
     const secondRow = element('label', '', displaySection); secondRow.className = 'kin-ux-setting-row';
     const secondCheck = element('input', '', secondRow); secondCheck.type = 'checkbox';
     secondCheck.setAttribute('aria-label', 'Show Rows on Second Display'); element('span', 'Show Rows on Second Display', secondRow);
@@ -192,7 +196,7 @@ window.KinViewerUXToolbar = (() => {
     const mammography = value => value?.mammography || { layout: 'compare', kind: null };
     const generalHanging = hanging.mount(services, () => preferences);
     const layoutStatus = element('span', ' · Display Fit', settings); layoutStatus.hidden = true;
-    layoutStatus.title = '현재 기기의 표시 한계에 맞춰 영상 영역의 폭을 조정했습니다. 배치 설정은 유지됩니다.';
+    layoutStatus.title = kinText("현재 기기의 표시 한계에 맞춰 영상 영역의 폭을 조정했습니다. 배치 설정은 유지됩니다.");
     const sizing = hanging.mountSizing(services, fitting => { layoutStatus.hidden = !fitting; });
     let appliedHanging = JSON.stringify(preferences.hanging);
     window.kinViewerHangingPreference = modality => hanging.get(preferences, modality);
@@ -241,10 +245,10 @@ window.KinViewerUXToolbar = (() => {
       if (!Object.keys(next.features).length) delete next.features;
       if (!session.writer()) {
         preferences = next;
-        status.textContent = '이 창에만 적용했습니다. 계정에는 저장하지 않습니다.';
+        status.textContent = kinText("이 창에만 적용했습니다. 계정에는 저장하지 않습니다.");
         return true;
       }
-      if (saving) { status.textContent = '계정에 저장 중입니다. 저장이 끝난 뒤 다시 시도하세요.'; return false; }
+      if (saving) { status.textContent = kinText("계정에 저장 중입니다. 저장이 끝난 뒤 다시 시도하세요."); return false; }
       if (!loaded) return false;
       const used = expected ?? record.revision;
       const saved = await save(next, used);
@@ -341,7 +345,7 @@ window.KinViewerUXToolbar = (() => {
       const used = new Set(Object.entries(shortcuts).filter(([id, key]) => !inputs.has(id) && key).map(([, key]) => key));
       for (const [id, input] of inputs) {
         const value = input.value.trim() ? keys.parse(input.value) : '';
-        if (value === null || value && used.has(value)) { feedback.textContent = '단축키는 중복 없이 영문자·숫자 한 개 또는 Shift+영문자로 지정하세요.'; input.focus(); return; }
+        if (value === null || value && used.has(value)) { feedback.textContent = kinText("단축키는 중복 없이 영문자·숫자 한 개 또는 Shift+영문자로 지정하세요."); input.focus(); return; }
         shortcuts[id] = value || null; if (value) used.add(value);
       }
       const selected = [...checks].filter(([, check]) => check.checked).map(([id]) => id);
@@ -357,7 +361,7 @@ window.KinViewerUXToolbar = (() => {
         let layout = fields.get('layout').value;
         if (layout === 'custom') {
           if (![rows, columns, rows * columns].every(v => Number.isSafeInteger(v) && v > 0)) {
-            feedback.textContent = '행과 열은 양의 정수로 지정하세요.'; fields.get('rows').focus(); return;
+            feedback.textContent = kinText("행과 열은 양의 정수로 지정하세요."); fields.get('rows').focus(); return;
           }
           layout = rows + 'x' + columns;
         }
@@ -394,7 +398,7 @@ window.KinViewerUXToolbar = (() => {
     function idle() {
       const states = [window.kinViewerHistoryWorkspaceState?.(), window.kinViewerJobWorkspaceState?.()];
       if (!states.some(state => state?.busy)) return true;
-      status.textContent = '영상 작업을 불러오는 중입니다. 완료 후 도구를 다시 선택하세요.';
+      status.textContent = kinText("영상 작업을 불러오는 중입니다. 완료 후 도구를 다시 선택하세요.");
       services.uiNotificationService?.show({ title: 'Image Tools', message: status.textContent, type: 'info' });
       return false;
     }
@@ -431,7 +435,7 @@ window.KinViewerUXToolbar = (() => {
         if (item.run) {
           // Progress shows in this toolbar's status line; an empty text puts back what it said before.
           const before = status.textContent, say = text => { if (active()) status.textContent = text || before; };
-          Promise.resolve(item.run(services, { live: active, say })).catch(error => { if (active()) status.textContent = error?.message || '영상을 내보내지 못했습니다.'; });
+          Promise.resolve(item.run(services, { live: active, say })).catch(error => { if (active()) status.textContent = error?.message || kinText("영상을 내보내지 못했습니다."); });
           return true;
         }
         if (window.kinViewerStackMouse?.deselect(id)) { refreshState(); return true; }
@@ -443,13 +447,13 @@ window.KinViewerUXToolbar = (() => {
         // after the command, for a feature that follows the reader's own act (MG Mirrored's Invert together).
         try { window.dispatchEvent(new CustomEvent('kin-viewer-tool-run', { detail: { id, viewportId } })); } catch (error) { console.error(error); }
         return true;
-      } catch (error) { status.textContent = error.message || '현재 영상에서 도구를 사용할 수 없습니다.'; return false; }
+      } catch (error) { status.textContent = error.message || kinText("현재 영상에서 도구를 사용할 수 없습니다."); return false; }
     }
     function tool(id, parent) {
       const item = catalog.get(id), key = preferences.shortcuts[id];
       const node = button('', parent, () => { more.open = false; invoke(id); }); node.className = 'kin-ux-tool'; node.draggable = loaded && !saving;
       node.dataset.tool = id; node.setAttribute('aria-label', label(item));
-      node.title = label(item) + (item.description ? ' — ' + item.description : '') + (key ? ' · ' + keys.display(key) : ' · 단축키 미지정') + ' — 끌어서 도구 위치를 바꿀 수 있습니다.';
+      node.title = kinText("{0}{1}{2} — 끌어서 도구 위치를 바꿀 수 있습니다.", label(item), (item.description ? ' — ' + item.description : ''), (key ? ' · ' + keys.display(key) : kinText(" · 단축키 미지정")));
       if (key) node.setAttribute('aria-keyshortcuts', keys.display(key));
       const icon = element('span', symbols[id] || label(item).split(' ').map(word => word[0]).slice(0, 2).join(''), node); icon.setAttribute('aria-hidden', 'true'); icon.className = 'kin-ux-tool-icon';
       element('span', label(item), node).className = 'kin-ux-tool-label'; element('kbd', keys.display(key) || '—', node);
@@ -465,8 +469,8 @@ window.KinViewerUXToolbar = (() => {
       bar.replaceChildren(); menu.replaceChildren();
       preferences.bar.filter(id => catalog.has(id)).forEach(id => tool(id, bar));
       [...catalog.keys()].filter(id => !preferences.bar.includes(id)).forEach(id => tool(id, menu));
-      if (!bar.children.length) element('span', '도구를 여기로 끌어 놓으세요.', bar);
-      if (!menu.children.length) element('span', '도구를 여기로 끌어 놓으세요.', menu);
+      if (!bar.children.length) element('span', kinText("도구를 여기로 끌어 놓으세요."), bar);
+      if (!menu.children.length) element('span', kinText("도구를 여기로 끌어 놓으세요."), menu);
       edit.hidden = !session.writer();
       edit.disabled = saving; saveButton.disabled = !loaded || saving;
       refreshState(); overflow(); window.KinViewerUX?.refreshCells?.();
@@ -557,11 +561,11 @@ window.KinViewerUXToolbar = (() => {
         if (compact) {
           const menu = button('Tools ▾', node, event => openCellMenu(event.currentTarget, viewportId));
           menu.dataset.cellTool = 'menu'; menu.setAttribute('aria-haspopup', 'menu'); menu.setAttribute('aria-expanded', 'false');
-          menu.title = '이 칸의 도구 목록을 엽니다. 고른 도구는 이 칸에서 실행합니다.';
+          menu.title = kinText("이 칸의 도구 목록을 엽니다. 고른 도구는 이 칸에서 실행합니다.");
         } else for (const id of items) {
           const item = catalog.get(id), key = preferences.shortcuts[id];
           const tool = button('', node, () => runCell(id, viewportId)); tool.dataset.cellTool = id; tool.setAttribute('aria-label', label(item));
-          tool.title = label(item) + (key ? ' · ' + keys.display(key) : '') + ' — 이 칸에서 실행합니다.';
+          tool.title = kinText("{0}{1} — 이 칸에서 실행합니다.", label(item), (key ? ' · ' + keys.display(key) : ''));
           const icon = element('span', symbols[id] || label(item).split(' ').map(word => word[0]).slice(0, 2).join(''), tool); icon.setAttribute('aria-hidden', 'true');
         }
         if (focused) node.querySelector('[data-cell-tool="' + CSS.escape(focused) + '"]')?.focus();
@@ -595,12 +599,12 @@ window.KinViewerUXToolbar = (() => {
       const response = await fetch('/api/workspace-shortcuts', { credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
         ...options, headers: { 'X-KIN-CSRF': '1', 'Content-Type': 'application/json' } }).catch(error => {
         if (error.name === 'AbortError') throw error;
-        throw new Error('설정을 불러오거나 저장하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.');
+        throw kinError("설정을 불러오거나 저장하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.");
       });
       if (window.KinSessionTransport.refusal(response)) throw window.KinSessionTransport.responseError(response);
-      const data = await response.json().catch(() => { throw new Error('계정 설정 응답을 읽지 못했습니다. 다시 불러오세요.'); });
-      if (!response.ok) throw new Error(data.message || '설정을 저장하지 못했습니다. 다시 불러온 뒤 시도하세요.');
-      if (JSON.stringify(data.owner) !== initialOwner) throw new Error('계정이 변경되었습니다. 뷰어를 다시 여세요.');
+      const data = await response.json().catch(() => { throw kinError("계정 설정 응답을 읽지 못했습니다. 다시 불러오세요."); });
+      if (!response.ok) throw new Error(data.message || kinText("설정을 저장하지 못했습니다. 다시 불러온 뒤 시도하세요."));
+      if (JSON.stringify(data.owner) !== initialOwner) throw kinError("계정이 변경되었습니다. 뷰어를 다시 여세요.");
       return data;
     }
     async function load() {
@@ -612,24 +616,24 @@ window.KinViewerUXToolbar = (() => {
       if (!active() || sequence !== loadSequence) return;
       if (!session.writer()) { status.textContent = ''; retry.hidden = true; render(); features?.changed(); return; }
       initialOwner = JSON.stringify(owner());
-      status.textContent = '계정 설정을 불러오는 중…';
+      status.textContent = kinText("계정 설정을 불러오는 중…");
       try {
         const data = await request(); if (!active() || sequence !== loadSequence) return;
         record = cached = data; preparedFailure = null; preferences = upgrade(data.viewerSettings) || defaults(); loaded = true; retry.hidden = true;
-        status.textContent = '계정 설정 · 다른 PC에서도 적용됩니다.';
+        status.textContent = kinText("계정 설정 · 다른 PC에서도 적용됩니다.");
         features?.changed();
       } catch (error) { if (active() && sequence === loadSequence) { status.textContent = error.message; retry.hidden = false; } }
       if (active() && sequence === loadSequence) { render(); saveMammography(); }
     }
     async function save(next, expected = null) {
       if (!loaded || saving || !active()) return false;
-      saving = true; render(); status.textContent = '계정에 저장 중…';
+      saving = true; render(); status.textContent = kinText("계정에 저장 중…");
       try {
         const data = await request({ method: 'PUT', body: JSON.stringify({ expectedOwner: record.owner, revision: expected ?? record.revision, viewerSettings: next }) });
         if (!active()) return false;
         record = cached = data; preferences = data.viewerSettings;
         try { settingsChannel?.postMessage({ owner: initialOwner, revision: data.revision }); } catch (_) {}
-        status.textContent = '계정에 저장했습니다.'; retry.hidden = true; features?.changed(); return true;
+        status.textContent = kinText("계정에 저장했습니다."); retry.hidden = true; features?.changed(); return true;
       } catch (error) {
         pendingMammography = requestedMammography = null;
         if (active()) { status.textContent = error.message; retry.hidden = false; applyMammography(true); }

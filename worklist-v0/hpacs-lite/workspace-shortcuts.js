@@ -24,7 +24,7 @@
       used.add(key); return true;
     });
   }
-  const unassigned = () => ({map:{version:2,...Object.fromEntries(ids.map(id=>[id,null]))},notices:['저장된 단축키를 확인할 수 없어 미배정으로 두었습니다. Shortcuts에서 확인하세요.']});
+  const unassigned = () => ({map:{version:2,...Object.fromEntries(ids.map(id=>[id,null]))},notices:[kinSayEn('저장된 단축키를 확인할 수 없어 미배정으로 두었습니다. Shortcuts에서 확인하세요.')]});
   const scope = id => ['image','note','tools','nativeTools'].includes(id)?'Viewer':'Worklist';
   function migrate(value) {
     if(value===null)return {map:{...defaultsV2},notices:[]};
@@ -37,12 +37,12 @@
       const key=source.version===2?raw:typeof raw==='string'?'Control+Alt+'+raw:null;
       map[id]=chord(key)&&!used.has(key)?key:null;
       if(map[id])used.set(key,id);
-      else if(raw!==null||source.version!==2)notices.push(labels[id]+': 알 수 없거나 중복된 키를 미배정으로 두었습니다. Shortcuts에서 지정하세요.');
+      else if(raw!==null||source.version!==2)notices.push(kinSayEn('{0}: 알 수 없거나 중복된 키를 미배정으로 두었습니다. Shortcuts에서 지정하세요.',labels[id]));
     }
     if(!Object.hasOwn(map,'finalize')){
       const key=defaultsV2.finalize;
       map.finalize=used.has(key)?null:key;
-      if(used.has(key))notices.push(display(key)+'는 이미 '+labels[used.get(key)]+'에 지정됨 — Shortcuts에서 지정하세요.');
+      if(used.has(key))notices.push(kinSayEn('{0}는 이미 {1}에 지정됨 — Shortcuts에서 지정하세요.',display(key),labels[used.get(key)]));
     }
     return {map,notices};
   }
@@ -101,7 +101,7 @@
     let toolBase=null, toolRows=null, toolStatus=null;
     if(viewerKeys){
       const heading=el('h3','Image Tool Keys',panels.Viewer);heading.id='workspace-viewer-keys-title';heading.style.cssText='margin:16px 0 4px;font-size:15px';
-      el('p','별도 Viewer 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 Viewer 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다.',panels.Viewer);
+      el('p',kinSayEn('별도 Viewer 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 Viewer 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다.'),panels.Viewer);
       toolStatus=el('p','',panels.Viewer);toolStatus.id='workspace-viewer-keys-status';toolStatus.setAttribute('role','status');
       toolRows=el('div','',panels.Viewer);toolRows.id='workspace-viewer-keys';toolRows.setAttribute('role','group');toolRows.setAttribute('aria-labelledby',heading.id);
     }
@@ -186,10 +186,10 @@
         const response=await transport.request('/api/workspace-shortcuts',{context:at,method:body?'PUT':'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
         if(!live())return;
 
-        if(!response.ok)throw Error(response.status===409?'다른 창에서 설정이 바뀌었습니다. 불러온 뒤 다시 저장하세요.':'계정 설정을 확인하지 못했습니다. 다시 불러오세요.');
+        if(!response.ok)throw Error(response.status===409?kinSayEn('다른 창에서 설정이 바뀌었습니다. 불러온 뒤 다시 저장하세요.'):kinSayEn('계정 설정을 확인하지 못했습니다. 다시 불러오세요.'));
         const data=response.body;if(!live())return;
         // bindings null is "no work-page keys saved" at any revision: a record may hold only the viewer settings (C05).
-        if(JSON.stringify(data.owner)!==bound||!Number.isInteger(data.revision)||data.revision<0||data.revision>2147483647||(data.revision===0?data.bindings!==null||data.invalid===true:data.bindings!==null&&!valid(data.bindings)))throw Error('계정 단축키 응답을 확인할 수 없습니다.');
+        if(JSON.stringify(data.owner)!==bound||!Number.isInteger(data.revision)||data.revision<0||data.revision>2147483647||(data.revision===0?data.bindings!==null||data.invalid===true:data.bindings!==null&&!valid(data.bindings)))throw Error(kinSayEn('계정 단축키 응답을 확인할 수 없습니다.'));
         work.commit(at,()=>{
         if(action==='load'&&JSON.stringify(snapshot)!==JSON.stringify(draft())){accountRevision=null;kinWrite(accountStatus, kinSay('입력이 바뀌어 불러온 설정을 적용하지 않았습니다.'));return;}
         accountRevision=data.revision;

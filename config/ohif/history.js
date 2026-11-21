@@ -81,20 +81,20 @@ function kinCreateViewerHistory() {
     // 쓰기 쪽 검사(writable·SR·도구·captureAnnotations)는 recovery.has(scope)를 그대로 읽는다.
     const held = () => recovery.has(scope) && !readOnly();
     const READ_ONLY = {
-      note: '읽기 전용 · 이 검사에 저장된 측정·키 이미지를 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다.',
-      tool: '읽기 전용 화면입니다. 측정을 만들지 않습니다.',
-      edit: '읽기 전용 화면입니다. 측정·표식을 편집하지 않습니다.',
-      sr: '읽기 전용 화면에서는 SR을 만들거나 저장하지 않습니다.',
-      denied: '이 검사의 저장 항목을 읽을 수 없습니다(HTTP 403). 서버가 거절했습니다.',
-      unmatched: '현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 저장 항목은 계속 다시 확인합니다.',
+      note: kinText("읽기 전용 · 이 검사에 저장된 측정·키 이미지를 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다."),
+      tool: kinText("읽기 전용 화면입니다. 측정을 만들지 않습니다."),
+      edit: kinText("읽기 전용 화면입니다. 측정·표식을 편집하지 않습니다."),
+      sr: kinText("읽기 전용 화면에서는 SR을 만들거나 저장하지 않습니다."),
+      denied: kinText("이 검사의 저장 항목을 읽을 수 없습니다(HTTP 403). 서버가 거절했습니다."),
+      unmatched: kinText("현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 저장 항목은 계속 다시 확인합니다."),
     };
     const UNCONFIRMED = {
-      tool: '계정이 확인되기 전에는 영상 조작만 할 수 있습니다. 측정·표식을 만들지 않습니다.',
-      edit: '계정이 확인되기 전에는 측정·표식을 편집하지 않습니다.',
-      sr: '계정이 확인되기 전에는 SR을 만들거나 저장하지 않습니다.',
+      tool: kinText("계정이 확인되기 전에는 영상 조작만 할 수 있습니다. 측정·표식을 만들지 않습니다."),
+      edit: kinText("계정이 확인되기 전에는 측정·표식을 편집하지 않습니다."),
+      sr: kinText("계정이 확인되기 전에는 SR을 만들거나 저장하지 않습니다."),
     };
     // After a 401/403 or a logout the panel has ended: that, not the account wording, is what the user needs to hear.
-    const closedText = kind => ended ? '로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.' : (readOnly() ? READ_ONLY : UNCONFIRMED)[kind];
+    const closedText = kind => ended ? kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.") : (readOnly() ? READ_ONLY : UNCONFIRMED)[kind];
     function planar(imageId, kind) {
       const image = cs.metaData.get('instance', imageId);
       if (image?.Modality === 'MG' && kind === 'length' || image?.Modality === 'CT' && image.SOPClassUID === '1.2.840.10008.5.1.4.1.1.2' && Number(image.NumberOfFrames || 1) === 1) return null;
@@ -108,9 +108,9 @@ function kinCreateViewerHistory() {
     // out of all of those even when the calibration is no longer found. This is the one place that answers "may a Length be
     // measured here with a screen calibration"; an image with spacing of its own keeps its rules (a calibration over it is refused
     // as before), and so do Angle and Ellipse.
-    const SCREEN_LABEL = '화면 보정 · 저장 안 됨';
-    const NO_SPACING = '원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다';
-    const SCREEN_SR = '화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.';
+    const SCREEN_LABEL = kinText("화면 보정 · 저장 안 됨");
+    const NO_SPACING = kinText("원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다");
+    const SCREEN_SR = kinText("화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.");
     // Any tag that gives the original a spacing of its own, valid or not (a spacing tag that cannot be read is refused by the
     // original's own rules, never measured with a screen calibration): the image is not one for a screen calibration.
     const given = v => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
@@ -150,11 +150,11 @@ function kinCreateViewerHistory() {
     // A screen-calibrated Length's words: its value in the calibrated unit the tool computed for its current points, or why not.
     function screenText(data, target) {
       const id = target.startsWith('imageId:') && target.slice(8);
-      if (!id) return ['지원하지 않는 측정 평면입니다'];
+      if (!id) return [kinText("지원하지 않는 측정 평면입니다")];
       if (!screenCalibration(id, 'length')) return [NO_SPACING];
-      if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
+      if (!freshStats(data, target)) return [kinText("재확인 필요: 현재 좌표로 계산되지 않았습니다")];
       const s = data.cachedStats[target], value = s?.length;
-      if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return ['측정을 완료하세요'];
+      if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return [kinText("측정을 완료하세요")];
       return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', SCREEN_LABEL];
     }
     // A reason the reader must see where the press was: over the cell, for a few seconds (the panel may be folded away).
@@ -179,7 +179,7 @@ function kinCreateViewerHistory() {
     // placed or moved while its cell showed that very image in that very plane: the image the cell last finished rendering
     // is the mark's own SOP (viewer-info-bar.js — the requested image changes before its pixels do), and the drawn spacing,
     // orientation and origin are the original's exactly. A point set when that is not confirmed gives no value and no SR.
-    const PLANE_UNCONFIRMED = '화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다';
+    const PLANE_UNCONFIRMED = kinText("화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다");
     const unconfirmedPoints = new Set();
     const pointKey = (imageId, point) => imageId + '|' + JSON.stringify(point);
     function planeConfirmed(viewport, imageId, geometry) {
@@ -223,7 +223,7 @@ function kinCreateViewerHistory() {
           if (geometry.calculator === 'kin-planar-manual-v1:us' ? cs.cache.getImage(imageId)?.calibration?.type || calibrated && !['Region', 'Uncalibrated'].includes(calibrated) ||
                 shown(plane?.rowPixelSpacing) !== 1 || shown(plane?.columnPixelSpacing) !== 1 :
               cs.cache.getImage(imageId)?.calibration?.type || calibrated || Number(plane?.rowPixelSpacing) !== geometry.spacing[0] || Number(plane?.columnPixelSpacing) !== geometry.spacing[1])
-            return '표시 간격과 원본 간격이 일치하지 않습니다';
+            return kinText("표시 간격과 원본 간격이 일치하지 않습니다");
           if (geometry.viewerPlane && points?.some(point => unconfirmedPoints.has(pointKey(imageId, point)))) return PLANE_UNCONFIRMED;
           if (points) geometry.measure(kind, points);
           return '';
@@ -232,36 +232,36 @@ function kinCreateViewerHistory() {
       if (image?.Modality === 'MG' && kind === 'length') {
         try {
           const mg = kinMgGeometry(image, reference(imageId)?.frame);
-          if (!mg || cs.cache.getImage(imageId)?.calibration?.type) return 'MG 원본 간격·보정을 확인할 수 없습니다';
+          if (!mg || cs.cache.getImage(imageId)?.calibration?.type) return kinText("MG 원본 간격·보정을 확인할 수 없습니다");
           const plane = cs.metaData.get('imagePlaneModule', imageId);
           if (Number(plane?.rowPixelSpacing) !== mg.spacing[0] || Number(plane?.columnPixelSpacing) !== mg.spacing[1])
-            return '표시 간격과 MG 원본 간격이 일치하지 않습니다';
+            return kinText("표시 간격과 MG 원본 간격이 일치하지 않습니다");
           points?.forEach(mg.imagePoint);
           return '';
         } catch (error) { return error.message; }
       }
       const spacing = image?.PixelSpacing, orientation = image?.ImageOrientationPatient, origin = image?.ImagePositionPatient;
       if (image?.SOPClassUID !== '1.2.840.10008.5.1.4.1.1.2' || image.Modality !== 'CT' || Number(image.NumberOfFrames || 1) !== 1)
-        return '일반 CT 원본 프레임에서 지원합니다';
+        return kinText("일반 CT 원본 프레임에서 지원합니다");
       if (!Array.isArray(spacing) || spacing.length !== 2 || spacing.some(n => !finite(n) || Number(n) <= 0) ||
           !Array.isArray(orientation) || orientation.length !== 6 || orientation.some(n => !finite(n)) ||
           !Array.isArray(origin) || origin.length !== 3 || origin.some(n => !finite(n)) || !image.FrameOfReferenceUID ||
-          image.PixelSpacingCalibrationType || cs.cache.getImage(imageId)?.calibration?.type) return '원본 좌표·간격·보정을 확인할 수 없습니다';
+          image.PixelSpacingCalibrationType || cs.cache.getImage(imageId)?.calibration?.type) return kinText("원본 좌표·간격·보정을 확인할 수 없습니다");
       const dot = (a, b) => a.reduce((s, n, i) => s + n * b[i], 0);
       const u = orientation.slice(0, 3).map(Number), v = orientation.slice(3).map(Number);
       const normal = [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
-      if (Math.max(Math.abs(dot(u,u)-1), Math.abs(dot(v,v)-1), Math.abs(dot(u,v))) > 1e-4) return '원본 방향이 올바르지 않습니다';
+      if (Math.max(Math.abs(dot(u,u)-1), Math.abs(dot(v,v)-1), Math.abs(dot(u,v))) > 1e-4) return kinText("원본 방향이 올바르지 않습니다");
       if (kind === 'ellipse') {
-        if (!ctHu(image)) return 'HU 보정을 확인할 수 없습니다';
+        if (!ctHu(image)) return kinText("HU 보정을 확인할 수 없습니다");
         const axis = a => a.filter(n => Math.abs(n) > 1e-6).length === 1;
         if (!axis(normal) || points?.length === 4 && (!axis(points[0].map((n,i)=>n-points[1][i])) || !axis(points[3].map((n,i)=>n-points[2][i]))))
-          return '사선·회전 ROI는 아직 지원하지 않습니다';
+          return kinText("사선·회전 ROI는 아직 지원하지 않습니다");
       }
       if (points?.some(p => {
         if (!Array.isArray(p) || p.length !== 3 || p.some(n => !Number.isFinite(n))) return true;
         const d = p.map((n,i)=>n-Number(origin[i])), x=dot(d,u)/Number(spacing[1]), y=dot(d,v)/Number(spacing[0]);
         return Math.abs(dot(d,normal)) > .001 || x < -.501 || y < -.501 || x > Number(image.Columns)-.499 || y > Number(image.Rows)-.499;
-      })) return '측정이 원본 영상 범위를 벗어났습니다';
+      })) return kinText("측정이 원본 영상 범위를 벗어났습니다");
       return '';
     }
     // A value of the planar geometry in one decimal on the cell and in the Measurements panel. An ultrasound region's Length
@@ -311,7 +311,7 @@ function kinCreateViewerHistory() {
     const nativeRemove = measurementService.remove;
     const ownRemove = uid => nativeRemove.call(measurementService, uid);
     const numericMeasurement = m => manual(kinds[m?.toolName]);
-    const unverifiedReport = () => ({ columns: ['Verification'], values: ['재확인 필요'] });
+    const unverifiedReport = () => ({ columns: ['Verification'], values: [kinText("재확인 필요")] });
     function checkedMeasurement(m) {
       if (!m || ended || suspended || held()) return null;
       const a = ct.annotation.state.getAnnotation(m.uid);
@@ -392,7 +392,7 @@ function kinCreateViewerHistory() {
         getReport: () => ({ columns: ['Verification'], values: [SCREEN_LABEL] }) };
       const checked = checkedMeasurement(m);
       return { ...m, ...(checked || { data: null,
-        displayText: { primary: ['재확인 필요'], secondary: [] } }),
+        displayText: { primary: [kinText("재확인 필요")], secondary: [] } }),
         getReport: () => {
           const current = measurementService.getMeasurement(m.uid);
           return checkedMeasurement(current)?.getReport?.() || unverifiedReport();
@@ -430,38 +430,38 @@ function kinCreateViewerHistory() {
     const reportContext = 'CORNERSTONE_STRUCTURED_REPORT', reportRestores = [], srRequests = new Map();
     function srItemMessage(m, reason) {
       const e = annotations.get(m?.uid), a = m?.uid && ct.annotation.state.getAnnotation(m.uid);
-      const label = String(e?.draft?.label || m?.label || names[kinds[a?.metadata?.toolName]] || m?.toolName || '측정').slice(0, 80);
+      const label = String(e?.draft?.label || m?.label || names[kinds[a?.metadata?.toolName]] || m?.toolName || kinText("측정")).slice(0, 80);
       const frame = e?.draft?.frame || m?.frameNumber;
-      return '재확인 필요: ' + label + (frame ? ' · 프레임 ' + frame : '') + ' [' + String(m?.uid || '항목 없음').slice(0, 12) + '] — ' + reason + ' SR에 포함할 항목을 명시적으로 다시 선택하세요.';
+      return kinText("재확인 필요: {0}{1} [{2}] — {3} SR에 포함할 항목을 명시적으로 다시 선택하세요.", label, (frame ? kinText(" · 프레임 {0}", frame) : ''), String(m?.uid || kinText("항목 없음")).slice(0, 12), reason);
     }
     function srVerificationMessage(m) {
       const e = annotations.get(m?.uid), a = m?.uid && ct.annotation.state.getAnnotation(m.uid);
-      const reason = e?.head && e.head.referenceStatus !== 'verified' ? '원본 다시 확인을 누르세요.' :
-        !a ? '현재 영상의 측정 표식을 찾을 수 없습니다.' :
-        !a.data?.handles?.points ? '측정 위치가 완성되지 않았습니다. 측정을 마치세요.' :
+      const reason = e?.head && e.head.referenceStatus !== 'verified' ? kinText("원본 다시 확인을 누르세요.") :
+        !a ? kinText("현재 영상의 측정 표식을 찾을 수 없습니다.") :
+        !a.data?.handles?.points ? kinText("측정 위치가 완성되지 않았습니다. 측정을 마치세요.") :
         screenData(a.data) ? SCREEN_SR :
         measurementReason(a.metadata.referencedImageId, kinds[a.metadata.toolName], a.data.handles.points) ||
-        (a.data.kinUnverified ? '저장 당시 측정과 다릅니다. 편집 후 다시 측정하세요.' :
-          !sample(a) ? '현재 위치의 계산이 완료되지 않았습니다. 측정을 마치고 다시 시도하세요.' : '현재 영상의 측정 변환을 확인할 수 없습니다.');
+        (a.data.kinUnverified ? kinText("저장 당시 측정과 다릅니다. 편집 후 다시 측정하세요.") :
+          !sample(a) ? kinText("현재 위치의 계산이 완료되지 않았습니다. 측정을 마치고 다시 시도하세요.") : kinText("현재 영상의 측정 변환을 확인할 수 없습니다."));
       return srItemMessage(m, reason);
     }
     let srBusy = false;
     async function manualSr(name, options) {
-      if (srBusy) throw new Error('SR을 처리 중입니다. 결과를 기다려 주세요.');
+      if (srBusy) throw kinError("SR을 처리 중입니다. 결과를 기다려 주세요.");
       const selected = options.measurementData || [], ticket = generation; let requestKey;
-      if (ended || !selected.length || selected.length > 16) throw new Error('직접 작성한 측정을1~16개 선택하세요.');
+      if (ended || !selected.length || selected.length > 16) throw kinError("직접 작성한 측정을1~16개 선택하세요.");
       srBusy = true; refreshSrButtons();
       try {
         await authenticate(ticket);
         const chosen = selected.map(m => annotations.get(m.uid));
         const invalid = chosen.findIndex(e => !e || !manual(e.draft.kind) || !writable(e) || e.heldDraft || e.head?.hidden);
         if (invalid !== -1)
-          throw new Error(srItemMessage(selected[invalid], '현재 검사에서 직접 작성한 측정만 SR로 저장할 수 있습니다. 숨김이나 보관 중인 수정도 먼저 정리하세요.'));
+          throw new Error(srItemMessage(selected[invalid], kinText("현재 검사에서 직접 작성한 측정만 SR로 저장할 수 있습니다. 숨김이나 보관 중인 수정도 먼저 정리하세요.")));
         for (const [i, e] of chosen.entries()) {
           if (!checkedMeasurement(measurementService.getMeasurement(e.annotationUID))) throw new Error(srVerificationMessage(selected[i]));
           if (e.editing || e.pending || !e.head) await save(e, e.head ? 'edit' : 'create');
           if (!valid(ticket) || !e.head || e.editing || e.pending || e.busy || e.head.referenceStatus !== 'verified')
-            throw new Error(srItemMessage(selected[i], '측정 저장을 완료하지 못했습니다. 측정 패널의 안내를 확인하세요.'));
+            throw new Error(srItemMessage(selected[i], kinText("측정 저장을 완료하지 못했습니다. 측정 패널의 안내를 확인하세요.")));
         }
         const items = chosen.map(e => ({ id: e.head.id, revision: e.head.revision })).sort((a,b) => a.id.localeCompare(b.id));
         const key = scope + '|' + subject + '|' + JSON.stringify(items);
@@ -470,31 +470,31 @@ function kinCreateViewerHistory() {
         const stillCurrent = () => valid(ticket) && chosen.every((e, i) => !e.editing && !e.pending && !e.heldDraft &&
           items.some(item => item.id === e.head?.id && item.revision === e.head?.revision) && checkedMeasurement(measurementService.getMeasurement(e.annotationUID)));
         const endpoint = '/studies/' + scope + '/manual-sr';
-        status.textContent = '원본 측정으로 SR을 확인하고 있습니다…';
+        status.textContent = kinText("원본 측정으로 SR을 확인하고 있습니다…");
         const prepared = await api(endpoint, { method: 'POST', body: JSON.stringify({ requestId: srRequests.get(key), items }) }, ticket);
-        if (!stillCurrent()) throw new Error('SR 준비 중 측정이 변경되었습니다. 현재 측정을 다시 확인하세요.');
+        if (!stillCurrent()) throw kinError("SR 준비 중 측정이 변경되었습니다. 현재 측정을 다시 확인하세요.");
         if (name === 'downloadReport') {
           const bytes = Uint8Array.from(atob(prepared.dicom), c => c.charCodeAt(0));
           const url = URL.createObjectURL(new Blob([bytes], { type: 'application/dicom' }));
           const a = document.createElement('a'); a.href = url; a.download = 'HALO-PACS-manual-' + prepared.id + '.dcm';
           document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-          status.textContent = 'SR 파일을 다운로드했습니다. 검사에 저장하려면24시간 안에 SR 저장을 누르세요.';
+          status.textContent = kinText("SR 파일을 다운로드했습니다. 검사에 저장하려면24시간 안에 SR 저장을 누르세요.");
           return prepared.dataset;
         }
         const stored = await api(endpoint + '/' + prepared.id + '/store', { method: 'POST', body: '{}' }, ticket);
-        if (!stillCurrent()) throw new Error('SR 저장 응답을 받았습니다. 최신 측정과 저장 문서를 다시 확인하세요.');
+        if (!stillCurrent()) throw kinError("SR 저장 응답을 받았습니다. 최신 측정과 저장 문서를 다시 확인하세요.");
         const source = extensions.getActiveDataSource?.()[0];
         source?.deleteStudyMetadataPromise?.(scope);
         // Public display-set API dispatches the pinned SR SOP handler; no
         // webpack module IDs or global DICOM serializer hooks are required.
         services.displaySetService.makeDisplaySets([stored.dataset], true);
         services.displaySetService.getActiveDisplaySets().find(ds => ds.SeriesInstanceUID === stored.dataset.SeriesInstanceUID)?.kinSelectDocument?.(stored.dataset.SOPInstanceUID);
-        status.textContent = 'SR 저장 완료 · 검사 목록에서 원문을 다시 열 수 있습니다.';
+        status.textContent = kinText("SR 저장 완료 · 검사 목록에서 원문을 다시 열 수 있습니다.");
         return stored.dataset;
       } catch (error) {
         if (error.status === 410 && requestKey) srRequests.delete(requestKey);
         if (valid(ticket)) {
-          const message = error.message || (error.status === 410 ? 'SR 준비 파일의24시간 보관 기한이 지났습니다. 다시 누르면 새 파일을 준비합니다.' : error.status === 409 ? '측정이 변경되었거나 원본 재확인이 필요합니다.' : 'SR 처리를 완료하지 못했습니다. 같은 동작으로 다시 시도하세요.');
+          const message = error.message || (error.status === 410 ? kinText("SR 준비 파일의24시간 보관 기한이 지났습니다. 다시 누르면 새 파일을 준비합니다.") : error.status === 409 ? kinText("측정이 변경되었거나 원본 재확인이 필요합니다.") : kinText("SR 처리를 완료하지 못했습니다. 같은 동작으로 다시 시도하세요."));
           status.textContent = message; services.uiNotificationService.show({ title: 'SR', message, type: 'warning' });
         }
         throw error;
@@ -518,11 +518,11 @@ function kinCreateViewerHistory() {
           return !checkedMeasurement(current);
         });
         if (blocked || ended || suspended || recovery.has(scope)) {
-          const message = ended ? '로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.' :
-            suspended || recovery.has(scope) ? '현재 검사 접근을 확인하고 보관 작업을 재개한 후 SR을 생성하세요.' :
+          const message = ended ? kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.") :
+            suspended || recovery.has(scope) ? kinText("현재 검사 접근을 확인하고 보관 작업을 재개한 후 SR을 생성하세요.") :
             srVerificationMessage(blocked);
           status.textContent = message;
-          services.uiNotificationService.show({ title: '측정 확인', message, type: 'warning' });
+          services.uiNotificationService.show({ title: kinText("측정 확인"), message, type: 'warning' });
           throw new Error(message);
         }
         return manualSr(name, options);
@@ -772,7 +772,7 @@ function kinCreateViewerHistory() {
     const button = (parent, label, run, disabled = false) => {
       const b = text(parent, 'button', label); b.type = 'button'; b.disabled = disabled;
       b.style.cssText = 'margin:3px;padding:4px 7px;border:1px solid #657c9f;border-radius:4px';
-      b.addEventListener('click', () => Promise.resolve().then(run).catch(() => { status.textContent = '작업을 완료하지 못했습니다. 현재 내용을 확인하세요.'; })); return b;
+      b.addEventListener('click', () => Promise.resolve().then(run).catch(() => { status.textContent = kinText("작업을 완료하지 못했습니다. 현재 내용을 확인하세요."); })); return b;
     };
     const input = (parent, label, value, change, disabled = false) => {
       const wrap = text(parent, 'label', label), el = document.createElement('input');
@@ -845,7 +845,7 @@ function kinCreateViewerHistory() {
         ct.annotation.state.removeAnnotation(a.annotationUID);
         if (measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
       }
-      reset(readOnly() ? READ_ONLY.denied : '이 검사에 접근할 수 없습니다. 보관 작업은 접근 확인 후 재개할 수 있습니다.'); me = null;
+      reset(readOnly() ? READ_ONLY.denied : kinText("이 검사에 접근할 수 없습니다. 보관 작업은 접근 확인 후 재개할 수 있습니다.")); me = null;
       kinViewerEntryRelease();
       if (readOnly()) { panel.dataset.readOnly = 'denied'; panel.dataset.studyUid = scope; }
       button(actions, 'Recheck Access', () => load());
@@ -853,7 +853,7 @@ function kinCreateViewerHistory() {
     function end(modeExit = false) {
       if (ended) return;
       kinViewerEntryRelease();
-      recovery.clear(); reset('로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'); ended = true; me = null; subject = ''; actions.replaceChildren();
+      recovery.clear(); reset(kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.")); ended = true; me = null; subject = ''; actions.replaceChildren();
       // Mode exit keeps this document and its login; the Findings section holds its drafts for the
       // next mode entry instead of destroying them as it must for a real logout or 401.
       window.dispatchEvent(Object.assign(new Event('kin-viewer-access-ended'), { kinModeExit: modeExit === true }));
@@ -908,23 +908,36 @@ function kinCreateViewerHistory() {
     }
     const path = () => '/studies/' + scope + '/viewer-items';
     function errorMessage(error) {
-      if (error.code === 'VIEWER_STORAGE_LIMIT') return '저장 공간 한도입니다. 숨김으로 공간이 회수되지는 않습니다. 작성 내용은 미저장 상태로 남아 있습니다.';
-      if (error.status === 409) return '다른 판 또는 저장 조건과 충돌했습니다. 최신판을 확인한 뒤 다시 저장하세요.';
-      if (error.status === 400 || error.status === 413) return '지원 영상·원본 평면·입력 길이를 확인하세요. 작성 내용은 저장되지 않았습니다.';
-      return '저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.';
+      if (error.code === 'VIEWER_STORAGE_LIMIT') return kinText("저장 공간 한도입니다. 숨김으로 공간이 회수되지는 않습니다. 작성 내용은 미저장 상태로 남아 있습니다.");
+      if (error.status === 409) return kinText("다른 판 또는 저장 조건과 충돌했습니다. 최신판을 확인한 뒤 다시 저장하세요.");
+      if (error.status === 400 || error.status === 413) return kinText("지원 영상·원본 평면·입력 길이를 확인하세요. 작성 내용은 저장되지 않았습니다.");
+      return kinText("저장 결과를 확인하지 못했습니다. 같은 요청 재시도로 결과를 확인하세요.");
     }
     // The status's saved-item count: the items this study holds on the server now — rows with a saved revision, hidden ones
     // included (the list is read with them), not one deleted in another window. Every way that number changes comes here: a
     // read of the list, a save answered (the Save button, autosave, Hide, Restore) and a delete answered. With a lead the
     // status is that text and the count; without one only a count already shown is brought up to date, so another message the
     // status shows meanwhile (a reason, an error, a recheck) is not overwritten.
-    const COUNT_TAIL = '개 저장 항목';
+    // A recheck message this panel wrote is read back by its start (below): as written, or the same words in the screen
+    // language (a message may carry more after them).
+    const RECHECK_SOURCE = [kinText("재확인 필요: 원본을 확인하지 못했습니다. 작성 내용은 유지됩니다."), kinText("재확인 필요: 원본을 확인하지 못했습니다. 보관한 수정은 유지됩니다."),
+      kinText("재확인 필요: 원본을 다시 확인하거나 새 뷰어에서 재측정하세요. 작성 내용은 유지됩니다."), kinText("재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다.")];
+    const RECHECK_VALUE = [kinText("재확인 필요: 재계산 값이 저장 당시와 다릅니다. 편집 후 다시 측정하세요."), kinText("재확인 필요: {0}", "")];
+    const rechecking = (message, sourceOnly) => message.startsWith(sourceOnly ? '재확인 필요: 원본' : '재확인 필요') ||
+      (sourceOnly ? RECHECK_SOURCE : RECHECK_SOURCE.concat(RECHECK_VALUE)).some(words => message.startsWith(words));
+    // The count line this panel wrote last and its lead: a count is brought up to date only while the status still shows it.
+    let counted = null;
     // Items this panel deleted (the server keeps them and their revisions; no list of the author's shows them again).
     const deletedHere = new Set();
     function recount(lead) {
       const n = [...entries.values()].filter(e => e.head && !e.gone).length;
-      if (typeof lead === 'string') status.textContent = lead + n + COUNT_TAIL + ' · 저장은 판독 확정과 별개입니다.';
-      else status.textContent = status.textContent.replace(/^(.*?)\d+개 저장 항목/, (_, before) => before + n + COUNT_TAIL);
+      if (typeof lead !== 'string') {
+        if (!counted || status.textContent !== counted.text) return;
+        lead = counted.lead;
+      }
+      const text = kinText('{t0}{n1}개 저장 항목 · 저장은 판독 확정과 별개입니다.', lead, n);
+      status.textContent = text;
+      counted = { lead, text: status.textContent };
     }
     // `answered`: only the clinician-only boundary passes it, from inside this panel's own /me answer — that answer is this read's /me.
     async function load(resume = false, recheck = null, answered = false) {
@@ -933,7 +946,7 @@ function kinCreateViewerHistory() {
       // Saved items as this read begins: only one of these can be judged deleted in another window by its absence from the
       // answer (an item saved while the read was on its way is not in it yet).
       const savedAtStart = new Set([...entries.values()].filter(e => e.head).map(e => e.head.id));
-      status.textContent = '저장 항목 확인 중…';
+      status.textContent = kinText("저장 항목 확인 중…");
       try {
         if (!answered) await authenticate(ticket);
         if (readPolicy() === 'shared') return await readOnlyLoad(ticket, seq);
@@ -963,7 +976,7 @@ function kinCreateViewerHistory() {
           let e = entries.get(head.id);
           if (e) e.gone = false;
           if (e && (e.editing || e.pending || e.busy)) {
-            if (head.revision !== e.head?.revision) { e.latest = head; e.message = '서버에 다른 판이 있습니다. 작성 내용은 유지됩니다.'; row(e); }
+            if (head.revision !== e.head?.revision) { e.latest = head; e.message = kinText("서버에 다른 판이 있습니다. 작성 내용은 유지됩니다."); row(e); }
             else {
               // A read's source verdict can change without a new revision.
               // Retain the draft, never treat a parked verdict as fresh proof.
@@ -971,8 +984,8 @@ function kinCreateViewerHistory() {
               if (manual(e.draft.kind) && head.referenceStatus !== 'verified') {
                 const a = e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID);
                 if (e.editing && !e.pending && a) e.draft.points = clone(a.data.handles.points);
-                removeAnnotation(e); e.message = '재확인 필요: 원본을 확인하지 못했습니다. 작성 내용은 유지됩니다.';
-              } else if (manual(e.draft.kind) && e.message.startsWith('재확인 필요: 원본')) e.message = '원본 확인 완료. 작성 내용은 아직 미저장 상태입니다.';
+                removeAnnotation(e); e.message = kinText("재확인 필요: 원본을 확인하지 못했습니다. 작성 내용은 유지됩니다.");
+              } else if (manual(e.draft.kind) && rechecking(e.message, true)) e.message = kinText("원본 확인 완료. 작성 내용은 아직 미저장 상태입니다.");
             }
             continue;
           }
@@ -983,15 +996,15 @@ function kinCreateViewerHistory() {
         // The whole author list leaves out only deleted items: a saved row it no longer has was deleted (in another window).
         // Work on such a row is kept and told; it can no longer be saved (any revision of a deleted item is refused).
         if (!recheck) for (const e of [...entries.values()]) if (e.head && savedAtStart.has(e.head.id) && !heads.some(h => h.id === e.head.id)) {
-          if (hasWork(e) || e.busy) { e.gone = true; e.message = '다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다.'; continue; }
+          if (hasWork(e) || e.busy) { e.gone = true; e.message = kinText("다른 창에서 지운 항목입니다. 이 창의 작성 내용은 저장되지 않습니다."); continue; }
           removeAnnotation(e); entries.delete(e.id); e.element?.remove();
         }
         for (const e of entries.values()) row(e);
-        if (recheck) status.textContent = heads.some(h => h.id === recheck) ? '선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.' : '선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.';
+        if (recheck) status.textContent = heads.some(h => h.id === recheck) ? kinText("선택한 항목의 원본 확인을 마쳤습니다. 항목의 확인 상태를 보세요. 저장 이력은 바뀌지 않습니다.") : kinText("선택한 저장 항목을 찾지 못했습니다. 목록을 새로고침하세요.");
         else recount('');
         panel.dataset.studyUid = scope;
         toolbar(); hydrate();
-      } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
+      } catch (e) { if (!e.stale && valid(ticket)) status.textContent = kinText("목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요."); }
       finally { if (ticket === generation) loading = false; }
     }
     // S5-U2b 읽기 전용 목록. 서버는 판독의와 같은 지금 목록({items, nextCursor} — 숨긴 항목 빼고)을 누구에게나 주고, 누가
@@ -1043,7 +1056,7 @@ function kinCreateViewerHistory() {
     // /me면 이 패널의 /me부터 다시 묻는다(끊은 /me의 늦은 답은 버린다). 진행 중인 읽기(loading)를 이유로 건너뛰지 않는다 — 건너뛰면
     // writer로 이미 요청한 목록이 전환 뒤에 도착해 그려지고, 그 목록에는 확인 기준(shown)이 없어 final:false로도 내려가지 않았다.
     function clinicianBoundary(own) {
-      reset('저장 항목 확인 중…'); toolbar();
+      reset(kinText("저장 항목 확인 중…")); toolbar();
       load(false, null, own);
     }
     // 끝까지 읽은 목록만 그리고, 그 목록(listKey)을 뒤따르는 주기·포커스 확인의 기준(shown)으로 남긴다.
@@ -1053,7 +1066,7 @@ function kinCreateViewerHistory() {
         const e = { id: head.id, head, draft: itemOnly(head), editing: false, latest: null, message: '' };
         entries.set(e.id, e); row(e);
       }
-      shownStatus = heads.length ? '저장 항목 ' + heads.length + '개 · 읽기 전용' : '이 검사에 저장된 측정·키 이미지가 없습니다 · 읽기 전용';
+      shownStatus = heads.length ? kinText("저장 항목 {n0}개 · 읽기 전용", heads.length) : kinText("이 검사에 저장된 측정·키 이미지가 없습니다 · 읽기 전용");
       status.textContent = shownStatus;
       panel.dataset.studyUid = study; panel.dataset.readOnly = heads.length ? 'ready' : 'empty';
       toolbar(); hydrate(); frameMatch(current());
@@ -1065,12 +1078,12 @@ function kinCreateViewerHistory() {
     // which proves arrival on the frame shown) and the saved item highlighted. A user who changes the active viewport meanwhile
     // stops it. Whatever the end, the opening hold is let go (Auto Save View may then save the view as the user leaves it).
     let entryTried = false;
-    const ENTRY_REASON = { 'series-missing': '이 창에서 원본 시리즈를 찾을 수 없습니다.', 'frame-missing': '원본 프레임을 열지 못했습니다.',
-      'viewport-unsupported': '현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다.', 'viewport-missing': '그 검사를 보이는 영상 칸이 없습니다.',
-      'viewport-ambiguous': '그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다.', timeout: '15초 안에 영상이 준비되지 않았습니다.',
-      superseded: '다른 영상 칸을 골라 이동을 멈췄습니다.', ended: '로그인이 종료되었습니다.' };
-    const ENTRY_MARK = { shown: '표식을 강조했습니다.', key: '키 이미지입니다.', missing: '그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제).',
-      hidden: '그 표식은 숨겨져 있습니다.', unverified: '그 측정은 원본을 확인하지 못해 그리지 않았습니다.', none: '표식을 그리지 않았습니다.' };
+    const ENTRY_REASON = { 'series-missing': kinText("이 창에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
+      'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다."), 'viewport-missing': kinText("그 검사를 보이는 영상 칸이 없습니다."),
+      'viewport-ambiguous': kinText("그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다."), timeout: kinText("15초 안에 영상이 준비되지 않았습니다."),
+      superseded: kinText("다른 영상 칸을 골라 이동을 멈췄습니다."), ended: kinText("로그인이 종료되었습니다.") };
+    const ENTRY_MARK = { shown: kinText("표식을 강조했습니다."), key: kinText("키 이미지입니다."), missing: kinText("그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제)."),
+      hidden: kinText("그 표식은 숨겨져 있습니다."), unverified: kinText("그 측정은 원본을 확인하지 못해 그리지 않았습니다."), none: kinText("표식을 그리지 않았습니다.") };
     // The panel keeps one status (other modules and tests read it); the outcome of the opening is its own polite line, made
     // only in a document that has a target.
     let entryNote = null;
@@ -1112,17 +1125,17 @@ function kinCreateViewerHistory() {
       entryTried = true;
       entryNavigate(target).then(outcome => {
         if (ended) return;
-        if (outcome.ok) entrySay('요청한 원본 영상(프레임 ' + target.frame + ')으로 이동했습니다. ' + (target.itemId ? ENTRY_MARK[outcome.annotation] || ENTRY_MARK.none : ''));
-        else entrySay('요청한 원본 영상으로 이동하지 못했습니다. ' + (ENTRY_REASON[outcome.reason] || '이동하지 못했습니다.'));
-      }, () => { if (!ended) entrySay('요청한 원본 영상으로 이동하지 못했습니다.'); }).finally(kinViewerEntryRelease);
+        if (outcome.ok) entrySay(kinText("요청한 원본 영상(프레임 {0})으로 이동했습니다. {1}", target.frame, (target.itemId ? ENTRY_MARK[outcome.annotation] || ENTRY_MARK.none : '')));
+        else entrySay(kinText("요청한 원본 영상으로 이동하지 못했습니다. {0}", (ENTRY_REASON[outcome.reason] || kinText("이동하지 못했습니다."))));
+      }, () => { if (!ended) entrySay(kinText("요청한 원본 영상으로 이동하지 못했습니다.")); }).finally(kinViewerEntryRelease);
     }
     function readOnlyFailed(error) {
       // A list that could not be read lets the opening go: Refresh may still open the target, without holding the view.
       dropRows(); kinViewerEntryRelease();
       const said = Array.isArray(error?.said) ? error.said.filter(x => typeof x === 'string').join(' ') : typeof error?.said === 'string' ? error.said : '';
-      status.textContent = '저장 항목을 불러오지 못했습니다. ' + (Number.isInteger(error?.status)
+      status.textContent = kinText("저장 항목을 불러오지 못했습니다. {0} Refresh로 다시 읽으세요.", (Number.isInteger(error?.status)
         ? (said ? said + ' ' : '') + '(HTTP ' + error.status + (typeof error.code === 'string' ? ' · ' + error.code : '') + ')'
-        : error?.name === 'AbortError' || error instanceof TypeError ? '서버 응답을 받지 못했습니다.' : '응답 형식을 확인할 수 없습니다.') + ' Refresh로 다시 읽으세요.';
+        : error?.name === 'AbortError' || error instanceof TypeError ? kinText("서버 응답을 받지 못했습니다.") : kinText("응답 형식을 확인할 수 없습니다.")));
       panel.dataset.studyUid = scope; panel.dataset.readOnly = 'failed';
       toolbar();
     }
@@ -1160,11 +1173,11 @@ function kinCreateViewerHistory() {
       actions.replaceChildren(); button(actions, 'Refresh', load);
       if (!writer()) { if (readOnly()) text(actions, 'p', READ_ONLY.note); return; }
       if (recovery.has(scope)) {
-        text(actions, 'p', '이 검사의 미저장 작업이 보관 중입니다. 이 뷰어를 닫거나 로그아웃하면 폐기됩니다.');
+        text(actions, 'p', kinText("이 검사의 미저장 작업이 보관 중입니다. 이 뷰어를 닫거나 로그아웃하면 폐기됩니다."));
         button(actions, 'Resume Held Work', () => { if (valid(ticket)) return load(true); });
         button(actions, 'Discard Held Work', () => {
           if (!valid(ticket) || suspended || !recovery.has(scope)) return;
-          if (!window.confirm('이 검사의 보관한 미저장 작업과 결과 미확인 요청을 버리시겠습니까? 서버 저장 이력은 유지됩니다.')) return;
+          if (!window.confirm(kinText("이 검사의 보관한 미저장 작업과 결과 미확인 요청을 버리시겠습니까? 서버 저장 이력은 유지됩니다."))) return;
           recovery.delete(scope); toolbar(); hydrate();
         });
         return;
@@ -1176,7 +1189,7 @@ function kinCreateViewerHistory() {
       refreshSrButtons();
       for (const kind of ['length', 'angle', 'ellipse']) button(actions, names[kind], () => {
         const v = viewport(), group = v && ct.ToolGroupManager.getToolGroupForViewport(v.id, v.renderingEngineId);
-        if (!group || v.type !== 'stack') { status.textContent = '원본 프레임을 선택하세요.'; return; }
+        if (!group || v.type !== 'stack') { status.textContent = kinText("원본 프레임을 선택하세요."); return; }
         if (!group.getToolInstance(tools[kind])) group.addTool(tools[kind]);
         configureMeasurements(group);
         const previous = group.getActivePrimaryMouseButtonTool();
@@ -1201,7 +1214,7 @@ function kinCreateViewerHistory() {
         return writable(e) && !e.heldDraft && !e.head?.hidden && !e.busy && checkedMeasurement(measurementService.getMeasurement(m.uid));
       });
       for (const b of actions.querySelectorAll('[data-kin-sr]')) {
-        b.disabled = !ready; b.title = ready ? '' : srBusy ? 'SR 처리 결과를 기다려 주세요.' : '원본 프레임에서 직접 작성한 측정의 확인이 끝나면 사용할 수 있습니다.';
+        b.disabled = !ready; b.title = ready ? '' : srBusy ? kinText("SR 처리 결과를 기다려 주세요.") : kinText("원본 프레임에서 직접 작성한 측정의 확인이 끝나면 사용할 수 있습니다.");
       }
     }
     // The pinned tools draw by a drag, or by a press, a move and another press (Angle always takes its last point that way).
@@ -1358,7 +1371,7 @@ function kinCreateViewerHistory() {
         },
       };
       roi.configuration = { ...previous, statsCalculator: adapter, getTextLines(data, target) {
-        if (data.kinUnverified) return ['재확인 필요: 측정값을 확인할 수 없습니다'];
+        if (data.kinUnverified) return [kinText("재확인 필요: 측정값을 확인할 수 없습니다")];
         const s = data.cachedStats[target]; if (!s) return [];
         const min = s.statsArray?.find(x => x?.name === 'min')?.value;
         const number = x => Math.sign(x) * Math.round(Math.abs(x));
@@ -1395,14 +1408,14 @@ function kinCreateViewerHistory() {
         const lines = config.getTextLines;
         tool.addNewAnnotation = function (event) {
           if (ended || !subject || suspended || recovery.has(scope) || !writer()) {
-            status.textContent = ended ? '로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.' : !writer() ? closedText('tool') : '현재 검사 접근과 보관 작업을 확인한 후 측정하세요.'; return refused;
+            status.textContent = ended ? kinText("로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.") : !writer() ? closedText('tool') : kinText("현재 검사 접근과 보관 작업을 확인한 후 측정하세요."); return refused;
           }
           const v = cs.getEnabledElement(event.detail.element).viewport;
           const id = v.type === 'stack' && v.getCurrentImageId();
-          let reason = id ? measurementReason(id, kind) : '원본 프레임을 선택하세요';
+          let reason = id ? measurementReason(id, kind) : kinText("원본 프레임을 선택하세요");
           if (!reason) { let geometry; try { geometry = planar(id, kind); } catch (_) { geometry = null; } if (geometry?.viewerPlane && !everyCellConfirmed(v, id, geometry)) reason = PLANE_UNCONFIRMED; }
           if (!reason && kind === 'ellipse' && !planar(id, kind) && v.getCamera().viewUp.filter(n => Math.abs(n) > 1e-6).length !== 1)
-            reason = '사선·회전 ROI는 아직 지원하지 않습니다';
+            reason = kinText("사선·회전 ROI는 아직 지원하지 않습니다");
           if (reason) { status.textContent = reason; cellNote(event.detail.element, reason); return refused; }
           const screen = !!screenCalibration(id, kind);
           const annotation = add.call(this, event);
@@ -1414,17 +1427,17 @@ function kinCreateViewerHistory() {
         };
         tool.configuration = { ...config, getTextLines(data, target) {
           // Only its first point so far: nothing to measure, and no reason to give for a shape that is not there yet.
-          if (samePoint(data.handles?.points)) return ['측정을 완료하세요'];
+          if (samePoint(data.handles?.points)) return [kinText("측정을 완료하세요")];
           if (screenData(data)) return screenText(data, target);
           const id = target.startsWith('imageId:') && target.slice(8);
-          const current = id ? measurementReason(id, kind, data.handles.points) : '지원하지 않는 측정 평면입니다';
+          const current = id ? measurementReason(id, kind, data.handles.points) : kinText("지원하지 않는 측정 평면입니다");
           // A saved mark being edited says why its current points give no value (moved out of an ultrasound region, off the
           // image) rather than only that it differs from its saved value.
           const edited = current && [...entries.values()].some(e => e.editing && e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID)?.data === data);
-          const reason = data.kinUnverified && !edited ? '재확인 필요: 저장 당시 측정과 다릅니다' : current;
+          const reason = data.kinUnverified && !edited ? kinText("재확인 필요: 저장 당시 측정과 다릅니다") : current;
           // A shape still being drawn (an ellipse stretched one way only, an angle with one arm) is not judged until it is finished.
-          if (reason) return [[...drawing.values()].some(w => w.annotation.data === data && unfinished(w.annotation)) ? '측정을 완료하세요' : reason];
-          if (!freshStats(data, target)) return ['재확인 필요: 현재 좌표로 계산되지 않았습니다'];
+          if (reason) return [[...drawing.values()].some(w => w.annotation.data === data && unfinished(w.annotation)) ? kinText("측정을 완료하세요") : reason];
+          if (!freshStats(data, target)) return [kinText("재확인 필요: 현재 좌표로 계산되지 않았습니다")];
           const geometry = planar(id, kind);
           if (geometry) {
             const value = geometry.measure(kind, data.handles.points);
@@ -1433,7 +1446,7 @@ function kinCreateViewerHistory() {
           if (kind === 'ellipse') return lines(data, target);
           const mg = kind === 'length' && kinMgGeometry(cs.metaData.get('instance', id), reference(id)?.frame);
           const value = mg ? mg.length(data.handles.points) : data.cachedStats[target]?.[kind === 'length' ? 'length' : 'angle'];
-          if (!Number.isFinite(value) || value <= 0) return ['측정을 완료하세요'];
+          if (!Number.isFinite(value) || value <= 0) return [kinText("측정을 완료하세요")];
           const number = (Math.round(value * 10) / 10).toFixed(1) + (kind === 'length' ? ' mm' : '°');
           // Keep the scale basis readable in the four-view mammography layout.
           return mg ? [number, ...kinText(mg.label).split(' · ')] : [number];
@@ -1453,7 +1466,7 @@ function kinCreateViewerHistory() {
     function restoreHeldDraft(e) {
       if (!e.head?.hidden && e.heldDraft) {
         if (manual(e.draft.kind) && e.head.referenceStatus !== 'verified') {
-          e.message = '재확인 필요: 원본을 확인하지 못했습니다. 보관한 수정은 유지됩니다.';
+          e.message = kinText("재확인 필요: 원본을 확인하지 못했습니다. 보관한 수정은 유지됩니다.");
           return;
         }
         // The hidden head may have replaced the live handles with its older
@@ -1462,24 +1475,22 @@ function kinCreateViewerHistory() {
         e.draft = e.heldDraft; e.heldDraft = null; e.editing = true;
         // Its place is to be checked first: not saved on its own as it comes back, only once the reader changes it.
         autoSeen(e, true);
-        e.message = '복원 완료. 보관한 수정은 아직 미저장 상태입니다.' +
-          (matches(current(), e.draft) ? ' 위치를 확인한 후 저장하세요.' : ' 영상으로 이동해 위치를 확인한 후 저장하세요.');
+        e.message = kinText("복원 완료. 보관한 수정은 아직 미저장 상태입니다.{t0}", (matches(current(), e.draft) ? kinText(" 위치를 확인한 후 저장하세요.") : kinText(" 영상으로 이동해 위치를 확인한 후 저장하세요.")));
       }
     }
     const heldActionReady = e => valid(generation) && entries.get(e.id) === e && writable(e) && e.heldDraft && !e.busy && !e.pending;
     function discardHeld(e) {
       if (!heldActionReady(e)) return;
-      if (!window.confirm('보관한 미저장 수정을 버리고 서버판 r' + (e.latest || e.head).revision +
-          '을 채택하시겠습니까?' + (e.latest ? ' 아직 반영하지 않은 최신 서버판입니다.' : '') + ' 서버 저장 이력은 유지됩니다.')) return;
+      if (!window.confirm(kinText("보관한 미저장 수정을 버리고 서버판 r{n0}을 채택하시겠습니까?{t1} 서버 저장 이력은 유지됩니다.", (e.latest || e.head).revision, (e.latest ? kinText(" 아직 반영하지 않은 최신 서버판입니다.") : '')))) return;
       if (!heldActionReady(e)) return;
       // A detached button can outlive a restore request. Never discard the
       // local recovery copy while that request's result is still uncertain.
       removeAnnotation(e);
       e.head = e.latest || e.head; e.latest = null;
       e.heldDraft = null; e.editing = false; e.draft = itemOnly(e.head);
-      e.message = '보관한 미저장 수정을 버렸습니다. 저장 이력은 유지됩니다.';
+      e.message = kinText("보관한 미저장 수정을 버렸습니다. 저장 이력은 유지됩니다.");
       if (manual(e.draft.kind) && e.head.referenceStatus !== 'verified')
-        e.message += ' 재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다.';
+        e.message += kinText(" 재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다.");
       row(e); hydrate(); render();
     }
     function row(e) {
@@ -1490,7 +1501,7 @@ function kinCreateViewerHistory() {
       // Source verification keeps its own 재확인 필요 line below, so a saved item stays Saved r<n>.
       const stateLabel = e.busy ? 'Saving' : e.pending ? 'Unverified' : hasWork(e) || !e.head ? 'Unsaved' : 'Saved r' + e.head.revision;
       text(el, 'strong', names[e.draft.kind] + ' · ' + stateLabel + (e.head?.hidden ? ' · Hidden' : ''));
-      if (e.head && stateLabel !== 'Saved r' + e.head.revision) text(el, 'div', '서버 저장 이력 r' + e.head.revision + ' · 현재 수정·저장 결과와는 별개입니다.');
+      if (e.head && stateLabel !== 'Saved r' + e.head.revision) text(el, 'div', kinText("서버 저장 이력 r{n0} · 현재 수정·저장 결과와는 별개입니다.", e.head.revision));
       // The clinician projection carries no author (clinician-policy.ts clinicianViewerItem).
       if (e.head) text(el, 'div', readOnly() ? 'Read-only' : e.head.authorActor + (writable(e) ? ' · My Item' : ' · Read-only'));
       if (e.editing) {
@@ -1507,24 +1518,24 @@ function kinCreateViewerHistory() {
         if (e.draft.description) text(el, 'p', e.draft.description);
       }
       // The Measure menu's marks go to no SR and carry no SR conversion; say so instead of leaving them out silently.
-      if (measureMark(e.draft.kind)) text(el, 'div', 'SR 미지원 표식 · SR 저장에는 들어가지 않습니다.');
-      text(el, 'div', '프레임 ' + e.draft.frame);
+      if (measureMark(e.draft.kind)) text(el, 'div', kinText("SR 미지원 표식 · SR 저장에는 들어가지 않습니다."));
+      text(el, 'div', kinText("프레임 {0}", e.draft.frame));
       // The saved measurement value (C-R01-131#4): the server head's own baseline, named and rounded as the Findings section names it.
       // A row being edited shows it as the saved revision's value; an unsaved new measurement has no saved value and shows none.
-      if (e.head && (manual(e.draft.kind) || valueMark(e.draft.kind))) valueNode(el, 'div', e.head.item, stateLabel === 'Saved r' + e.head.revision ? '' : '저장값 r' + e.head.revision + ': ');
+      if (e.head && (manual(e.draft.kind) || valueMark(e.draft.kind))) valueNode(el, 'div', e.head.item, stateLabel === 'Saved r' + e.head.revision ? '' : kinText("저장값 r{n0}: ", e.head.revision));
       if (e.message) text(el, 'p', e.message);
       if (e.heldDraft) {
-        text(el, 'p', '미저장 수정은 보관 중입니다. ' + (e.head.hidden ?
-          '숨김을 복원하고 원본을 확인한 후 다시 편집할 수 있습니다.' : '원본을 다시 확인하면 보관한 수정으로 돌아갑니다.'));
+        text(el, 'p', kinText("미저장 수정은 보관 중입니다. {t0}", (e.head.hidden ?
+          kinText("숨김을 복원하고 원본을 확인한 후 다시 편집할 수 있습니다.") : kinText("원본을 다시 확인하면 보관한 수정으로 돌아갑니다."))));
         const held = text(el, 'details', ''); text(held, 'summary', 'Held Changes');
         text(held, 'p', e.heldDraft.label ?? e.heldDraft.title);
         if (e.heldDraft.description) text(held, 'p', e.heldDraft.description);
-        text(held, 'p', '프레임 ' + e.heldDraft.frame + ' · 아직 저장되지 않은 내용입니다.');
+        text(held, 'p', kinText("프레임 {0} · 아직 저장되지 않은 내용입니다.", e.heldDraft.frame));
       }
       button(el, 'Go to Image', () => navigate(e));
       // Recheck and remeasure belong to the writer; a read-only row keeps the "재확인 필요" message hydrate() writes.
       if (sourceUnverified && !e.head.hidden && writer()) {
-        text(el, 'p', '저장 이력과 현재 원본 확인은 별개입니다. 이 항목만 다시 확인할 수 있습니다. 원본이 바뀐 경우 새 뷰어에서 다시 측정하세요. 이 창의 수정과 기존 저장 이력은 유지됩니다.');
+        text(el, 'p', kinText("저장 이력과 현재 원본 확인은 별개입니다. 이 항목만 다시 확인할 수 있습니다. 원본이 바뀐 경우 새 뷰어에서 다시 측정하세요. 이 창의 수정과 기존 저장 이력은 유지됩니다."));
         if (!e.heldDraft) button(el, 'Recheck Source', () => {
           if (valid(generation) && entries.get(e.id) === e && !e.busy && !e.pending) return load(false, e.head.id);
         }, !!(e.busy || e.pending));
@@ -1537,7 +1548,7 @@ function kinCreateViewerHistory() {
         else if (e.editing) button(el, 'Save', () => save(e, 'edit'), !!e.busy || !!e.latest || !!sourceUnverified);
         else if (!e.head?.hidden) button(el, 'Edit', () => { e.editing = true; lock(e, false); row(e); }, manual(e.draft.kind) && e.head?.referenceStatus !== 'verified');
         if (e.head && !e.editing && !e.pending) button(el, e.head.hidden ? 'Restore' : 'Hide', () => {
-          const reason = window.prompt((e.head.hidden ? '복원' : '숨김') + ' 사유 (선택)');
+          const reason = window.prompt(kinText("{t0} 사유 (선택)", (e.head.hidden ? kinText("복원") : kinText("숨김"))));
           if (reason !== null) save(e, e.head.hidden ? 'restore' : 'hide', reason);
         }, !!e.busy);
         if (e.latest && !e.pending) button(el, 'Use Latest & Keep Changes', () => {
@@ -1545,12 +1556,12 @@ function kinCreateViewerHistory() {
           if (e.head.hidden) {
             if (e.editing) e.heldDraft ??= clone(e.draft);
             removeAnnotation(e); render();
-            e.editing = false; e.draft = itemOnly(e.head); e.message = '서버에서 숨겨졌습니다.';
+            e.editing = false; e.draft = itemOnly(e.head); e.message = kinText("서버에서 숨겨졌습니다.");
           }
           else if (e.heldDraft) { e.draft = itemOnly(e.head); restoreHeldDraft(e); }
           // Keeping the reader's changes over the latest revision is the decision to save them: saved on their own from here (autoReady).
-          else if (e.editing) { e.message = autoMarks() ? '최신판을 확인했습니다. 내 수정을 곧 저장합니다.' : '최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다.'; autoSeen(e, false); }
-          else { e.draft = itemOnly(e.head); e.message = '최신 서버판을 반영했습니다.'; }
+          else if (e.editing) { e.message = autoMarks() ? kinText("최신판을 확인했습니다. 내 수정을 곧 저장합니다.") : kinText("최신판을 확인했습니다. 저장을 눌러야 내 수정이 반영됩니다."); autoSeen(e, false); }
+          else { e.draft = itemOnly(e.head); e.message = kinText("최신 서버판을 반영했습니다."); }
           row(e); hydrate(); render();
         }, !!e.busy);
         if (e.heldDraft) {
@@ -1573,7 +1584,7 @@ function kinCreateViewerHistory() {
             if (!valid(ticket) || !el.isConnected || !list.isConnected) return;
             // Each revision with its own saved value (C-R01-011#15), so r1 and r2 can be compared.
             for (const r of data.revisions) {
-              const line = text(list, 'p', 'r' + r.revision + ' · ' + ({ create: '생성', edit: '수정', hide: '숨김', restore: '복원', delete: '삭제' }[r.action] || r.action) + ' · ' + r.actor + ' · ' + r.at + ' · ' + r.reason + ' · ' + (r.item.label ?? r.item.title));
+              const line = text(list, 'p', 'r' + r.revision + ' · ' + ({ create: kinText("생성"), edit: kinText("수정"), hide: kinText("숨김"), restore: kinText("복원"), delete: kinText("삭제") }[r.action] || r.action) + ' · ' + r.actor + ' · ' + r.at + ' · ' + r.reason + ' · ' + (r.item.label ?? r.item.title));
               if (manual(r.item.kind)) valueNode(line, 'span', r.item, ' · ');
             }
             count += data.revisions.length; cursor = data.nextCursor;
@@ -1594,11 +1605,11 @@ function kinCreateViewerHistory() {
       // A verdict can change without a revision. A retained draft must never
       // bind itself to different source bytes by repeatedly retrying an edit.
       if (!e.pending && e.editing && manual(e.draft.kind) && e.head && e.head.referenceStatus !== 'verified') {
-        e.message = '재확인 필요: 원본을 다시 확인하거나 새 뷰어에서 재측정하세요. 작성 내용은 유지됩니다.'; row(e); return;
+        e.message = kinText("재확인 필요: 원본을 다시 확인하거나 새 뷰어에서 재측정하세요. 작성 내용은 유지됩니다."); row(e); return;
       }
       if (manual(e.draft.kind) && e.editing && !e.pending) {
         const baseline = sample(e.annotationUID && ct.annotation.state.getAnnotation(e.annotationUID));
-        if (!baseline) { e.message = '측정을 마치고 계산 완료 후 저장하세요.'; row(e); return; }
+        if (!baseline) { e.message = kinText("측정을 마치고 계산 완료 후 저장하세요."); row(e); return; }
         e.draft.baseline = baseline;
       }
       const ticket = generation; e.busy = true; lock(e, true);
@@ -1612,9 +1623,9 @@ function kinCreateViewerHistory() {
         // A mark with values (a circle, an orthopaedic measurement, a line tool's mark) is saved only with the values of the place
         // it is at, computed again from the original now; a mark of values whose check is missing is not saved.
         if (valueMark(e.draft.kind) && e.editing) {
-          const frame = window.KinMeasureFrame, what = e.draft.kind === 'circle' ? '원' : '측정';
-          const reason = !e.draft.baseline ? what + '의 값이 계산된 뒤 저장하세요.' : !annotation ? '현재 영상에서 ' + what + ' 표식을 찾을 수 없습니다.' :
-            typeof frame?.verify === 'function' ? frame.verify(annotation, true) : what + '의 값을 다시 확인할 수 없습니다.';
+          const frame = window.KinMeasureFrame, what = e.draft.kind === 'circle' ? kinText("원") : kinText("측정");
+          const reason = !e.draft.baseline ? kinText("{0}의 값이 계산된 뒤 저장하세요.", what) : !annotation ? kinText("현재 영상에서 {0} 표식을 찾을 수 없습니다.", what) :
+            typeof frame?.verify === 'function' ? frame.verify(annotation, true) : kinText("{0}의 값을 다시 확인할 수 없습니다.", what);
           if (reason) { e.busy = false; lock(e, !e.editing); e.message = reason; row(e); return; }
         }
         const command = { requestId: crypto.randomUUID(), item: clone(e.draft) };
@@ -1629,22 +1640,22 @@ function kinCreateViewerHistory() {
         // Deleted: off the image and the list. The server keeps the item and its revisions; no list shows it again.
         if (head.item?.deleted === true) {
           deletedHere.add(head.id); removeAnnotation(e); entries.delete(e.id); e.element?.remove();
-          recount(names[e.draft.kind] + ' 항목을 지웠습니다. 저장 이력은 서버에 남습니다. '); render(); return;
+          recount(kinText("{0} 항목을 지웠습니다. 저장 이력은 서버에 남습니다. ", names[e.draft.kind])); render(); return;
         }
         const duplicate = entries.get(head.id);
         if (duplicate && duplicate !== e && hasWork(duplicate)) {
           // A lost create receipt can be listed before its retry resolves.
           // Keep edits started on that listed row instead of overwriting them.
           removeAnnotation(e); e.element?.remove(); entries.delete(e.id);
-          duplicate.message = '같은 요청의 저장 결과를 확인했습니다. 이 항목의 작성 내용은 유지됩니다.';
+          duplicate.message = kinText("같은 요청의 저장 결과를 확인했습니다. 이 항목의 작성 내용은 유지됩니다.");
           row(duplicate); return;
         }
         if (duplicate && duplicate !== e) { removeAnnotation(duplicate); duplicate.element?.remove(); }
         entries.delete(e.id); e.id = head.id; entries.set(e.id, e);
-        Object.assign(e, { head, draft: itemOnly(head), pending: null, latest: null, editing: false, message: '저장 완료' });
+        Object.assign(e, { head, draft: itemOnly(head), pending: null, latest: null, editing: false, message: kinText("저장 완료") });
         restoreHeldDraft(e);
         if (manual(e.draft.kind) && head.referenceStatus !== 'verified') {
-          e.message = '저장 완료 · 재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다. 새로고침으로 다시 확인하세요.';
+          e.message = kinText("저장 완료 · 재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다. 새로고침으로 다시 확인하세요.");
           removeAnnotation(e);
         } else if (head.hidden) removeAnnotation(e);
         else lock(e, !e.editing);
@@ -1747,7 +1758,7 @@ function kinCreateViewerHistory() {
         if (e.annotationUID) removeMark(e.annotationUID); else { entries.delete(e.id); e.element?.remove(); }
         return;
       }
-      if (!window.confirm(names[e.draft.kind] + ' 저장 항목(r' + e.head.revision + ')을 지우시겠습니까? 영상과 목록에서 사라지고 되돌릴 수 없습니다. 저장 이력은 서버에 남습니다.')) return;
+      if (!window.confirm(kinText("{0} 저장 항목(r{n1})을 지우시겠습니까? 영상과 목록에서 사라지고 되돌릴 수 없습니다. 저장 이력은 서버에 남습니다.", names[e.draft.kind], e.head.revision))) return;
       if (!valid(generation) || entries.get(e.id) !== e || !writable(e) || e.busy || e.pending) return;
       // The saved revision is what is deleted; edits not saved yet go with it.
       if (e.editing) { e.editing = false; e.draft = itemOnly(e.head); e.message = ''; }
@@ -1759,8 +1770,8 @@ function kinCreateViewerHistory() {
       const e = uid && annotations.get(uid);
       if (!e?.head) return false;
       if (nativeAuthoringClosed()) status.textContent = closedText('edit');
-      else if (!writable(e)) status.textContent = '내가 저장한 항목만 지울 수 있습니다. 지우지 않았습니다.';
-      else if (e.busy || e.pending) status.textContent = '저장 결과를 확인한 뒤 지우세요. 지우지 않았습니다.';
+      else if (!writable(e)) status.textContent = kinText("내가 저장한 항목만 지울 수 있습니다. 지우지 않았습니다.");
+      else if (e.busy || e.pending) status.textContent = kinText("저장 결과를 확인한 뒤 지우세요. 지우지 않았습니다.");
       else void deleteEntry(e).catch(() => {});
       return true;
     }
@@ -1801,8 +1812,8 @@ function kinCreateViewerHistory() {
       if (!valid(generation) || suspended || held() || entries.get(e.id) !== e) return;
       const outcome = await navigateTo({ studyUid: scope, seriesUid: e.draft.seriesUid, sopUid: e.draft.sopUid, frame: e.draft.frame });
       if (outcome.ok || !valid(generation) || entries.get(e.id) !== e) return;
-      const message = { 'series-missing': '현재 검사에서 원본 시리즈를 찾을 수 없습니다.', 'frame-missing': '원본 프레임을 열지 못했습니다.',
-        'viewport-unsupported': '현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요.' }[outcome.reason];
+      const message = { 'series-missing': kinText("현재 검사에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
+        'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요.") }[outcome.reason];
       if (message) { e.message = message; row(e); }
     }
     // Read-only view of the saved heads for the Findings section: only saved rows are linkable and
@@ -1823,7 +1834,7 @@ function kinCreateViewerHistory() {
       for (const e of entries.values()) {
         if (!e.head && !e.rehydrate || e.head?.hidden || !tools[e.draft.kind] || e.annotationUID || !matches(r, e.draft) || (plane?.frameOfReferenceUID ?? null) !== e.draft.frameOfReferenceUid) continue;
         if (manual(e.draft.kind) && e.head && e.head.referenceStatus !== 'verified') {
-          if (!e.message) { e.message = '재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다.'; row(e); }
+          if (!e.message) { e.message = kinText("재확인 필요: 원본 영상의 동일성을 확인할 수 없습니다."); row(e); }
           continue;
         }
         const uid = crypto.randomUUID(), camera = v.getCamera();
@@ -1857,7 +1868,7 @@ function kinCreateViewerHistory() {
       if (r && r.study !== scope) {
         // Rows not saved yet are held with the study (park) and, with marks saved on their own, taken up and saved when its
         // image is active again (load); a request of theirs already prepared goes as the window closes (closeSend).
-        park(); reset('검사 확인 중…'); scope = r.study; me = null;
+        park(); reset(kinText("검사 확인 중…")); scope = r.study; me = null;
         load(); return;
       }
       // No /me has answered this panel yet (errors, time-outs): ask again on focus and every 15 s, so that a passing failure
@@ -1899,11 +1910,11 @@ function kinCreateViewerHistory() {
             (actual.calculator !== baseline?.calculator || actual.values.length !== baseline?.values?.length ||
             actual.values.some((value, index) => value !== baseline.values[index]));
           if (a.data.kinUnverified !== mismatch) { a.data.kinUnverified = mismatch; render(); }
-          if (mismatch && actual && !e.message.startsWith('재확인 필요')) {
-            e.message = e.head.referenceStatus !== 'verified' ? '재확인 필요: 원본을 확인하지 못했습니다. 작성 내용은 유지됩니다.' :
-              '재확인 필요: 재계산 값이 저장 당시와 다릅니다. 편집 후 다시 측정하세요.'; row(e);
+          if (mismatch && actual && !rechecking(e.message)) {
+            e.message = e.head.referenceStatus !== 'verified' ? kinText("재확인 필요: 원본을 확인하지 못했습니다. 작성 내용은 유지됩니다.") :
+              kinText("재확인 필요: 재계산 값이 저장 당시와 다릅니다. 편집 후 다시 측정하세요."); row(e);
           }
-          else if (!mismatch && e.message.startsWith('재확인 필요')) { e.message = e.editing ? '재측정 확인 완료. 작성 내용은 아직 미저장 상태입니다.' : ''; row(e); }
+          else if (!mismatch && rechecking(e.message)) { e.message = e.editing ? kinText("재측정 확인 완료. 작성 내용은 아직 미저장 상태입니다.") : ''; row(e); }
         }
       }
       hydrate();
@@ -1972,10 +1983,10 @@ function kinCreateViewerHistory() {
     // made or moved there now, otherwise the reason. The same conditions as the measuring tools' own press (configureMeasurements).
     const markGate = imageId => {
       if (ended || !writer() || !window.KinViewerSessionBoundary?.active()) return closedText('tool');
-      if (!subject || suspended || recovery.has(scope)) return '현재 검사 접근과 보관 작업을 확인한 후 측정하세요.';
-      if (window.KinWorkContext?.state() === 'preparing') return '작업 공간을 준비하는 중입니다. 잠시 뒤 다시 누르세요.';
+      if (!subject || suspended || recovery.has(scope)) return kinText("현재 검사 접근과 보관 작업을 확인한 후 측정하세요.");
+      if (window.KinWorkContext?.state() === 'preparing') return kinText("작업 공간을 준비하는 중입니다. 잠시 뒤 다시 누르세요.");
       const r = imageId ? reference(imageId) : null;
-      if (!r || r.study !== scope) return '현재 검사의 원본 프레임에서만 표식을 만듭니다.';
+      if (!r || r.study !== scope) return kinText("현재 검사의 원본 프레임에서만 표식을 만듭니다.");
       return '';
     };
     window.kinViewerHistoryMarkGate = markGate;
@@ -1987,7 +1998,7 @@ function kinCreateViewerHistory() {
      window.addEventListener('focus', onFocus); window.addEventListener('beforeunload', beforeUnload); window.addEventListener('pagehide', pageHide);
     // The pinned viewer changes active viewports through several services. A
     // bounded observation timer also covers stack frame changes without patching them.
-    const timer = setInterval(() => { try { scan(); } catch (_) { status.textContent = '현재 영상 연결을 확인할 수 없습니다.'; } }, 250);
+    const timer = setInterval(() => { try { scan(); } catch (_) { status.textContent = kinText("현재 영상 연결을 확인할 수 없습니다."); } }, 250);
     // Identity changes must invalidate immediately, even for A→B→A within one
     // observation tick. Stack events and active-viewport events own that boundary.
     const onImage = () => { try { scan(); } catch (_) {} };
