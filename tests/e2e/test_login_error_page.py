@@ -296,7 +296,8 @@ class LoginErrorPageE2E(base.WorklistE2E):
           return seen; }""")
 
     def assert_one_language(self, page, language, shot, names=()):
-        seen = self.page_words(page, language, shot)
+        # A drawn line's CSS escapes (the line break "\\a ") are not words.
+        seen = re.sub(r"\\[0-9a-fA-F]{1,6} ?", " ", self.page_words(page, language, shot))
         if language == "en":
             self.assertIsNone(HANGUL.search(seen), f"{shot}: {seen}")
         else:
