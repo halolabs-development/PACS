@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -1018,6 +1018,15 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 route.fulfill(status=self.me_status, json={'statusCode': self.me_status, 'message': 'SYN unavailable'})
             else:
                 route.fulfill(json={**self.me, 'sessionId': 'SYN-SESSION-' + str(self.me.get('sub'))})
+            return
+        # In-app unread (unread-badges.js): the page reads its unread views with the list; answered with nothing unread
+        # for this session (tests/in_app_unread_dom_test.py has the marks) and logged apart.
+        if method == "GET" and path == "/api/unread":
+            account = self.me if isinstance(self.me, dict) else {}
+            self.unread_reads = [*getattr(self, "unread_reads", []), request.url]
+            route.fulfill(json={"owner": [account.get("institution"), account.get("sub")],
+                                "view": parse_qs(url.query).get("view", [None])[0], "available": True, "count": 0, "items": [],
+                                "nextCursor": None})
             return
         if method == 'GET' and path == '/api/clinician/studies':
             query = parse_qs(url.query, keep_blank_values=True)

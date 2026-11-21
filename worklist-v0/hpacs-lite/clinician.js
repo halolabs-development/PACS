@@ -113,7 +113,7 @@
   // S5-U4b 질문 스레드 문구. 상태명·버튼·제목은 영어, 설명·확인·오류는 한국어다(AGENTS §4).
   const QUESTION = {
     hint: '이 검사에 대해 소속 기관 영상의학과에 질문을 남깁니다. 질문과 답변은 작성한 본인과 소속 기관의 판독의·관리자만 봅니다. '
-      + '새 답변은 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요. 답변은 판독문이 아니며 판독문을 대신하지 않습니다.',
+      + '새 답변은 목록의 ‘New Answers’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다). 답변은 판독문이 아니며 판독문을 대신하지 않습니다.',
     summary: '이 검사에 대한 질문과 답변을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     loading: '질문 목록을 불러오는 중입니다…',
     failed: '질문 목록을 불러오지 못했습니다.',
@@ -481,6 +481,8 @@
       if (!folderChosen) folders.setApplied('folder:' + MY_STUDIES);
     }
     paintRows(true);
+    // The unread counts are read with every complete list (its rows carry them from the next answer on).
+    if (unread) unread.refresh();
     rove(focusUid !== null && byUid.has(focusUid) ? focusUid : reopen, focusUid !== null);
     // 내려 둔 검사가 새 목록에 남아 있으면 판독문도 다시 읽어 식별 줄과 판독문이 같은 시점의 것이 되게 한다.
     if (reopen !== null) {
@@ -599,6 +601,7 @@
       tag.style.color = 'var(--danger-text)';
       cell.append(tag);
     }
+    paintRowUnread(cell, row);
   }
 
   /**
@@ -656,6 +659,148 @@
     rove(buttons[next].closest('tr').dataset.uid, true);
   }
 
+  // ── 검사 묶음의 원본 ──
+  /**
+   * The originals one per-study read covers: the selected study, and when the server answered for its exam (a merged or
+   * split exam whose report row is this one: the answer's scope names this row as its reportUid) every original that scope
+   * lists. A question or request of one of those originals belongs to this row's sections; anything else is malformed.
+   */
+  function examUids(uid, data) {
+    const out = new Set([uid]);
+    const scope = data && data.scope;
+    if (scope && typeof scope === 'object' && scope.reportUid === uid && Array.isArray(scope.sources))
+      for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+    return out;
+  }
+  // The originals of the last successful per-study read of each section ({ uid, uids }). A thread or single request read
+  // (which carries no scope) is checked against them; another study's answer falls back to the study alone.
+  let questionScope = null, requestScope = null;
+  const questionUids = uid => questionScope && questionScope.uid === uid ? questionScope.uids : new Set([uid]);
+  const requestUids = uid => requestScope && requestScope.uid === uid ? requestScope.uids : new Set([uid]);
+  /** A pane is drawn only when the browser lays it out (not collapsed, not in a hidden page part). */
+  const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
+  // ── 안 읽음 표시 ──
+  // In-app unread (unread-badges.js): the server's count of this person's own question threads with a new answer and own
+  // image requests with a new processing result, inside HALO only (no email, message or push). Read with the list, on
+  // Refresh and every minute while the page is visible. A thread or request drawn in an open section sends its seen mark.
+  // The words are state words (English); a count is the server's, never this page's.
+  const UNREAD_QUESTIONS = 'question-mine', UNREAD_REQUESTS = 'image-request-mine';
+  const UNREAD_POLL_MS = 60000;
+  const UNREAD = {
+    answers: n => `New Answers ${n}`,
+    processed: n => `Processed ${n}`,
+    row: 'New',
+    tip: '서버가 센 안 읽은 항목입니다. 질문 스레드나 영상 요청 칸을 열어 보면 없어집니다. 이메일·문자로 보내지 않습니다.',
+    stale: '안 읽음 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
+    outsideQuestion: '최신 50건 목록 밖의 질문입니다. 새 답변이 있습니다.',
+  };
+  let unread = null;
+
+  /** GET unread and the seen writes through this document's transport: any HTTP answer resolves with its status. */
+  async function unreadSend(method, path, body) {
+    const context = KinWorkContext.capture('document');
+    const response = await KinSessionTransport.page().request(API + path,
+      method === 'GET' ? { context, deadlineMs: TIMEOUT_MS } : { method, json: body, context, deadlineMs: TIMEOUT_MS });
+    if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+    if (!response.ok) throw failure(response.status, response.body);
+    return { status: response.status, body: response.body };
+  }
+
+  function mountUnread() {
+    if (unread || !root.KinUnread) return;
+    try {
+      unread = root.KinUnread.mount({ send: unreadSend, views: [UNREAD_QUESTIONS, UNREAD_REQUESTS], owner: () => owner,
+        allowed: () => !leaving && owner !== null, onChange: () => paintUnread(), onAccount: () => accountChanged(''),
+        pollMs: UNREAD_POLL_MS });
+    } catch (_) { unread = null; }
+  }
+
+  /** Unread items of a view on one listed row: those the server says open on that row now (openUid). */
+  function unreadOn(view, uid) {
+    const known = unread && unread.view(view);
+    if (!known || !known.available) return [];
+    return [...known.items].filter(([, item]) => item.openUid === uid).map(([id, item]) => ({ id, ...item }));
+  }
+
+  function unreadTag(text, kind) {
+    const tag = node('span', 'tag', text);
+    tag.dataset.unread = kind;
+    tag.title = UNREAD.tip;
+    tag.style.marginLeft = '6px';
+    // The page's emphasis colour (the theme's --accent), as the selected folder and focus use it.
+    tag.style.borderColor = 'var(--accent)';
+    tag.style.color = 'var(--accent)';
+    return tag;
+  }
+
+  /** The Report cell's unread tags of a list row (after its status), from the server's items. */
+  function paintRowUnread(cell, row) {
+    for (const old of cell.querySelectorAll('[data-unread]')) old.remove();
+    const answers = unreadOn(UNREAD_QUESTIONS, row.uid).length, processed = unreadOn(UNREAD_REQUESTS, row.uid).length;
+    if (answers) cell.append(unreadTag(UNREAD.answers(answers), 'answers'));
+    if (processed) cell.append(unreadTag(UNREAD.processed(processed), 'processed'));
+  }
+
+  /** The `New` tag of a thread or request row in the open sections. */
+  function paintItemUnread(li, view) {
+    const old = li.querySelector(':scope > [data-unread="item"], :scope > [data-part="info"] [data-unread="item"]');
+    const want = !!unread && unread.unread(view, li.dataset.id);
+    if (want && !old) {
+      const tag = unreadTag(UNREAD.row, 'item');
+      const head = view === UNREAD_REQUESTS ? li.querySelector('[data-part="info"] > p') : null;
+      if (head) head.append(tag); else li.prepend(tag, ' ');
+    } else if (!want && old) old.remove();
+  }
+
+  /** Unread threads of the selected study that its latest-50 list does not hold: a row each that opens the thread. */
+  function paintQuestionsOutside(uid) {
+    const list = $('#question-list');
+    if (!list || questionLock !== null || selected !== uid || $('#questions').dataset.state === 'failed') return;
+    for (const li of list.querySelectorAll('li[data-unread-outside]')) li.remove();
+    const listed = new Set([...list.children].map(li => li.dataset.id));
+    for (const item of unreadOn(UNREAD_QUESTIONS, uid)) {
+      if (listed.has(item.id)) continue;
+      const li = node('li');
+      li.dataset.id = item.id;
+      li.dataset.unreadOutside = '';
+      li.style.margin = '6px 0';
+      if (item.id === questionThread) li.setAttribute('aria-current', 'true');
+      const open = node('button', null, 'Open Thread');
+      open.type = 'button';
+      open.dataset.openThread = '';
+      open.addEventListener('click', () => openQuestionThread(uid, item.id));
+      li.append(UNREAD.outsideQuestion, ' ', open);
+      list.append(li);
+      paintItemUnread(li, UNREAD_QUESTIONS);
+    }
+    list.hidden = !list.children.length;
+  }
+
+  function paintUnread() {
+    if (leaving) return;
+    const box = $('#unread-summary');
+    const questions = unread && unread.view(UNREAD_QUESTIONS), requests = unread && unread.view(UNREAD_REQUESTS);
+    const answers = questions && questions.available ? questions.count : 0, processed = requests && requests.available ? requests.count : 0;
+    if (box) {
+      box.textContent = [answers ? UNREAD.answers(answers) : '', processed ? UNREAD.processed(processed) : ''].filter(Boolean).join(' · ');
+      box.title = (questions && questions.failed) || (requests && requests.failed) ? UNREAD.stale : UNREAD.tip;
+      box.hidden = !(answers || processed);
+    }
+    for (const tr of document.querySelectorAll('#studies tr[data-uid]')) {
+      const row = byUid.get(tr.dataset.uid), cell = tr.querySelector('td[data-report]');
+      if (row && cell) paintRowUnread(cell, row);
+    }
+    for (const li of document.querySelectorAll('#question-list > li[data-id]')) paintItemUnread(li, UNREAD_QUESTIONS);
+    if (selected !== null && $('#question-list') && !$('#question-list').closest('[hidden]')) paintQuestionsOutside(selected);
+    for (const li of document.querySelectorAll('#image-request-list > li[data-id]')) paintItemUnread(li, UNREAD_REQUESTS);
+    // An unread request of the open section that its latest-50 list does not hold is read on its own (readRequestsOutside).
+    const section = $('#image-requests');
+    if (section && section.open && selected !== null && requestsItems !== null && requestsLock === null) {
+      const listed = new Set([...document.querySelectorAll('#image-request-list > li[data-id]')].map(li => li.dataset.id));
+      if (unreadOn(UNREAD_REQUESTS, selected).some(item => requestUids(selected).has(item.studyUid) && !listed.has(item.id))) loadRequests(selected);
+    }
+  }
   // ── 선택한 검사 ──
 
   function field(label, value, note) {
@@ -1144,7 +1289,7 @@
     summary: '이 검사에 남긴 외부영상·영상전송 요청을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     hint: 'External Images는 다른 병원의 영상을 이 기관으로 가져오도록, Send Images는 이 검사의 영상을 다른 병원에 보내도록 '
       + '소속 기관 직원에게 남기는 요청입니다. 요청은 처리 상태의 기록일 뿐 이 화면이 영상을 옮기지 않고, 실제 처리는 직원이 따로 합니다. '
-      + '처리 결과는 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요.',
+      + '처리 결과는 목록의 ‘Processed’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다).',
     tele: '원격판독으로 받은 검사에는 영상 요청을 남기거나 읽지 않습니다. 요청은 검사를 소유한 기관 안에서만 오갑니다.',
     loading: '영상 요청을 불러오는 중입니다…',
     failed: '영상 요청을 불러오지 못했습니다.',
@@ -1163,6 +1308,7 @@
     ownFailed: '이 계정이 남긴 요청인지 확인하지 못해 취소 칸을 열지 않았습니다. Retry로 다시 읽으세요.',
     ownTooMany: '내 요청 목록을 끝까지 보지 못해 일부 요청을 찾지 못했습니다.',
     outside: '최신 50건 목록 밖으로 밀린 요청입니다. 결과를 모르는 취소가 남아 있어 이 요청만 따로 읽었습니다.',
+    outsideNew: '최신 50건 목록 밖으로 밀린 요청입니다. 새 처리 결과가 있어 이 요청만 따로 읽었습니다.',
     outsideUnread: '최신 50건 목록 밖으로 밀린 요청을 따로 읽지 못했습니다. 취소 결과는 Retry(같은 요청 ID)로 확인하거나 Discard로 버릴 수 있습니다.',
     outsideGone: '결과를 모르는 취소가 남은 요청을 서버가 지금 보여 주지 않습니다. 접근 조건이 바뀌었거나 요청이 없어졌을 수 있어 이 취소는 더 확인할 수 없습니다.',
     sending: '보내는 중입니다…',
@@ -1275,9 +1421,10 @@
    * (서버 CHECK와 같은 조건). 하나라도 어긋나면 답 전체를 그리지 않는다.
    */
   function requestItemOk(item, uid) {
+    const owned = uid instanceof Set ? uid : new Set([uid]);
     const text = value => typeof value === 'string';
     const person = value => !!value && typeof value === 'object' && text(value.actor) && text(value.name);
-    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && item.studyUid === uid
+    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && owned.has(item.studyUid)
       && Object.prototype.hasOwnProperty.call(REQUEST_KINDS, item.kind) && REQUEST_STATES.includes(item.state)
       && Number.isSafeInteger(item.revision) && item.revision >= 1 && person(item.requester)
       && !!item.counterparty && typeof item.counterparty === 'object' && text(item.counterparty.text)
@@ -1287,10 +1434,11 @@
   }
 
   function readRequestItems(data, uid) {
-    const items = data && data.items;
-    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uid))
+    const items = data && data.items, uids = examUids(uid, data);
+    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uids))
         || new Set(items.map(item => item.id)).size !== items.length)
       throw new Error(REQUEST.malformed);
+    requestScope = { uid, uids };
     return items;
   }
 
@@ -1306,7 +1454,7 @@
     const at = applied && typeof applied.at === 'string' ? new Date(applied.at) : null;
     return sent.status === 201 && !!applied && typeof applied === 'object' && typeof reply.replayed === 'boolean'
       && typeof applied.requestId === 'string' && applied.requestId.toLowerCase() === attempt.requestId
-      && applied.studyUid === attempt.uid && applied.action === attempt.action
+      && applied.studyUid === (attempt.itemUid || attempt.uid) && applied.action === attempt.action
       && applied.id === (create ? attempt.requestId : attempt.itemId) && applied.kind === attempt.kind
       && applied.from === attempt.from && applied.to === (create ? 'Requested' : 'Cancelled')
       && applied.revision === (create ? 1 : attempt.payload.revision + 1)
@@ -1368,10 +1516,11 @@
    */
   function readRequestsOutside(uid, items, fresh) {
     const listed = new Set(items.map(item => item.id));
-    const waiting = [...requestAttempts.values()].filter(attempt => attempt.uid === uid && attempt.itemId !== null
-      && !listed.has(attempt.itemId));
-    return Promise.all(waiting.map(async attempt => {
-      const id = attempt.itemId;
+    const waiting = [...new Set([...requestAttempts.values()].filter(attempt => attempt.uid === uid && attempt.itemId !== null
+      && !listed.has(attempt.itemId)).map(attempt => attempt.itemId)
+      // An unread request of this study that the latest 50 do not hold (its new processing result is read on its own).
+      .concat(unreadOn(UNREAD_REQUESTS, uid).filter(item => requestUids(uid).has(item.studyUid) && !listed.has(item.id)).map(item => item.id)))];
+    return Promise.all(waiting.map(async id => {
       try {
         const data = await request(`/image-requests/${encodeURIComponent(id)}`);
         if (!fresh()) return { id, item: null, error: null };
@@ -1380,7 +1529,7 @@
           accountChanged('');
           return { id, item: null, error: null };
         }
-        if (same === null || !requestItemOk(data.item, uid) || data.item.id !== id) throw new Error(REQUEST.malformed);
+        if (same === null || !requestItemOk(data.item, requestUids(uid)) || data.item.id !== id) throw new Error(REQUEST.malformed);
         return { id, item: data.item, error: null };
       } catch (error) {
         return { id, item: null, error };
@@ -1449,6 +1598,7 @@
   function clearRequests() {
     requestsEpoch++;
     requestsItems = null;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     const old = $('#image-requests');
     if (old) old.remove();
   }
@@ -1465,6 +1615,7 @@
     }
     requestsEpoch++;
     requestsItems = null;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     section.dataset.state = 'closed';
     body.remove();
   }
@@ -1551,6 +1702,7 @@
         return;
       }
       requestsItems = null;
+      if (unread) unread.hidden(UNREAD_REQUESTS);
       $('#image-requests').dataset.state = 'failed';
       $('#image-request-list').hidden = true;
       setRequestsState('failed', REQUEST.failed, `${error.status === 404 ? `${REQUEST.notFound}\n` : ''}${describe(error)}`);
@@ -1598,6 +1750,11 @@
     setRequestsState(items.length ? 'ready' : 'empty', items.length ? REQUEST.ready(items.length) : REQUEST.empty,
       ownFailure ? `${REQUEST.ownFailed}\n${describe(ownFailure)}` : '', !!ownFailure);
     $('#image-request-new').hidden = false;
+    // The open section drew these requests: their seen marks go to the server (unread-badges.js decides whether to send).
+    if (unread) {
+      unread.hidden(UNREAD_REQUESTS);
+      if (drawnNow($('#image-request-list'))) for (const item of requestsItems) unread.shown(UNREAD_REQUESTS, item.id, item.revision);
+    }
   }
 
   function requestItem(uid, id, item, entry) {
@@ -1622,7 +1779,7 @@
     info.dataset.part = 'info';
     li.querySelector('[data-part="info"]').replaceWith(info);
     const aside = li.querySelector('[data-part="outside"]');
-    const text = !entry ? null : entry.item ? REQUEST.outside : requestAttempts.has(key)
+    const text = !entry ? null : entry.item ? (requestAttempts.has(key) ? REQUEST.outside : REQUEST.outsideNew) : requestAttempts.has(key)
       ? `${REQUEST.outsideUnread}\n${describe(entry.error)}` : null;
     if (text === null) {
       if (aside) aside.remove();
@@ -1638,6 +1795,7 @@
     const keep = !!item && REQUEST_ACTIVE.includes(item.state) && requestOwn.get(item.id) === true || requestAttempts.has(key);
     if (keep && !compose) li.querySelector('[data-request-note]').before(requestCancelComposer(uid, li.dataset.id));
     else if (!keep && compose) compose.remove();
+    paintItemUnread(li, UNREAD_REQUESTS);
   }
 
   function requestField(wrap, name, label, tag, max, hintId) {
@@ -1834,7 +1992,7 @@
       return;
     }
     // kind·from은 보낼 때 읽은 그 요청의 값이다. 적용 결과가 이 둘과 맞아야 저장 결과로 받는다(requestApplied).
-    const attempt = { requestId, owner: [...owner], uid, itemId: id, action: 'cancel', kind: item.kind, from: item.state, key, draft,
+    const attempt = { requestId, owner: [...owner], uid, itemId: id, itemUid: item.studyUid, action: 'cancel', kind: item.kind, from: item.state, key, draft,
       busy: false, unknown: false, path: `/image-requests/${encodeURIComponent(id)}`,
       payload: { revision: item.revision, action: 'cancel', note: draft.note } };
     requestDrafts.set(key, draft);
@@ -1940,6 +2098,7 @@
     if (requestsLock !== null && (requestsLock.account || !account)) return;
     requestsLock = { text, detail: detail || '', account };
     requestsEpoch++;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     requestsItems = null;
     requestDrafts.clear();
     requestAttempts.clear();
@@ -2302,14 +2461,15 @@
 
   /** #3 응답의 모양 검사. 다른 검사의 행이나 모르는 상태가 하나라도 있으면 답 전체를 그리지 않는다. */
   function readQuestionSummaries(data, uid) {
-    const items = data && data.items;
+    const items = data && data.items, uids = examUids(uid, data);
     if (!Array.isArray(items) || items.length > 50) throw new Error(QUESTION.malformed);
     for (const item of items) {
-      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || item.studyUid !== uid
+      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || !uids.has(item.studyUid)
           || !QUESTION_STATES.includes(item.state) || !Number.isSafeInteger(item.revision) || item.revision < 1
           || !Number.isSafeInteger(item.entryCount) || item.entryCount < 1 || !item.author || typeof item.author !== 'object')
         throw new Error(QUESTION.malformed);
     }
+    questionScope = { uid, uids };
     return items;
   }
 
@@ -2324,7 +2484,7 @@
       && (!role || Object.prototype.hasOwnProperty.call(QUESTION_ROLE, value.role));
     const anchor = value => !!value && typeof value === 'object' && text(value.rs) && value.rs.length > 0
       && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
-    if (!item || typeof item !== 'object' || item.id !== id || item.studyUid !== uid || !QUESTION_STATES.includes(item.state)
+    if (!item || typeof item !== 'object' || item.id !== id || !questionUids(uid).has(item.studyUid) || !QUESTION_STATES.includes(item.state)
         || !person(item.author) || !Array.isArray(item.entries) || !item.entries.length
         || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
         || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -2351,7 +2511,7 @@
         || !QUESTION_ACTIONS[attempt.action].includes(applied.action)) return false;
     const step = QUESTION_STEPS[applied.action], entry = applied.entry, base = attempt.base;
     const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-    return mine(applied.requestId) && applied.studyUid === attempt.uid
+    return mine(applied.requestId) && applied.studyUid === (base && base.studyUid || attempt.uid)
       && applied.id === (attempt.threadId === null ? attempt.requestId : attempt.threadId)
       && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
       && applied.revision === (base ? base.revision + 1 : 1)
@@ -2389,6 +2549,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     const old = $('#questions');
     if (old) old.remove();
   }
@@ -2406,6 +2567,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     section.dataset.state = 'closed';
     body.remove();
   }
@@ -2559,6 +2721,7 @@
     $('#questions').dataset.state = items.length ? 'ready' : 'empty';
     setQuestionsState(items.length ? 'ready' : 'empty', items.length ? QUESTION.ready(items.length) : QUESTION.empty);
     $('.question-compose[data-action="ask"]').hidden = false;
+    paintQuestionsOutside(uid);
     paintQuestionPending(uid);
     if (questionThread !== null) loadQuestionThread(uid, questionThread);
     else hideQuestionThread();
@@ -2575,6 +2738,7 @@
     open.addEventListener('click', () => openQuestionThread(uid, item.id));
     li.append(questionBadge(item.state), ' ', QUESTION.item(questionTime(item.createdAt), item.entryCount, questionTime(item.lastEntryAt)),
       ' ', open);
+    paintItemUnread(li, UNREAD_QUESTIONS);
     return li;
   }
 
@@ -2592,6 +2756,7 @@
   function hideQuestionThread() {
     questionThreadSeq++;
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     const box = $('#question-thread');
     if (!box) return;
     box.hidden = true;
@@ -2686,6 +2851,7 @@
         return;
       }
       questionThreadItem = null;
+      if (unread) unread.hidden(UNREAD_QUESTIONS);
       box.dataset.state = 'failed';
       $('#question-thread-status').replaceChildren();
       $('#question-thread-meta').textContent = '';
@@ -2709,6 +2875,8 @@
     $('#question-closed-note').hidden = item.state !== 'Closed';
     setThreadState('ready', '');
     paintQuestionComposers(uid, item.id);
+    // The thread is drawn in the open section: its seen mark goes to the server (unread-badges.js decides whether to send).
+    if (unread) { unread.hidden(UNREAD_QUESTIONS); if (drawnNow($('#question-thread'))) unread.shown(UNREAD_QUESTIONS, item.id, item.revision); }
   }
 
   function questionEntry(entry, current, evidence) {
@@ -2871,7 +3039,7 @@
       return;
     }
     const attempt = { requestId, uid, threadId, action, noteKey, path, text, busy: false, unknown: false,
-      base: base ? { revision: base.revision, state: base.state } : null,
+      base: base ? { revision: base.revision, state: base.state, studyUid: base.studyUid } : null,
       payload: { ...(base ? { revision: base.revision } : {}), [action === 'close' ? 'note' : 'body']: text } };
     questionDrafts.set(key, text);
     questionAttempts.set(key, attempt);
@@ -2987,6 +3155,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     questionDrafts.clear();
     questionAttempts.clear();
     questionNotes.clear();
@@ -3027,6 +3196,7 @@
     questionNotes.clear();
     // 받은 중요 결과 영역도 같은 자리에서 끝낸다: 나간 요청을 멈추고 늦은 답·주기 읽기를 그리지 않는다.
     if (criticalInbox) criticalInbox.end();
+    if (unread) unread.end();
     listSeq++;
     reportSeq++;
     selected = null;
@@ -3167,6 +3337,7 @@
     mountMode();
     mountFolders();
     clearDetail();
+    mountUnread();
     loadList();
     // The shared inbox uses this document's defaults; verified owner replacement closes all work.
     try {
