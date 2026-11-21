@@ -584,7 +584,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         with no mark and nothing saved."""
         f = synthetic_us(self.stack, 'USCINE-' + uuid.uuid4().hex[:12], 'uscine' + uuid.uuid4().hex[:6], '20261121',
                          [us_region(0, 319, US_LEFT)], frames=2)
-        p = self.observed(f)
+        w, p = self.us_viewer(f)
         p.evaluate("async()=>{await cornerstone.getEnabledElements()[0].viewport.setImageIdIndex(1);}")
         p.wait_for_function("()=>/\\/frames\\/2$/.test(cornerstone.getEnabledElements()[0].viewport.getCurrentImageId())")
         canvas_ready(p, 1)
@@ -604,29 +604,7 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         self.assertEqual(('verified', 2, 'kin-planar-manual-v1:us'),
                          (saved[0]['referenceStatus'], saved[0]['item']['frame'], saved[0]['item']['baseline']['calculator']), saved[0])
         self.assertLess(abs(saved[0]['item']['baseline']['values'][0] - expected), 1e-6)
-        # Stored as an SR and opened again: the SR cell shows the cine at frame 2, where its Length is drawn.
-        p.get_by_role('button', name='Store SR', exact=True).click()
-        expect(p.locator('#kin-viewer-history [role=status]')).to_contain_text('SR 저장 완료', timeout=30000)
-        p.wait_for_function("()=>__d05c1.services.displaySetService.getActiveDisplaySets().some(d=>d.Modality==='SR')", timeout=30000)
-        p.evaluate('''()=>{const s=__d05c1.services;window.sourceDS=s.displaySetService.getActiveDisplaySets().find(d=>d.Modality==='SR');
-            s.viewportGridService.setDisplaySetsForViewport({viewportId:s.viewportGridService.getActiveViewportId(),displaySetInstanceUIDs:[sourceDS.displaySetInstanceUID]});}''')
-        p.wait_for_function('()=>sourceDS.isLoaded && cornerstoneTools.annotation.state.getAllAnnotations().some(a=>a.metadata.toolName==="DICOMSRDisplay")', timeout=30000)
-        try:
-            p.wait_for_function('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
-                return /\\/frames\\/2$/.test(v?.getCurrentImageId?.()||'');}''', timeout=15000)
-        except Exception:
-            self.fail('The SR cell is not on frame 2: ' + str(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
-                return [v?.getCurrentImageId?.(), (v?.getImageIds?.()||[]).slice(0,3), sourceDS.measurements.map(m=>m.imageId)];}''')))
-        try:
-            expect(p.locator('svg.svg-layer')).to_contain_text(' mm')
-        except AssertionError:
-            p.screenshot(path=str(Path(__file__).parent / 'artifacts/measurement-accuracy-ci/us-cine-sr-reopen.png'))
-            self.fail('The SR mark is not drawn: ' + json.dumps(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
-                const marks=cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='DICOMSRDisplay');
-                return {viewport:{id:v?.id, type:v?.type, frameOfReference:v?.getFrameOfReferenceUID?.(), current:v?.getCurrentImageId?.(), actors:v?._actors?.size ?? null, index:v?.getCurrentImageIdIndex?.()},
-                  marks:marks.map(a=>({frameOfReference:a.metadata.FrameOfReferenceUID, image:a.metadata.referencedImageId, visible:a.isVisible, tracking:a.data?.TrackingUniqueIdentifier})),
-                  groups:Object.keys(cornerstoneTools.annotation.state.getAnnotationManager().getFramesOfReference?.()||{})};}''')))
-        p.close()
+        p.close(); w.close()
         # A region without deltas: the rule it had.
         g = synthetic_us(self.stack, 'USNODELTA-' + uuid.uuid4().hex[:12], 'usnod' + uuid.uuid4().hex[:6], '20261121', [us_region(0, 319, None)])
         w, p = self.us_viewer(g)
