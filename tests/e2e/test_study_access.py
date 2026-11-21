@@ -119,6 +119,49 @@ class StudyAccessE2E(WorklistE2E):
         d.locator('[data-reload]').click();expect(d.locator('[data-status]')).to_contain_text('Revision 1');expect(d.locator('[data-field=studyUids]')).to_have_value(a.uid)
         folder=Path('../tmp/study-access/screens');folder.mkdir(parents=True,exist_ok=True);p.screenshot(path=str(folder/'admin-access.png'))
 
+    def test_access_05_patient_permission_two_readers_and_consent_opens_nothing(self):
+        # Patient-level permission is the Original Patient ID rule alone; withdrawing it is Deny All Studies. A consent
+        # record (Patient Consent) changes neither reader's access, and its rows reach this institution's admin audit.
+        x1=self.fixture();x2=self.fixture(patient_id=x1.patient_id);y=self.fixture()
+        consent_ids=[]
+        def cleanup_consent():
+            for cid in consent_ids:
+                for raw in psql('SELECT to_jsonb(t)::text FROM "AuditLog" t WHERE target='+lit(cid)+" AND action LIKE 'patient.consent.%'"):
+                    self.assertEqual(psql(past_audit_guard('DELETE FROM "AuditLog" t WHERE to_jsonb(t)='+lit(raw)+'::jsonb RETURNING 1')),['1'])
+                self.assertEqual(psql('DELETE FROM "TransferBasis" WHERE id='+lit(cid)+" AND \"studyUid\" IS NULL AND reference LIKE 'SYNTHETIC%' RETURNING 1"),['1'])
+        self.addCleanup(cleanup_consent)
+        only=dict(patientId=x1.patient_id,modalities=[],dateFrom=None,dateTo=None,studyUids=[])
+        self.write(policy(rules=[only]),who='doctor');self.write(policy(),who='doctor2')
+        def opens(who,uid):
+            return self.stack.bearer_request('GET','/dicom-web/studies/'+uid+'/series',self.stack.token(who),base=self.stack.proxy).status==200
+        def listed(who):
+            r=self.stack.request('GET','/studies?limit=100',who);self.assertEqual(r.status,200,r.text);return {s['uid'] for s in r.body['studies']}
+        self.assertEqual(listed('doctor')&{x1.uid,x2.uid,y.uid},{x1.uid,x2.uid})
+        self.assertEqual([opens('doctor',u) for u in (x1.uid,x2.uid,y.uid)],[True,True,False])
+        self.assertEqual(listed('doctor2')&{x1.uid,x2.uid},set());self.assertFalse(opens('doctor2',x1.uid))
+        # The administrator records the patient's consent: nothing opens for the reader without permission.
+        r=self.stack.request('POST','/admin/patient-consent/lookup','jmryu',dict(patientId=x1.patient_id));self.assertEqual(r.status,200,r.text)
+        self.assertEqual(r.body['records'],[])
+        body=dict(patientId=x1.patient_id,purpose='SYNTHETIC research registry',reference='SYNTHETIC-FORM-0001',
+                  obtainedAt='2026-11-01T00:00:00.000Z',requestId=str(uuid.uuid4()))
+        r=self.stack.request('POST','/admin/patient-consent','jmryu',body);self.assertEqual(r.status,201,r.text);consent_ids.append(r.body['id'])
+        again=self.stack.request('POST','/admin/patient-consent','jmryu',body);self.assertEqual(again.status,201,again.text)
+        self.assertEqual(again.body['id'],r.body['id']);self.assertTrue(again.body['replayed'])
+        self.assertFalse(opens('doctor2',x1.uid))
+        r=self.stack.request('POST','/admin/patient-consent/lookup','jmryu',dict(patientId=x1.patient_id))
+        self.assertEqual([(c['purpose'],c['state']) for c in r.body['records']],[('SYNTHETIC research registry','active')])
+        r=self.stack.request('POST','/admin/patient-consent/'+consent_ids[0]+'/withdraw','jmryu',dict(patientId=x1.patient_id,reason='SYNTHETIC withdrawn'))
+        self.assertEqual(r.status,200,r.text);self.assertEqual(r.body['state'],'withdrawn')
+        self.assertEqual([opens('doctor',u) for u in (x1.uid,x2.uid)],[True,True],'withdrawing a consent keeps an existing permission')
+        for who in ('doctor','tech','kdoctor'):
+            self.assertEqual(self.stack.request('POST','/admin/patient-consent/lookup',who,dict(patientId=x1.patient_id)).status,403,who)
+        audit=self.stack.request('GET','/admin/audit?limit=100','jmryu');self.assertEqual(audit.status,200,audit.text)
+        rows=audit.body.get('rows',audit.body.get('items',[])) if isinstance(audit.body,dict) else audit.body
+        self.assertEqual(sorted(e['action'] for e in rows if e.get('target')==consent_ids[0]),['patient.consent.record','patient.consent.revoke'])
+        # Permission withdrawn (Deny All Studies): neither the list nor the direct image address opens X.
+        self.write(policy(),who='doctor',revision=1)
+        self.assertEqual(listed('doctor')&{x1.uid,x2.uid},set());self.assertEqual([opens('doctor',u) for u in (x1.uid,x2.uid)],[False,False])
+
 def load_tests(loader,tests,pattern):
     return unittest.TestSuite(StudyAccessE2E(name) for name in StudyAccessE2E.__dict__ if name.startswith('test_access_'))
 

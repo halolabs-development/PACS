@@ -344,6 +344,10 @@ ROUTES: dict[tuple[str, str], Route] = {
     # The critical result hospital inbox: admin only, one setting of the own institution (read and set).
     ("GET", "admin/critical-result-inbox"): Route(Kind.TENANT),
     ("PATCH", "admin/critical-result-inbox"): Route(Kind.TENANT),
+    # Patient Consent: admin only, one patient of the own institution (lookup, record, withdraw); the patient ID is in the body.
+    ("POST", "admin/patient-consent/lookup"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent"): Route(Kind.TENANT),
+    ("POST", "admin/patient-consent/:id/withdraw"): Route(Kind.TENANT),
     # FC-070 Query/Retrieve: 자기 기관의 상대 PACS만 등록·삭제(admin)·검색·가져오기(판독의·방사선사), 검색 답·작업은 요청자에 묶인다.
     ("GET", "admin/dicom-peers"): Route(Kind.TENANT),
     ("POST", "admin/dicom-peers"): Route(Kind.TENANT),

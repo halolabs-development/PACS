@@ -172,6 +172,7 @@
     #audit-table .aval.withheld { color: #ddd6f7; font-style: italic; }
     .audit-empty { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     .audit-pager { display: flex; justify-content: center; margin-top: 12px; }
+    #patient-consent [hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -444,6 +445,38 @@
           <tbody id="access-review-rows"></tbody></table>
       </div>
       <div class="audit-pager"><button id="access-review-more" type="button" hidden>Load More</button></div>
+    </section>
+    <section class="audit" id="patient-consent" aria-labelledby="patient-consent-title">
+      <div class="audit-head">
+        <h2 id="patient-consent-title">Patient Consent</h2>
+        <span class="astate not_loaded" id="patient-consent-state" role="status">Not Loaded</span>
+      </div>
+      <p class="audit-hint">이 기관 환자의 동의 기록입니다. 원본 Patient ID로 환자를 불러와, 무엇에 대한 동의인지(Purpose)와 근거(Reference — 동의서 번호·보관 위치 등), 받은 시각을 적습니다. 기록은 검사 접근을 열거나 막지 않습니다 — 검사 접근은 회원의 Study Access로 정합니다. 적은 기록은 지우지 않고 Withdraw로 철회하며, 기록·철회는 Audit / Security에 남습니다.</p>
+      <form id="patient-consent-lookup" class="audit-head">
+        <label>Original Patient ID <input id="patient-consent-id" maxlength="64" autocomplete="off" spellcheck="false" translate="no" required disabled></label>
+        <button type="submit" id="patient-consent-load" disabled>Load Consent</button>
+      </form>
+      <p class="audit-fixed" id="patient-consent-patient" hidden>Patient: <span id="patient-consent-name" translate="no"></span> · <span id="patient-consent-pid" translate="no"></span></p>
+      <p class="message" id="patient-consent-message" role="alert"></p>
+      <div class="audit-table" id="patient-consent-wrap" hidden>
+        <table><thead><tr><th scope="col">Purpose</th><th scope="col">Reference</th><th scope="col">Obtained (UTC)</th><th scope="col">Expires (UTC)</th><th scope="col">State</th><th scope="col">Recorded By / At (UTC)</th><th scope="col">Withdrawn</th><th scope="col">Action</th></tr></thead>
+          <tbody id="patient-consent-rows"></tbody></table>
+      </div>
+      <p class="audit-empty" id="patient-consent-empty" hidden>이 환자의 동의 기록이 없습니다.</p>
+      <form id="patient-consent-withdraw" class="audit-head" hidden>
+        <span id="patient-consent-withdraw-target" translate="no"></span>
+        <label class="wide">Withdraw Reason <input id="patient-consent-reason" maxlength="1000" required autocomplete="off" translate="no"></label>
+        <button type="submit" class="primary" id="patient-consent-withdraw-confirm">Confirm Withdraw</button>
+        <button type="button" id="patient-consent-withdraw-cancel">Cancel</button>
+      </form>
+      <form id="patient-consent-form" class="audit-head" hidden>
+        <label class="wide">Purpose <input name="purpose" maxlength="500" required autocomplete="off" translate="no"></label>
+        <label class="wide">Reference <input name="reference" maxlength="1000" required autocomplete="off" translate="no"></label>
+        <label>Obtained At (UTC) <input name="obtained" type="datetime-local" step="1" required></label>
+        <label>Expires At (UTC) <input name="expires" type="datetime-local" step="1"></label>
+        <button type="submit" class="primary" id="patient-consent-record">Record Consent</button>
+        <button type="button" id="patient-consent-retry" hidden>Retry Same Request</button>
+      </form>
     </section>
   </main>
 
@@ -2328,6 +2361,7 @@
   <script src="dicom-peers-admin.js"></script>
   <script src="gateway-rules-admin.js"></script>
   <script src="gateway-support-admin.js"></script>
+  <script src="patient-consent-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>
 </body>
