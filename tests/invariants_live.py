@@ -2910,9 +2910,11 @@ class LiveInvariantTests(unittest.TestCase):
             "GET", f"/studies/{quote(fixture.uid)}/report/versions", user,
         )
         self.assertEqual(result.status, 200, "기존 ReportVersion이 조회 불가능해졌습니다: " + result.text)
-        # MODULE_A A2: accessRef names this read's own access record, so it differs per read by contract. The stored
-        # version content these cases compare across reads is every other field.
-        return sorted(({k: v for k, v in row.items() if k != "accessRef"} for row in result.body), key=lambda row: row["version"])
+        # MODULE_A A2: accessRef names this read's own access record, so it differs per read by contract. keptAt/keptOn name the
+        # time the study keeps for an event of its current approval (they follow the study, not the stored version). The
+        # stored version content these cases compare across reads is every other field.
+        return sorted(({k: v for k, v in row.items() if k not in ("accessRef", "keptAt", "keptOn")} for row in result.body),
+                      key=lambda row: row["version"])
 
     def report_state(self, fixture: Fixture, user: str) -> dict[str, Any]:
         result = self.stack.request("GET", "/bootstrap", user)
@@ -3026,6 +3028,13 @@ class LiveInvariantTests(unittest.TestCase):
     def prefix(self, user: str) -> str:
         return self.stack.actor(user).split("@")[0]
 
+    def signer(self, user: str) -> str:
+        """How a new approval or addendum writes this account as the signer: the member name on its account row, else the
+        login before the @ (as before)."""
+        sub = self.stack.request("GET", "/me", user).body["sub"].replace("'", "''")
+        name = psql(f"SELECT name FROM \"MemberRights\" WHERE sub='{sub}'")
+        return name[0].strip() if name and name[0].strip() else self.prefix(user)
+
     # ── 판독 상태기계 W/T/P/A/H ──
 
     def test_rs_transition_table_walks_every_state_and_rejects_illegal_cells(self) -> None:
@@ -3106,7 +3115,7 @@ class LiveInvariantTests(unittest.TestCase):
             days |= self.today_set()
             self.assert_status(approved, 201)
             self.assertEqual(approved.body["rs"], "A")
-            self.assertEqual(approved.body["repDoc"], self.prefix("jmryu"))
+            self.assertEqual(approved.body["repDoc"], self.signer("jmryu"))
             self.assertIn(approved.body["confirm"], days)
             self.assertIsNone(approved.body["holder"])
 
@@ -3116,7 +3125,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assert_status(added, 201)
             self.assertEqual(added.body["rs"], "A")
             self.assertEqual(added.body["version"], approved.body["version"] + 1)
-            self.assertEqual(added.body["repDoc"], self.prefix("doctor2"))
+            self.assertEqual(added.body["repDoc"], self.signer("doctor2"))
             self.assertIn(added.body["confirm"], days)
 
             reset = self.commit(fixture, "doctor", "reset", added.body["version"], reason="정정 필요")
@@ -3555,7 +3564,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assert_status(self.stack.request("PATCH", path, "kdoctor", {"ts": "inReading"}), 200)
             approved = self.commit(f2, "kdoctor", "approve", 0, findings="x")
             self.assert_status(approved, 201)
-            self.assertEqual((approved.body["rs"], approved.body["ts"], approved.body["repDoc"]), ("A", "completed", self.prefix("kdoctor")))
+            self.assertEqual((approved.body["rs"], approved.body["ts"], approved.body["repDoc"]), ("A", "completed", self.signer("kdoctor")))
             added = self.commit(f2, "kdoctor", "addendum", 1, findings="add")
             self.assert_status(added, 201)
             self.assertEqual(added.body["ts"], "completed")
@@ -5194,7 +5203,7 @@ class LiveInvariantTests(unittest.TestCase):
                     self.assert_status(result, 400)
                     self.assertIn("추가기재(Addendum) 또는 판독 취소(Reset)", result.body["message"])
                     self.assert_snapshot_unchanged(fixture, "doctor", before)
-            self.assertEqual(self.report_state(fixture, "doctor")["repDoc"], self.prefix("doctor"))
+            self.assertEqual(self.report_state(fixture, "doctor")["repDoc"], self.signer("doctor"))
             added = self.commit(fixture, "doctor2", "addendum", approved.body["version"], findings="add")
             self.assert_status(added, 201)
             reset = self.commit(fixture, "doctor", "reset", added.body["version"], reason="정정")

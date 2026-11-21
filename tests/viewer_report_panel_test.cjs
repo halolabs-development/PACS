@@ -7,6 +7,8 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
 const scopeModel=require('../worklist-v0/hpacs-lite/exam-scope.js');
+// The report screens' one time rule (KinReportPaper) is loaded before the panel, as the viewer's asset list does.
+const paper = require('../worklist-v0/hpacs-lite/report-preview.js');
 const panel = require('../worklist-v0/hpacs-lite/viewer-report-panel.js');
 const link = require('../worklist-v0/hpacs-lite/viewer-editor-link.js');
 const windows = require('../worklist-v0/hpacs-lite/viewer-windows.js');
@@ -62,13 +64,20 @@ test('choose hides first, then shows Live, My Draft, the saved report or nothing
   assert.equal(panel.choose({ uid: UID, row: all, live: { uid: OTHER, editor: text('X') } }).kind, 'draft');
   const mine = panel.choose({ uid: UID, row: all, live: null });
   assert.equal(mine.kind, 'draft');
-  assert.match(mine.source, /^My Draft — 서버에 저장된 내 초안 \(저장 \d\d:\d\d\)$/);
+  assert.equal(mine.source, `My Draft — 서버에 저장된 내 초안 (저장 ${paper.paperStamp(draft.at)})`);
+  assert.match(mine.source, /\(저장 \d{4}-\d\d-\d\d \d\d:\d\d\)$/);
   assert.deepEqual(mine.fields, text('DRAFT'));
   assert.equal(panel.choose({ uid: UID, row: row({ version: 3, rs: 'T', ...text('SAVED') }) }).source, 'Saved — v3');
-  const approved = panel.choose({ uid: UID, row: row({ version: 2, rs: 'A', repDoc: 'SYN DOCTOR', confirm: '2026-11-10 09:00', ...text('FINAL') }) });
+  // The approval time is the worklist Confirm cell's: the kept approval time in this screen's time zone (the stored confirm
+  // is the server's UTC date), else the stored date of an approval older than the kept time.
+  const approvedAt = '2026-11-09T18:06:00.000Z';
+  const approved = panel.choose({ uid: UID, row: row({ version: 2, rs: 'A', repDoc: 'SYN DOCTOR', confirm: '2026-11-09', approvedAt, ...text('FINAL') }) });
   assert.equal(approved.kind, 'approved');
-  assert.equal(approved.source, 'Approved — SYN DOCTOR · 2026-11-10 09:00');
+  assert.equal(approved.source, 'Approved — SYN DOCTOR · ' + paper.paperStamp(approvedAt));
+  assert.match(approved.source, / · \d{4}-\d\d-\d\d \d\d:\d\d$/);
   assert.deepEqual(approved.fields, text('FINAL'));
+  assert.equal(panel.choose({ uid: UID, row: row({ version: 2, rs: 'A', repDoc: 'SYN DOCTOR', confirm: '2026-11-09', ...text('FINAL') }) }).source,
+    'Approved — SYN DOCTOR · 2026-11-09');
   assert.equal(panel.choose({ uid: UID, row: row({}) }).kind, 'none');
   // Only the three fields are carried over.
   assert.deepEqual(Object.keys(panel.choose({ uid: UID, row: row({ draft: { ...draft, secret: 'x' } }) }).fields), panel.FIELDS);

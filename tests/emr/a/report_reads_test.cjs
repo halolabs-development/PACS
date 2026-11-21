@@ -295,8 +295,11 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
   assert.equal(firstByte, rows.length, 'every returned version is committed before the first byte');
   assert.match(answer.headers['content-type'], /^application\/json/);
   // The array contract: newest first, the same ten fields, whether the version is the caller's own account's (`mine`,
-  // judged on the server), plus each row's opaque accessRef.
+  // judged on the server), plus each row's opaque accessRef; a row whose writer is shown also names the writer by the
+  // member name on that account (no name on a hidden writer's row). This study keeps no approval time, so no kept time.
   assert.deepEqual(answer.body.map(r => r.version), [4, 3, 2, 1]);
+  const memberName = (await ctx.witness.memberRights.findUnique({ where: { sub } }))?.name?.trim();
+  assert.ok(memberName, 'the synthetic reader has a member row with a name');
   for (const row of answer.body) {
     const stored = rows.find(r => r.version === row.version);
     const { accessRef, ...fields } = row;
@@ -309,7 +312,7 @@ test('A-HTTP-REPORT / A-HTTP-BODY / A-PG-COMMIT: every returned version is commi
       recommendation: withheld ? '' : stored.recommendation,
       reason: withheld ? '관리자 강제 초안 해제' : stored.reason,
       author: withheld ? '작성자 비공개' : stored.author,
-      at: stored.at.toISOString(), ...(withheld ? { bodyHidden: 'in-progress' } : {}) });
+      at: stored.at.toISOString(), ...(withheld ? { bodyHidden: 'in-progress' } : { authorName: memberName }) });
   }
   const recorded = await settled(uid, rows.length);
   const opened = recorded.filter(e => e.event.action === 'provide-prepared');

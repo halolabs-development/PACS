@@ -61,9 +61,10 @@ ROWS = {
     UID_A: row(UID_A, TABS[0]["key"], state(rs="T", version=1, findings="SYN-A SAVED v1", conclusion="SYN-A SAVED C",
                                             draft={"findings": TEXT_A, "conclusion": "SYN-A CONCLUSION", "recommendation": "SYN-A REC",
                                                    "baseVersion": 1, "at": "2026-11-11T01:02:00.000Z"})),
-    # B: approved report.
+    # B: approved report, as the study row carries it (the kept approval time; `confirm` is the server's UTC date).
     UID_B: row(UID_B, TABS[1]["key"], state(rs="A", version=2, findings=TEXT_B, conclusion="SYN-B CONCLUSION",
-                                            recommendation="", repDoc="SYN DOCTOR", confirm="2026-11-10 09:00")),
+                                            recommendation="", repDoc="SYN DOCTOR", confirm="2026-11-10",
+                                            approvedAt="2026-11-10T00:00:00.000Z")),
     UID_C: row(UID_C, TABS[2]["key"], state()),
 }
 
@@ -262,7 +263,7 @@ class ViewerReportPanel(unittest.TestCase):
         self.open_tab(page)
         self.wait_source(page, "draft")
         self.assertEqual([TEXT_A, "SYN-A CONCLUSION", "SYN-A REC"], page.evaluate(VALUES))
-        expect(page.locator("#kin-viewer-report-source")).to_have_text(re.compile(r"^My Draft — 서버에 저장된 내 초안 \(저장 10:02\)$"))
+        expect(page.locator("#kin-viewer-report-source")).to_have_text(re.compile(r"^My Draft — 서버에 저장된 내 초안 \(저장 2026-11-11 10:02\)$"))
         expect(page.locator("#kin-viewer-report-patient")).to_have_text("SYN PATIENT ALPHA · SYN-P-001 · MG")
         expect(page.locator("#kin-viewer-report-state")).to_have_text("In Progress")
         expect(page.locator("#kin-viewer-report")).to_contain_text("Read Only")

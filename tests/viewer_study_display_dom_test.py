@@ -40,7 +40,8 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
         cls.pw.stop()
 
     def setUp(self):
-        self.page = self.browser.new_page(viewport={"width": 1280, "height": 900})
+        # A fixed browser time zone: the Previous Report's times are this screen's local minutes (not the server's UTC).
+        self.page = self.browser.new_page(viewport={"width": 1280, "height": 900}, timezone_id="Asia/Seoul")
         self.held, self.reads, self.answer = [], [], dict(ROWS)
         self.page.route(ORIGIN + "/", lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
         self.page.route(ORIGIN + "/api/studies**", self.serve)
@@ -66,7 +67,10 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
 
     def fulfill(self, route):
         if route.request.url.endswith("/report/versions"):
-            route.fulfill(json=[{"version": 1, "action": "approve", "findings": "Approved text"}])
+            # The signer as the server names it (the member name beside the stored login) and the approval that opened the
+            # current cycle at the time the study keeps (2026-11-18 03:06 in Asia/Seoul).
+            route.fulfill(json=[{"version": 1, "action": "approve", "findings": "Approved text", "author": "syn.reader@example.test",
+                                 "authorName": "SYN Kim Reader", "at": "2026-11-17T18:05:59.990Z", "keptAt": "2026-11-17T18:06:00.000Z"}])
             return
         uids = (route.request.url.split("uids=")[1].split("&")[0].replace("%2C", ",").split(",")
                 if "uids=" in route.request.url else self.answer)
@@ -154,7 +158,8 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
           Object.assign(services.cornerstoneViewportService, { EVENTS: {VIEWPORT_DATA_CHANGED:'data'}, subscribe: () => ({unsubscribe(){}}) });
           window.KinSessionTransport = {refusal: () => false};
         }""")
-        for name in ("viewer-info-bar", "viewer-patient-tabs", "viewer-prior-controller", "viewer-prior-panel", "viewer-tech-note"):
+        # report-preview.js comes before the prior controller and panel, as the viewer's Previous Report asset list loads it.
+        for name in ("viewer-info-bar", "viewer-patient-tabs", "report-preview", "viewer-prior-controller", "viewer-prior-panel", "viewer-tech-note"):
             self.page.add_script_tag(path=str(IDENTITY.with_name(name + ".js")))
         self.page.evaluate("""async () => {
           const tabs = KinViewerPatientTabs;
@@ -204,6 +209,10 @@ class ViewerStudyDisplayDOMTest(unittest.TestCase):
             expect(header).to_contain_text("IMAGE-ACC")
             expect(header).not_to_contain_text("ORDER-ACC")
             expect(header).to_contain_text("Approved text")
+            # Who signed it and when: the member name and this screen's minute, never the login or the server's UTC text.
+            expect(header).to_contain_text("Version 1 | Approved | SYN Kim Reader | 2026-11-18 03:06")
+            for leaked in ("syn.reader@", "2026-11-17", "T18:0", "Z"):
+                self.assertNotIn(leaked, header.locator("p").nth(2).text_content())
             expect(self.page.get_by_role("button", name="Current CT")).to_have_attribute(
                 "title", "CURRENT PATIENT | PID-1 | IMAGE-ACC | study-current")
         else:

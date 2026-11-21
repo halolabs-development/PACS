@@ -82,6 +82,7 @@
       return [field, box];
     }));
     const sourceState = section.querySelector('.related-mode-state');
+    const signedLine = section.querySelector('.related-mode-signed');
     if (!sourceState) throw new Error('Related Report mode: the Source state line is missing');
     const editor = app.editor();
     if (!editor) throw new Error('Related Report mode: the report editor host is missing');
@@ -204,6 +205,11 @@
       // The identity cards are not on screen, so this line also carries the Retry of a failed read.
       sourceState.hidden = ready;
       write(sourceState, ready ? '' : message);
+      // The plain view's head line (who signed it, when) is hidden in the mode, so the title row carries the same line (data).
+      if (signedLine) {
+        const line = ready ? sourceLine(view) || '' : '';
+        signedLine.hidden = !line; signedLine.textContent = line; signedLine.title = line;
+      }
       if (view.state === 'failed') {
         const retry = doc.createElement('button');
         retry.type = 'button';

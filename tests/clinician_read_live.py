@@ -354,6 +354,13 @@ class ClinicianReadLive(unittest.TestCase):
     def worklist_uids(self, user: str) -> set[str]:
         return {row["uid"] for row in self.call("GET", "/studies", user).body["studies"]}
 
+    def signer(self, user: str) -> str:
+        """How a new approval or addendum writes this account as the signer: the member name on its account row, else the
+        login before the @ (as before)."""
+        sub = self.stack.request("GET", "/me", user).body["sub"].replace("'", "''")
+        name = psql(f"SELECT name FROM \"MemberRights\" WHERE sub='{sub}'")
+        return name[0].strip() if name and name[0].strip() else self.stack.actor(user).split("@")[0]
+
     def create_member(self, logical: str) -> tuple[str, str, str]:
         username = f"kin-test-{uuid.uuid4().hex[:12]}-{logical}"
         self.assertRegex(username, OWNED_USERNAME)
@@ -499,7 +506,7 @@ class ClinicianReadLive(unittest.TestCase):
             self.assertIn(uid, listed)
             row = listed[uid]
             self.assertEqual(row["report"], {"final": True, "rs": "A", "action": "approve", "version": 1,
-                                             "repDoc": self.stack.actor("doctor").split("@")[0], "confirm": row["report"]["confirm"],
+                                             "repDoc": self.signer("doctor"), "confirm": row["report"]["confirm"],
                                              "findings": row["report"]["findings"], "conclusion": row["report"]["conclusion"],
                                              "recommendation": row["report"]["recommendation"]})
             self.assertIn(row["report"]["confirm"], {datetime.now(timezone.utc).date().isoformat(), date.today().isoformat()})
@@ -553,8 +560,11 @@ class ClinicianReadLive(unittest.TestCase):
             answer = self.report(uid).body
             self.assertEqual(sorted(answer), sorted(C["report_read_keys"]))
             # The detail read of a final report also says whether it was edited after approval (FC-034): not yet.
-            self.assertEqual(sorted(answer["report"]), sorted(C["report_final_keys"] + C["report_body_keys"] + ["amendedAt"]))
+            # It also names who signed the version shown and when (the member name; its time, here the kept approval time).
+            self.assertEqual(sorted(answer["report"]),
+                             sorted(C["report_final_keys"] + C["report_body_keys"] + ["amendedAt", "signedBy", "at", "keptAt"]))
             self.assertIsNone(answer["report"]["amendedAt"])
+            self.assertEqual(answer["report"]["signedBy"], self.signer("doctor"))
             self.assertEqual((answer["uid"], answer["report"]["final"], answer["report"]["action"], answer["report"]["version"]),
                              (uid, True, "approve", v))
             self.assertEqual((answer["report"]["findings"], answer["report"]["conclusion"], answer["report"]["recommendation"]),
@@ -816,7 +826,7 @@ class ClinicianReadLive(unittest.TestCase):
                     # settled: the HTTP list row is the new head with its own signer
                     row = next(r for r in self.clinician_rows("clinician") if r["uid"] == uid)
                     self.assertEqual(row["report"], {"final": True, "rs": "A", "action": "addendum", "version": box["v"],
-                                                     "repDoc": self.stack.actor(signer).split("@")[0],
+                                                     "repDoc": self.signer(signer),
                                                      "confirm": row["report"]["confirm"],
                                              "findings": row["report"]["findings"], "conclusion": row["report"]["conclusion"],
                                              "recommendation": row["report"]["recommendation"]})

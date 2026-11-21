@@ -51,7 +51,7 @@ ASSET_DIR = "/worklist/hpacs-lite/"
 # over the report fields when it runs, so report-editor-frame.js is served and listed like the other page modules
 # (the NC-11 script-src lists exactly these; the assets-byte-exact check covers it). W5 Phase B: the region also calls the
 # page's always-mounted Related Report mode, so related-report-mode.js is served and listed the same way.
-PAGE_SCRIPTS = ("work-context.js", "session-transport.js", "report-draft-client.js", "report-citation.js", "report-editor-frame.js",
+PAGE_SCRIPTS = ("work-context.js", "session-transport.js", "report-draft-client.js", "report-citation.js", "report-preview.js", "report-editor-frame.js",
                 "related-report-mode.js", "report-structure.js", "dictation-session.js", "dictation-capture.js", "dictation.js")
 WORKLET = "dictation-worklet.js"
 ASSETS = PAGE_SCRIPTS + (WORKLET,)
@@ -177,6 +177,7 @@ STRUCTHTML
 <script src="session-transport.js"></script>
 <script src="report-draft-client.js"></script>
 <script src="report-citation.js"></script>
+<script src="report-preview.js"></script>
 <script src="report-editor-frame.js"></script>
 <script src="related-report-mode.js"></script>
 <script src="report-structure.js"></script>

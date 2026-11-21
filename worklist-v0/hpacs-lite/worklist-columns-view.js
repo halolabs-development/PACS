@@ -131,12 +131,9 @@
       return Number.isFinite(until) && now >= until;
     }
     function reportStatusWord(a, now) { return reportFinalized(a, now) ? "Finalized" : RS_WORD[a?.rs] ?? a?.rs; }
-    /** 수정 창의 시각을 이 화면의 시간대로 MM-DD HH:mm. */
+    /** 수정 창의 시각 — 판독 화면의 시각 한 규칙(이 화면의 시간대로 YYYY-MM-DD HH:mm, report-preview.js paperStamp). */
     function amendTime(iso) {
-      const d = new Date(iso);
-      if (!Number.isFinite(d.getTime())) return "—";
-      const p = n => String(n).padStart(2, "0");
-      return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      return KinReportPaper.paperStamp(typeof iso === "string" ? iso : "") || "—";
     }
     /**
      * 승인본(RS A)에서 Approve(= 24시간 안의 수정 뒤 다시 승인)를 열지와 그 단추의 설명. `edited`는 편집기의 글이 승인본과
@@ -152,7 +149,7 @@
         ? { open: true, title: `승인 후 24시간 안입니다 — 본문을 고쳐 다시 Approve할 수 있습니다 (${until}까지). 의뢰의 화면에 "수정됨(시각)"이 붙습니다` }
         : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
     }
-    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 MM-DD HH:mm까지, 수정됨 MM-DD HH:mm. */
+    /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 (시각)까지, 수정됨 (시각). */
     function reportStatusParts(a, now) {
       if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];

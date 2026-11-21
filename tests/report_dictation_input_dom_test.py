@@ -48,6 +48,9 @@ CITATION_PATH = Path(os.environ.get("KIN_DICTATION_CITATION_JS",
 STRUCTURE_PATH = ROOT / "worklist-v0" / "hpacs-lite" / "report-structure.js"
 MAIN = read_page_source(MAIN_PATH)
 CITATION_JS = CITATION_PATH.read_text(encoding="utf-8")
+# The page loads the report screens' one time rule (report-preview.js, KinReportPaper) beside report-citation.js; the
+# sliced region calls it.
+PREVIEW_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-preview.js").read_text(encoding="utf-8")
 STRUCTURE_JS = STRUCTURE_PATH.read_text(encoding="utf-8")
 
 UID = "1.2.3"
@@ -346,7 +349,7 @@ def harness(state):
             .replace("PANEHTML", PANE_HTML)
             .replace("CITEHTML", CITE_HTML)
             .replace("STRUCTHTML", STRUCT_HTML)
-            .replace("CITATIONJS", CITATION_JS)
+            .replace("CITATIONJS", CITATION_JS + "\n" + PREVIEW_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", LOCK_TEXT_FN + "\n" + WRITE_BLOCK_FN)

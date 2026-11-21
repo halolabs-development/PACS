@@ -32,6 +32,9 @@ ROOT = Path(__file__).resolve().parents[1]
 MAIN_PATH = Path(os.environ.get("KIN_CITATION_MAIN", ROOT / "worklist-v0" / "hpacs-lite" / "main.html"))
 MAIN = read_page_source(MAIN_PATH)
 CITATION_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-citation.js").read_text(encoding="utf-8")
+# The page loads the report screens' one time rule (report-preview.js, KinReportPaper) beside report-citation.js; the
+# sliced region calls it.
+PREVIEW_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-preview.js").read_text(encoding="utf-8")
 # S3-structured-report added a block inside REPORT_BLOCK that builds its form object and registers
 # its listeners at the top level. The module and its markup must be here or the sliced script throws
 # while loading and every case dies before its assertion (the U3 lesson). The product catalog is
@@ -371,7 +374,7 @@ def harness(state):
             .replace("PANEHTML", PANE_HTML)
             .replace("CITEHTML", CITE_HTML)
             .replace("STRUCTHTML", STRUCT_HTML)
-            .replace("CITATIONJS", CITATION_JS)
+            .replace("CITATIONJS", CITATION_JS + "\n" + PREVIEW_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)

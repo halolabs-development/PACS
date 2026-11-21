@@ -20,6 +20,8 @@ import { consumerSource, viewerSources } from '../emr-viewing/consumer-read';
 import { activeGroups, resolveExamScope, prepareExamRead, relatedExamRecord, relatedExamReports, readableExamRecord, examScopeView, scopeIncludesSeries, ResolvedExamScope,
   groupedExamUids, ordinaryExamRecord } from '../exam-merge.service';
 import { versionDrawings, drawingEntries } from '../image-report';
+import { memberNames } from '../member-rights';
+import { keptVersionTime } from './values';
 import { reportBodyLock, storedVersionReadable } from '../report-visibility';
 
 /**
@@ -102,7 +104,8 @@ export class PacsClinician {
   async clinicianReportRead(uid: string, c: Caller, version?:string) {
     if(version!==undefined&&(!/^[1-9]\d*$/.test(version)||!Number.isSafeInteger(Number(version))))throw new BadRequestException('판 번호를 확인하세요');
     return this.clinicianScope(uid, c, async (tx, state, head, scope) => {
-      const report = { ...clinicianReportView(state, head), scope:examScopeView(scope) };
+      const view = clinicianReportView(state, head);
+      const report = { ...view, ...(view.final ? await this.signedFacts(tx, uid, state, head) : {}), scope:examScopeView(scope) };
       const identity = this.studyAccess.assertUnsplitSource(c, scope.sources[0].studyUid);
       if (state.rs === 'P') {
         const body = { uid, report, keys: null };
@@ -129,6 +132,20 @@ export class PacsClinician {
           : [consumerSource('study-metadata', uid, state.institutionId, uid, null, ['report'], identity)]),
         ...viewerSources(uid, state.institutionId, body.keys, ['keys'], identity)]);
     },version===undefined?undefined:Number(version));
+  }
+
+  /**
+   * The version this read shows says who signed it and when, as the History of that same version does - the member's
+   * name on its account (member-rights.ts memberNames; an account without a name: the login before the @, as the study's signer
+   * was written before) and its time (`at`), or the time the study keeps for it when it is a kept event of the current cycle
+   * (values.ts keptVersionTime). A version opened by number names its own signer and time, never the current head's.
+   */
+  private async signedFacts(tx: any, uid: string, state: any, head: any) {
+    const names = await memberNames(tx, [head?.authorSub]);
+    const rows = await tx.reportVersion.findMany({ where: { uid }, select: { version: true, action: true } });
+    const t = head?.at ? new Date(head.at).getTime() : NaN;
+    return { signedBy: (head?.authorSub && names.get(head.authorSub)) || String(head?.author ?? '').split('@')[0] || null,
+      at: Number.isFinite(t) ? new Date(t).toISOString() : null, ...keptVersionTime(state, head, rows) };
   }
 
   /**
@@ -218,7 +235,7 @@ export class PacsClinician {
       const scope=await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),state,identity:true});
       const head = report?.version > 0 ? await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: report.version } },
-        select: { id: true, version: true, action: true, author: true, authorSub: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
+        select: { id: true, version: true, action: true, author: true, authorSub: true, at: true, reason: true, findings: true, conclusion: true, recommendation: true, drawings: true } }) : null;
       // The state table (report-visibility.ts): another physician's unsigned text is not read here, by a clinician as by
       // any reader who did not write it.
       // Judged on the version row itself (its action and writer), so a Save of drawings alone is withheld too.

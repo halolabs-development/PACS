@@ -7596,13 +7596,18 @@ function kinStackMouse(services) {
 function kinCreateViewerPrior() {
   let services, extensions, generation = 0, ready, dispose, frame;
   const assets = ['viewer-prior-controller.js', 'viewer-prior-panel.js'];
+  const asset = name => new Promise((resolve, reject) => {
+    const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
+    script.onload = () => { script.remove(); resolve(); };
+    script.onerror = () => { script.remove(); reject(new Error('이전 검사 모듈을 불러오지 못했습니다.')); };
+    document.head.append(script);
+  });
+  // report-preview.js: the report screens' one rule for a version's time (KinReportPaper), which the panel shows with. It
+  // loads beside the controller and the panel (they keep their order), so the extension starts when it did before.
   function load() {
-    return ready ||= assets.reduce((previous, name) => previous.then(() => new Promise((resolve, reject) => {
-      const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
-      script.onload = () => { script.remove(); resolve(); };
-      script.onerror = () => { script.remove(); reject(new Error('이전 검사 모듈을 불러오지 못했습니다.')); };
-      document.head.append(script);
-    })), Promise.resolve()).catch(error => { ready = null; throw error; });
+    return ready ||= Promise.all([window.KinReportPaper?.versionStamp ? null : asset('report-preview.js'),
+      assets.reduce((previous, name) => previous.then(() => asset(name)), Promise.resolve())])
+      .catch(error => { ready = null; throw error; });
   }
   function stop() { generation++; cancelAnimationFrame(frame); dispose?.(); dispose = null; }
   function mount(viewer) {
@@ -7719,6 +7724,7 @@ function kinCreateViewerPrior() {
 function kinCreateViewerReportPanel() {
   let ready, panel = null, frame, generation = 0;
   const assets = [['exam-scope.js', () => !!window.KinExamScope], ['viewer-editor-link.js', () => typeof window.kinViewerEditorLink === 'function'],
+    ['report-preview.js', () => typeof window.KinReportPaper?.approvalText === 'function'],
     ['viewer-report-panel.js', () => !!window.KinViewerReportPanel]];
   function load() {
     return ready ||= assets.reduce((previous, [name, loaded]) => previous.then(() => loaded() ? undefined : new Promise((resolve, reject) => {
