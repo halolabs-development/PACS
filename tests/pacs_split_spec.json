@@ -11185,5 +11185,58 @@
         "optional": []
       }
     }
+  },
+  "di_additions_access_alerts": {
+    "unit": "access-alerts",
+    "decision": "Access Alerts",
+    "note": "The administrator's alerts of one account opening many different studies in a short time: one provider on the existing AdminController's audit read (report=access-alerts), no new route. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [],
+    "providers": [
+      "AdminAccessAlerts"
+    ],
+    "routes": [],
+    "injectables": {
+      "AdminAccessAlerts": {
+        "params": [
+          "PrismaService",
+          "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    },
+    "changed_injectables": {
+      "AdminController": {
+        "before": {
+          "params": [
+            "AdminService",
+            "PacsService",
+            "Object",
+            "AdminAccessReview"
+          ],
+          "scope": null,
+          "declared": [
+            "2:Symbol(RequestContextSource)"
+          ],
+          "optional": []
+        },
+        "after": {
+          "params": [
+            "AdminService",
+            "PacsService",
+            "Object",
+            "AdminAccessReview",
+            "AdminAccessAlerts"
+          ],
+          "scope": null,
+          "declared": [
+            "2:Symbol(RequestContextSource)"
+          ],
+          "optional": []
+        }
+      }
+    }
   }
 }

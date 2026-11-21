@@ -9,6 +9,7 @@ const build = process.env.KIN_ACCESS_REVIEW_BUILD;
 const compiled = name => require(path.join(build, name));
 const { AdminController } = compiled('admin.controller.js');
 const { AdminAccessReview } = compiled('admin-access-review.js');
+const { AdminAccessAlerts } = compiled('admin-access-alerts.js');
 const { AdminService } = compiled('admin.service.js'), { PacsService } = compiled('pacs.service.js');
 const { PrismaService } = compiled('prisma.service.js'), { StudyAccessService } = compiled('study-access.service.js');
 const { createRecordPort } = compiled('emr-runtime/record-port.js');
@@ -56,7 +57,7 @@ const target = kind => ({ kind, patientLinkSnapshot: known({ linkId: 'SYN-LINK',
     await store.append(event({ occurredAt: until }));
     await store.append(event({ occurredAt: new Date(Date.parse(from) - 1).toISOString() }));
     class Fixture {}
-    Module({ controllers: [AdminController], providers: [AdminAccessReview,
+    Module({ controllers: [AdminController], providers: [AdminAccessReview, AdminAccessAlerts,
       { provide: PrismaService, useValue: db }, { provide: StudyAccessService, useValue: access },
       { provide: AdminService, useValue: { auditEvents: () => ({ legacy: true }),
         listUsers: () => ({ page: 1, pageSize: 25, total: 0, pendingCount: 0, users: [] }) } },

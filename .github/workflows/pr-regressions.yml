@@ -189,6 +189,9 @@ jobs:
     - name: FC-034 amend - readers of an amended report version (pure, from source)
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/report-amend-readers --cwd . --tree api/src --file tests/report_amend_readers_test.cjs --file tests/service_test_loader.cjs -- node --test tests/report_amend_readers_test.cjs
+    - name: Access Alerts time rule (pure, from source)
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/access-alerts-rules --cwd . --tree api/src --file tests/access_alerts_rules_test.cjs --file tests/service_test_loader.cjs -- node --test tests/access_alerts_rules_test.cjs
     - name: Admin audit record-time attribution and paging behavior
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-audit-attribution --cwd . --tree api/src --file api/tsconfig.json --file api/package-lock.json --file tests/admin_audit_attribution_test.cjs --file tests/fixtures/admin-audit-checker/recorded-boundaries.cjs --file api/prisma/schema.prisma --file api/prisma/import-member-rights.cjs -- docker run --rm --network none --read-only -v "$PWD:/src:ro" -w /src -e KIN_ADMIN_AUDIT_MODULE=api/src/admin-audit.ts node:22-alpine node --test tests/admin_audit_attribution_test.cjs
@@ -923,7 +926,7 @@ jobs:
     needs: select
     if: ${{ !cancelled() && (needs.select.result != 'success' || fromJSON(needs.select.outputs.jobs)['admin-session-dom']) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 106
+    timeout-minutes: 109
     steps:
     - name: Path selection completed
       if: ${{ needs.select.result != 'success' }}
@@ -1027,6 +1030,10 @@ jobs:
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 3
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-audit-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/study-access-admin.js --file tests/admin_audit_dom_test.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/session-transport.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_audit_dom_test.py
+    - name: Admin Access Alerts DOM (check, threshold, alert rows, Review into Access Review)
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      timeout-minutes: 3
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/admin-access-alerts-dom --cwd . --file worklist-v0/hpacs-lite/admin.html --file worklist-v0/hpacs-lite/auth.js --file worklist-v0/hpacs-lite/admin-access-review.js --file worklist-v0/hpacs-lite/worklist-language-terms.js --file tests/admin_access_alerts_dom_test.py --file worklist-v0/hpacs-lite/work-context.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/session-transport.js -- "$RUNNER_TEMP/measurement-python/bin/python" -B tests/admin_access_alerts_dom_test.py
     - name: S7-U5 logout end states, ending, end unconfirmed, end confirmed, Retry Log Out, tab notices, late answers and draft preservation DOM
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       timeout-minutes: 4

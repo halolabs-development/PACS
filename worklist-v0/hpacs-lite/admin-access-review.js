@@ -96,3 +96,121 @@
     ready = session?.state === 'approved' && !session.demo && KinAuth.has('admin'); controls();
   }).catch(() => {});
 })();
+
+/* Access Alerts: one account opening many different studies in a short time, from the same access ledger as Access
+ * Review. The server decides what counts and the threshold; this panel shows its answer and opens Access Review on an
+ * alert's span. Read only when the administrator presses Check Alerts. */
+(() => {
+  'use strict';
+  const kinSay = globalThis.KinLanguage?.say || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
+  const el = name => document.getElementById(`access-alerts-${name}`);
+  const DAY = 86400000;
+  let sequence = 0, ready = false, pending = false, edited = false;
+  const local = ms => new Date(ms).toISOString().slice(0, 19);
+  const state = text => kinWrite(el('state'), text);
+  const message = (text, failed = false) => {
+    kinWrite(el('message'), text);
+    el('message').className = failed ? 'message show' : 'audit-hint';
+  };
+  function lastDay() {
+    const until = Math.ceil(Date.now() / 1000) * 1000;
+    el('from').value = local(until - DAY); el('until').value = local(until);
+  }
+  function controls() { el('load').disabled = !ready || pending; }
+  function clear() {
+    sequence++; pending = false;
+    el('rows').replaceChildren(); el('wrap').hidden = true;
+    el('scope').textContent = ''; state(kinSay('Not Loaded')); message(''); controls();
+  }
+  function cell(text, title) {
+    const td = document.createElement('td');
+    td.setAttribute('translate', 'no');
+    td.textContent = text;
+    if (title) td.title = title;
+    return td;
+  }
+  // Access Review's own inputs and Load Review: the alert's span, to the second, end exclusive.
+  function review(alert) {
+    const first = Math.floor(Date.parse(alert.firstAt) / 1000) * 1000;
+    const after = Math.floor(Date.parse(alert.lastAt) / 1000) * 1000 + 1000;
+    document.getElementById('access-review-from').value = local(first);
+    document.getElementById('access-review-until').value = local(after);
+    document.getElementById('access-review-filter').value = 'all';
+    document.getElementById('access-review-form').requestSubmit();
+    document.getElementById('access-review').scrollIntoView({ block: 'start' });
+  }
+  function row(alert) {
+    const tr = document.createElement('tr');
+    const who = alert.userId.value;
+    const open = document.createElement('button');
+    open.type = 'button';
+    kinWrite(open, kinSay('Review'));
+    kinWrite(open, kinSay('이 기관의 같은 시간대 접속기록을 Access Review에서 엽니다. 그 시간대의 다른 사용자 기록도 함께 보일 수 있습니다.'), 'title');
+    open.addEventListener('click', () => review(alert));
+    const action = document.createElement('td');
+    action.append(open);
+    tr.append(cell(who.id, `issuer: ${who.issuer} · subject: ${who.subject}`), cell(alert.firstAt), cell(alert.lastAt),
+      cell(String(alert.studies)), cell(String(alert.events)), action);
+    return tr;
+  }
+  const valid = (body, selected) => body && body.from === selected.from && body.until === selected.until &&
+    typeof body.institutionId === 'string' && body.threshold &&
+    Number.isSafeInteger(body.threshold.studies) && Number.isSafeInteger(body.threshold.minutes) &&
+    Array.isArray(body.alerts) && body.alerts.every(alert => alert && alert.userId?.status === 'known' &&
+      ['id', 'issuer', 'subject'].every(key => typeof alert.userId.value?.[key] === 'string') &&
+      ['firstAt', 'lastAt', 'evidenceEntryId'].every(key => typeof alert[key] === 'string') &&
+      Number.isSafeInteger(alert.studies) && Number.isSafeInteger(alert.events));
+  async function load() {
+    if (!ready || pending || KinConsoleSession.ended()) return;
+    if (!edited) lastDay();
+    clear();
+    let selected;
+    try {
+      selected = { report: 'access-alerts', from: new Date(`${el('from').value}Z`).toISOString(),
+        until: new Date(`${el('until').value}Z`).toISOString() };
+      if (selected.from >= selected.until) throw new Error();
+    } catch { message(kinSay('시작보다 뒤인 종료 시각을 지정하세요.'), true); return; }
+    const current = ++sequence, context = KinWorkContext.capture('document');
+    pending = true; state(kinSay('Checking')); message(''); controls();
+    try {
+      const response = await KinSessionTransport.page().request(
+        `${location.origin}/api/admin/audit?${new URLSearchParams(selected)}`, { context });
+      if (current !== sequence || KinConsoleSession.ended() || !KinWorkContext.admits(context)) return;
+      if (!response.ok || response.incomplete) throw Object.assign(new Error(), { status: response.status,
+        detail: typeof response.body?.message === 'string' ? response.body.message : '' });
+      const body = response.body;
+      if (!valid(body, selected)) throw new Error();
+      const fragment = document.createDocumentFragment();
+      body.alerts.forEach(alert => fragment.append(row(alert)));
+      el('rows').replaceChildren(fragment);
+      el('wrap').hidden = !body.alerts.length;
+      kinWrite(el('scope'), kinSay('{0} · {1} ≤ 발생 시각 < {2} · 기준: {3}분 안에 서로 다른 검사 {4}건 이상 · 경보 {5}건',
+        body.institutionId, body.from, body.until, body.threshold.minutes, body.threshold.studies, body.alerts.length));
+      state(kinSay(body.alerts.length ? 'Alerts Found' : 'No Alerts'));
+      message(body.alerts.length
+        ? kinSay('경보는 확인할 단서입니다. 업무상 열람인지는 Review로 그 시간대의 접속기록을 보고 담당자가 확인하세요.')
+        : kinSay('선택한 기간에 경보 기준에 닿은 열람이 없습니다.'));
+    } catch (error) {
+      if (current !== sequence || KinConsoleSession.ended()) return;
+      el('rows').replaceChildren(); el('wrap').hidden = true; el('scope').textContent = '';
+      state(kinSay('Check Failed'));
+      message(error.detail ? kinSay('경보 확인에 실패했습니다: {e0}', error.detail)
+        : kinSay('경보 확인에 실패했습니다. 기간과 권한을 확인하고 다시 확인하세요.'), true);
+    } finally {
+      if (current === sequence) { pending = false; controls(); }
+    }
+  }
+  lastDay();
+  el('form').addEventListener('submit', event => { event.preventDefault(); load(); });
+  for (const name of ['from', 'until']) el(name).addEventListener('input', () => { edited = true; clear(); });
+  KinConsoleSession.onEnd(() => { ready = false; clear(); });
+  KinAuth.init().then(session => {
+    if (KinConsoleSession.ended()) return;
+    ready = session?.state === 'approved' && !session.demo && KinAuth.has('admin'); controls();
+  }).catch(() => {});
+})();
