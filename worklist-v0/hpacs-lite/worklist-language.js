@@ -588,6 +588,8 @@
 
   window.KinLanguage = {
     tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
+    /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
+    isSentence,
     /** A dialog the page opens by itself for one screen (no pointer or key on that screen first, such as the reading
      * workspace opening Tech Note): it opens in that screen's language. */
     opensOn(region, open) {

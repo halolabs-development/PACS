@@ -1363,6 +1363,14 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      // What the model hands the page is strings, made in the screen language when it is asked: its tables keep their words
+      // as sentences because they are built at page load, before the page follows the chosen language.
+      const words = value => globalThis.KinLanguage?.isSentence?.(value) ? String(value)
+        : Array.isArray(value) ? (list => Object.isFrozen(value) ? Object.freeze(list) : list)(value.map(words))
+        : value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+          ? (copy => Object.isFrozen(value) ? Object.freeze(copy) : copy)(Object.fromEntries(Object.entries(value).map(([k, v]) => [k, words(v)])))
+          : value;
+      const strings = fn => (...args) => words(fn(...args));
       const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
       const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
       const VERSION = /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,31}$/;
@@ -1470,7 +1478,7 @@
           title: kinSayEn("서버가 이 응답을 만든 시각의 상태입니다. 버튼을 누를 때만 읽으므로 지금 이 순간의 상태가 아닐 수 있습니다.") };
       }
 
-      root.KinGatewayHealth = Object.freeze({ readAnswer, display, empty, summary, formatTime: localTime });
+      root.KinGatewayHealth = Object.freeze({ readAnswer, display: strings(display), empty: strings(empty), summary: strings(summary), formatTime: localTime });
     })(typeof globalThis === "object" ? globalThis : this);
   </script>
   <script>
@@ -1602,6 +1610,14 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      // What the model hands the page is strings, made in the screen language when it is asked: its tables keep their words
+      // as sentences because they are built at page load, before the page follows the chosen language.
+      const words = value => globalThis.KinLanguage?.isSentence?.(value) ? String(value)
+        : Array.isArray(value) ? (list => Object.isFrozen(value) ? Object.freeze(list) : list)(value.map(words))
+        : value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype
+          ? (copy => Object.isFrozen(value) ? Object.freeze(copy) : copy)(Object.fromEntries(Object.entries(value).map(([k, v]) => [k, words(v)])))
+          : value;
+      const strings = fn => (...args) => words(fn(...args));
       const HOUR = 3600 * 1000;
       const TAT = kinSayEn("최근 7일 안에 처음 승인된 검사가 HALO PACS 등록부터 첫 승인(ReportVersion approve)까지 걸린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.");
       const WAIT = kinSayEn("지금 승인 전(RS W·T·P·H)인 검사가 HALO PACS 등록부터 지금까지 기다린 시간입니다. Emergency 표시는 지금 값이며 사람이 입력합니다.");
@@ -1871,8 +1887,8 @@
           title: kinSayEn("서버가 이 응답을 만든 시각입니다. 줄마다 원천이 답한 시각이 따로 있습니다.") };
       }
 
-      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, SERVER, ANSWERS, readAnswer, readServer, display,
-        displayServer, summary, formatBytes, formatDuration, formatUptime, formatTime: localTime });
+      root.KinAdminMetrics = Object.freeze({ METRICS, ROW_STATES, REASONS, UNITS, SERVER, ANSWERS, readAnswer, readServer, display: strings(display),
+        displayServer: strings(displayServer), summary: strings(summary), formatBytes, formatDuration, formatUptime, formatTime: localTime });
     })(typeof globalThis === "object" ? globalThis : this);
   </script>
   <script>
