@@ -45,6 +45,9 @@ test('a signed report on paper names its author and its signer apart when anothe
   assert.deepEqual(authors(html), [['Author', '박작성 (synthetic / writer)'], ['Signer', 'SYN-DOCTOR'],
     ['Author', '박작성 (synthetic / writer)'], ['Signer', 'SYN-DOCTOR']]);
   assert.ok(html.includes('합성 원문 1 &lt;script&gt;') && html.includes('합성 원문 2 &lt;script&gt;'));
+  // The signature state each version carries is on paper, the signed originals being only in the electronic copy.
+  assert.deepEqual([...html.matchAll(/<dt>Signature<\/dt><dd>([^<]*)<\/dd>/g)].map(m => m[1]), ['Signed', 'Signed']);
+  assert.ok(!html.includes('"envelope"') && !html.includes('keyAtSigning'));
   // Without a member name the two people are still told apart by their identifiers.
   assert.deepEqual(authors(await paper(fixture(undefined, undefined, writer))), [['Author', 'synthetic / writer'], ['Signer', 'SYN-DOCTOR'],
     ['Author', 'synthetic / writer'], ['Signer', 'SYN-DOCTOR']]);

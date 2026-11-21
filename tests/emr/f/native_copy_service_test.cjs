@@ -147,6 +147,7 @@ test('a Tech Note on paper names its author by the member name of its stored aut
   const t = new Date(Date.parse(plan.version.at) + 9 * 3600000).toISOString();
   assert.ok(html.includes(`<dt>Recorded</dt><dd>${t.slice(0, 10)} ${t.slice(11, 19)} KST (UTC+09:00)</dd>`));
   assert.ok(html.includes('합성 Tech Note 본문')); assert.ok(!html.includes('"plan"'));
+  assert.ok(html.includes('<dt>Signature</dt><dd>Not Signed</dd>'), 'an unsigned record version says so on paper');
 });
 
 test('a native report is copied as its head chain: unsigned saves, signed approvals and a content reset', async () => {

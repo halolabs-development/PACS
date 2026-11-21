@@ -77,11 +77,17 @@ const field = (label: string, value: string) => value ? `<h3>${label}</h3><pre>$
 const person = (name: string | undefined, id: string) => `<dd translate="no">${esc(name ? `${name} (${id})` : id)}</dd>`;
 const REPORT_ACTIONS: Readonly<Record<string, string>> = { save: 'Saved Report', preliminary: 'Preliminary Report',
   approve: 'Approved Report', amend: 'Amendment', addendum: 'Addendum', reset: 'Cancellation' };
+/** Whether a version is signed, as the issued manifest records its verified signature (fixed-versions.ts) - the one
+ * answer every section prints, now that the signed originals are not on paper. */
+const signature = (manifest: DisclosureManifest, item: Original) =>
+  `<dt>Signature</dt><dd>${manifest.records.find(r => r.recordId === item.recordId)?.versions
+    .find(v => v.versionId === item.versionId)?.signature ? 'Signed' : 'Not Signed'}</dd>`;
 /** One native ReportVersion row in the report's own fields. An unsigned save is printed as not signed,
  * never under a signer's name; its author is the stored row's author. */
-function reportSection(item: Original, row: Record<string, any>, signed: { at: string; author: string } | null, name?: string): string {
+function reportSection(manifest: DisclosureManifest, item: Original, row: Record<string, any>,
+  signed: { at: string; author: string } | null, name?: string): string {
   return `<section><h2>${REPORT_ACTIONS[row.action] ?? 'Report Version'}</h2><dl><dt>Recorded</dt><dd>${esc(paperTime(signed?.at ?? row.at))}</dd>` +
-    `<dt>Author</dt>${person(name, signed?.author ?? row.author)}<dt>Signature</dt><dd>${signed ? 'Signed' : 'Not Signed'}</dd>` +
+    `<dt>Author</dt>${person(name, signed?.author ?? row.author)}${signature(manifest, item)}` +
     `<dt>Study</dt><dd>${esc(row.uid)}</dd><dt>Record</dt><dd>${esc(item.recordId)}</dd><dt>Version</dt><dd>${esc(item.versionId)}</dd></dl>` +
     field('Findings', row.findings) + field('Conclusion', row.conclusion) + field('Recommendation', row.recommendation) +
     field('Reason', row.reason ?? '') + '</section>';
@@ -93,7 +99,7 @@ export function fixedDocument(manifest: DisclosureManifest, originals: Original[
   if (manifest.delivery.format === 'signed-electronic') return Buffer.from(JSON.stringify({ manifest, originals }), 'utf8');
   const sections = originals.map(item => {
     const read = source(item), name = names.get(versionKey(item));
-    if (read.kind === 'report') return reportSection(item, read.row, read.signed, name);
+    if (read.kind === 'report') return reportSection(manifest, item, read.row, read.signed, name);
     const content = read.content;
     const action = { 'approve-sign': 'Approved Report', addendum: 'Addendum', amend: 'Amendment',
       cancel: 'Cancellation', entry: 'Original Entry', 'additional-entry': 'Additional Entry', correction: 'Correction' }[content.action ?? content.act] ?? 'Record Version';
@@ -102,7 +108,7 @@ export function fixedDocument(manifest: DisclosureManifest, originals: Original[
       : field('Content', typeof content.text === 'string' ? content.text : content.text?.body ?? '');
     return `<section><h2>${action}</h2><dl><dt>Recorded</dt><dd>${esc(paperTime(content.serverTime ?? content.at))}</dd>` +
       `<dt>Author</dt>${person(name, read.author)}` + (read.signer ? `<dt>Signer</dt>${person(undefined, read.signer)}` : '') +
-      `<dt>Study</dt><dd>${esc(content.studyId)}</dd>` +
+      signature(manifest, item) + `<dt>Study</dt><dd>${esc(content.studyId)}</dd>` +
       `<dt>Record</dt><dd>${esc(item.recordId)}</dd><dt>Version</dt><dd>${esc(item.versionId)}</dd></dl>` +
       text + field('Reason', content.reason ?? '') + '</section>';
   }).join('');
