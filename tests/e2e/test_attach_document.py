@@ -59,6 +59,38 @@ class AttachDocumentE2E(DicomPdfE2E):
           const image=v.getCornerstoneImage?.()||v.csImage, data=image.getPixelData(), n=Math.round(data.length/(w*h)), out=[];
           for(let i=0;i<Math.min(8,w*h);i++) out.push(data[i*n],data[i*n+1],data[i*n+2]); return out;}""", [size[0], size[1]])
 
+    # The worklist row's cells under the visible headers named `titles` (null when the header or the row is not shown).
+    ROW_CELLS = """([uid, titles]) => { const body = document.querySelector('#rows'), table = body.closest('table');
+      const head = [...table.tHead.rows[0].cells].map(c => [...c.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim());
+      const tr = [...body.querySelectorAll('tr[data-uid]')].find(r => r.dataset.uid === uid);
+      return titles.map(t => { const i = head.indexOf(t); return i < 0 || !tr ? null : tr.cells[i].innerText.replace(/\\s+/g, ' ').trim(); }); }"""
+    ROW_TITLES = ["Count", "Series", "Modality"]
+
+    def manual_with_counts(self, work):
+        """Auto Refresh Manual (this window's own setting) and the Count and Series columns shown for this window, so a
+        cell that changes was changed by the page's own list read after a write, not by the poll."""
+        self.open_toolbar_group(work, "#worklist-refresh")
+        expect(work.locator("#worklist-refresh")).to_be_enabled()
+        work.locator("#worklist-refresh").select_option("0")
+        self.close_toolbar_groups(work)
+        self.open_toolbar_group(work, "#columnsettings")
+        work.locator("#columnsettings").click()
+        dialog = work.get_by_role("dialog", name=re.compile(r"^Worklist Columns"))
+        for title in ("Count", "Series"):
+            dialog.get_by_role("checkbox", name="Show " + title, exact=True).check()
+        dialog.get_by_role("button", name="Apply for This Window", exact=True).click()
+        expect(dialog).to_be_hidden()
+        self.close_toolbar_groups(work)
+
+    def row_shows(self, work, uid, expected):
+        """Wait until the row's Count, Series and Modality cells are `expected` (the server's list answer)."""
+        try:
+            work.wait_for_function("([uid, titles, want]) => JSON.stringify((" + self.ROW_CELLS + ")([uid, titles])) === JSON.stringify(want)",
+                                   arg=[uid, self.ROW_TITLES, expected], timeout=20000)
+        except Exception:
+            print("ROW CELLS " + json.dumps(dict(want=expected, shown=work.evaluate(self.ROW_CELLS, [uid, self.ROW_TITLES]))), flush=True)
+            raise
+
     # A picture is a stack display set, which carries no SOPInstanceUID of its own (only a document set does): it is found
     # by the SOP of its instance.
     FIND_SET = "s=>services.displaySetService.getActiveDisplaySets().find(d=>d.SOPInstanceUID===s||(d.instances||d.images||[]).some(i=>i.SOPInstanceUID===s))"
@@ -81,9 +113,13 @@ class AttachDocumentE2E(DicomPdfE2E):
         self.addCleanup(cleanup)
         pdf = synthetic_pdf(["KIN ATTACHED PAGE 1"])
         known, known_pixels = self.known_png()
-        work = self.login(); row = self.select(work, fixture)
+        work = self.login(); self.manual_with_counts(work); row = self.select(work, fixture)
         counts = lambda answer: next((s["series"], s["count"]) for s in answer.body["studies"] if s["uid"] == fixture.uid)
+        # The row's cells as the server's list gives them: Count, Series, Modality.
+        listed = lambda: next([str(s["count"]), str(s["series"]), s["modality"]] for s in
+                              self.stack.request("GET", "/studies?uids=" + fixture.uid, "doctor").body["studies"] if s["uid"] == fixture.uid)
         series_before = counts(self.stack.request("GET", "/studies?uids=" + fixture.uid, "doctor"))
+        self.row_shows(work, fixture.uid, listed())
         box = row.evaluate("tr => { const r = tr.getBoundingClientRect(); return { x: r.x, y: r.y }; }")
         row.dispatch_event("contextmenu", {"clientX": box["x"] + 5, "clientY": box["y"] + 5, "button": 2})
         item = work.locator("#ctx [data-i]").filter(has_text=re.compile("^Attach Document$"))
@@ -102,6 +138,10 @@ class AttachDocumentE2E(DicomPdfE2E):
         self.assertEqual({"scan.png": "stored", "known.png": "stored", "referral.pdf": "stored"}, {k: r["state"] for k, r in rows.items()})
         self.assertEqual((series_before[0] + 3, series_before[1] + 3),
                          counts(self.stack.request("GET", "/studies?uids=" + fixture.uid, "doctor")), "one series of one image each")
+        # The same screen, with no Refresh and Auto Refresh Manual: the attached study's row now says what the server holds.
+        after = listed()
+        print("ATTACH row after " + json.dumps(after), flush=True)
+        self.row_shows(work, fixture.uid, after)
         stored = pydicom.dcmread(io.BytesIO(self.stack.orthanc_bytes(f"/instances/{rows['referral.pdf']['orthanc']}/file")))
         self.assertEqual((str(stored.SOPClassUID), stored.SeriesDescription), (PDF_CLASS, "Attached Document"))
         self.assertEqual(stored.EncapsulatedDocument.rstrip(b"\0"), pdf.rstrip(b"\0"))

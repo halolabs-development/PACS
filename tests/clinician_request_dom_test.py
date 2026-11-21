@@ -563,7 +563,7 @@ M_CODES = {
     "IMAGE_REQUEST_ROLE_REQUIRED": "이 계정에는 이 동작에 필요한 역할이 없습니다.",
     "IMAGE_REQUEST_BUSY": "서버가 다른 요청을 처리하고 있어 저장하지 못했을 수 있습니다. Retry는 같은 요청 ID로 다시 보냅니다.",
 }
-CLOSING = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
+CLOSING = "업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
 
 # UXR-SP-34 / UXR-G-18 avoided words and UXR-S5-15 acknowledgement wording (as tests/clinician_home_dom_test.py), plus
 # U4p R06: the Connect word is not the name of a request.
