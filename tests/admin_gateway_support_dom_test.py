@@ -125,6 +125,8 @@ class AdminGatewaySupportDOMTest(unittest.TestCase):
             route.fulfill(body=SCRIPTS[path], content_type="application/javascript; charset=utf-8")
         elif method == "GET" and path == BASE + "index.html":
             route.fulfill(status=204, body="")
+        elif method == "GET" and path == "/worklist/hpacs-lite/kin-emblem-j1.svg":  # the header's HALO icon
+            route.fulfill(path=HPACS / "kin-emblem-j1.svg")
         elif path == "/favicon.ico":
             route.fulfill(status=404, body="")
         elif method == "GET" and path == "/api/me":

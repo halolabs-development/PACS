@@ -1038,6 +1038,7 @@
       "api/src/image-report*",
       "tests/worklist_language_*",
       "tests/screen_language_*",
+      "proxy/branding/**",
       "tests/language_data_probe.py",
       "tests/theme_palette_*",
       "worklist-v0/hpacs-lite/worklist-language*",

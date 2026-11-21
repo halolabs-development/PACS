@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Audit — HALO PACS</title>
+  <link rel="icon" type="image/svg+xml" href="/kin-brand/kin-emblem-j1.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png">
   <style>
     :root { color-scheme: dark; --bg: #212121; --panel: #2d2d2d; --line: #b4b4b440; --text: #e3e3e3; --muted: #b4b4b4; --accent: #8ab4c8; }
     * { box-sizing: border-box; }
@@ -11,6 +13,9 @@
     body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif; }
     header { display: flex; align-items: center; gap: 18px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
     header a { color: var(--accent); }
+    /* The brand link starts with the work page's HALO icon, at the size the work page's menu bar draws it. */
+    header > a[href="main.html"] { display: inline-flex; align-items: center; gap: 10px; flex: none; }
+    header > a[href="main.html"] img { width: 18px; height: 18px; flex: none; }
     h1 { font-size: 20px; margin: 0; flex: 1; }
     h2 { font-size: 17px; margin: 0 0 12px; }
     main { padding: 22px; }
@@ -40,7 +45,7 @@
 </head>
 <body>
   <div id="audit-workspace" hidden>
-    <header><a href="main.html">HALO PACS</a><h1>Audit</h1><button id="audit-logout" type="button">Log out</button></header>
+    <header><a href="main.html"><img src="kin-emblem-j1.svg" alt="">HALO PACS</a><h1>Audit</h1><button id="audit-logout" type="button">Log out</button></header>
     <main>
       <section aria-labelledby="investigation-title">
         <h2 id="investigation-title">Patient Access Records</h2>

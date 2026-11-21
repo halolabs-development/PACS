@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Members — HALO PACS</title>
+  <link rel="icon" type="image/svg+xml" href="/kin-brand/kin-emblem-j1.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png">
   <style>
     :root {
       color-scheme: dark;
@@ -38,7 +40,9 @@
       height: 54px; display: flex; align-items: center; gap: 14px; padding: 0 20px;
       background: var(--panel); border-bottom: 1px solid var(--line);
     }
-    header .brand { font-size: 12px; letter-spacing: .15em; color: var(--muted); }
+    /* The brand starts with the work page's HALO icon, at the size the work page's menu bar draws it. */
+    header .brand { display: inline-flex; align-items: center; gap: 10px; flex: none; font-size: 12px; letter-spacing: .15em; color: var(--muted); }
+    header .brand img { width: 18px; height: 18px; flex: none; }
     header h1 { margin: 0; font-size: 17px; }
     header .spacer { flex: 1; }
     header .actor { color: var(--muted); }
@@ -176,7 +180,7 @@
 </head>
 <body>
   <header>
-    <div class="brand">HALO PACS</div>
+    <div class="brand"><img src="kin-emblem-j1.svg" alt="">HALO PACS</div>
     <h1>Members</h1>
     <div class="spacer"></div>
     <span class="actor" id="actor"></span>
