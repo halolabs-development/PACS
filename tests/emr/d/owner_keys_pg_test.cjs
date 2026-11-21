@@ -12,6 +12,9 @@ const { spawnSync } = require('node:child_process');
 const api = process.env.KIN_D_API || path.resolve(__dirname, '../../../api');
 const { PrismaClient } = require(path.join(api, 'node_modules/@prisma/client'));
 const migration = '20261120150000_owner_account_keys';
+// The database here stops at this migration; a version is read by the columns it has then (a later column is not there yet).
+const VERSION_COLUMNS = Object.fromEntries(['id', 'uid', 'version', 'action', 'findings', 'conclusion', 'recommendation', 'reason',
+  'author', 'authorSub', 'citations', 'structured', 'drawings', 'at', 'groupId', 'snapshotFormat'].map(key => [key, true]));
 const { PacsFilters } = require(path.join(api, 'dist/pacs/filters'));
 const { PacsPreferences } = require(path.join(api, 'dist/pacs/preferences'));
 const { draftOf } = require(path.join(api, 'dist/owner-identity'));
@@ -141,7 +144,7 @@ for (const aliases of [false, true]) {
       assert.deepEqual([study.holderSub,study.preDocSub,study.preReviewerSub],[account,account,'ordinary']);
       const historical = index === 2 && !aliases ? null : account;
       const head = await db.report.findUnique({ where: { uid: study.uid } });
-      const version = await db.reportVersion.findFirst({ where: { uid: study.uid } });
+      const version = await db.reportVersion.findFirst({ where: { uid: study.uid }, select: VERSION_COLUMNS });
       assert.equal(head.updatedBySub, historical);
       assert.equal(version.authorSub, historical);
       if (who) {
@@ -295,7 +298,7 @@ test('an administrator replacement whose successor now has the predecessor\'s ol
   await db.reportDraft.create({ data: { uid: study, author, authorSub: 'successor', authorLogin: mail, present: true,
     workUnit: 'disposal:'+randomUUID(), workSince: new Date(), workIntent: 'approve', findings: 'the successor\'s own draft' } });
   assert.equal((await draftOf(db, study, successor)).findings, 'the successor\'s own draft');
-  const version = await db.reportVersion.findFirst({ where: { uid: study, version: 1 } });
+  const version = await db.reportVersion.findFirst({ where: { uid: study, version: 1 }, select: VERSION_COLUMNS });
   assert.equal(await storedVersionReadable(db, study, version, successor), false, 'the unsigned version is not the successor\'s');
   // The predecessor's rows are kept as they were, unattributed.
   const kept = await db.reportDraft.findFirst({ where: { uid: study, author: mail } });
