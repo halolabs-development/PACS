@@ -131,7 +131,7 @@ BIRTH_TIP = "원본 DICOM 생년월일이 선택한 검사와 다릅니다."
 SEX_TIP = "원본 DICOM 성별이 선택한 검사와 다릅니다."
 NOT_LISTED = "이 검사는 지금 목록에 없어 열 수 없습니다. 목록을 새로고침하세요."
 TELE_TIP = "원격판독으로 의뢰받은 검사입니다."
-CLOSING = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
+CLOSING = "업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"
 
 # UXR-SP-34 / UXR-G-18 avoided words and UXR-S5-15 acknowledgement words (as tests/clinician_home_dom_test.py).
 AVOIDED = re.compile(r"진단|검출|판정|우선순위|diagnos|detect|priorit|\bAI\b", re.IGNORECASE)

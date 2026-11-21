@@ -42,7 +42,18 @@ class MammographyHangingE2E(WorklistE2E):
         finally:
             super().tearDown()
 
-    def phantom(self, patient, prior=False, uncertain=False, xa=False, dbt=False, reference_frame=None):
+    # The tissue of a breast=True phantom as it was made, as a box of pixel edges in the stored image: against the stored
+    # left border for the left breast, the stored right border for the right breast, and for the prior left breast
+    # (stored flipped on both axes) the stored right border too, upside down.
+    @staticmethod
+    def breast_box(side, prior=False):
+        if side == 'L' and not prior:
+            return {'x0': 0, 'x1': 65, 'y0': 15, 'y1': 105}
+        return {'x0': 63, 'x1': 128, 'y0': 23 if side == 'L' else 15, 'y1': 113 if side == 'L' else 105}
+
+    # breast=True: the tissue stands against the chest wall the stored orientation names (a breast as a device stores
+    # it); otherwise a block apart from both borders, for the tests of the hanging and the stored orientation alone.
+    def phantom(self, patient, prior=False, uncertain=False, xa=False, dbt=False, reference_frame=None, breast=False):
         uid = generate_uid()
         fixture = Fixture(uid, patient, "한림병원", "jmryu", "MG-FOLLOWUP-SYNTHETIC")
         self.stack.active[uid] = fixture
@@ -81,9 +92,17 @@ class MammographyHangingE2E(WorklistE2E):
                 ds.WindowCenter, ds.WindowWidth = 500, 1000
                 ds.PixelSpacing = [1, 1]
                 pixels = np.zeros((128, 128), dtype='<u2')
-                pixels[15:105, 15:80] = 350
-                pixels[22:42, 22:35] = 1000
-                pixels[75:90, 55:70] = 700
+                if breast:
+                    # The chest wall at the stored left (columns 0 … 64), mirrored for the right breast.
+                    pixels[15:105, 0:65] = 350
+                    pixels[22:42, 22:35] = 1000
+                    pixels[75:90, 40:55] = 700
+                    if side == 'R':
+                        pixels = pixels[:, ::-1].copy()
+                else:
+                    pixels[15:105, 15:80] = 350
+                    pixels[22:42, 22:35] = 1000
+                    pixels[75:90, 55:70] = 700
                 if xa:
                     ds.NumberOfFrames, ds.FrameTime = 12, 40
                     pixels = np.stack([np.roll(pixels, i, axis=1) for i in range(12)])
