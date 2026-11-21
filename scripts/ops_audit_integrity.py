@@ -1033,6 +1033,25 @@ def verify_backup(directory, checkpoint=None):
     directory = Path(directory)
     try:
         manifest = read_json(directory / "manifest.json")
+        encrypted = ops.encryption_record(manifest) is not None
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
+        return 2, {"exit": 2, "error": "Unreadable backup manifest"}
+    except ops.BackupEncryptionError as error:
+        return 2, {"exit": 2, "error": str(error)}
+    if encrypted:
+        # An encrypted daily set never declares a checkpoint; an external one is compared with its plaintext kin.dump,
+        # read from the opened set (key and every component checked first).
+        if checkpoint is None:
+            return 2, {"exit": 2, "error": "The backup declares no intact checkpoint"}
+        try:
+            with ops.opened_set(directory, manifest) as opened:
+                return verify(checkpoint, snapshot_source(opened.path, opened.manifest))
+        except InputError as error:
+            return 2, {"exit": 2, "error": str(error)}
+        except (ops.BackupEncryptionError, ops.StoredSetError, OSError, ValueError, KeyError, TypeError) as error:
+            refused = isinstance(error, (ops.BackupEncryptionError, ops.StoredSetError))
+            return 2, {"exit": 2, "error": str(error) if refused else "Unreadable backup"}
+    try:
         declared_digest = manifest.get("sha256", {}).get(CHECKPOINT)
         source = snapshot_source(directory, manifest)
     except (OSError, ValueError, KeyError, AttributeError, TypeError):
@@ -1096,6 +1115,9 @@ def seal(directory, root, manifest):
     target = directory / CHECKPOINT
     if directory.is_symlink() or target.exists() or target.is_symlink():
         raise Refused("The backup already holds a checkpoint")
+    if "encryption" in manifest:
+        # The seal would add a plaintext checkpoint and change the authenticated manifest of an encrypted set.
+        raise Refused("An encrypted daily backup is not sealed")
     with ledger_lock(root):
         return _seal(directory, root, manifest, target)
 

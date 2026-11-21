@@ -50,6 +50,7 @@ on:
           - screen-language
           - login-error-page
           - viewer-overlay-units
+          - suspended-reader-pickers
 
 permissions:
   contents: read
@@ -147,6 +148,7 @@ jobs:
             tests/e2e/artifacts/login-error-page-ci/
             tests/e2e/artifacts/LOGIN-ERROR-PAGE-*.png
             tests/e2e/artifacts/viewer-overlay-units-ci/
+            tests/e2e/artifacts/suspended-reader-pickers-ci/
             tests/e2e/artifacts/film-print-ci/
             tests/e2e/artifacts/viewer-mg-ci/
             tests/e2e/artifacts/test_image_text_*.png
