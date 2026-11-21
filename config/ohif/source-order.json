@@ -1,5 +1,6 @@
 {
-  "shared": ["worklist-v0/hpacs-lite/exam-scope.js"],
+  "shared": ["worklist-v0/hpacs-lite/exam-scope.js", "worklist-v0/hpacs-lite/viewer-language.js",
+    "worklist-v0/hpacs-lite/worklist-language-terms.js", "worklist-v0/hpacs-lite/worklist-language.js"],
   "sources": [
     "branding-defaults.js",
     "session.js",

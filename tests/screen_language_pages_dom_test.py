@@ -73,10 +73,15 @@ class ScreenLanguagePages(unittest.TestCase):
             page.wait_for_timeout(800)
         return page, reads
 
-    def test_the_viewer_does_not_load_the_translator(self):
+    def test_the_viewer_carries_the_translator_and_leaves_its_page_alone(self):
+        # The glossary and translator are shared sources of config/ohif.js (no separate load); the viewer mark makes the
+        # translator leave OHIF's page alone (nothing registered, nothing stored) and follow the reading-screen choice.
         page, reads = self.open("viewer", "radiologist", "en")
         self.assertFalse(LANGUAGE.intersection(reads))
-        self.assertFalse(page.evaluate("Boolean(window.KinLanguage || window.KinLanguageTerms)"))
+        self.assertEqual("viewer", page.evaluate("window.KinLanguageDocument"))
+        self.assertEqual("en", page.evaluate("window.KinLanguage.lang(document.body)"))
+        self.assertFalse(page.evaluate("document.documentElement.hasAttribute('data-kin-lang-worklist') || document.documentElement.hasAttribute('data-kin-lang-reading')"))
+        self.assertEqual('{"version":1,"worklist":"en","reading":"en"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
 
     def test_pages_follow_english_and_stay_as_they_are_otherwise(self):
         for name, role in PAGES:

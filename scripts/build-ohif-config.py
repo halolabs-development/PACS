@@ -28,7 +28,10 @@ def assemble(root=ROOT):
         raise ValueError("source-order.json differs from source files: "
                          f"unlisted={sorted(available - listed)}, missing={sorted(listed - available)}")
     shared = manifest.get("shared", [])
-    if shared not in ([], ["worklist-v0/hpacs-lite/exam-scope.js"]):
+    # The exam scope, then the screen language: the viewer mark, the glossary and the translator, before any viewer source.
+    language = ["worklist-v0/hpacs-lite/viewer-language.js", "worklist-v0/hpacs-lite/worklist-language-terms.js",
+                "worklist-v0/hpacs-lite/worklist-language.js"]
+    if shared not in ([], ["worklist-v0/hpacs-lite/exam-scope.js"], ["worklist-v0/hpacs-lite/exam-scope.js", *language]):
         raise ValueError("Unknown shared viewer source")
     return b"".join((root / name).read_bytes() for name in shared) + b"".join((directory / name).read_bytes() for name in sources)
 
