@@ -116,6 +116,7 @@ REGRESSION_SUITES = {
         tests/viewer_hanging_protocol_monitors_dom_test.py
         tests/viewer_monitor_hanging_dom_test.py
         tests/viewer_compare_dom_test.py
+        tests/viewer_hotkey_table_dom_test.py
         tests/viewer_mg_dom_test.py
         tests/viewer_clinician_entry_dom_test.py
         tests/viewer_context_loss_dom_test.py
@@ -158,6 +159,7 @@ REGRESSION_SUITES = {
         tests/clinician_request_dom_test.py
         tests/clinician_timeline_dom_test.py
         tests/clinician_viewer_dom_test.py
+        tests/in_app_unread_dom_test.py
     """.split(),
     'critical-result-dom': """
         tests/clinical_context_dom_test.py
@@ -2128,6 +2130,31 @@ class MeasurementCiTests(unittest.TestCase):
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- auto-save-view', dispatch)
         self.assertIn('tests/e2e/artifacts/auto-save-view-ci/', dispatch)
+    def test_in_app_unread_profile_is_exact_and_dispatch_only(self):
+        # In-app unread: the declared cases of one class in one unit, reached only through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['in-app-unread']
+        suite, class_name, unit = 'e2e/test_in_app_unread.py', 'InAppUnreadE2E', 'ci-in-app-unread'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'in-app-unread-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-in-app-unread-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'in-app-unread':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_unread_01_question_answer_followup', 'test_unread_02_image_request_processed',
+                          'test_unread_03_a_moved_study_leaves_every_count'])
+        self.assertNotIn('in-app-unread', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- in-app-unread', dispatch)
+        self.assertIn('tests/e2e/artifacts/in-app-unread-ci/', dispatch)
 
     def test_mark_autosave_profile_is_exact_and_dispatch_only(self):
         # Marks saved on their own and deleted: the declared cases of one class in one unit, reached only through the
@@ -2324,6 +2351,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'image-report',
                           # Auto Save View on a real stack, Focused integration dispatch only.
                           'auto-save-view',
+                          # In-app unread marks on a real stack (API level), Focused integration dispatch only.
+                          'in-app-unread',
                           # Marks saved without the Save button and saved marks deleted, Focused integration dispatch only.
                           'mark-autosave',
                           # Screen language on a real stack, Focused integration dispatch only.

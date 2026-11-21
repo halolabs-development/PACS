@@ -93,7 +93,10 @@ window.KinReadingWorkspace = function (app) {
     const label=text=>Object.assign(document.createElement('span'),{textContent:text}),parts=[];
     Object.entries(shortcutButtons).forEach(([id,b],i)=>{if(i)parts.push(' · ');parts.push(label(window.KinLanguage?window.KinLanguage.source(b):b.textContent),' '+KinWorkspaceShortcuts.display(map[id]));});
     // C-R01-008: Approve is in the same map (Ctrl+S by default); the summary names it too.
-    hints.replaceChildren(...parts,kinWrite(document.createTextNode(''),kinSayEn(' (입력 중 검사 이동 제외)')),' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize));
+    hints.replaceChildren(...parts,kinWrite(document.createTextNode(''),kinSayEn(' (입력 중 검사 이동 제외)')),' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize),
+      ...(map.finalizeNext?[' · ',label('Approve & Next'),' '+KinWorkspaceShortcuts.display(map.finalizeNext)]:[]));
+    const approveNext=document.getElementById('b-approve-next');
+    if(approveNext){if(map.finalizeNext)approveNext.setAttribute('aria-keyshortcuts',KinWorkspaceShortcuts.display(map.finalizeNext));else approveNext.removeAttribute('aria-keyshortcuts');}
   }});
   /* C-R01-008: the summary also names the letter keys of the Viewer window. They are the saved viewer keys of the account
    * (/api/workspace-shortcuts viewerSettings), or the viewer defaults when none are saved, read from the viewer
@@ -535,6 +538,11 @@ window.KinReadingWorkspace = function (app) {
     // Frame keydown cannot reach the page dispatcher; both use the same command gate.
     if(command==='finalize'){
       if(doc!==document&&window.KinReportCommands?.finalize?.()===true)e.preventDefault();
+      return;
+    }
+    // Finalize & Next (Approve & Next) the same way: the page's own key goes to the page's dispatcher, the frame's is passed on.
+    if(command==='finalizeNext'){
+      if(doc!==document&&!window.KinReportCommands?.otherWriting?.(e.target)&&window.KinReportCommands?.finalizeNext?.()===true)e.preventDefault();
       return;
     }
     if (!active) {

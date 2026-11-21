@@ -226,6 +226,13 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET image-requests', 'GET image-requests/:id', 'GET studies/:uid/image-requests'] },
   { kinds: ['image-request'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/image-requests', 'POST image-requests/:id'] },
+  // In-app unread: a view's unread count and the id, study and listed revision of each unread question thread or image
+  // request (no body), read as the person looks and by the screens' polling. Its 열람 is the listed head, as a list row's.
+  { kinds: ['clinical-question', 'clinical-answer', 'image-request'], operation: 'read', causes: ['user-view', 'background-fetch'],
+    routes: ['GET unread'] },
+  // The person's seen mark of a thread or request their screen showed: their own reading state, no clinical record.
+  { kinds: ['preferences'], operation: 'write', causes: ['user-view'],
+    routes: ['POST questions/:id/seen', 'POST image-requests/:id/seen'] },
   { kinds: ['manual-sr'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/manual-sr', 'POST studies/:uid/manual-sr/:id/store'] },
   { kinds: ['measurement', 'key-image'], operation: 'read', causes: ['user-view', 'background-fetch'],
@@ -246,6 +253,12 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET admin/agreements', 'GET studies/:uid/basis', 'GET transfers'] },
   { kinds: ['transfer-governance'], operation: 'write', causes: ['user-view'],
     routes: ['POST admin/agreements', 'PATCH admin/agreements/:id', 'POST studies/:uid/basis', 'POST studies/:uid/basis/:id/revoke', 'POST studies/:uid/transfers', 'POST transfers/:id/revoke'] },
+  // Patient Consent: a patient's consent records of the administrator's own institution (kept with the transfer basis).
+  // The lookup is a POST so the patient ID stays out of the URL; it reads only.
+  { kinds: ['transfer-governance'], operation: 'read', causes: ['user-view'],
+    routes: ['POST admin/patient-consent/lookup'] },
+  { kinds: ['transfer-governance'], operation: 'write', causes: ['user-view'],
+    routes: ['POST admin/patient-consent', 'POST admin/patient-consent/:id/withdraw'] },
   { kinds: ['private-draft', 'report-evidence'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET studies/:uid/draft'] },
   // S9-U4b (contract S9-U4p 6, U4P3-06): the self-institution import writes originals, the study's metadata and per-file

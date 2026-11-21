@@ -32,6 +32,10 @@
         // issued itself for exactly this field and request (the mode checks and consumes it here, once per edit span).
         canEdit: (field, admission = null, at = null) => work.state() === "active" && !!selectedUid
           && !reportEditorBlock(admission && relatedMode.admits(admission, field, at) ? admission : null),
+        // An approved report that takes only an Addendum keeps its approved text (keepsApprovedText): every edit of the
+        // frame, typed or written, may only write after it. A refused typed edit is put back and said once.
+        keeps: (field, text, prior) => keepsApprovedText(field, text, prior),
+        kept: () => toast(kinSay(ADDENDUM_APPEND_ONLY), "err"),
       });
       return reportFrame;
     }
@@ -156,6 +160,8 @@
     function commitFailureRoute(e) {
       if (e?.code === "REPORT_HELD") return "held";
       if (e?.code === "REPORT_DRAFT_STALE") return "stale";
+      // The version lock: a head another window of this same account saved is "mine" (report-commit.ts head.mine).
+      if (e?.code === "REPORT_VERSION_CONFLICT" && e.body?.head?.mine === true) return "mine";
       if (String(e?.message ?? "").includes("저장했습니다")) return "reload";
       return "toast";
     }
@@ -321,6 +327,50 @@
       return RFIELDS.some(k => KinReportCitation.toLf(r[k] ?? "") !== KinReportCitation.toLf($("#" + k).value))
         || reportDrawingsChanged.get(uid) === true;
     }
+    /**
+     * An Addendum only adds to the approved report (the server decides it: report-commit.ts addendumRefusal - these are its
+     * words). `approvedHeadHere` is the approved text the editor's text stands on: the study is approved and the editor's
+     * text is based on its current version. A text based on an older version (a stale draft) has none here - the server
+     * answers its Addendum with the approved report to rebase on, and nothing local stands in that way.
+     */
+    const ADDENDUM_APPEND_ONLY = "추가기재는 승인본에 덧붙이기만 합니다 — 승인본의 글은 그대로 두고 그 뒤에 쓰세요";
+    const ADDENDUM_EMPTY = "덧붙인 내용이 없습니다 — 승인본 뒤에 추가기재할 글을 쓴 뒤 Addendum을 누르세요";
+    function approvedHeadHere(uid) {
+      const r = uid ? appState[uid] : null;
+      if (!serverMode || demoMode || !r || r.rs !== "A" || r.prelimHidden) return null;
+      if (reportBaseVersion(uid, r.version ?? 0) !== (r.version ?? 0)) return null;
+      return Object.fromEntries(RFIELDS.map(k => [k, KinReportCitation.toLf(String(r[k] ?? ""))]));
+    }
+    /**
+     * Where an approved report takes nothing but an Addendum from this reader (its 24-hour amendment is not open), the
+     * editor keeps each field's approved text: an edit - typed, or written by a command (template, dictation, Paste, a
+     * citation, a structured item, Related Report) - may only write after it. `prior` is the field's text before the edit:
+     * a text that did not keep the approved one already is not held (the server judges it).
+     */
+    function keepsApprovedText(field, text, prior) {
+      const head = approvedHeadHere(selectedUid);
+      const r = appState[selectedUid];
+      if (!head || !RFIELDS.includes(field) || (typeof amendApproval === "function" && amendApproval(r, true).open)) return true;
+      const lf = KinReportCitation.toLf;
+      if (prior !== undefined && !lf(String(prior)).startsWith(head[field])) return true;
+      return lf(String(text ?? "")).startsWith(head[field]);
+    }
+    /**
+     * Said before an Addendum is sent, with the server's words: nothing added to the approved text the editor stands on (the
+     * Addendum pressed with no change). Drawings count only when the draft is known to hold no drawing change (an attach or
+     * a removal goes to the server, which decides). Text that does not start with the approved text is not judged here:
+     * this page's approved text may be older than the server's, and the server then answers with the approved report to
+     * rebase on - the editor keeps the approved text it shows (keepsApprovedText) and the server decides the rest. Null: send.
+     */
+    function addendumRefusalHere(uid, texts) {
+      const head = approvedHeadHere(uid);
+      if (!head) return null;
+      const lf = KinReportCitation.toLf;
+      if (!RFIELDS.every(k => lf(String(texts[k] ?? "")).startsWith(head[k]))) return null;
+      const drawings = reportDraftDrawings.now(uid);
+      const added = RFIELDS.some(k => lf(String(texts[k] ?? "")).slice(head[k].length).trim());
+      return !added && drawings.known && drawings.drawings === null && reportDrawingsChanged.get(uid) !== true ? ADDENDUM_EMPTY : null;
+    }
     // 승인본에서는 고친 글이 생기거나 사라질 때 Approve가 열리고 닫힌다(위의 비교). 확정이 나가 있는 동안은 그 확정이 단추를 쥔다.
     onReportField("input", () => { if (appState[selectedUid]?.rs === "A" && !commitInFlight) updateReportButtons(); });
 
@@ -465,7 +515,9 @@
                    `다음 자동 저장이 다시 시도합니다`
          : deferred ? `<b>${lead}Unsaved Draft</b> — 이 화면에 담아 두었습니다 · 서버 저장은 아직 확인되지 않았습니다`
                   : `<b>${lead}Draft Saved${at ? " " + esc(draftTime(d.at)) : ""}</b> — ${apart ? "초안으로 " : "개인 초안으로 "}자동 저장됨 (확정 전)`) +
-        (behind ? ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 확정됐습니다`
+        // A version saved since is "saved" (Save, Defer, Preliminary are not a finalization); only an approved one is approved.
+        (behind ? (r.rs === "A" ? ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 승인됐습니다`
+                                : ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 저장됐습니다`)
                 : `<span id="drafthint"></span>`);
       renderDraftHint();
     }
@@ -979,7 +1031,7 @@
      * 병합은 하지 않는다 — 두 판독문을 기계가 섞으면 누구의 진술도 아닌 글이 남는다.
      */
     let staleSeq = 0, stalePane = null, staleBusy = false;
-    function openStaleRebase(uid, seq, e) {
+    function openStaleRebase(uid, seq, e, action = null) {
       /**
        * **그리기 전에** UID와 선택 순번을 함께 확인한다.
        *
@@ -996,7 +1048,8 @@
       const head = staleHeadOf(e);
       // 모양이 아니면 아무것도 "승인본"이라고 보여주지 않는다. 그때는 일반 실패로 끝낸다.
       if (!head) { toast("저장 실패: " + e.message, "err"); return; }
-      stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head };
+      // The refused decision rides with the pane: an Addendum is re-based as an addition to the new approved text.
+      stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, action };
       drawApprovedPane(head, {
         title: "Approved Report Changed",
         message: `이 초안은 v${head.draftBaseVersion ?? "?"}을 기준으로 씁니다. 그 뒤 v${head.version}이 승인됐습니다 — ` +
@@ -1071,6 +1124,40 @@
     }
     $("#b-approved-view").addEventListener("click", viewApprovedReport);
 
+    /**
+     * An Addendum re-based on the approved report the pane shows: for each field, this text's addition to the version it was
+     * written on (`draftBaseVersion` - its text read from the history; v0 is three empty fields) is put after the new approved
+     * text. A field that already starts with the new approved text stays as it is (nothing is added twice). `{ texts }`, or
+     * `{ refused }` with the reason: that version's text cannot be read (not answered, hidden from this reader), or a field
+     * does not start with it (its approved text was changed, which an Addendum never does).
+     */
+    async function staleAddition(pane, typed) {
+      const base = pane.head.draftBaseVersion;
+      const unread = kinSay("v{n0}의 글을 읽지 못해 기준을 다시 잡지 않았습니다 — 쓰던 글은 그대로 있습니다. 잠시 뒤 다시 누르세요.", base ?? 0);
+      if (!Number.isSafeInteger(base) || base < 0) return { refused: unread };
+      let old = base === 0 ? Object.fromEntries(RFIELDS.map(k => [k, ""])) : null;
+      if (!old) {
+        try {
+          const list = await api("GET", `/studies/${encodeURIComponent(pane.uid)}/report/versions`, undefined, undefined, work.capture("study"));
+          const row = (Array.isArray(list) ? list : []).find(v => v?.version === base && v.action !== "discarded");
+          if (row && !row.bodyHidden && row.group?.readable !== false && RFIELDS.every(k => typeof row[k] === "string")) old = row;
+        } catch (_) {}
+      }
+      if (!old) return { refused: unread };
+      const lf = KinReportCitation.toLf, texts = {};
+      for (const k of RFIELDS) {
+        const mine = lf(String(typed[k] ?? "")), was = lf(old[k]), now = lf(String(pane.head[k] ?? ""));
+        // The addition is what this text wrote after the version it stands on - never that version's own text, which the new
+        // approved report may have shortened (an amendment) - put after the new approved text. A field that already holds
+        // the new approved text grown from that version (it was taken in before) is not given it twice.
+        if (now.startsWith(was) && mine.startsWith(now)) texts[k] = mine;
+        else if (mine.startsWith(was)) texts[k] = now + mine.slice(was.length);
+        else if (mine.startsWith(now)) texts[k] = mine;
+        else return { refused: kinSay("이 화면의 글이 v{n0}의 글로 시작하지 않아 기준을 다시 잡지 않았습니다 — 추가기재는 승인본에 덧붙이기만 합니다. 쓰던 글은 그대로 있습니다.", base) };
+      }
+      return { texts };
+    }
+
     async function rebaseDraft() {
       const pane = stalePane;
       // 승인본 보기로 연 창에는 다시 잡을 기준이 없다(단추도 없다).
@@ -1084,7 +1171,27 @@
       }
       const why = reportWriteBlock();
       if (why) { $("#stale-status").textContent = why; return; }
-      const next = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      let next = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      /**
+       * An Addendum only adds to the approved report. Re-based for an Addendum, the text becomes the new approved text with
+       * what this text added to the version it was written on (staleAddition): that version's text is read from the
+       * history. When it cannot be read, or this text does not start with it, nothing is re-based - the text and its base
+       * stay as they are and the pane says why. An amendment is re-based as before (its approver may change the middle).
+       */
+      let typed = null;
+      if (pane.action === "addendum") {
+        typed = next;
+        staleBusy = true;
+        $("#stale-rebase").disabled = true;
+        kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 중…"));
+        let composed;
+        try { composed = await staleAddition(pane, typed); } finally { staleBusy = false; }
+        if (stalePane !== pane || pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) return;
+        $("#stale-rebase").disabled = false;
+        if (RFIELDS.some(k => $("#" + k).value !== typed[k])) { kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 사이 글이 바뀌었습니다 — 다시 누르세요.")); return; }
+        if (composed.refused) { kinWrite($("#stale-status"), composed.refused); return; }
+        next = composed.texts;
+      }
       // 빈 초안은 행을 지운다(서버 규칙). 기준을 잡을 대상이 없다.
       // Image Report: a draft that holds a drawing list (drawings attached, or removed) is a draft without text too - its
       // base is taken again by the same draft write, which names the list. Only "no text and no list" has nothing to
@@ -1126,11 +1233,14 @@
         // 서버에 남은 것은 이 검사의 초안이다. 화면 갱신은 지금 그 검사·그 안내일 때만 한다.
         const a = appState[pane.uid] ?? {};
         appState[pane.uid] = { ...a, draftRevision: result.envelope.revision };
-        if (RFIELDS.every(k => (a.draft ?? a)[k] === next[k])) {
+        // An Addendum's re-based text is what was saved: it replaces the text the editor still shows (the one it came from).
+        const shown = !!typed && pane.uid === selectedUid && pane.selSeq === selectionSeq && RFIELDS.every(k => $("#" + k).value === typed[k]);
+        if (shown || RFIELDS.every(k => (a.draft ?? a)[k] === next[k])) {
           appState[pane.uid].draft = { ...next, baseVersion: pane.head.version, at: new Date().toISOString() };
           recordReportOrigin(pane.uid, pane.head.version);
           reportConverge.delete(pane.uid);
         }
+        if (shown) loadReport({ force: true });
         if (pane.seq !== staleSeq) return;
         closeStaleRebase();
         if (selectedUid === pane.uid) renderDraftBar();

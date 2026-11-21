@@ -91,7 +91,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
                                                     "critical-result-inbox.js", "clinical-signature.js")}
 MAIN_HTML = read_page_source(HPACS / "main.html")
 AUTH_CONTROLLER = lf_text(ROOT / "api" / "src" / "auth.controller.ts")
@@ -489,6 +489,11 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                 return
             route.fulfill(**self.list_reply(query))
             return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
+            return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
         # A stored version (?version=n, the Exam Reports buttons) is answered from "<uid>?version=n".
         if method == "GET" and found and (not url.query or re.fullmatch(r"version=[1-9][0-9]*", url.query)):
@@ -510,6 +515,15 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                 self.held_logouts.append(route)
                 return
             route.fulfill(status=204, body="")
+            return
+        # In-app unread (unread-badges.js): the page reads its unread views with the list; answered with nothing unread
+        # for this session (tests/in_app_unread_dom_test.py has the marks) and logged apart.
+        if method == "GET" and path == "/api/unread":
+            account = self.me if isinstance(self.me, dict) else {}
+            self.unread_reads = [*getattr(self, "unread_reads", []), request.url]
+            route.fulfill(json={"owner": [account.get("institution"), account.get("sub")],
+                                "view": parse_qs(url.query).get("view", [None])[0], "available": True, "count": 0, "items": [],
+                                "nextCursor": None})
             return
         # S7-U2a: the Critical Results area reads its pending list when the page boots (and every 60 s while shown). It is
         # answered for this session (empty unless a case sets inbox_items) and logged apart; any other critical-result

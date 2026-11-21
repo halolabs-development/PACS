@@ -172,6 +172,7 @@
     #audit-table .aval.withheld { color: #ddd6f7; font-style: italic; }
     .audit-empty { margin: 12px 0 0; color: var(--muted); font-size: 13px; }
     .audit-pager { display: flex; justify-content: center; margin-top: 12px; }
+    #patient-consent [hidden] { display: none; }
   </style>
 </head>
 <body>
@@ -244,7 +245,7 @@
         <div class="spacer"></div>
         <button type="button" id="gateway-rules-refresh" disabled>Load Gateway Rules</button>
       </div>
-      <p class="gateway-hint">이 기관 Gateway가 받은 검사를 어디로 보낼지(Routing), HALO PACS로 보낼 때 무손실로 줄일지(Compression)를 정합니다. 규칙은 적은 조건(Modality, 보낸 장비의 AE Title)이 모두 맞는 검사에 쓰이고, 빈 조건은 모든 검사에 맞습니다. 한 검사에 여러 규칙이 맞으면(예: CT와 SR 시리즈가 함께 있는 검사) 그 규칙들의 목적지 모두로 보내고, 맞는 규칙이 없는 검사는 HALO PACS로만 보냅니다. 목적지는 HALO PACS와 DICOM Peers에 PACS / Modality로 등록한 상대입니다. 재전송과 늦게 도착한 영상은 처음 정한 목적지 중 현재 규칙과 등록 정보가 일치하는 곳으로만 보냅니다. 모든 목적지가 받은 뒤에도 Gateway에 영상이 남습니다. 무손실 압축은 HALO PACS로 보내는 비압축 영상에만 쓰이며 화소 값은 바뀌지 않습니다(원내 PACS로는 받은 그대로 보냅니다). Gateway는 약 1분 안에 저장한 규칙을 읽습니다.</p>
+      <p class="gateway-hint">이 기관 Gateway가 받은 검사를 어디로 보낼지(Routing), HALO PACS로 보낼 때 무손실로 줄일지(Compression)를 정합니다. 규칙은 적은 조건(Modality, 보낸 장비의 AE Title)이 모두 맞는 검사에 쓰이고, 빈 조건은 모든 검사에 맞습니다. 한 검사에 여러 규칙이 맞으면(예: CT와 SR 시리즈가 함께 있는 검사) 그 규칙들의 목적지 모두로 보내고, 맞는 규칙이 없는 검사는 HALO PACS로만 보냅니다. 목적지는 HALO PACS와 DICOM Peers에 PACS / Modality로 등록한 상대입니다. 재전송과 늦게 도착한 영상은 처음 정한 목적지 중 현재 규칙과 등록 정보가 일치하는 곳으로만 보냅니다. Delete Delivered Copies After에 날 수를 적으면, 모든 목적지가 받은 것이 확인된 검사의 Gateway 사본을 마지막 목적지가 받은 때부터 그 날 수가 지난 뒤 지웁니다(비워 두면 지우지 않습니다). 아직 보내지 못했거나(대기·재시도·실패) 목적지 하나라도 받지 못한 검사는 날 수가 지나도 지우지 않습니다. 무손실 압축은 HALO PACS로 보내는 비압축 영상에만 쓰이며 화소 값은 바뀌지 않습니다(원내 PACS로는 받은 그대로 보냅니다). Gateway는 약 1분 안에 저장한 규칙을 읽습니다.</p>
       <form id="gateway-rules-form">
         <div class="audit-table" id="gateway-rules-wrap" hidden>
           <table>
@@ -256,6 +257,7 @@
         <div class="audit-head">
           <button type="button" id="gateway-rule-add" disabled>Add Rule</button>
           <label>Compression <select id="gateway-compression" disabled><option value="none" selected>None</option><option value="lossless">Lossless</option></select></label>
+          <label>Delete Delivered Copies After <input id="gateway-retention-days" inputmode="numeric" size="5" placeholder="Never" autocomplete="off" disabled> days</label>
           <button type="submit" class="primary" id="gateway-rules-save" disabled>Save Gateway Rules</button>
         </div>
       </form>
@@ -443,6 +445,38 @@
           <tbody id="access-review-rows"></tbody></table>
       </div>
       <div class="audit-pager"><button id="access-review-more" type="button" hidden>Load More</button></div>
+    </section>
+    <section class="audit" id="patient-consent" aria-labelledby="patient-consent-title">
+      <div class="audit-head">
+        <h2 id="patient-consent-title">Patient Consent</h2>
+        <span class="astate not_loaded" id="patient-consent-state" role="status">Not Loaded</span>
+      </div>
+      <p class="audit-hint">이 기관 환자의 동의 기록입니다. 원본 Patient ID로 환자를 불러와, 무엇에 대한 동의인지(Purpose)와 근거(Reference — 동의서 번호·보관 위치 등), 받은 시각을 적습니다. 기록은 검사 접근을 열거나 막지 않습니다 — 검사 접근은 회원의 Study Access로 정합니다. 적은 기록은 지우지 않고 Withdraw로 철회하며, 기록·철회는 Audit / Security에 남습니다.</p>
+      <form id="patient-consent-lookup" class="audit-head">
+        <label>Original Patient ID <input id="patient-consent-id" maxlength="64" autocomplete="off" spellcheck="false" translate="no" required disabled></label>
+        <button type="submit" id="patient-consent-load" disabled>Load Consent</button>
+      </form>
+      <p class="audit-fixed" id="patient-consent-patient" hidden>Patient: <span id="patient-consent-name" translate="no"></span> · <span id="patient-consent-pid" translate="no"></span></p>
+      <p class="message" id="patient-consent-message" role="alert"></p>
+      <div class="audit-table" id="patient-consent-wrap" hidden>
+        <table><thead><tr><th scope="col">Purpose</th><th scope="col">Reference</th><th scope="col">Obtained (UTC)</th><th scope="col">Expires (UTC)</th><th scope="col">State</th><th scope="col">Recorded By / At (UTC)</th><th scope="col">Withdrawn</th><th scope="col">Action</th></tr></thead>
+          <tbody id="patient-consent-rows"></tbody></table>
+      </div>
+      <p class="audit-empty" id="patient-consent-empty" hidden>이 환자의 동의 기록이 없습니다.</p>
+      <form id="patient-consent-withdraw" class="audit-head" hidden>
+        <span id="patient-consent-withdraw-target" translate="no"></span>
+        <label class="wide">Withdraw Reason <input id="patient-consent-reason" maxlength="1000" required autocomplete="off" translate="no"></label>
+        <button type="submit" class="primary" id="patient-consent-withdraw-confirm">Confirm Withdraw</button>
+        <button type="button" id="patient-consent-withdraw-cancel">Cancel</button>
+      </form>
+      <form id="patient-consent-form" class="audit-head" hidden>
+        <label class="wide">Purpose <input name="purpose" maxlength="500" required autocomplete="off" translate="no"></label>
+        <label class="wide">Reference <input name="reference" maxlength="1000" required autocomplete="off" translate="no"></label>
+        <label>Obtained At (UTC) <input name="obtained" type="datetime-local" step="1" required></label>
+        <label>Expires At (UTC) <input name="expires" type="datetime-local" step="1"></label>
+        <button type="submit" class="primary" id="patient-consent-record">Record Consent</button>
+        <button type="button" id="patient-consent-retry" hidden>Retry Same Request</button>
+      </form>
     </section>
   </main>
 
@@ -2329,6 +2363,7 @@
   <script src="dicom-peers-admin.js"></script>
   <script src="gateway-rules-admin.js"></script>
   <script src="gateway-support-admin.js"></script>
+  <script src="patient-consent-admin.js"></script>
   <script src="product-info-data.js"></script>
   <script src="product-info.js"></script>
 </body>

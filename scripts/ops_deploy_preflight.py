@@ -2,16 +2,19 @@
 
 python scripts/ops_deploy_preflight.py request.json --request-sha256 <sha256>
 python scripts/ops_deploy_preflight.py --storage-only [--backup-root <directory>]
+python -B scripts/ops_deploy_preflight.py --network-only
 The separately supplied hash binds bytes, not the identity/authority of an approver. Both report storage and backup
 encryption (one line on stderr, the report in the JSON); that report is a warning, never a refusal. The backup key is
 called `configured` only where the backup itself would accept its destination and key: by the storage-only form,
 given the backup root and run as the account that owns it (the daily backup's account); otherwise it is `unknown`,
-`absent` or `invalid`.
+`absent` or `invalid`. The network-only form reports the host's listening addresses and ports and lists the firewall,
+network separation and remote administration checks an operator makes; it too is a report, never a refusal.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -327,6 +330,170 @@ def storage_line(report):
     return ("storage encryption: " + report["status"] + " ("
             + ", ".join(row["location"] + "=" + row["status"] for row in report["locations"])
             + "); backup encryption: " + report["backup_encryption"])
+
+
+# ── Network access (read-only report; a warning, never a refusal; runbook "Network access") ──
+# One rule: an endpoint is judged only by the bind address this host reports for it. Loopback (127.0.0.0/8, ::1 and
+# IPv4-mapped loopback) is "loopback"; any other address (a wildcard, a private, link-local or interface-scoped one) is
+# "exposed", except the site proxy's own TCP 80->80 and 443->443 mappings on that address, which are "public-web". The
+# endpoints are the host's listening TCP and bound UDP sockets (ss, IPv4 and IPv6 read apart) and the ports the local
+# Docker publishes for running containers (a published port can have no socket of its own). The overall status is
+# "unknown" when either source could not be read completely (not Linux, a missing or failing command, a remote Docker,
+# output it does not parse); then "exposed" when an endpoint is; else "web-only". What the host cannot show - the cloud
+# or upstream firewall, host firewall rules, the network boundary, how remote administration is authenticated - is an
+# operator row, never a pass or a fail.
+NETWORK_STATES = ("web-only", "exposed", "unknown")
+NETWORK_BINDINGS = ("loopback", "public-web", "exposed")
+PROXY_CONTAINER, PROXY_SERVICE = "/kin-proxy", "proxy"
+PUBLIC_WEB = {("tcp", "80", "80"), ("tcp", "443", "443")}
+NETWORK_OPERATOR_CHECKS = (
+    ("firewall", "Compare the cloud and host firewall rules (IPv4 and IPv6, and Docker's forwarding rules) with the "
+                 "listeners: inbound open only to TCP 80 and 443 and to the remote-administration path."),
+    ("network-separation", "From a machine outside the server, the database, Orthanc and Keycloak ports do not answer; "
+                           "the hospital Gateway's DICOM port answers only inside the hospital network."),
+    ("remote-administration", "SSH by key only, from the named administration addresses; Keycloak and Orthanc "
+                              "administration only through an SSH tunnel to their loopback ports."),
+)
+
+
+def _endpoint(protocol, host, port, family=None):
+    """(protocol, address, port) of one endpoint as a source names it, or None when it cannot be placed. The address is
+    one string: brackets dropped, a %interface kept, ss's wildcard `*` named by the family it was read under (Docker
+    names its own); it must be an IP address."""
+    if protocol not in ("tcp", "udp", "sctp") or not (type(port) is str and port.isdigit()) or type(host) is not str:
+        return None
+    if host.startswith("["):
+        address, _, interface = host[1:].partition("]")
+        if interface and not interface.startswith("%"):
+            return None
+    else:
+        address, _, name = host.partition("%")
+        interface = "%" + name if name else ""
+    if address == "*" and family in (4, 6):
+        address = "0.0.0.0" if family == 4 else "::"
+    address = address.lower()
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        return None
+    return protocol, address + interface, port
+
+
+def _is_loopback(address):
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    mapped = getattr(ip, "ipv4_mapped", None)
+    return ip.is_loopback or bool(mapped and mapped.is_loopback)
+
+
+# The one rule for both sources: every entry that can be placed is kept; an entry that cannot (an unreadable line, a
+# binding without its address or port), a failed or refused command, or a command that warns (ss exits 0 after an
+# interrupted dump, saying so on stderr) makes that source incomplete - never a reason to drop what was read, including
+# what a command printed before it exited non-zero (docker inspect of a container that has gone prints the others).
+def _socket_rows(family):
+    """([(protocol, address, port)] of the listening TCP and bound UDP sockets of one address family, complete)."""
+    try:
+        result = ops.run(["ss", "-H", "-l", "-n", "-t", "-u", "-" + str(family)], check=False, timeout=30)
+        out, complete = result.stdout.decode("utf-8", "replace"), result.returncode == 0 and not result.stderr.strip()
+    except Exception:
+        return [], False
+    rows = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split()
+        host, _, port = fields[4].rpartition(":") if len(fields) >= 6 else ("", "", "")
+        row = _endpoint(fields[0], host, port, family)
+        if row is None:
+            complete = False
+        else:
+            rows.append(row)
+    return rows, complete
+
+
+def _published_rows():
+    """([(protocol, address, host port, container port, container, site proxy)] of the ports the local Docker
+    publishes for its running containers, complete). A remote Docker is not asked."""
+    try:
+        ops.require_local_docker()
+    except Exception:
+        return [], False
+    ids = _read(["docker", "ps", "-q", "--no-trunc"])
+    if ids is None:
+        return [], False
+    if not ids.split():
+        return [], True
+    try:
+        result = ops.run(["docker", "inspect", *ids.split()], check=False, timeout=30)
+        items = json.loads(result.stdout.decode("utf-8", "replace") or "")
+    except Exception:
+        return [], False
+    if type(items) is not list:
+        return [], False
+    rows, complete = [], result.returncode == 0 and len(items) == len(ids.split())
+    for item in items:
+        ports = (item.get("NetworkSettings") or {}).get("Ports", False) if type(item) is dict else False
+        if not (ports is None or type(ports) is dict):
+            complete = False
+            continue
+        labels = (item.get("Config") or {}).get("Labels") or {}
+        name = str(item.get("Name") or "").lstrip("/") or None
+        proxy = (item.get("Name") == PROXY_CONTAINER and labels.get("com.docker.compose.service") == PROXY_SERVICE
+                 and labels.get("com.docker.compose.project.working_dir") == str(ops.ROOT))
+        for target, bindings in (ports or {}).items():
+            number, _, protocol = str(target).partition("/")
+            if not (number.isdigit() and (bindings is None or type(bindings) is list)):
+                complete = False
+                continue
+            for binding in bindings or []:
+                binding = binding if type(binding) is dict else {}
+                row = _endpoint(protocol, binding.get("HostIp"), binding.get("HostPort"))
+                if row is None:
+                    complete = False
+                else:
+                    rows.append((*row, number, name, proxy))
+    return rows, complete
+
+def network_access():
+    """The report: {"status", "listeners": [{"protocol", "address", "port", "binding", "container"}],
+    "unreadable": [source...], "operator_checks": [{"check", "status", "detail"}]}."""
+    unreadable, endpoints = [], {}
+    if not sys.platform.startswith("linux"):
+        unreadable += ["sockets", "docker"]
+    else:
+        for family in (4, 6):
+            rows, complete = _socket_rows(family)
+            if not complete:
+                unreadable.append("sockets")
+            for protocol, address, port in rows:
+                endpoints.setdefault((protocol, address, port), {"container": None, "public": False})
+        published, complete = _published_rows()
+        if not complete:
+            unreadable.append("docker")
+        for protocol, address, port, target, container, proxy in published:
+            entry = endpoints.setdefault((protocol, address, port), {"container": None, "public": False})
+            entry["container"] = entry["container"] or container
+            entry["public"] = entry["public"] or (proxy and (protocol, port, target) in PUBLIC_WEB)
+    listeners = []
+    for (protocol, address, port), entry in sorted(endpoints.items(), key=lambda item: (int(item[0][2]), item[0])):
+        binding = "loopback" if _is_loopback(address) else "public-web" if entry["public"] else "exposed"
+        listeners.append({"protocol": protocol, "address": address, "port": int(port), "binding": binding,
+                          "container": entry["container"]})
+    unreadable = sorted(set(unreadable))
+    status = ("unknown" if unreadable else "exposed" if any(row["binding"] == "exposed" for row in listeners)
+              else "web-only")
+    return {"status": status, "listeners": listeners, "unreadable": unreadable,
+            "operator_checks": [{"check": check, "status": "operator", "detail": detail}
+                                for check, detail in NETWORK_OPERATOR_CHECKS]}
+
+
+def network_line(report):
+    def endpoint(row):
+        address = "[" + row["address"] + "]" if ":" in row["address"] else row["address"]
+        owner = " " + row["container"] if row["container"] else ""
+        return row["protocol"] + " " + address + ":" + str(row["port"]) + "=" + row["binding"] + owner
+    unread = "; not read: " + ", ".join(report["unreadable"]) if report["unreadable"] else ""
+    return ("network access: " + report["status"] + " (" + ", ".join(endpoint(row) for row in report["listeners"])
+            + ")" + unread + "; " + ", ".join(row["check"] for row in report["operator_checks"]) + ": operator check")
 
 
 def preflight(body):
@@ -645,6 +812,15 @@ def check_served_bytes(observed, expected):
 
 
 def main():
+    if "--network-only" in sys.argv[1:]:
+        # The network access report alone: read-only, no request, no lock; exit 0 in every state.
+        parser = argparse.ArgumentParser(description="Report listening addresses and ports and the operator checks; read-only")
+        parser.add_argument("--network-only", action="store_true", required=True)
+        parser.parse_args()
+        report = network_access()
+        print(network_line(report), file=sys.stderr, flush=True)
+        print(json.dumps(report))
+        return 0
     if "--storage-only" in sys.argv[1:]:
         # The storage report alone: read-only, no request, no lock (the release preparation runs it).
         parser = argparse.ArgumentParser(description="Report storage and backup encryption; read-only")

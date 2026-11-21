@@ -1,14 +1,15 @@
 (function () {
   'use strict';
   // Gateway Rules: the administrator sets, for the institution's Gateways, which destinations a study goes to (rules by
-  // Modality and/or sending AE Title; HALO PACS and the DICOM Peers registered as PACS / Modality), and lossless compression toward HALO PACS (GET/PUT /api/admin/gateway-settings; the rule
+  // Modality and/or sending AE Title; HALO PACS and the DICOM Peers registered as PACS / Modality), lossless compression toward HALO PACS,
+  // and after how many days a Gateway deletes a copy every destination has (empty = never) (GET/PUT /api/admin/gateway-settings; the rule
   // itself is api/src/gateway-settings.ts). Opening the page reads nothing: Load Gateway Rules (or arriving at
   // #gateway-rules) reads them. A save names the revision it was loaded at; another save in between is refused and the
   // rules are read again. The page owns termination (KinConsoleSession).
   const API = `${location.origin}/api`;
   const KIN = 'kin';
   const $ = selector => document.querySelector(selector);
-  const CONTROLS = ['#gateway-rules-refresh', '#gateway-rule-add', '#gateway-compression', '#gateway-rules-save'];
+  const CONTROLS = ['#gateway-rules-refresh', '#gateway-rule-add', '#gateway-compression', '#gateway-retention-days', '#gateway-rules-save'];
   const FIELD = { modality: 'Modality', sourceAe: 'Sending AE Title', destinations: 'Destinations' };
   let enabled = false, pending = false, loaded = false, seq = 0, revision = 0, peers = [];
 
@@ -38,6 +39,7 @@
   function failure(error, what) {
     if (error?.status === 400 && typeof error.field === 'string') {
       const row = error.field.match(/^routes\[(\d+)\]\.?(\w*)$/);
+      if (error.field === 'retentionDays') return '보관 날 수는 1부터 3650까지의 정수로 적거나, 지우지 않으려면 비워 두세요.';
       if (row) return `규칙 ${Number(row[1]) + 1}의 ${FIELD[row[2]] || '값'}을(를) 확인하세요` +
         (row[2] === 'destinations' ? ' — 목적지를 하나 이상, 겹치지 않게 고릅니다.' : '.');
       return '저장할 수 없는 값이 있습니다. 다시 불러와 확인하세요.';
@@ -114,6 +116,7 @@
     for (const route of settings.routes) addRow(route);
     numbers();
     $('#gateway-compression').value = settings.compression === 'lossless' ? 'lossless' : 'none';
+    $('#gateway-retention-days').value = Number.isSafeInteger(settings.retentionDays) ? String(settings.retentionDays) : '';
     const chip = $('#gateway-rules-state');
     chip.className = 'gstate observed';
     chip.textContent = settings.routes.length ? `${settings.routes.length} Rules` : 'No Rules';
@@ -125,7 +128,10 @@
       return { modality: value('modality') || null, sourceAe: value('sourceAe') || null,
         destinations: [...tr.querySelectorAll('.gw-rule-destinations input:checked')].map(box => box.value) };
     });
-    return { revision, routes, compression: $('#gateway-compression').value };
+    // Empty = never delete (null); whole digits = days; anything else goes as written so the server names the field.
+    const days = $('#gateway-retention-days').value.trim();
+    return { revision, routes, compression: $('#gateway-compression').value,
+      retentionDays: days === '' ? null : /^\d+$/.test(days) ? Number(days) : days };
   }
 
   async function load() {
@@ -155,6 +161,7 @@
     loaded = false;
     seq++;
     $('#gateway-rules-rows').replaceChildren();
+    $('#gateway-retention-days').value = '';
     $('#gateway-rules-wrap').hidden = true;
     $('#gateway-rules-empty').hidden = true;
     $('#gateway-rules-state').className = 'gstate not_loaded';

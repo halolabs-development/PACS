@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 import threading
 import unittest
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect, sync_playwright
 
@@ -214,6 +214,11 @@ class AuthEntryDOMTest(unittest.TestCase):
                 return route.fulfill(json={"studies": [], "pagination": {"limit": 100, "offset": 0, "total": 0, "next": None}})
             if path == "/api/critical-results":
                 return route.fulfill(json={"items": [], "nextCursor": None})
+            # In-app unread (unread-badges.js): Clinician Home reads its views with the list; nothing unread here.
+            if path == "/api/unread":
+                view = (parse_qs(urlparse(request.url).query).get("view") or [None])[0]
+                return route.fulfill(json={"owner": ["SYN-hospital", "SYN-sub"], "view": view, "available": True, "count": 0,
+                                           "items": [], "nextCursor": None})
             if path == "/api/syn-work":
                 return route.fulfill(json={"ok": True})
             if path == "/api/auth/logout":

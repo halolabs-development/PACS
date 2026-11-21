@@ -3,9 +3,8 @@
 Real page + real F service/contract over native_harness.cjs: one Study UID holds both a Tech Note and a native
 report. An unselected copy or rights request is refused with guidance and stores nothing; Record Type selects one.
 A request received before the UID became ambiguous keeps its intake and hold and is shown as stored, with its ways
-out. A paper copy is read in the browser as a person reads it.
+out. A paper copy is read in the browser as a person reads it: each version's content, author name and Korean time, no signed source.
 """
-import json
 from pathlib import Path
 import subprocess
 import unittest
@@ -237,7 +236,7 @@ class RecordKindSelection(AuditPage):
         section.get_by_role('button', name='Issue', exact=True).click()
         expect(state).to_contain_text('Issuance: Issued')
 
-    def test_paper_copy_shows_report_versions_readably_and_keeps_the_originals(self):
+    def test_paper_copy_shows_report_versions_readably_by_author_name_and_korean_time(self):
         saved = '저장 소견 <b>원문</b>'
         self.backend_call(reset=True, saved=saved)
         self.open()
@@ -262,16 +261,22 @@ class RecordKindSelection(AuditPage):
             versions[fields['Version']] = fields
         self.assertEqual(sorted(versions), ['1', '2'])
         self.assertEqual((versions['1']['Findings'], versions['1']['Conclusion'], versions['1']['Signature']), (saved, '합성 결론', 'Not Signed'))
-        self.assertEqual((versions['2']['Findings'], versions['2']['Signature'], versions['2']['Author']), ('확정 소견', 'Signed', 'SYN-DOCTOR'))
+        self.assertEqual((versions['2']['Findings'], versions['2']['Signature']), ('확정 소견', 'Signed'))
         self.assertTrue(all(not v['Findings'].lstrip().startswith('{') for v in versions.values()), 'the readable part is not the stored row JSON')
         self.assertEqual(paper.locator('section b').count(), 0, 'stored markup is shown as text, not rendered')
-        # The stored originals travel with the copy, folded until opened.
-        originals = paper.get_by_role('group').filter(has_text='Original Documents')
-        expect(originals.get_by_text(saved, exact=False)).to_be_hidden()
-        originals.get_by_text('Original Documents', exact=True).click()
-        expect(originals.get_by_text(saved, exact=False)).to_be_visible()
-        document = json.loads(originals.inner_text().split('\n', 1)[1])
-        self.assertIn(saved, json.dumps(document, ensure_ascii=False))
+        # Who wrote each version, by the member name with the identifier beside it, and when, in Korean time.
+        self.assertEqual(versions['1']['Author'], '김합성 (synthetic-doctor@example.test)')
+        self.assertEqual(versions['2']['Author'], '김합성 (SYN-DOCTOR)')
+        self.assertEqual(versions['1']['Recorded'], '2026-10-01 09:00:02 KST (UTC+09:00)')  # stored 2026-10-01T00:00:02Z
+        self.assertRegex(versions['2']['Recorded'], r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} KST \(UTC\+09:00\)$')
+        header = dict(zip(paper.locator('body > dl').get_by_role('term').all_inner_texts(),
+            paper.locator('body > dl').get_by_role('definition').all_inner_texts()))
+        self.assertRegex(header['Prepared'], r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} KST \(UTC\+09:00\)$')
+        expect(paper.get_by_text('Original Documents')).to_have_count(0)
+        # The signed originals are not on paper; the electronic copy carries them (native_copy_service_test).
+        html = paper.content()
+        for source in ('"envelope"', 'keyAtSigning', '"manifest"', '"originals"', '<details'):
+            self.assertNotIn(source, html)
         paper.close()
 
     def test_rights_request_selects_report_or_is_refused_with_guidance(self):

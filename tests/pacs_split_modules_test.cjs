@@ -2272,3 +2272,122 @@ test('a literal legacy login ending in #sub keeps its id and full display name',
   assert.deepEqual(w.db.rows('reportVersion').map(row => [row.findings, row.author]).sort(),
     [['legacy', legacyName], ['new', x.actor]]);
 });
+
+// ── An Addendum only adds to the approved report, and adds something; signing-key refusals say the action; a head saved
+//    by another window of the same account is named as such and can be saved over by an explicit second send ──
+
+const { ContractError } = require('/app/dist/emr-contract/validation');
+const versionsOf = (w, uid) => w.db.rows('reportVersion').filter(v => v.uid === uid).map(v => [v.version, v.action, v.findings, v.conclusion]);
+async function approvedStudy(w, text = { findings: 'Line one.\nLine two.', conclusion: 'Impression.' }) {
+  const s = w.study();
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', s.draftEpoch, 0, 0, text), RAD_A, null);
+  return s;
+}
+
+test('an Addendum with nothing added is refused, the first one and a repeated one alike, and signs no version', async () => {
+  const w = world(), s = await approvedStudy(w);
+  const head = { findings: 'Line one.\nLine two.', conclusion: 'Impression.' };
+  for (const text of [head, { ...head, findings: head.findings + '  \n' }, { ...head, recommendation: '\n' }]) {
+    const body = await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, text), RAD_A2, null), 400, 'REPORT_ADDENDUM_EMPTY');
+    assert.match(body.message, /덧붙인 내용이 없습니다/);
+  }
+  assert.deepEqual(versionsOf(w, s.uid), [[1, 'approve', head.findings, head.conclusion]]);
+  const added = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { ...head, recommendation: 'Follow up in 3 months.' }), RAD_A2, null);
+  assert.equal(added.state.rs, 'A');
+  // The same Addendum pressed again on the new head adds nothing: refused.
+  await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 1, 2, { ...head, recommendation: 'Follow up in 3 months.' }), RAD_A2, null), 400, 'REPORT_ADDENDUM_EMPTY');
+  assert.deepEqual(versionsOf(w, s.uid).map(v => v.slice(0, 2)), [[1, 'approve'], [2, 'addendum']]);
+});
+
+test('an Addendum that takes away or changes approved text is refused; one that writes after it is signed, the head kept in front', async () => {
+  const w = world(), s = await approvedStudy(w);
+  const cases = [
+    { findings: 'Line one.', conclusion: 'Impression.' },                                  // a line taken away
+    { findings: 'Line one.\nLine 2.\nAdded.', conclusion: 'Impression.' },               // a word changed
+    { findings: 'Added.\nLine one.\nLine two.', conclusion: 'Impression.' },             // written before the head
+    { findings: 'Line one.\nLine two.\nAdded.', conclusion: '' },                        // another field emptied
+  ];
+  for (const text of cases) {
+    const body = await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, text), RAD_A2, null), 400, 'REPORT_ADDENDUM_NOT_APPENDED');
+    assert.match(body.message, /추가기재는 승인본에 덧붙이기만 합니다/);
+  }
+  assert.equal(w.db.rows('reportVersion').length, 1);
+  await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { findings: 'Line one.\nLine two.', conclusion: 'Impression.\nAddendum: no change.' }), RAD_A2, null);
+  assert.deepEqual(versionsOf(w, s.uid), [[1, 'approve', 'Line one.\nLine two.', 'Impression.'],
+    [2, 'addendum', 'Line one.\nLine two.', 'Impression.\nAddendum: no change.']]);
+});
+
+test('an Addendum written on an older approved text cannot drop the lines another reader added since', async () => {
+  const w = world(), s = await approvedStudy(w, { findings: 'Base.' });
+  await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { findings: 'Base.\nAdded by the second reader.' }), RAD_A2, null);
+  // The first reader's screen polled the new version number but still holds text written on v1.
+  await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 2, { findings: 'Base.\nAdded by the first reader.' }), RAD_A, null), 400, 'REPORT_ADDENDUM_NOT_APPENDED');
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 2, { findings: 'Base.\nAdded by the second reader.\nAdded by the first reader.' }), RAD_A, null);
+  assert.deepEqual(versionsOf(w, s.uid).map(v => [v[0], v[1], v[2]]), [[1, 'approve', 'Base.'],
+    [2, 'addendum', 'Base.\nAdded by the second reader.'], [3, 'addendum', 'Base.\nAdded by the second reader.\nAdded by the first reader.']]);
+});
+
+test('an Addendum compares line ends only as line ends: a head stored with CRLF takes text written after it', async () => {
+  const w = world(), s = w.study({ rs: 'A', repDoc: 'syn-rad-a', confirm: '2026-11-01' });
+  w.db.seed('report', { uid: s.uid, findings: 'Stored one.\r\nStored two.', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor, updatedBySub: RAD_A.sub });
+  w.db.seed('reportVersion', { uid: s.uid, version: 1, action: 'approve', findings: 'Stored one.\r\nStored two.', conclusion: '', recommendation: '', author: RAD_A.actor, authorSub: RAD_A.sub, citations: [] });
+  await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { findings: 'Stored one.\nStored two.\nAdded.' }), RAD_A2, null);
+  assert.equal(versionsOf(w, s.uid).at(-1)[1], 'addendum');
+});
+
+test('the approver may still change the middle of the text within 24 hours (amend); an Addendum that does the same is refused', async () => {
+  const w = world(), s = await approvedStudy(w);
+  await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 1, { findings: 'Line one.\nLine 2.', conclusion: 'Impression.' }), RAD_A, null), 400, 'REPORT_ADDENDUM_NOT_APPENDED');
+  const amended = await w.commit.commitReport(s.uid, commitBody(RAD_A, 'amend', s.draftEpoch, 1, 1, { findings: 'Line one.\nLine 2.', conclusion: 'Impression.' }), RAD_A, null);
+  assert.equal(amended.state.rs, 'A');
+  assert.deepEqual(versionsOf(w, s.uid).map(v => v.slice(0, 3)), [[1, 'approve', 'Line one.\nLine two.'], [2, 'amend', 'Line one.\nLine 2.']]);
+});
+
+test('a refusal for want of a signing key names the action it refused; the approval keeps its words', async () => {
+  const w = world();
+  const signer = { sign: async () => { throw new ContractError('DoctorSigningKeyUnavailable'); } };
+  const failing = withDraftRequestContext(new PacsReportCommit(w.keycloak, w.sa, w.evidence, w.draft, signer), b2Ledger(w.db.root));
+  const fresh = w.study();
+  const approve = await refused(() => failing.commitReport(fresh.uid, commitBody(RAD_A, 'approve', fresh.draftEpoch, 0, 0, { findings: 'Text.' }), RAD_A, null), 503, 'DoctorSigningKeyUnavailable');
+  assert.match(approve.message, /서명키를 확인하지 못해 승인하지 못했습니다/);
+  const s = await approvedStudy(w);
+  const said = {
+    amend: [commitBody(RAD_A, 'amend', s.draftEpoch, 1, 1, { findings: 'Line one.\nLine 2.', conclusion: 'Impression.' }), /승인 후 수정을 저장하지 못했습니다/],
+    addendum: [commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 1, { findings: 'Line one.\nLine two.\nMore.', conclusion: 'Impression.' }), /추가기재\(Addendum\)를 저장하지 못했습니다/],
+    reset: [commitBody(RAD_A, 'reset', s.draftEpoch, 1, 1, { reason: 'wrong patient' }), /판독 취소\(Reset\)를 하지 못했습니다/],
+  };
+  for (const [action, [body, words]] of Object.entries(said)) {
+    const refusal = await refused(() => failing.commitReport(s.uid, body, RAD_A, null), 503, 'DoctorSigningKeyUnavailable');
+    assert.match(refusal.message, words, action);
+    assert.doesNotMatch(refusal.message, /승인하지 못했습니다/, action);
+  }
+  assert.deepEqual(versionsOf(w, s.uid).map(v => v.slice(0, 2)), [[1, 'approve']], 'no refused commit left a version');
+});
+
+test('a Save on a version another window of the same account saved is named as mine, and a second send on that version saves it', async () => {
+  const w = world(), s = w.study();
+  await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', s.draftEpoch, 0, 0, { findings: 'Window one.' }), RAD_A, null);
+  // The second window still stands on v0.
+  const body = await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', s.draftEpoch, 1, 0, { findings: 'Window two.' }), RAD_A, null), 409, 'REPORT_VERSION_CONFLICT');
+  assert.deepEqual(body.head, { version: 1, mine: true });
+  assert.match(body.message, /다른 창에서 이 계정으로 v1을 저장했습니다/);
+  assert.ok(!body.message.includes(RAD_A.actor) && !body.message.includes('syn-rad-a'), body.message);
+  const saved = await w.commit.commitReport(s.uid, commitBody(RAD_A, 'save', s.draftEpoch, 1, 1, { findings: 'Window two.' }), RAD_A, null);
+  assert.equal(saved.state.rs, 'T');
+  assert.deepEqual(versionsOf(w, s.uid).map(v => v.slice(0, 3)), [[1, 'save', 'Window one.'], [2, 'save', 'Window two.']]);
+  // A head another account signed is not mine: the refusal names its writer as before.
+  const a = await approvedStudy(w);
+  const other = await refused(() => w.commit.commitReport(a.uid, commitBody(RAD_A2, 'reset', a.draftEpoch, 0, 0, { reason: 'wrong patient' }), RAD_A2, null), 409, 'REPORT_VERSION_CONFLICT');
+  assert.deepEqual(other.head, { version: 1, mine: false });
+  assert.match(other.message, /^그 사이 .+가 v1을 저장했습니다/);
+});
+
+test('an Addendum pressed before the first draft write, on a version older than the approved head, is re-based - not reloaded', async () => {
+  const w = world(), s = await approvedStudy(w, { findings: 'Base.' });
+  await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { findings: 'Base.\nSecond reader.' }), RAD_A2, null);
+  // The first reader typed on v1 and pressed Addendum before any draft of theirs reached the server.
+  const stale = await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 1, { findings: 'Base.\nFirst reader.' }), RAD_A, null), 409, 'REPORT_DRAFT_STALE');
+  assert.equal(stale.draftBaseVersion, 1);
+  assert.deepEqual({ version: stale.head.version, findings: stale.head.findings }, { version: 2, findings: 'Base.\nSecond reader.' });
+  assert.equal(versionsOf(w, s.uid).length, 2, 'nothing was signed');
+});

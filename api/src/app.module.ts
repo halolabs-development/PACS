@@ -19,6 +19,7 @@ import { ImageRequestService } from './image-request.service';
 import { CriticalResultController } from './critical-result.controller';
 import { CriticalResultService } from './critical-result.service';
 import { CriticalResultInboxController } from './critical-result-inbox.controller';
+import { UnreadController } from './unread.controller';
 import { ReaderAssignmentController } from './reader-assignment.controller';
 import { ReaderAssignmentService } from './reader-assignment.service';
 import { DynamicModule, Module } from '@nestjs/common';
@@ -53,6 +54,8 @@ import { ViewerJobController } from './viewer-job.controller';
 import { ViewerJobService } from './viewer-job.service';
 import { ConnectController } from './connect.controller';
 import { ConnectService } from './connect.service';
+import { PatientConsentController } from './patient-consent.controller';
+import { PatientConsentService } from './patient-consent.service';
 import { OnlineImageService } from './emr-image/service';
 import { ImageCheckDatabase } from './emr-image/check-db';
 import { ImageContextSource, ProductionImageContext } from './emr-image/context';
@@ -98,7 +101,7 @@ import { GatewaySettingsService } from './gateway-settings.service';
 import { GatewaySupportService } from './gateway-support.service';
 
 @Module({
-  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController, GatewaySupportController],
+  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, UnreadController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController, GatewaySupportController, PatientConsentController],
   providers: [
     PreloadKeyService, PresenceService, EmrAuditService,
     ...startupClinicalProviders,
@@ -106,7 +109,7 @@ import { GatewaySupportService } from './gateway-support.service';
     OnlineImageService, ImageCheckDatabase, OrthancImageCatalog,
     { provide: ImageContextSource, inject: [CURRENT_CLINICAL_CONTEXT, OrthancImageCatalog],
       useFactory: (clinical: ClinicalContextSource, catalog: OrthancImageCatalog) => new ProductionImageContext(clinical, catalog) },
-    AsrService, StudyAccessService, PrismaService, PacsService, OrthancService, KeycloakService, AuthService, AdminService, ViewerService, FindingService, ViewerJobService, ConnectService, ManualSrService, FavoriteService, StudyTagsService, ReaderAssignmentService, ConsultationService, ClinicianQuestionService, ImageRequestService, ClinicalContextService, CriticalResultService,
+    AsrService, StudyAccessService, PrismaService, PacsService, OrthancService, KeycloakService, AuthService, AdminService, ViewerService, FindingService, ViewerJobService, ConnectService, PatientConsentService, ManualSrService, FavoriteService, StudyTagsService, ReaderAssignmentService, ConsultationService, ClinicianQuestionService, ImageRequestService, ClinicalContextService, CriticalResultService,
     StudyTransferLocalService, DicomImportGateService, StudyImageDeliveryRecorder, DicomFrameService, QueryRetrieveService, StudyAttachmentService, FilmPrintService, TechnicianOrdersService, ModalityWorklistService, ExamMergeService, ViewerAutoViewService, GatewayStatusService, GatewaySettingsService,
     GatewaySupportService, AdminAccessReview, AdminAccessAlerts,
     { provide: APP_GUARD, useClass: AuthGuard },

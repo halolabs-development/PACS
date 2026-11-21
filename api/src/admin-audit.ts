@@ -70,6 +70,8 @@ export const AUDIT_FIELD_RULES: Readonly<Record<string, AuditFieldSource>> = Obj
   "hanging-protocol.site.reset": 'target',
   "institution.emr-link.save": 'target',          // FA-090: target이 EMR Link를 바꾼 관리자의 기관 id다
   "institution.critical-result-inbox.save": 'target', // target is the institution whose hospital inbox the administrator set
+  "patient.consent.record": 'detail.institution',   // Patient Consent: the recording administrator's institution (target = the record id)
+  "patient.consent.revoke": 'detail.institution',   // Patient Consent withdrawn by an administrator of that institution
   "institution.dicom-peer.register": 'detail.institution',  // FC-070: 상대 PACS를 자기 기관에 등록한 관리자의 기관
   "institution.dicom-peer.remove": 'detail.institution',    // FC-070: 상대 PACS를 자기 기관에서 지운 관리자의 기관
   "gateway.support.request": 'detail.institution',  // Gateway remote support: the requesting administrator's institution

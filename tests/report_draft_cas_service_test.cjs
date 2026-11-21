@@ -1043,7 +1043,8 @@ test('D09 missing or malformed preconditions, a fabricated owner, a foreign stud
     // report-state rules keep their own answers (the draft boundary does not replace them)
     ['commit', A, request('addendum', A, { token: `${epoch}:1`, head: 0, mark: 'X' })[1], 400, null],
     ['commit', A, { ...request('reset', A, { token: `${epoch}:1`, head: 0, mark: 'X' })[1], reason: ' ' }, 400, null],
-    ['commit', A, { ...request('save', A, { token: `${epoch}:1`, head: 0, mark: 'X' })[1], baseVersion: 3 }, 409, null],
+    // The version lock names itself (REPORT_VERSION_CONFLICT; the head it met rides with it).
+    ['commit', A, { ...request('save', A, { token: `${epoch}:1`, head: 0, mark: 'X' })[1], baseVersion: 3 }, 409, 'REPORT_VERSION_CONFLICT'],
     ['put', A, { ...good, baseVersion: 2 }, 400, null],
   ];
   for (const [route, as, body, status, code] of cases) {

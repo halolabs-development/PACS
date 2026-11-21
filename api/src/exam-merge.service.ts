@@ -11,7 +11,7 @@
  * first and is seen here, or waits and sees the new group. Both changes also give the studies a new draft epoch: a screen
  * that still shows the old grouping cannot save or approve on it (the existing draft-conflict answer).
  */
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
@@ -381,6 +381,35 @@ export async function currentExams(db: any, access: StudyAccessService, c: Calle
     }
   }
   return result;
+}
+
+/**
+ * The row a record kept on a study UID (a question thread, an image request) opens on now: the report row the server
+ * answers that UID's current exam on (`resolveExamScope(..., purpose: 'current')`'s reportUid). A study never grouped
+ * answers itself — its list's own filter already admitted it. A study merged into another answers the merged exam's base,
+ * when the caller may read that exam whole and it still holds the study. A UID no row answers for the caller now (access,
+ * a retired split part, a source that cannot be observed) has no entry: a screen opens nothing for it rather than a guess.
+ * `prisma` observes the grouped originals (outside any lock); `db` reads on the caller's connection.
+ */
+export async function examOpenUids(db: any, prisma: any, access: StudyAccessService, c: Caller, uids: string[]): Promise<Map<string, string>> {
+  const all = unique(uids), out = new Map<string, string>();
+  const grouped = await groupedExamUids(db, all);
+  const settled = (error: any) => error instanceof NotFoundException || error instanceof ConflictException || error instanceof ServiceUnavailableException;
+  for (const uid of all) {
+    if (!grouped.has(uid)) { out.set(uid, uid); continue; }
+    try {
+      await prepareExamRead(prisma, access, c, uid);
+      try { out.set(uid, (await resolveExamScope(db, access, c, { uid, purpose: 'current' })).reportUid); }
+      catch (error: any) {
+        const base = error instanceof ConflictException ? (error.getResponse() as any) : null;
+        if (base?.code !== STUDY_MERGED || typeof base.baseUid !== 'string') throw error;
+        await prepareExamRead(prisma, access, c, base.baseUid);
+        const exam = await resolveExamScope(db, access, c, { uid: base.baseUid, purpose: 'current' });
+        if (exam.studies.includes(uid)) out.set(uid, exam.reportUid);
+      }
+    } catch (error) { if (!settled(error)) throw error; }
+  }
+  return out;
 }
 
 /** Workload counts use report parents; source registrations and archive bytes keep their original meaning. */

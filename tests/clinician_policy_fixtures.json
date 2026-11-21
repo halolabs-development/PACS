@@ -53,6 +53,9 @@
     "GET studies/:uid/image-requests",
     "POST studies/:uid/image-requests",
     "POST image-requests/:id",
+    "GET unread",
+    "POST questions/:id/seen",
+    "POST image-requests/:id/seen",
     "GET critical-results",
     "GET critical-results/:id",
     "POST critical-results/:id/ack",
@@ -127,6 +130,9 @@
     "GET studies/:uid/image-requests",
     "POST studies/:uid/image-requests",
     "POST image-requests/:id",
+    "GET unread",
+    "POST questions/:id/seen",
+    "POST image-requests/:id/seen",
     "GET clinician/studies/:uid/timeline",
     "GET studies/:uid/clinical-context",
     "GET critical-results",
@@ -264,6 +270,9 @@
     {"method": 0, "controller": "/", "handler": "studies/:uid/image-requests", "key": "GET studies/:uid/image-requests", "allowed": true},
     {"method": 1, "controller": "/", "handler": "studies/:uid/image-requests", "key": "POST studies/:uid/image-requests", "allowed": true},
     {"method": 1, "controller": "/", "handler": "image-requests/:id", "key": "POST image-requests/:id", "allowed": true},
+    {"method": 0, "controller": "/", "handler": "unread", "key": "GET unread", "allowed": true},
+    {"method": 1, "controller": "/", "handler": "questions/:id/seen", "key": "POST questions/:id/seen", "allowed": true},
+    {"method": 1, "controller": "/", "handler": "image-requests/:id/seen", "key": "POST image-requests/:id/seen", "allowed": true},
     {"method": 0, "controller": "/", "handler": "critical-results", "key": "GET critical-results", "allowed": true},
     {"method": 0, "controller": "/", "handler": "critical-results/:id", "key": "GET critical-results/:id", "allowed": true},
     {"method": 1, "controller": "/", "handler": "critical-results/:id/ack", "key": "POST critical-results/:id/ack", "allowed": true},
@@ -357,7 +366,7 @@
     "unit": "S5-U1c",
     "head": "9e7f69885b3eaa8e6c90ca9bd6de01b460e2794b",
     "rule": "Every (method, template) of the controllers has exactly one row: public_routes, session_routes, business_routes or one basis group of denied. The pure test fails on a controller route without a row, a row without a controller route, a row in two places, and counts that disagree with the controllers or invariants_live ROUTES. Nothing is denied by subtraction.",
-    "counts": {"routes": 228, "public": 7, "session": 2, "business": 93, "denied": 126},
+    "counts": {"routes": 234, "public": 7, "session": 2, "business": 96, "denied": 129},
     "basis_legend": {
       "report": "Clinical writes and private draft reads stay denied. Shared worklist and report reads follow radiologist rules, P body excluded (owner 2026-11-02).",
       "viewer": "Clinical annotation, finding, manual SR and viewer-job writes stay denied; current viewer items and finding reads follow radiologist rules.",
@@ -433,7 +442,8 @@
         "POST admin/source-devices", "POST admin/institution-aliases", "GET admin/metrics", "GET admin/audit", "POST admin/dicom-import/:operationId/files/:index/recovery",
         "GET admin/users/:id/signing-key", "POST admin/users/:id/signing-key", "PATCH admin/emr-link", "GET admin/gateway-status",
         "GET admin/gateway-settings", "PUT admin/gateway-settings", "GET admin/gateway-support", "POST admin/gateway-support", "GET admin/gateway-support/:id/diagnostics",
-        "GET admin/critical-result-inbox", "PATCH admin/critical-result-inbox"
+        "GET admin/critical-result-inbox", "PATCH admin/critical-result-inbox",
+        "POST admin/patient-consent/lookup", "POST admin/patient-consent", "POST admin/patient-consent/:id/withdraw"
       ],
       "attachment": [
         "POST studies/:uid/attachments", "GET studies/:uid/attachments", "POST studies/:uid/attachments/:id/withdraw"
@@ -531,6 +541,9 @@
       "GET studies/:uid/image-requests": {"decision": "business", "unit": "S5-U4c", "commit": "4749f5f", "basis": "requests of one owned study (tele institution 404), the clinician's own only; declared in allowed_additions"},
       "POST studies/:uid/image-requests": {"decision": "business", "unit": "S5-U4c", "commit": "4749f5f", "basis": "external-image or image-transfer request create (clinician role, owning institution, attribution from the token only, per-request receipt and one audit row); a record, never a transfer; declared in allowed_additions"},
       "POST image-requests/:id": {"decision": "business", "unit": "S5-U4c", "commit": "4749f5f", "basis": "state change: accept/close/decline by technician or admin only, cancel by the requesting clinician or admin; replay returns the stored receipt; Connect routes stay denied; declared in allowed_additions"},
+      "GET unread": {"decision": "business", "unit": "S5-in-app-unread", "commit": null, "basis": "in-app unread: the count and the id, study and listed revision of the caller's own unread question threads (view=question-mine) or image requests (view=image-request-mine), by the list's own filter; no body, author or report; a clinician-only member has no inbox view (answered with available false); declared in allowed_additions"},
+      "POST questions/:id/seen": {"decision": "business", "unit": "S5-in-app-unread", "commit": null, "basis": "the seen mark of the caller's own question thread at the revision the screen showed (never above the thread's, never down); another member's thread is 404 as a read; no clinical record, no audit row; declared in allowed_additions"},
+      "POST image-requests/:id/seen": {"decision": "business", "unit": "S5-in-app-unread", "commit": null, "basis": "the seen mark of the caller's own image request at the revision the screen showed; only its requester (403 otherwise), another institution 404 as a read; no clinical record, no audit row; declared in allowed_additions"},
       "GET admin/audit": {"decision": "denied", "unit": "S5-U5b", "commit": "014010f", "basis": "admin audit and security read attributed by the institution recorded in each row (need admin, restricted study access refused); not a clinician read"},
       "GET clinician/studies/:uid/timeline": {"decision": "business", "unit": "S5-U3", "commit": "156866c", "basis": "patient timeline: the listed studies with the anchor's server patient key (listStudies scope, one-snapshot report status, list row fields) and the source birth/sex relation only, paged with limit required; no bodies or values; declared in allowed_additions"},
       "GET studies/:uid/clinical-context": {"decision": "business", "unit": "S7-U4a", "commit": "fa2d162", "basis": "Owner 2026-11-02: physician reads under radiologist rules and own screen settings; clinical writes remain denied."},
@@ -560,6 +573,9 @@
       "PATCH admin/emr-link": {"decision": "denied", "unit": "FA-090-emr-link", "commit": null, "basis": "sets or clears the EMR Link (EMR address template) of the admin's own institution (need admin); never a clinician action"},
       "GET admin/critical-result-inbox": {"decision": "denied", "unit": "S7-critical-result-inbox", "commit": null, "basis": "the admin's own institution's critical result hospital inbox and the members who can hold it (need admin); not a clinician read"},
       "PATCH admin/critical-result-inbox": {"decision": "denied", "unit": "S7-critical-result-inbox", "commit": null, "basis": "sets or clears the critical result hospital inbox member of the admin's own institution (need admin); never a clinician action"},
+      "POST admin/patient-consent/lookup": {"decision": "denied", "unit": "S9-patient-consent", "commit": null, "basis": "admin read of one patient's consent records in the admin's own institution (need admin, the patient must be on an owned study the admin's Study Access allows); not a clinician read"},
+      "POST admin/patient-consent": {"decision": "denied", "unit": "S9-patient-consent", "commit": null, "basis": "admin records a patient's consent in the admin's own institution (need admin, audited); opens no access; never a clinician action"},
+      "POST admin/patient-consent/:id/withdraw": {"decision": "denied", "unit": "S9-patient-consent", "commit": null, "basis": "admin withdraws a patient consent record of the admin's own institution (need admin, audited); never a clinician action"},
       "POST studies/:uid/attachments": {"decision": "denied", "unit": "FC-076-attach-document", "commit": null, "basis": "attaches one JPG, PNG or PDF to an own-institution study as a new archive series (technician or radiologist, admin passes); never a clinician action"},
       "GET studies/:uid/attachments": {"decision": "denied", "unit": "FC-076-attach-document", "commit": null, "basis": "the documents attached to a study the caller's institution owns or reads by tele (technician or radiologist, admin passes); not a clinician read"},
       "GET studies/:uid/report/drawings": {"decision": "denied", "unit": "FA-088-image-report", "commit": null, "basis": "the drawings the report head and the caller's own draft hold (the radiologist's editor and preview); a clinician sees the head version's drawings in its own report read (GET clinician/studies/:uid/report)"},
@@ -1596,6 +1612,9 @@
       }
     },
     "pending_routes": {
+      "GET unread": "NOT_RUN: the live clinician matrix pins audited writes and lowercase queries; in-app unread (no audit row, hyphenated views) is covered by tests/in_app_unread_service_test.cjs over the compiled services and tests/in_app_unread_dom_test.py on both screens.",
+      "POST questions/:id/seen": "NOT_RUN: the live clinician matrix pins audited writes and lowercase queries; in-app unread (no audit row, hyphenated views) is covered by tests/in_app_unread_service_test.cjs over the compiled services and tests/in_app_unread_dom_test.py on both screens.",
+      "POST image-requests/:id/seen": "NOT_RUN: the live clinician matrix pins audited writes and lowercase queries; in-app unread (no audit row, hyphenated views) is covered by tests/in_app_unread_service_test.cjs over the compiled services and tests/in_app_unread_dom_test.py on both screens.",
       "POST emr-audit/incidents": "NOT_RUN: deployed Keycloak/nginx matrix. Isolated HTTP/PG run is recorded in the CD-08 report.",
       "GET emr-audit/incidents": "NOT_RUN: deployed Keycloak/nginx matrix. Isolated HTTP/PG run is recorded in the CD-08 report.",
       "GET emr-audit/incidents/:id": "NOT_RUN: deployed Keycloak/nginx matrix. Isolated HTTP/PG run is recorded in the CD-08 report.",

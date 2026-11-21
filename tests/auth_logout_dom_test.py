@@ -191,8 +191,11 @@ SERVED_FILES = (
     "worklist-v0/hpacs-lite/dicom-peers-admin.js",
     "worklist-v0/hpacs-lite/gateway-rules-admin.js",
     "worklist-v0/hpacs-lite/gateway-support-admin.js",
+    "worklist-v0/hpacs-lite/patient-consent-admin.js",
     "worklist-v0/hpacs-lite/clinician.html",
     "worklist-v0/hpacs-lite/clinician.js",
+    # In-app unread marks of Clinician Home and the reading screen (main.html tags it right before the bundle).
+    "worklist-v0/hpacs-lite/unread-badges.js",
     # CD-01: the shared Product Information panel of main, admin and Clinician Home.
     "worklist-v0/hpacs-lite/product-info-data.js",
     "worklist-v0/hpacs-lite/product-info.js",
@@ -701,6 +704,10 @@ class Site:
                 {"id": "SYN-U-1", "username": "syn-member", "email": "syn-member@synthetic.test", "emailVerified": True,
                  "name": "SYN Member Jung", "institution": INSTITUTION, "roles": ["technician"], "enabled": True,
                  "approvalState": "APPROVED"}]})
+        # In-app unread (unread-badges.js): nothing unread for this account (tests/in_app_unread_dom_test.py has the marks).
+        if method == "GET" and path == "/api/unread":
+            return route.fulfill(json={"owner": [INSTITUTION, account["sub"]], "view": parse_qs(query).get("view", [None])[0],
+                                       "available": True, "count": 0, "items": [], "nextCursor": None})
         if method == "GET" and path == "/api/clinician/studies":
             return route.fulfill(json={"studies": [{"uid": UID, "id": "SYN-P-001", "name": PATIENT, "birth": "19800101",
                                                     "sex": "M", "date": "20261003", "acc": "SYNACC0001",

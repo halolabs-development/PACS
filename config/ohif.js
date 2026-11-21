@@ -818,7 +818,7 @@ window.KinLanguageTerms = {
     ["From {0} · Sent {1}", "보낸 사람 {0} · 보낸 시각 {1}", "l"],
     ["From: {0} · To: {1} · {2}", "보낸 사람: {0} · 받는 사람: {1} · {2}", "l"],
     ["Gateway 보고 형식을 확인할 수 없습니다", "Cannot verify the Gateway report format", "l"],
-    ["Gateway 보고({0}): 병원 보유 {1}건 중 {2}건 전송", "Gateway report ({0}): {2} of {1} held by the hospital sent", "l"],
+    ["Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송", "Gateway report ({0}): {2} of {1} counted by the Gateway sent", "l"],
     ["Gateway 자동 재시도 대기", "Waiting for Gateway auto-retry", "l"],
     ["Gateway:", "게이트웨이:", "l"],
     ["General", "일반", "l"],
@@ -1018,6 +1018,8 @@ window.KinLanguageTerms = {
     ["New from Current", "현재 조건으로 새로 만들기", "l"],
     ["New to List", "목록에 새로 들어옴", "l"],
     ["New to List {0} · Emergency Changes {1}", "목록에 새로 {0} · 응급 변경 {1}", "l"],
+    ["New", "새 항목", "l"],
+    ["New Questions {0}", "새 질문 {0}", "l"],
     ["Next", "다음", "l"],
     ["Next Frame", "다음 프레임", "l"],
     ["Next Page", "다음 페이지", "l"],
@@ -1431,6 +1433,9 @@ window.KinLanguageTerms = {
     ["영상 요청 읽기 실패", "Image request read failed", "l"],
     ["영상 요청: 계정 바뀜", "Image requests: account changed", "l"],
     ["이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).", "Image requests of this study are not read (tele study).", "m"],
+    ["서버가 센 안 읽은 질문입니다(소속 기관의 Open 질문 중 이 계정이 아직 열어 보지 않은 것). 누르면 Inbox를 엽니다. 이메일·문자로 보내지 않습니다.", "Unread questions counted by the server (Open questions of your institution this account has not opened yet). Opens the Inbox. Nothing is sent by email or text message.", "m"],
+    ["안 읽은 질문 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.", "The unread question count could not be checked again. The number shown is the last one checked.", "m"],
+    ["최신 50건 목록 밖의 질문입니다. 새 질문이 있습니다.", "A question outside the latest 50. It has a new question.", "m"],
     ["이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).", "Questions of this study are not read (tele study, permission).", "m"],
     ["질문 {n0}건{1}", "Questions {n0}{1}", "l"],
     ["질문 읽기 거절", "Question read refused", "l"],
@@ -3817,7 +3822,22 @@ window.KinLanguageTerms = {
     ["이 브라우저의 배치를 유지하며 계정 배치 접근을 다시 확인합니다.", "Keeps this browser's layout and checks account layout access again.", "m"],
     ["이 브라우저의 배치를 유지하며 계정 배치를 다시 확인합니다.", "Keeps this browser's layout and checks the account layout again.", "m"],
     ["이 브라우저의 현재 계정 설정 · 연결할 때 한 번 확인하며 입력·미저장 작업 중에는 건너뜁니다", "Current account setting in this browser · checked once on connect, skipped while typing or with unsaved work", "m"],
-    ["이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer의 새 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.", "Saved to the current account in this browser. Assign a Ctrl+Alt combination or Ctrl+S. Ctrl+Alt+C (copy patient ID), Ctrl+Alt+8 (image layout) and other browser and input keys are reserved. Backspace/Delete unassigns a key. New keys for the Viewer apply from the next time it opens; open windows keep the current keys.", "m", "이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. 영상 창의 새 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다."],
+    ["이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer 창의 새 Ctrl+Alt 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.", "Saved to the current account in this browser. Assign a Ctrl+Alt combination or Ctrl+S. Ctrl+Alt+C (copy patient ID), Ctrl+Alt+8 (image layout) and other browser and input keys are reserved. Backspace/Delete unassigns a key. New Ctrl+Alt keys for the Viewer window apply from the next time it opens; open windows keep the current keys.", "m", "이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. 영상 창의 새 Ctrl+Alt 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다."],
+    // The Viewer tab's image tool keys and Finalize & Next (workspace-shortcuts.js).
+    ["Finalize & Next (Approve & Next)", "확정 후 다음 (승인 후 다음)", "lc"],
+    ["Image Tool Keys", "영상 도구 키", "l"],
+    ["별도 Viewer 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 Viewer 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다.", "Image tool keys pressed outside a text field in a separate Viewer window (one letter or digit, or Shift with a letter). They are saved to the account and apply on other PCs too; once saved they also apply at once to the Viewer windows open in this browser. The images inside the reading screen use the viewer's default keys.", "m", "별도 영상 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 영상 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다."],
+    ["영상 도구 키는 영문자·숫자 한 개 또는 Shift+영문자입니다. Backspace/Delete로 미배정할 수 있습니다.", "An image tool key is one letter or digit, or Shift with a letter. Backspace/Delete unassigns it.", "m"],
+    ["계정의 영상 도구 키입니다.", "The image tool keys of the account.", "m"],
+    ["계정의 영상 도구 키를 불러오는 중…", "Loading the image tool keys of the account…", "m"],
+    ["계정의 영상 도구 키를 불러오지 못했습니다. Load from Account로 다시 불러오세요.", "The image tool keys of the account could not be loaded. Load them again with Load from Account.", "m", "계정의 영상 도구 키를 불러오지 못했습니다. 계정에서 불러오기로 다시 불러오세요."],
+    ["중복 영상 도구 키: {0}. 서로 다른 키로 지정하세요.", "Duplicate image tool keys: {0}. Give each a different key.", "m"],
+    ["영상 도구 키를 저장하려면 먼저 Load from Account로 계정 설정을 불러오세요.", "To save image tool keys, first load the account settings with Load from Account.", "m", "영상 도구 키를 저장하려면 먼저 계정에서 불러오기로 계정 설정을 불러오세요."],
+    ["영상 도구 키는 계정에 저장했습니다. 그 뒤 바뀐 작업 화면 키는 아직 적용하지 않았습니다. Apply & Save를 다시 누르세요.", "The image tool keys were saved to the account. Work-page keys changed after that are not applied yet. Press Apply & Save again.", "m", "영상 도구 키는 계정에 저장했습니다. 그 뒤 바뀐 작업 화면 키는 아직 적용하지 않았습니다. 적용 및 저장을 다시 누르세요."],
+    ["영상 도구 키는 계정에 저장했습니다. 작업 화면 키는 다른 창에서 설정이 바뀌어 적용하지 않았습니다. 취소 후 다시 열어 확인하세요.", "The image tool keys were saved to the account. The work-page keys were not applied because another window changed the settings. Cancel, then open again to check.", "m"],
+    ["영상 도구 키는 계정에 저장했습니다. 작업 화면 키는 이 브라우저에 저장하지 못했습니다. 다시 시도하세요.", "The image tool keys were saved to the account. The work-page keys could not be saved in this browser. Try again.", "m"],
+    ["영상 도구 키를 계정에 저장하지 못해 아무것도 적용하지 않았습니다. 입력은 유지했습니다.", "The image tool keys could not be saved to the account, so nothing was applied. Your entries are kept.", "m"],
+    ["단축키를 저장했습니다. 영상 도구 키는 열린 Viewer 창에도 적용되고, 작업 화면 키는 열린 Viewer 창에서 다음 열기부터 적용됩니다.", "Shortcuts saved. Image tool keys also apply to open Viewer windows; work-page keys apply in an open Viewer window from the next time it opens.", "m", "단축키를 저장했습니다. 영상 도구 키는 열린 영상 창에도 적용되고, 작업 화면 키는 열린 영상 창에서 다음 열기부터 적용됩니다."],
     ["이 삽입은 서버에 저장됐지만 그 뒤 초안이 바뀌었습니다 — 같은 삽입을 다시 넣지 않습니다. {0}", "This insert was saved on the server, but the draft changed afterward — the same insert will not be added again. {0}", "m"],
     ["이 소견에는 이미 다른 비교 검사가 연결된 적이 있어 이 비교 검사의 표식을 연결할 수 없습니다. 이 비교 검사의 소견은 새 소견으로 기록하세요. 작성 내용은 저장되지 않았습니다.", "A different comparison study has already been linked to this finding, so marks from this comparison study cannot be linked. Record findings for this comparison study as a new finding. Your text was not saved.", "m"],
     ["이 소견은 다른 판 형식으로 바뀌었습니다. 화면을 새로고침해 최신판을 확인하세요. 작성 내용은 저장되지 않았습니다.", "This finding has changed to a different version format. Refresh the screen to see the latest version. Your text was not saved.", "m"],
@@ -3851,7 +3871,12 @@ window.KinLanguageTerms = {
     ["이 창에서는 보내지 않습니다.", "This window will not send.", "m"],
     ["이 초안은 v{0}을 기준으로 씁니다. 그 뒤 v{n1}이 승인됐습니다 — 아래 승인본을 확인한 뒤 정하세요. 쓰던 내용은 그대로 두었습니다.", "This draft is based on v{0}. v{n1} was approved after that — check the approved version below before deciding. Your text was left as is.", "m"],
     ["이 초안은 더 낡은 승인본을 기준으로 씁니다 — Addendum을 눌러 승인본을 확인하고 기준을 다시 잡은 뒤 인용하세요", "This draft is based on an older approved version — click Addendum to check the approved report and rebase, then cite", "m", "이 초안은 더 낡은 승인본을 기준으로 씁니다 — 추가 기재를 눌러 승인본을 확인하고 기준을 다시 잡은 뒤 인용하세요"],
-    ["이 초안을 쓰기 시작한 뒤 v{0}이 확정됐습니다", "v{0} was finalized after this draft was started", "m"],
+    ["이 초안을 쓰기 시작한 뒤 v{0}이 승인됐습니다", "v{0} was approved after this draft was started", "m"],
+    ["이 초안을 쓰기 시작한 뒤 v{0}이 저장됐습니다", "v{0} was saved after this draft was started", "m"],
+    ["다른 창에서 이 계정으로 v{n0}을 저장했습니다. 이 창의 글을 v{n0} 다음 판으로 저장할까요? (취소하면 이 창의 글은 그대로 있고 아무것도 저장하지 않습니다)", "v{n0} was saved from another window of this account. Save the text in this window as the next version after v{n0}? (Cancel keeps the text in this window and saves nothing)", "m"],
+    ["v{n0}의 글을 읽지 못해 기준을 다시 잡지 않았습니다 — 쓰던 글은 그대로 있습니다. 잠시 뒤 다시 누르세요.", "The text of v{n0} could not be read, so the draft was not rebased — your text is unchanged. Press again shortly.", "m"],
+    ["이 화면의 글이 v{n0}의 글로 시작하지 않아 기준을 다시 잡지 않았습니다 — 추가기재는 승인본에 덧붙이기만 합니다. 쓰던 글은 그대로 있습니다.", "The text on this screen does not start with the text of v{n0}, so the draft was not rebased — an Addendum only adds to the approved report. Your text is unchanged.", "m"],
+    ["기준을 다시 잡는 사이 글이 바뀌었습니다 — 다시 누르세요.", "The text changed while the draft was being rebased — press again.", "m"],
     ["이 출처에 해당 항목이 없습니다(확인 {observedAt}).", "This source has no such item (checked {observedAt}).", "m"],
     ["이 칸에 같은 출처를 이미 인용했습니다. 그래도 넣으려면 한 번 더 누르세요.", "This source is already cited in this field. Click once more to insert it anyway.", "m"],
     ["이 칸의 줄 끝이 섞여 있어 자리를 정확히 말할 수 없습니다 — 본문에서 직접 고쳐 주세요", "Line endings in this field are mixed, so the position can't be pinpointed — edit it directly in the body", "m"],
@@ -5108,6 +5133,18 @@ window.KinLanguageTerms = {
     ["바뀐 값이 없습니다", "Nothing changed", "s"],
     ["이 기관의 승인된 회원만 이메일·이름을 바꿀 수 있습니다", "Only an approved member of this institution can have the email and name changed", "s"],
     ["명부의 이메일이 이 화면의 이메일과 다릅니다. Change Name / Email로 주소를 확인해 저장한 뒤 다시 보내세요.", "The login account's email differs from the email on this screen. Confirm and save the address with Change Name / Email, then send again.", "s"],
+    // Patient Consent on the Members console (api/src/patient-consent.service.ts).
+    ["원본 환자 검사 목록을 확인할 수 없습니다", "The original studies of the patient could not be confirmed", "s"],
+    ["이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", "No study with this patient ID was found at this institution", "s"],
+    ["환자 동의 기록은 이 기관의 관리자만 다룹니다", "Only an administrator of this institution handles patient consent records", "s"],
+    ["저장이 지연되었습니다. 같은 요청으로 다시 시도하세요", "Saving was delayed. Try again with the same request", "s"],
+    ["다른 기록에 쓰인 요청입니다. 기록을 다시 불러와 확인하세요", "This request was used for another record. Load the records again and check", "s"],
+    ["이미 철회된 기록입니다. 기록을 다시 불러오세요", "The record is already withdrawn. Load the records again", "s"],
+    ["입력 값을 확인하세요", "Check the input", "s"],
+    ["{0}을(를) 확인하세요", "Check {0}", "s"],
+    ["환자 번호를 확인하세요", "Check the patient ID", "s"],
+    ["Obtained At은 지금보다 뒤일 수 없습니다", "Obtained At cannot be later than now", "s"],
+    ["Expires At은 Obtained At보다 뒤여야 합니다", "Expires At must be later than Obtained At", "s"],
     ["회원 상태가 바뀌었습니다. 다시 실행하세요", "The member's state changed. Run again", "s"],
     ["다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 실행하세요", "Another request is changing the member's state. Run again shortly", "s"],
     ["같은 명령을 같은 인자로 다시 실행하세요.", "Run the same command again with the same arguments.", "s"],
@@ -6277,7 +6314,7 @@ window.KinLanguageTerms = {
     ["원본 DICOM 생년월일이 선택한 검사와 다릅니다.", "The original DICOM birth date differs from the selected study.", "m"],
     ["원본 DICOM 성별이 선택한 검사와 다릅니다.", "The original DICOM sex differs from the selected study.", "m"],
     ["이 검사는 지금 목록에 없어 열 수 없습니다. 목록을 새로고침하세요.", "This study is not in the current list and cannot be opened. Refresh the list.", "m"],
-    ["이 검사에 대해 소속 기관 영상의학과에 질문을 남깁니다. 질문과 답변은 작성한 본인과 소속 기관의 판독의·관리자만 봅니다. 새 답변은 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요. 답변은 판독문이 아니며 판독문을 대신하지 않습니다.", "Leave a question about this study for your institution's radiology department. Questions and answers are visible only to you and your institution's radiologists and administrators. New answers do not send notifications, so reopen this section to check. Answers are not reports and do not replace the report.", "m"],
+    ["이 검사에 대해 소속 기관 영상의학과에 질문을 남깁니다. 질문과 답변은 작성한 본인과 소속 기관의 판독의·관리자만 봅니다. 새 답변은 목록의 ‘New Answers’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다). 답변은 판독문이 아니며 판독문을 대신하지 않습니다.", "Leave a question about this study for your institution's radiology department. Questions and answers are visible only to you and your institution's radiologists and administrators. New answers are shown by the ‘New Answers’ mark in the list (nothing is sent by email or text message). Answers are not reports and do not replace the report.", "m"],
     ["이 검사에 대한 질문과 답변을 엽니다. 연 뒤에만 서버에서 읽습니다.", "Opens questions and answers for this study. They are read from the server only after you open this.", "m"],
     ["질문 목록을 불러오는 중입니다…", "Loading questions…", "m"],
     ["질문 목록을 불러오지 못했습니다.", "Could not load questions.", "m"],
@@ -6312,7 +6349,7 @@ window.KinLanguageTerms = {
     ["이 판의 저장된 판독문과 영상 범위를 엽니다.", "Opens the saved report and image scope of this version.", "m"],
     ["요청한 판독 버전과 다릅니다.", "The report version differs from the one requested.", "m"],
     ["이 검사에 남긴 외부영상·영상전송 요청을 엽니다. 연 뒤에만 서버에서 읽습니다.", "Opens the external image and image transfer requests for this study. They are read from the server only after you open this.", "m"],
-    ["External Images는 다른 병원의 영상을 이 기관으로 가져오도록, Send Images는 이 검사의 영상을 다른 병원에 보내도록 소속 기관 직원에게 남기는 요청입니다. 요청은 처리 상태의 기록일 뿐 이 화면이 영상을 옮기지 않고, 실제 처리는 직원이 따로 합니다. 처리 결과는 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요.", "External Images asks your institution's staff to bring another hospital's images into this institution; Send Images asks them to send this study's images to another hospital. A request only records processing status: this screen does not move images, and staff do the actual work separately. Results do not send notifications, so reopen this section to check.", "m"],
+    ["External Images는 다른 병원의 영상을 이 기관으로 가져오도록, Send Images는 이 검사의 영상을 다른 병원에 보내도록 소속 기관 직원에게 남기는 요청입니다. 요청은 처리 상태의 기록일 뿐 이 화면이 영상을 옮기지 않고, 실제 처리는 직원이 따로 합니다. 처리 결과는 목록의 ‘Processed’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다).", "External Images asks your institution's staff to bring another hospital's images into this institution; Send Images asks them to send this study's images to another hospital. A request only records processing status: this screen does not move images, and staff do the actual work separately. Processing results are shown by the ‘Processed’ mark in the list (nothing is sent by email or text message).", "m"],
     ["원격판독으로 받은 검사에는 영상 요청을 남기거나 읽지 않습니다. 요청은 검사를 소유한 기관 안에서만 오갑니다.", "Image requests are not created or read for studies received for teleradiology. Requests stay within the institution that owns the study.", "m"],
     ["영상 요청을 불러오는 중입니다…", "Loading image requests…", "m"],
     ["영상 요청을 불러오지 못했습니다.", "Could not load image requests.", "m"],
@@ -8109,6 +8146,9 @@ window.KinLanguageTerms = {
     ["질문 목록 구분(view)을 확인하세요", "Check the question list view", "m"],
     ["질문 상태 필터를 확인하세요", "Check the question status filter", "m"],
     ["질문 목록 페이지를 확인하세요", "Check the question list page", "m"],
+    ["안 읽음 구분(view)을 확인하세요", "Check the unread view", "m"],
+    ["안 읽음 목록 페이지를 확인하세요", "Check the unread list page", "m"],
+    ["기준 revision을 확인하세요", "Check the base revision", "m"],
     ["요청 ID와 질문을 입력하세요", "Enter a request ID and a question", "m"],
     ["요청 ID·기준 revision과 내용을 입력하세요", "Enter a request ID, base revision, and content", "m"],
     ["요청 ID·기준 revision과 사유를 확인하세요", "Check the request ID, base revision, and reason", "m"],
@@ -8395,9 +8435,15 @@ window.KinLanguageTerms = {
     ["진행 중 판독 되돌림 (점유: {0}, 저장 글: {1})", "In-progress report reverted (claimed by: {0}, text saved by: {1})", "m"],
     ["이 초안은 v{0}을 기준으로 씁니다. 지금 승인본은 v{n1}입니다 — 승인본을 확인한 뒤 기준을 다시 잡아 주세요.", "This draft is based on v{0}. The approved version is now v{n1} — review the approved version, then rebase the draft on it.", "m"],
     ["그 사이 {0}가 v{n1}을 저장했습니다. 내용을 다시 불러온 뒤 작성해 주세요.", "{0} saved v{n1} in the meantime. Reload the content before continuing.", "m"],
+    ["다른 창에서 이 계정으로 v{n0}을 저장했습니다. 이 창의 글은 그대로 있습니다.", "v{n0} was saved from another window of this account. The text in this window is unchanged.", "s"],
+    ["추가기재는 승인본에 덧붙이기만 합니다 — 승인본의 글은 그대로 두고 그 뒤에 쓰세요", "An Addendum only adds to the approved report — leave the approved text as it is and write after it", "s"],
+    ["덧붙인 내용이 없습니다 — 승인본 뒤에 추가기재할 글을 쓴 뒤 Addendum을 누르세요", "Nothing was added — write the Addendum after the approved text, then press Addendum", "s"],
     ["다른 사용자", "Another user", "l"],
     ["판독 취소로 폐기 (취소자: {0})", "Discarded because the report was canceled (canceled by: {0})", "m"],
     ["이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.", "Could not approve because no signing key usable by this account could be confirmed. Ask your institution administrator to check the Signing Key and account details. Your report input is preserved.", "m"],
+    ["이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인 후 수정을 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.", "Could not save the amendment because no signing key usable by this account could be confirmed. Ask your institution administrator to check the Signing Key and account details. Your report input is preserved.", "m"],
+    ["이 계정에서 사용할 수 있는 서명키를 확인하지 못해 추가기재(Addendum)를 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.", "Could not save the Addendum because no signing key usable by this account could be confirmed. Ask your institution administrator to check the Signing Key and account details. Your report input is preserved.", "m"],
+    ["이 계정에서 사용할 수 있는 서명키를 확인하지 못해 판독 취소(Reset)를 하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.", "Could not Reset the report because no signing key usable by this account could be confirmed. Ask your institution administrator to check the Signing Key and account details. Your report input is preserved.", "m"],
     ["온라인 서명을 완료하지 못했습니다. 판독 입력은 보존됩니다.", "Could not complete the online signature. Your report input is preserved.", "m"],
     ["판독문 저장", "Report saving", "l"],
     ["판독문 초안 조회", "Report draft lookup", "l"],
@@ -8674,8 +8720,64 @@ window.KinLanguageTerms = {
     ["My Studies는 의뢰의(Requesting Physician)가 로그인한 계정의 이름과 같은 검사입니다. All Studies에서 서버가 허용한 모든 검사를 봅니다.", "My Studies holds the studies whose Requesting Physician has the signed-in account's name. All Studies shows every study the server allows.", "m"],
     ["My Studies는 의뢰의(Requesting Physician)가 로그인한 계정의 이름과 같은 검사입니다. All Studies는 서버가 허용한 모든 검사입니다.", "My Studies holds the studies whose Requesting Physician has the signed-in account's name. All Studies holds every study the server allows.", "m"],
     ["My Studies", "내 검사", "l"],
+    ["Open Annotated Image", "표식 영상 열기", "l"],
+    ["뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.", "Asked the viewer window to open that original image with its mark. Check the images in that window.", "m"],
+    ["키 이미지의 원본 식별(시리즈·영상·프레임)을 확인할 수 없어 열지 않았습니다.", "The key image's original (series, image, frame) could not be confirmed, so nothing was opened.", "m"],
+    ["이 문장이 가리키는 원본 영상과 표식을 엽니다.", "Opens the original image and the mark this sentence points to.", "m"],
+    ["인용한 표식의 원본 영상을 확인하는 중입니다…", "Checking the original image of the cited mark…", "m"],
+    ["인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.", "The cited mark is not among the saved items now (hidden or deleted). No image was opened.", "m"],
+    ["인용한 표식의 원본 식별을 확인할 수 없어 영상을 열지 않았습니다.", "The cited mark's original could not be confirmed, so no image was opened.", "m"],
+    ["인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.", "The cited mark's study cannot be confirmed in the list now as the same patient's, so it was not opened. Refresh the list.", "m"],
+    ["뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r{0}, 지금 표시하는 표식은 r{1}입니다.", "Asked the viewer window to open that original image with its mark. The mark was r{0} when cited; the one shown now is r{1}.", "m"],
+    ["판독문의 인용 기록을 읽지 못해 문장에 영상 연결을 붙이지 않았습니다.", "The report's citations could not be read, so no sentence links to an image.", "m"],
   ],
   skip: [
+    // viewer-ux-shortcuts.js (loaded for Edit Shortcuts): the viewer's tool names, shown as the viewer shows them (translate=no),
+    // its key code parts, and the notes it writes only inside a Viewer window's own hotkey table.
+    "Shift",
+    "Stack Scroll",
+    "Rectangle ROI",
+    "Cine",
+    "Invert",
+    "Flip Horizontal",
+    "Flip Vertical",
+    "Rotate Left",
+    "Rotate Right",
+    "Bidirectional",
+    "Circle ROI",
+    "Freehand ROI",
+    "Pointer",
+    "Cobb Angle",
+    "Livewire Contour",
+    "Probe",
+    "Spline ROI",
+    "Calibration Line",
+    "Ultrasound Directional",
+    "Image Overlay",
+    "Image Slice Sync",
+    "Reference Lines",
+    "Magnify",
+    "Magnify Probe",
+    "Tag Browser",
+    "Window Level Region",
+    "Copy Image",
+    "Copy Screen",
+    "Save JPEG",
+    "Save Series JPEG",
+    "Add to Captures",
+    "Captures",
+    "Save Video",
+    "Match Ratio",
+    "Next Patient",
+    "EllipticalROI",
+    "Digit{0}",
+    "Key{0}",
+    "Control",
+    "Alt",
+    "Meta",
+    "이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.",
+    "이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.",
+    "이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.",
     "\"Batang\", \"Noto Serif KR\", serif",
     "\"Batang\", serif",
     "\"Consolas\", monospace",
@@ -8835,7 +8937,7 @@ window.KinLanguageTerms = {
     "대통령령 제36502호 스냅샷; 부칙 제34821호 2024-08-14 시행",
     "법률 제21500호 2026-10-01 시행; 시행령 제36735호 스냅샷",
     "P26⑧→P34②+PD39의2·39의3",
-    "body{font:16px/1.5 sans-serif;margin:2rem;color:#17212b;max-width:52rem}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:8rem 1fr;gap:.3rem}dt{font-weight:bold}dd{margin:0;overflow-wrap:anywhere}h3{font-size:1rem;margin-bottom:0}section{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem}@media print{details{display:none}section{break-inside:avoid}}",
+    "body{font:16px/1.5 sans-serif;margin:2rem;color:#17212b;max-width:52rem}pre{font:inherit;white-space:pre-wrap;overflow-wrap:anywhere}dl{display:grid;grid-template-columns:8rem 1fr;gap:.3rem}dt{font-weight:bold}dd{margin:0;overflow-wrap:anywhere}h3{font-size:1rem;margin-bottom:0}section{border-top:1px solid #ccc;margin-top:2rem;padding-top:1rem}@media print{section{break-inside:avoid}}",
     "legalize-kr/kr/의료법/법률.md",
     "legalize-kr/kr/의료법/시행규칙.md",
     "legalize-kr/kr/개인정보보호법/법률.md",
@@ -9472,6 +9574,29 @@ window.KinLanguageTerms = {
 const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — HALO PACS';
 const KIN_VIEWER_PRODUCT = 'HALO PACS Viewer';
 
+// the original image a Physician-mode hand-off asks this document to open first (a key image or a cited line of the
+// report): its study, series, SOP, frame and the saved item, as the server gave them to Clinician Home. Only the document
+// that read the hand-off has it - a reload has none and opens as the viewer always does. From the hand-off until
+// history.js has moved there or given up, the opening is held as a restore the address chose holds it (viewer-jobs.js
+// holdOpening), so Auto Save View does not put a saved view over it.
+let KIN_VIEWER_ENTRY_TARGET = null, KIN_VIEWER_ENTRY_HOLD = null;
+function kinViewerEntryTarget(value) {
+  const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)+$/.test(s);
+  if (!value || typeof value !== 'object' || !uid(value.studyUid) || !uid(value.seriesUid) || !uid(value.sopUid) ||
+      !Number.isSafeInteger(value.frame) || value.frame < 1 || !(value.itemId === undefined || typeof value.itemId === 'string' && /^[0-9a-f-]{36}$/.test(value.itemId))) return null;
+  return Object.freeze({ studyUid: value.studyUid, seriesUid: value.seriesUid, sopUid: value.sopUid, frame: value.frame,
+    ...(value.itemId ? { itemId: value.itemId } : {}) });
+}
+// The target is opened once in this document: the first panel that takes it has it, a later mode entry gets none.
+function kinViewerEntryTake() {
+  const target = KIN_VIEWER_ENTRY_TARGET; KIN_VIEWER_ENTRY_TARGET = null; return target;
+}
+function kinViewerEntryRelease() {
+  const hold = KIN_VIEWER_ENTRY_HOLD, openings = window.kinViewerOpeningRestore; KIN_VIEWER_ENTRY_HOLD = null;
+  if (hold && openings?.holds?.delete(hold)) {
+    try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase: 'end', hold } })); } catch (_) {}
+  }
+}
 // Consume the opener-less handoff before loading any other script. Neither the address nor
 // a later document's window.name retains the expected session; the boundary records it locally.
 const KIN_VIEWER_EXPECTED_SESSION = (() => {
@@ -9485,6 +9610,15 @@ const KIN_VIEWER_EXPECTED_SESSION = (() => {
     // B14: the screen that opened this window. Opened from Clinician Home (the Physician mode) it is read-only for every
     // account (kinViewerClinicianOnly); every hand-off says it again and a reload of this tab keeps the last one.
     try { sessionStorage.setItem('kin-viewer-mode', entry.mode === 'physician' ? 'physician' : ''); } catch (_) {}
+    KIN_VIEWER_ENTRY_TARGET = entry.mode === 'physician' ? kinViewerEntryTarget(entry.target) : null;
+    if (KIN_VIEWER_ENTRY_TARGET) {
+      const openings = window.kinViewerOpeningRestore ||= { screen: 0, holds: new Set() };
+      const hold = Object.freeze({ screen: openings.screen });
+      try { window.dispatchEvent(new CustomEvent('kin-viewer-opening-restore', { detail: { phase: 'begin', hold } })); } catch (_) {}
+      openings.holds.add(hold); openings.held = hold.screen; KIN_VIEWER_ENTRY_HOLD = hold;
+      // A document that never draws its list (no answer at all) does not hold the view for ever.
+      setTimeout(kinViewerEntryRelease, 60000);
+    }
     // A fresh list action may reuse the named window and its URL. It starts a new
     // verification; a reload has no handoff and retains the previous entry instead.
     history.replaceState({ ...history.state, kinViewerSession: {
@@ -10838,13 +10972,12 @@ function kinCreateViewerHistory() {
     // 쓰기 쪽 검사(writable·SR·도구·captureAnnotations)는 recovery.has(scope)를 그대로 읽는다.
     const held = () => recovery.has(scope) && !readOnly();
     const READ_ONLY = {
-      note: '읽기 전용 · 확정 판독문에 저장된 측정·키 이미지만 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다.',
-      withheld: '확정 판독문이 아니어서 저장된 측정·키 이미지를 표시하지 않습니다 · 읽기 전용',
+      note: '읽기 전용 · 이 검사에 저장된 측정·키 이미지를 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 서버도 쓰기를 거절합니다.',
       tool: '읽기 전용 화면입니다. 측정을 만들지 않습니다.',
       edit: '읽기 전용 화면입니다. 측정·표식을 편집하지 않습니다.',
       sr: '읽기 전용 화면에서는 SR을 만들거나 저장하지 않습니다.',
       denied: '이 검사의 저장 항목을 읽을 수 없습니다(HTTP 403). 서버가 거절했습니다.',
-      unmatched: '현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 확정 여부는 계속 다시 확인합니다.',
+      unmatched: '현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 저장 항목은 계속 다시 확인합니다.',
     };
     const UNCONFIRMED = {
       tool: '계정이 확인되기 전에는 영상 조작만 할 수 있습니다. 측정·표식을 만들지 않습니다.',
@@ -11546,7 +11679,7 @@ function kinCreateViewerHistory() {
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
     // 이유로 돌지 못했어도(settle은 감시자의 실패를 삼킨다) 전환 뒤에 도착한 작성자 목록은 그려지지 않는다.
-    const readPolicy = () => readOnly() ? 'final' : 'author';
+    const readPolicy = () => readOnly() ? 'shared' : 'author';
     const asked = (ticket, seq, policy) => valid(ticket) && seq === readSequence && readPolicy() === policy;
     const writable = entry => window.KinViewerSessionBoundary?.active() && writer() && !suspended && !recovery.has(scope) && me?.kind === 'member' && me.roles?.includes('radiologist') &&
       (!entry.head || entry.head.authorSub === subject);
@@ -11604,11 +11737,13 @@ function kinCreateViewerHistory() {
         if (measurementService.getMeasurement(a.annotationUID)) ownRemove(a.annotationUID);
       }
       reset(readOnly() ? READ_ONLY.denied : '이 검사에 접근할 수 없습니다. 보관 작업은 접근 확인 후 재개할 수 있습니다.'); me = null;
+      kinViewerEntryRelease();
       if (readOnly()) { panel.dataset.readOnly = 'denied'; panel.dataset.studyUid = scope; }
       button(actions, 'Recheck Access', () => load());
     }
     function end(modeExit = false) {
       if (ended) return;
+      kinViewerEntryRelease();
       recovery.clear(); reset('로그인이 종료되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'); ended = true; me = null; subject = ''; actions.replaceChildren();
       // Mode exit keeps this document and its login; the Findings section holds its drafts for the
       // next mode entry instead of destroying them as it must for a real logout or 401.
@@ -11692,7 +11827,7 @@ function kinCreateViewerHistory() {
       status.textContent = '저장 항목 확인 중…';
       try {
         if (!answered) await authenticate(ticket);
-        if (readPolicy() === 'final') return await readOnlyLoad(ticket, seq);
+        if (readPolicy() === 'shared') return await readOnlyLoad(ticket, seq);
         const heads = []; let cursor = null;
         do {
           const page = await api(path() + '?includeHidden=true&limit=100' + (recheck ? '&recheck=' + encodeURIComponent(recheck) : '') + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), {}, ticket);
@@ -11750,40 +11885,45 @@ function kinCreateViewerHistory() {
       } catch (e) { if (!e.stale && valid(ticket)) status.textContent = '목록을 확인하지 못했습니다. 새로고침으로 다시 확인하세요.'; }
       finally { if (ticket === generation) loading = false; }
     }
-    // S5-U2b 읽기 전용 목록. 서버는 clinician-only에게 확정본일 때만 좁힌 쪽({uid, final, reportVersion, items, nextCursor})을
-    // 주고, 숨긴 항목 요청은 400으로 거절한다. 이어받기 값은 받은 그대로 넘기고, 모든 쪽이 같은 검사·같은 확정 판이어야
-    // 한다 — 판이 다른 쪽을 이어 붙이면 어느 확정 시점에도 없던 목록이 된다(S5-U1b-F04). 읽는 동안 이전 목록을 내려 두고,
-    // 실패하면 받은 쪽도 버린다. 확정 전(items null)은 빈 목록(항목 없음)과 다르게 알린다.
+    // S5-U2b 읽기 전용 목록. 서버는 판독의와 같은 지금 목록({items, nextCursor} — 숨긴 항목 빼고)을 누구에게나 주고, 누가
+    // 무엇을 보는가는 서버 한 곳(viewer.service)이 정한다(2026-11-02 결정 뒤 판독 확정 여부로 좁히지 않는다). 이 화면은 답의
+    // 모양만 보고 끝 쪽까지 읽는다. 읽는 동안 이전 목록을 내려 두고, 실패하면 받은 쪽도 버린다.
     const dropRows = () => {
       for (const e of entries.values()) removeAnnotation(e);
       entries.clear(); list.replaceChildren(); shown = null; unmatched = false; delete panel.dataset.frame;
     };
+    // One page of the shared list, or a throw: an items array of known kinds, a next cursor that is null or a new string.
+    function readOnlyPage(page, cursor) {
+      const next = page?.nextCursor;
+      if (!page || typeof page !== 'object' || !Array.isArray(page.items) || page.items.length > 100 ||
+          !page.items.every(h => h && typeof h === 'object' && typeof h.id === 'string' && h.id && Number.isSafeInteger(h.revision) &&
+            h.item && typeof h.item === 'object' && Object.hasOwn(names, h.item.kind)) ||
+          !(next === null || typeof next === 'string' && next.length > 0 && next.length <= 512 && next !== cursor)) throw Object.assign(new Error('Invalid page'), { invalid: true });
+      return next;
+    }
+    async function readOnlyHeads(ticket, seq) {
+      const heads = []; let cursor = null;
+      do {
+        const page = await api(path() + '?limit=100' + (cursor === null ? '' : '&cursor=' + encodeURIComponent(cursor)), {}, ticket);
+        if (!asked(ticket, seq, 'shared')) throw { stale: true };
+        const next = readOnlyPage(page, cursor);
+        heads.push(...page.items); cursor = next;
+      } while (cursor !== null);
+      return heads;
+    }
+    // What the periodic check compares: each item's id, revision and the server's source verdict of this read (a measurement's
+    // verified/unverified can change without a new revision).
+    const listKey = heads => JSON.stringify(heads.map(h => [h.id, h.revision, h.referenceStatus ?? null]).sort());
     async function readOnlyLoad(ticket, seq) {
       if (!valid(ticket) || seq !== readSequence) return;
-      const study = scope, heads = [];
-      let cursor = null, version = null, withheld = false;
+      const study = scope;
       dropRows(); panel.dataset.readOnly = 'loading'; toolbar();
       try {
-        do {
-          const page = await api(path() + '?limit=100' + (cursor === null ? '' : '&cursor=' + encodeURIComponent(cursor)), {}, ticket);
-          if (!asked(ticket, seq, 'final')) return;
-          if (!page || page.uid !== study || typeof page.final !== 'boolean') throw new Error('Invalid page');
-          if (!page.final) {
-            if (cursor !== null || page.items !== null || page.nextCursor !== null) throw new Error('Invalid page');
-            withheld = true; break;
-          }
-          const next = page.nextCursor;
-          if (!Number.isSafeInteger(page.reportVersion) || page.reportVersion < 1 || (version !== null && page.reportVersion !== version) ||
-              !Array.isArray(page.items) || page.items.length > 100 ||
-              !page.items.every(h => h && typeof h === 'object' && typeof h.id === 'string' && h.id && Number.isSafeInteger(h.revision) &&
-                h.item && typeof h.item === 'object' && Object.hasOwn(names, h.item.kind)) ||
-              !(next === null || typeof next === 'string' && next.length > 0 && next.length <= 512 && next !== cursor)) throw new Error('Invalid page');
-          version = page.reportVersion; heads.push(...page.items); cursor = next;
-        } while (cursor !== null);
-        if (!asked(ticket, seq, 'final')) return;
-        readOnlyShow(study, withheld ? null : version, heads);
+        const heads = await readOnlyHeads(ticket, seq);
+        if (!asked(ticket, seq, 'shared')) return;
+        readOnlyShow(study, heads);
       } catch (error) {
-        if (error?.stale || !asked(ticket, seq, 'final')) return;
+        if (error?.stale || !asked(ticket, seq, 'shared')) return;
         readOnlyFailed(error);
       }
     }
@@ -11797,21 +11937,79 @@ function kinCreateViewerHistory() {
       reset('저장 항목 확인 중…'); toolbar();
       load(false, null, own);
     }
-    // 끝까지 검증한 한 판(확정 판 번호, 확정 전이면 null)만 그리고, 그 판을 뒤따르는 주기·포커스 확인의 기준(shown)으로 남긴다.
-    function readOnlyShow(study, version, heads) {
-      suspended = false; shown = { study, version }; unmatched = false;
+    // 끝까지 읽은 목록만 그리고, 그 목록(listKey)을 뒤따르는 주기·포커스 확인의 기준(shown)으로 남긴다.
+    function readOnlyShow(study, heads) {
+      suspended = false; shown = { study, key: listKey(heads) }; unmatched = false;
       for (const head of heads) {
         const e = { id: head.id, head, draft: itemOnly(head), editing: false, latest: null, message: '' };
         entries.set(e.id, e); row(e);
       }
-      shownStatus = version === null ? READ_ONLY.withheld : heads.length ? '확정 판독문 r' + version + '의 저장 항목 ' + heads.length + '개 · 읽기 전용'
-        : '확정 판독문 r' + version + '에 저장된 측정·키 이미지가 없습니다 · 읽기 전용';
+      shownStatus = heads.length ? '저장 항목 ' + heads.length + '개 · 읽기 전용' : '이 검사에 저장된 측정·키 이미지가 없습니다 · 읽기 전용';
       status.textContent = shownStatus;
-      panel.dataset.studyUid = study; panel.dataset.readOnly = version === null ? 'withheld' : heads.length ? 'ready' : 'empty';
+      panel.dataset.studyUid = study; panel.dataset.readOnly = heads.length ? 'ready' : 'empty';
       toolbar(); hydrate(); frameMatch(current());
+      openEntryTarget(study);
+    }
+    // the original image this document was opened at (session.js KIN_VIEWER_ENTRY_TARGET: a key image or a cited line in
+    // Clinician Home), opened once, after the first read-only list is drawn. The study the target names is shown in the one
+    // viewport that shows it, else the active viewport takes the target's series; then the exact frame (kinViewerNavigateTo,
+    // which proves arrival on the frame shown) and the saved item highlighted. A user who changes the active viewport meanwhile
+    // stops it. Whatever the end, the opening hold is let go (Auto Save View may then save the view as the user leaves it).
+    let entryTried = false;
+    const ENTRY_REASON = { 'series-missing': '이 창에서 원본 시리즈를 찾을 수 없습니다.', 'frame-missing': '원본 프레임을 열지 못했습니다.',
+      'viewport-unsupported': '현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다.', 'viewport-missing': '그 검사를 보이는 영상 칸이 없습니다.',
+      'viewport-ambiguous': '그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다.', timeout: '15초 안에 영상이 준비되지 않았습니다.',
+      superseded: '다른 영상 칸을 골라 이동을 멈췄습니다.', ended: '로그인이 종료되었습니다.' };
+    const ENTRY_MARK = { shown: '표식을 강조했습니다.', key: '키 이미지입니다.', missing: '그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제).',
+      hidden: '그 표식은 숨겨져 있습니다.', unverified: '그 측정은 원본을 확인하지 못해 그리지 않았습니다.', none: '표식을 그리지 않았습니다.' };
+    // The panel keeps one status (other modules and tests read it); the outcome of the opening is its own polite line, made
+    // only in a document that has a target.
+    let entryNote = null;
+    function entrySay(text) {
+      if (!entryNote) { entryNote = document.createElement('p'); entryNote.id = 'kin-viewer-entry-note'; entryNote.setAttribute('aria-live', 'polite'); status.after(entryNote); }
+      entryNote.textContent = text; entryNote.hidden = false;
+      // A folded dock still shows its own status row: the reason is readable there too.
+      const row = document.getElementById('kin-dock-preference-status'); if (row) row.textContent = text;
+    }
+    function entrySeries(target) {
+      try {
+        const sets = services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === target.studyUid &&
+          d.SeriesInstanceUID === target.seriesUid && kinSeriesSplitHolds(d, target.sopUid, target.frame));
+        if (sets.length !== 1) return false;
+        services.viewportGridService.setDisplaySetsForViewport({ viewportId: services.viewportGridService.getActiveViewportId(), displaySetInstanceUIDs: [sets[0].displaySetInstanceUID] });
+        return true;
+      } catch (_) { return false; }
+    }
+    async function entryNavigate(target) {
+      const deadline = Date.now() + 15000, wait = () => new Promise(resolve => setTimeout(resolve, 100));
+      const activeId = () => { try { return services.viewportGridService.getActiveViewportId(); } catch (_) { return null; } };
+      if (scope !== target.studyUid) {
+        const activation = activateStudy(target.studyUid);
+        if (!activation.ok && !entrySeries(target)) return { ok: false, reason: activation.reason };
+      }
+      const viewportId = activeId();
+      while (!(scope === target.studyUid && !suspended && !loading && shown?.study === scope)) {
+        if (ended) return { ok: false, reason: 'ended' };
+        if (activeId() !== viewportId) return { ok: false, reason: 'superseded' };
+        if (Date.now() > deadline) return { ok: false, reason: 'timeout' };
+        await wait();
+      }
+      return navigateTo(target);
+    }
+    function openEntryTarget() {
+      if (entryTried) return;
+      const target = kinViewerEntryTake();
+      if (!target) return;
+      entryTried = true;
+      entryNavigate(target).then(outcome => {
+        if (ended) return;
+        if (outcome.ok) entrySay('요청한 원본 영상(프레임 ' + target.frame + ')으로 이동했습니다. ' + (target.itemId ? ENTRY_MARK[outcome.annotation] || ENTRY_MARK.none : ''));
+        else entrySay('요청한 원본 영상으로 이동하지 못했습니다. ' + (ENTRY_REASON[outcome.reason] || '이동하지 못했습니다.'));
+      }, () => { if (!ended) entrySay('요청한 원본 영상으로 이동하지 못했습니다.'); }).finally(kinViewerEntryRelease);
     }
     function readOnlyFailed(error) {
-      dropRows();
+      // A list that could not be read lets the opening go: Refresh may still open the target, without holding the view.
+      dropRows(); kinViewerEntryRelease();
       const said = Array.isArray(error?.said) ? error.said.filter(x => typeof x === 'string').join(' ') : typeof error?.said === 'string' ? error.said : '';
       status.textContent = '저장 항목을 불러오지 못했습니다. ' + (Number.isInteger(error?.status)
         ? (said ? said + ' ' : '') + '(HTTP ' + error.status + (typeof error.code === 'string' ? ' · ' + error.code : '') + ')'
@@ -11819,30 +12017,24 @@ function kinCreateViewerHistory() {
       panel.dataset.studyUid = scope; panel.dataset.readOnly = 'failed';
       toolbar();
     }
-    // S5-U2b-R-001 F03. 주기·포커스 확인의 답도 지금 그려 둔 확정 판(shown)과 대조한다. 같은 검사·같은 읽기 세대의 답만 본다 —
-    // 다른 검사로 옮겼다 돌아온 A→B→A의 늦은 답이나 그 사이 새로 시작한 읽기가 있으면 이 답은 아무것도 바꾸지 않는다. 확정이
-    // 풀리면(final:false) 행과 표식을 바로 내리고 withheld로, 판이 바뀌면 내린 뒤 새 판 전체를 처음부터 다시 검증해 그린다.
-    // 전송 실패·5xx는 확인하지 못한 것이라 다음 확인까지 검증한 판을 두고, 4xx·형식 오류는 서버가 지금 내주지 않는 목록이라 내린다.
-    function confirmShown(ticket, seq, study, page, error) {
-      if (error?.stale || !asked(ticket, seq, 'final') || loading || scope !== study || shown?.study !== study) return;
-      if (error) { if (Number.isInteger(error.status) && error.status >= 400 && error.status < 500) readOnlyFailed(error); return; }
-      if (!page || page.uid !== study || typeof page.final !== 'boolean' || (page.final
-        ? !Number.isSafeInteger(page.reportVersion) || page.reportVersion < 1 || !Array.isArray(page.items)
-        : page.items !== null || page.nextCursor !== null)) return readOnlyFailed(new Error('Invalid page'));
-      const version = page.final ? page.reportVersion : null;
-      if (version === shown.version) return;
-      dropRows();
-      if (version === null) return readOnlyShow(study, null, []);
-      panel.dataset.readOnly = 'loading'; toolbar(); load();
+    // S5-U2b-R-001 F03. 주기·포커스 확인의 답(끝 쪽까지 읽은 목록)도 지금 그려 둔 목록(shown)과 대조한다. 같은 검사·같은 읽기
+    // 세대의 답만 본다 — 다른 검사로 옮겼다 돌아온 A→B→A의 늦은 답이나 그 사이 새로 시작한 읽기가 있으면 이 답은 아무것도 바꾸지
+    // 않는다. 항목·판·원본 확인이 하나라도 바뀌면(숨긴 항목이 빠짐 포함) 행과 표식을 내리고 새 목록으로 다시 그린다.
+    // 전송 실패·5xx는 확인하지 못한 것이라 다음 확인까지 그린 목록을 두고, 4xx·형식 오류는 서버가 지금 내주지 않는 목록이라 내린다.
+    function confirmShown(ticket, seq, study, heads, error) {
+      if (error?.stale || !asked(ticket, seq, 'shared') || loading || scope !== study || shown?.study !== study) return;
+      if (error) { if (error.invalid || Number.isInteger(error.status) && error.status >= 400 && error.status < 500) readOnlyFailed(error); return; }
+      if (listKey(heads) === shown.key) return;
+      dropRows(); readOnlyShow(study, heads);
     }
     // S5-U2b-R-002 F02. 이 확인은 활성 화면의 원본 프레임 식별과 떼어 둔다: 그려 둔 검사(scope)와 읽기 세대를 기준으로 주기(15초)·
     // 포커스마다 확인하고, 답은 위 confirmShown의 UID·세대 방어를 그대로 거친다. 프레임이 없는 화면(MPR·볼륨·로딩 실패)에
-    // 머물러도 취소·교체된 판이 확인 없이 남지 않는다.
+    // 머물러도 지워지거나 숨겨진 항목이 확인 없이 남지 않는다.
     function recheckShown() {
       if (!scope || !subject || suspended || loading || checking || Date.now() - lastAuth <= 15000) return;
       checking = true; const ticket = generation, seq = readSequence, study = scope;
-      authenticate(ticket).then(() => api(path() + '?limit=1', {}, ticket))
-        .then(page => confirmShown(ticket, seq, study, page, null), error => confirmShown(ticket, seq, study, null, error))
+      authenticate(ticket).then(() => readOnlyHeads(ticket, seq))
+        .then(heads => confirmShown(ticket, seq, study, heads, null), error => confirmShown(ticket, seq, study, null, error))
         .catch(() => {}).finally(() => { checking = false; });
     }
     // 목록은 식별된 원본 프레임으로만 화면 영상과 이어진다. 활성 화면에서 그 검사의 원본 프레임을 찾지 못하면 목록을 영상과 맞추지
@@ -14259,8 +14451,27 @@ function kinCreateViewerTechNote() {
   // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
   const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, prepare, epoch=0, active=false, state='stopped';
-  let identity, identityReady, prepareIdentity, identityServices;
+  let identity, identityReady, prepareIdentity, identityServices, loadFile, dockReady;
   function stopIdentity(){identity?.dispose();identity=null;}
+  // Secondary panels stay available without obstructing the images: the read-only viewer's two panels
+  // (Measurements & Key Images, Viewer Status) go into the same dock as a writer's, which reserves its row instead of
+  // floating over the image cells. The writer's dock comes with the Tech Note bridge; here it is mounted on its own, for this
+  // document's account (the same owner key as the writer's, so the dock settings are the user's own), once both panels are
+  // there - and again at a mode re-entry, which adopts the panels mounted anew.
+  function connectDock(){
+    if(!active||!kinViewerSession.readOnly()||window.top!==window||!loadFile)return;
+    const ticket=epoch;
+    (typeof window.KinViewerWorkspaceDock==='function'?Promise.resolve():dockReady||(dockReady=loadFile('viewer-workspace-dock.js').catch(error=>{dockReady=null;throw error;}))).then(()=>{
+      const owner=()=>{const o=kinViewerSession.owner();return o?JSON.stringify(o):null;};
+      const mount=tries=>{
+        if(!active||ticket!==epoch||!kinViewerSession.readOnly())return;
+        if(document.getElementById('kin-viewer-history')&&document.getElementById('kin-viewer-layout'))
+          window.KinViewerWorkspaceDock(window,{owner,allowed:()=>active&&kinViewerSession.readOnly()});
+        else if(tries<100)setTimeout(()=>mount(tries+1),100);
+      };
+      mount(0);
+    }).catch(()=>{});
+  }
   function connectIdentity(){
     if(!active||!kinViewerSession.readOnly()||identity||!prepareIdentity)return;
     const ticket=epoch;
@@ -14278,7 +14489,7 @@ function kinCreateViewerTechNote() {
     });
   }
   // The bridge follows the verified role; document disposal belongs to the page boundary.
-  kinViewerSession.onChange(next=>{if(next==='writer'){stopIdentity();connect();return;}epoch++;if(active)state=next;if(next==='read-only'){current?.stop();current=null;connectIdentity();}else stopIdentity();});
+  kinViewerSession.onChange(next=>{if(next==='writer'){stopIdentity();connect();return;}epoch++;if(active)state=next;if(next==='read-only'){current?.stop();current=null;connectIdentity();connectDock();}else stopIdentity();});
   function connect() {
     if(!active||state==='loading'||state==='ready'||!kinViewerSession.writer())return;
     kinToolRetry('kin-note-retry');
@@ -14301,7 +14512,7 @@ function kinCreateViewerTechNote() {
       const timer=setTimeout(fail,20000);
       script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=fail;document.head.append(script);
     });
-    identityServices=servicesManager.services;
+    identityServices=servicesManager.services;loadFile=load;
     prepareIdentity=()=>window.KinViewerIdentity?Promise.resolve(window.KinViewerIdentity):
       identityReady||(identityReady=load('viewer-identity.js').then(()=>window.KinViewerIdentity).catch(error=>{identityReady=null;throw error;}));
     const standalone=window.top===window;
@@ -14339,7 +14550,7 @@ function kinCreateViewerTechNote() {
   },onModeEnter(){if(!prepare)return;epoch++;active=true;state='unconfirmed';const ticket=epoch;
     // S5-U2b: Tech notes are a technician record the clinician allowlist neither reads nor writes. The bridge connects only
     // after a /me answered writer; until an answer it stays 'unconfirmed', and 'read-only'/'refused' never connect.
-    kinViewerSession.decide().then(session=>{if(!active||ticket!==epoch)return;if(session==='writer')connect();else{state=session;if(session==='read-only')connectIdentity();}});
+    kinViewerSession.decide().then(session=>{if(!active||ticket!==epoch)return;if(session==='writer')connect();else{state=session;if(session==='read-only'){connectIdentity();connectDock();}}});
   },onModeExit(){kinToolRetry('kin-note-retry');epoch++;active=false;state='stopped';stopIdentity();current?.stop();current=null;}};
 }
 
@@ -16571,6 +16782,7 @@ function kinCreateViewerUX() {
       shortcuts = window.KinViewerUXShortcuts.mount({
         getBindings: () => toolbar?.bindings() || {}, invoke: id => toolbar?.invoke(id),
         allowed: () => !kinViewerSession.ended(),
+        workspace: kinViewerWorkspaceClaims,
       });
       kinViewerOnEnd(() => { shortcuts?.dispose(); window.KinViewerUXToolbar.clear(); });
     },
@@ -16598,6 +16810,13 @@ function kinCreateViewerUX() {
     },
     onModeExit: stop,
   };
+}
+
+// The work page's chords this Viewer window acts on, as its executors answer them (viewer-tech-note.js): patient ID
+// copy (Ctrl+Alt+C) while the window has it, and the chords of the map that window read when it connected.
+function kinViewerWorkspaceClaims({ ctrlKey, altKey, code }) {
+  const chord = { ctrlKey, altKey, code, shiftKey: false, metaKey: false };
+  return !!code && (!!window.kinViewerPatientCopyChord?.(chord) || !!window.kinViewerWorkspaceChord?.(chord));
 }
 
 // OHIF's resize restores a stack's current frame through setViewReference ->

@@ -860,7 +860,10 @@ class ClinicianQuestionLive(unittest.TestCase):
         at_answer = self.head_version(f.uid)
         self.assertIsNotNone(at_answer)
         self.entry("doctor2", qid, 1)
-        added = self.check(self.commit(f.uid, "doctor2", "addendum", approved.body["version"], findings="SYNTHETIC-Q11-addendum"), 201)
+        # An Addendum adds to the approved text (each field starts with the approved one).
+        added = self.check(self.commit(f.uid, "doctor2", "addendum", approved.body["version"],
+                                       findings="SYNTHETIC-Q11-approved-findings\nSYNTHETIC-Q11-addendum",
+                                       conclusion="SYNTHETIC-Q11-conclusion"), 201)
         reset = self.check(self.commit(f.uid, "doctor", "reset", added.body["version"], reason="SYNTHETIC Q11 reset"), 201)
         self.assertEqual(reset.body["rs"], "W")
         thread = self.read("clinician", qid)

@@ -107,7 +107,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js", "report-editor-frame.js")}
 MAIN = read_page_source(HPACS / "main.html")
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 INDEX_STAND_IN = ('<!doctype html><html><head><meta charset="utf-8"><title>SYN index stand-in</title></head>'
@@ -427,6 +427,9 @@ REPORT_FRAME = slice_between(MAIN, "    let reportFrame = null;\n", "    functio
 EXIT_STAND_INS = """
 // The logout slice includes presence cleanup; this question fixture has no worklist columns.
 const viewingNames = new Map();
+// The frame's Addendum rule (report-editor.js keepsApprovedText: an approved report that takes only an Addendum keeps its
+// approved text) lives in the report region this file does not cut out. These cases open no approved report: nothing is held.
+function keepsApprovedText() { return true; }
 function shownColumns() { return []; }
 let insertInFlight = false, commitInFlight = false, appState = {}, selectionSeq = 0, user = 'syn-radiologist';
 const RFIELDS = ['findings', 'conclusion', 'recommendation'];
@@ -691,7 +694,12 @@ class QuestionServer:
                 return self.error("QUESTION_INPUT_INVALID")
         page = rows[start:start + 50]
         following = b64({"at": page[-1]["createdAt"], "i": start + 50, "r": 0}) if start + 50 < len(rows) else None
-        return 200, {"owner": owner, "items": [self.summary(t) for t in page], "nextCursor": following}
+        # Each pool row names the row the server answers its study on now (openUid; a never-grouped study is itself).
+        return 200, {"owner": owner, "items": [{**self.summary(t), "openUid": self.open_uid(t["studyUid"])} for t in page],
+                     "nextCursor": following}
+
+    # The server's openUid rule (exam-merge.service.ts examOpenUids); a case with grouped studies replaces it.
+    open_uid = staticmethod(lambda u: u)
 
     def create(self, caller, owner, u, body):
         if "clinician" not in caller["roles"]:
@@ -937,6 +945,11 @@ class ClinicianQuestionDOMTest(unittest.TestCase):
             ordered = sorted(self.rows, key=lambda row: row["uid"])
             route.fulfill(json={"studies": copy.deepcopy(ordered), "serverTime": "2026-09-26T00:00:00.000Z",
                                 "pagination": {"next": None, "total": len(ordered), "offset": 0, "limit": 100}})
+            return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
             return
         found = re.fullmatch(r"/api/clinician/studies/([^/]+)/report", path)
         if method == "GET" and found:

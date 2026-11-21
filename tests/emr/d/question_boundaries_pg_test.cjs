@@ -101,7 +101,8 @@ test('CD-09 W-Q question writes: report anchor, lock order against native, Tech 
     const commit = async (uid, action, who = 'doctor') => {
       const d = await draft(uid, who), head = await witness.report.findUnique({ where: { uid } });
       const body = { expectedOwner: draftOwner(who), expectedRevision: d.revision, baseVersion: head?.version ?? 0,
-        findings: 'SYN signed ' + uid + ' ' + action, conclusion: '', recommendation: '', citationIds: [], structureIds: [],
+        // An Addendum adds to the approved head: its text is written after the head's.
+        findings: (action === 'addendum' && head?.findings ? head.findings + '\n' : '') + 'SYN signed ' + uid + ' ' + action, conclusion: '', recommendation: '', citationIds: [], structureIds: [],
         action, ...(action === 'reset' ? { reason: 'SYN reset' } : {}) };
       return () => call(who, 'POST', `/studies/${uid}/report/commit`, body);
     };

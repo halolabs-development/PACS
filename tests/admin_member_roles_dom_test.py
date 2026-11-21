@@ -85,6 +85,7 @@ SCRIPTS = {
     "/worklist/hpacs-lite/dicom-peers-admin.js": lf_text(HPACS / "dicom-peers-admin.js"),
     "/worklist/hpacs-lite/gateway-rules-admin.js": lf_text(HPACS / "gateway-rules-admin.js"),
     "/worklist/hpacs-lite/gateway-support-admin.js": lf_text(HPACS / "gateway-support-admin.js"),
+    "/worklist/hpacs-lite/patient-consent-admin.js": lf_text(HPACS / "patient-consent-admin.js"),
     # CD-01: the shared Product Information panel and its embedded facts.
     "/worklist/hpacs-lite/product-info-data.js": lf_text(HPACS / "product-info-data.js"),
     "/worklist/hpacs-lite/product-info.js": lf_text(HPACS / "product-info.js"),
@@ -1122,6 +1123,221 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.assertEqual({"lastName": "", "firstName": "", "email": ""}, self.identity_fields())
         self.assertEqual("", self.page.locator("#identity-target").text_content())
 
+
+# ── Patient Consent ──
+    def consent_server(self):
+        """The part of PatientConsentService this section reaches: per patient ID a name and its records; an unknown ID 404."""
+        state = {"records": {"P1": [], "P2": []}, "names": {"P1": ["SYN^ONE"], "P2": ["SYN^TWO"]}, "calls": [], "lose_next": False,
+                 "wrong_patient": False, "wrong_owner": False, "requests": {}}
+        def view(record):
+            return dict(record)
+        def answer(route):
+            request = route.request
+            path = urlparse(request.url).path
+            body = request.post_data_json
+            state["calls"].append((path, body))
+            def reply(status, payload):
+                if state["lose_next"]:
+                    state["lose_next"] = False
+                    route.abort("failed")
+                else:
+                    route.fulfill(status=status, json=payload)
+            if request.method != "POST":
+                route.abort(); return
+            if path.endswith("/lookup"):
+                pid = body.get("patientId")
+                if pid not in state["records"]:
+                    route.fulfill(status=404, json={"statusCode": 404, "code": "CONSENT_PATIENT_NOT_FOUND",
+                                                    "message": "이 기관에서 이 환자 번호의 검사를 찾지 못했습니다"}); return
+                owner = [INSTITUTION, "SYN-SOMEONE-ELSE" if state["wrong_owner"] else ME["sub"]]
+                shown = "P2" if state["wrong_patient"] else pid
+                route.fulfill(json={"owner": owner, "patient": {"patientId": shown, "names": state["names"][shown]},
+                                    "records": [view(r) for r in state["records"][pid]]}); return
+            found = re.fullmatch(r"/api/admin/patient-consent/([^/]+)/withdraw", path)
+            if found:
+                record = next(r for r in state["records"][body["patientId"]] if r["id"] == found.group(1))
+                record.update(state="withdrawn", withdrawnBy="syn-admin@members.test", withdrawnAt="2026-11-21T09:00:00.000Z",
+                              withdrawReason=body["reason"])
+                reply(200, view(record)); return
+            if path == "/api/admin/patient-consent":
+                key = body["requestId"]
+                if key in state["requests"]:
+                    reply(201, dict(view(state["requests"][key]), replayed=True)); return
+                record = {"id": "00000000-0000-4000-8000-%012d" % (len(state["requests"]) + 1), "purpose": body["purpose"],
+                          "reference": body["reference"], "obtainedAt": body["obtainedAt"], "expiresAt": body.get("expiresAt"),
+                          "recordedBy": "syn-admin@members.test", "recordedAt": "2026-11-21T08:00:00.000Z",
+                          "withdrawnBy": None, "withdrawnAt": None, "withdrawReason": None, "state": "active"}
+                state["requests"][key] = record
+                state["records"][body["patientId"]].insert(0, record)
+                reply(201, dict(view(record), replayed=False)); return
+            route.abort()
+        self.page.route("**/api/admin/patient-consent**", answer)
+        return state
+
+    def consent_load(self, pid):
+        self.page.locator("#patient-consent-id").fill(pid)
+        self.page.locator("#patient-consent-load").click()
+
+    def test_patient_consent_section_records_reads_again_retries_and_withdraws(self):
+        state = self.consent_server()
+        self.load()
+        expect(self.page.locator("#patient-consent-title")).to_have_text("Patient Consent")
+        expect(self.page.locator("#patient-consent-state")).to_have_text("Not Loaded")
+        expect(self.page.locator("#patient-consent-form")).to_be_hidden()
+        self.assertEqual([], state["calls"], "opening the page reads nothing")
+        self.consent_load("P1")
+        expect(self.page.locator("#patient-consent-patient")).to_have_text("Patient: SYN^ONE · P1")
+        expect(self.page.locator("#patient-consent-empty")).to_be_visible()
+        expect(self.page.locator("#patient-consent-state")).to_have_text("0 Records")
+        self.assertEqual(("/api/admin/patient-consent/lookup", {"patientId": "P1"}), state["calls"][-1], "the ID travels in the body")
+        form = self.page.locator("#patient-consent-form")
+        form.locator("[name=purpose]").fill("SYN research registry")
+        form.locator("[name=reference]").fill("SYN-FORM-0001 <paper>")
+        form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 저장했습니다.")
+        posted = [b for p, b in state["calls"] if p == "/api/admin/patient-consent"]
+        self.assertEqual(1, len(posted))
+        self.assertEqual({"patientId", "purpose", "reference", "obtainedAt", "requestId"}, set(posted[0]))
+        self.assertEqual("2026-11-20T09:30:15.000Z", posted[0]["obtainedAt"])
+        rows = self.page.locator("#patient-consent-rows tr")
+        expect(rows).to_have_count(1)
+        expect(rows.first.locator("td").nth(0)).to_have_text("SYN research registry")
+        expect(rows.first.locator("td").nth(1)).to_have_text("SYN-FORM-0001 <paper>")
+        expect(rows.first.locator("td").nth(2)).to_have_text("2026-11-20 09:30:15")
+        expect(rows.first.locator("td").nth(4)).to_have_text("Active")
+        self.assertEqual("no", rows.first.locator("td").nth(0).get_attribute("translate"))
+        self.assertEqual("no", self.page.locator("#patient-consent-name").get_attribute("translate"))
+        # A lost answer is not shown as saved: the patient is read again and the same request is offered again.
+        form.locator("[name=purpose]").fill("SYN second purpose")
+        form.locator("[name=reference]").fill("SYN-FORM-0002")
+        form.locator("[name=obtained]").fill("2026-11-20T10:00:15")
+        form.locator("[name=expires]").fill("2027-11-20T10:00:15")
+        state["lose_next"] = True
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-message")).to_contain_text("저장되었는지 확인하지 못했습니다")
+        expect(self.page.locator("#patient-consent-retry")).to_be_visible()
+        expect(rows).to_have_count(2)
+        # Until that result is known only the same request can be sent: Record Consent and the fields are locked.
+        expect(self.page.locator("#patient-consent-record")).to_be_disabled()
+        expect(form.locator("[name=purpose]")).to_be_disabled()
+        expect(self.page.locator("#patient-consent-retry")).to_be_enabled()
+        self.page.locator("#patient-consent-retry").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 저장했습니다.")
+        expect(self.page.locator("#patient-consent-retry")).to_be_hidden()
+        posted = [b for p, b in state["calls"] if p == "/api/admin/patient-consent"]
+        self.assertEqual(posted[1], posted[2], "Retry Same Request sends the same request")
+        self.assertEqual("2027-11-20T10:00:15.000Z", posted[1]["expiresAt"])
+        expect(rows).to_have_count(2)
+        # Withdraw: the reason goes with the selected patient; the row stays and reads Withdrawn.
+        rows.nth(1).get_by_role("button", name="Withdraw", exact=True).click()
+        expect(self.page.locator("#patient-consent-withdraw-target")).to_have_text("SYN research registry")
+        self.page.locator("#patient-consent-reason").fill("SYN withdrew by phone")
+        self.page.locator("#patient-consent-withdraw-confirm").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 철회했습니다.")
+        expect(rows.nth(1).locator("td").nth(4)).to_have_text("Withdrawn")
+        expect(rows.nth(1).get_by_role("button", name="Withdraw")).to_have_count(0)
+        expect(rows.nth(1).locator("td").nth(6)).to_contain_text("SYN withdrew by phone")
+        withdrawn = [(p, b) for p, b in state["calls"] if p.endswith("/withdraw")]
+        self.assertEqual([("/api/admin/patient-consent/00000000-0000-4000-8000-000000000001/withdraw",
+                           {"patientId": "P1", "reason": "SYN withdrew by phone"})], withdrawn)
+
+    def test_patient_consent_section_shows_only_the_patient_in_the_box(self):
+        state = self.consent_server()
+        state["records"]["P1"].append({"id": "00000000-0000-4000-8000-0000000000a1", "purpose": "SYN P1 purpose", "reference": "SYN ref",
+                                       "obtainedAt": "2026-11-01T00:00:00.000Z", "expiresAt": None, "recordedBy": "syn-admin@members.test",
+                                       "recordedAt": "2026-11-01T00:00:00.000Z", "withdrawnBy": None, "withdrawnAt": None,
+                                       "withdrawReason": None, "state": "active"})
+        self.load()
+        self.consent_load("P1")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(1)
+        # Editing the ID clears the drawn patient at once (no table, form or Withdraw of the previous patient).
+        self.page.locator("#patient-consent-id").press("End")
+        self.page.locator("#patient-consent-id").type("0")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(self.page.locator("#patient-consent-form")).to_be_hidden()
+        expect(self.page.locator("#patient-consent-state")).to_have_text("Not Loaded")
+        # Another institution's patient or an unknown ID: the server's sentence, nothing drawn.
+        self.consent_load("P404")
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(self.page.locator("#patient-consent-form")).to_be_hidden()
+        # An answer naming another patient, or another account, is not drawn.
+        for flag in ("wrong_patient", "wrong_owner"):
+            state[flag] = True
+            self.consent_load("P1")
+            expect(self.page.locator("#patient-consent-message")).to_have_text("불러온 기록을 확인하지 못했습니다.")
+            expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
+            expect(self.page.locator("#patient-consent-form")).to_be_hidden()
+            state[flag] = False
+        # A refused read after a drawn patient leaves nothing of it.
+        self.consent_load("P1")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(1)
+        self.page.route("**/api/admin/patient-consent/lookup", lambda route: route.fulfill(status=403, json={"statusCode": 403}))
+        self.consent_load("P1")
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 계정으로는 환자 동의 기록을 다룰 수 없습니다.")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
+        expect(self.page.locator("#patient-consent-form")).to_be_hidden()
+        # Leading or trailing spaces are another ID: nothing is asked.
+        before = len(state["calls"])
+        self.consent_load(" P1")
+        expect(self.page.locator("#patient-consent-message")).to_have_text("Original Patient ID를 앞뒤 공백 없이 입력하세요.")
+        self.assertEqual(before, len(state["calls"]))
+
+    def test_patient_consent_section_clears_the_patient_when_a_write_or_its_reread_is_refused(self):
+        state = self.consent_server()
+        self.load()
+        self.consent_load("P1")
+        form = self.page.locator("#patient-consent-form")
+        form.locator("[name=purpose]").fill("SYN purpose")
+        form.locator("[name=reference]").fill("SYN ref")
+        form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(1)
+        # The administrator's own Study Access no longer reaches the patient: the withdraw is refused (404) and nothing of
+        # the patient stays on the screen.
+        def refused(route):
+            state["calls"].append((urlparse(route.request.url).path, route.request.post_data_json))
+            route.fulfill(status=404, json={"statusCode": 404, "code": "CONSENT_PATIENT_NOT_FOUND",
+                                            "message": "이 기관에서 이 환자 번호의 검사를 찾지 못했습니다"})
+        self.page.locator("#patient-consent-rows tr").first.get_by_role("button", name="Withdraw", exact=True).click()
+        self.page.locator("#patient-consent-reason").fill("SYN reason")
+        self.page.route("**/api/admin/patient-consent/*/withdraw", refused)
+        self.page.locator("#patient-consent-withdraw-confirm").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(form).to_be_hidden()
+        expect(self.page.locator("#patient-consent-withdraw")).to_be_hidden()
+        # A record that is saved but whose read-back is refused: the saved answer is not followed by the patient's rows.
+        self.page.unroute("**/api/admin/patient-consent/*/withdraw", refused)
+        self.consent_load("P2")
+        form.locator("[name=purpose]").fill("SYN purpose two")
+        form.locator("[name=reference]").fill("SYN ref two")
+        form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
+        self.page.route("**/api/admin/patient-consent/lookup", refused)
+        self.page.locator("#patient-consent-record").click()
+        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
+        expect(form).to_be_hidden()
+    def test_patient_consent_section_is_reachable_in_a_narrow_window(self):
+        state = self.consent_server()
+        self.page.set_viewport_size({"width": 380, "height": 900})
+        self.load()
+        self.consent_load("P2")
+        expect(self.page.locator("#patient-consent-patient")).to_have_text("Patient: SYN^TWO · P2")
+        # The console scrolls sideways at this width (its member table); every control of this section is reached and
+        # takes a click there, and the section itself adds no width of its own.
+        for selector in ("#patient-consent-id", "#patient-consent-load", "[name=purpose]", "[name=reference]", "[name=obtained]",
+                         "[name=expires]", "#patient-consent-record"):
+            self.page.locator(selector).click(trial=True)
+        self.assertLessEqual(self.page.evaluate("document.querySelector('#patient-consent').scrollWidth"),
+                             self.page.evaluate("document.querySelector('#patient-consent').clientWidth"))
+        # Fixed words of the section are English labels; explanations stay Korean (as the rest of the console).
+        for selector in ("#patient-consent-title", "#patient-consent-load", "#patient-consent-record", "#patient-consent-retry",
+                         "#patient-consent-withdraw-confirm", "#patient-consent-withdraw-cancel"):
+            self.assertFalse(has_hangul(self.page.locator(selector).text_content()), selector)
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

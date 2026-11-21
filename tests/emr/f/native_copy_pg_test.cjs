@@ -167,8 +167,11 @@ async function study() {
   return { uid, revision: state.draftEpoch + ':0', version: 0 };
 }
 function commitBody(s, action, text) {
+  // An Addendum adds to the approved head: its text is written after the head's (`s.head`, the last committed text).
+  const findings = action === 'addendum' && s.head ? `${s.head.findings}\n${text}` : text;
+  const conclusion = action === 'addendum' && s.head ? s.head.conclusion : text ? '합성 결론' : '';
   return { expectedOwner: { institution, sub: 'fn-doctor', author: 'fn-doctor@example.test' }, baseVersion: s.version,
-    findings: text, conclusion: text ? '합성 결론' : '', recommendation: '', citationIds: [], structureIds: [] };
+    findings, conclusion, recommendation: '', citationIds: [], structureIds: [] };
 }
 async function draft(s, text) {
   const d = await call('fn-doctor', 'PUT', `studies/${s.uid}/report`, { ...commitBody(s, 'save', text), expectedRevision: s.revision });
@@ -176,10 +179,12 @@ async function draft(s, text) {
 }
 async function commit(s, action, text = `${action} 합성 소견`, reason) {
   if (action !== 'reset') await draft(s, text);
+  const sent = commitBody(s, action, text);
   const r = await call('fn-doctor', 'POST', `studies/${s.uid}/report/commit`,
-    { ...commitBody(s, action, text), expectedRevision: s.revision, action, ...(reason ? { reason } : {}) });
+    { ...sent, expectedRevision: s.revision, action, ...(reason ? { reason } : {}) });
   assert.equal(r.status, 201, action + ' ' + JSON.stringify(r.body));
   s.revision = r.body.revision; s.version = r.body.state.version;
+  s.head = action === 'reset' ? { findings: '', conclusion: '' } : { findings: sent.findings, conclusion: sent.conclusion };
   return r.body;
 }
 async function techNote(uid, text = '합성 Tech Note', baseVersion = 0) {
@@ -798,6 +803,11 @@ test('FT11/FT12 only the designated auditor issues; an issued copy is independen
   const html = Buffer.from(issued.artifact, 'base64').toString('utf8');
   fs.writeFileSync(path.join(spool, 'native-fixed-copy.html'), html);
   assert.equal(stored.sha256, sha(Buffer.from(issued.artifact, 'base64')));
+  // Each version's author by the member name of the account on its stored ReportVersion row, the identifier beside it.
+  const authors = [...html.matchAll(/<dt>Author<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map(m => m[1]);
+  assert.equal(authors.length, 2, html);
+  assert.ok(authors.every(author => author.startsWith('Synthetic fn-doctor (')), JSON.stringify(authors));
+  assert.deepEqual([...html.matchAll(/<dt>Signature<\/dt><dd>([^<]*)<\/dd>/g)].map(m => m[1]), ['Not Signed', 'Signed']);
   const [grants] = await ctx.witness.$queryRaw`SELECT has_table_privilege('kin_runtime','emr_audit.fixed_copy','SELECT') AS s,
     has_table_privilege('kin_runtime','emr_audit.fixed_copy','INSERT') AS i, has_table_privilege('kin_runtime','emr_audit.fixed_copy','UPDATE') AS u,
     has_table_privilege('kin_runtime','emr_audit.fixed_copy','DELETE') AS d, has_table_privilege('kin_runtime','emr_audit.fixed_copy','TRUNCATE') AS t`;

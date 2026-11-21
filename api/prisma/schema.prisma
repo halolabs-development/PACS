@@ -402,7 +402,14 @@ model TechNoteRevision {
 /// Evidence records precede any new institution-to-institution access grant.
 model TransferBasis {
   id String @id @db.Uuid
-  studyUid String
+  /// A study's transfer basis names its study; a patient consent (studyUid null) names the patient instead.
+  studyUid String?
+  /// Patient consent only: the exact original Patient ID within institutionId, what the consent is for, and the
+  /// screen's request id with the recording account's fixed id (a retried request returns the same row).
+  patientId String? @db.VarChar(64)
+  purpose String? @db.VarChar(500)
+  requestId String? @db.Uuid
+  recordedBySub String?
   institutionId String
   kind String
   reference String @db.VarChar(1000)
@@ -413,10 +420,12 @@ model TransferBasis {
   revokedBy String?
   revokedAt DateTime?
   revokeReason String? @db.VarChar(1000)
-  study StudyState @relation(fields: [studyUid], references: [uid], onDelete: Restrict)
+  study StudyState? @relation(fields: [studyUid], references: [uid], onDelete: Restrict)
   institution Institution @relation(fields: [institutionId], references: [id], onDelete: Restrict)
   transfers Transfer[]
   @@index([studyUid, id])
+  @@index([institutionId, patientId, id])
+  @@unique([institutionId, recordedBySub, requestId])
 }
 
 model ProcessingAgreement {
@@ -1190,6 +1199,7 @@ model StudyQuestion {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   entries StudyQuestionEntry[]
+  seen StudyQuestionSeen[]
 
   @@index([institutionId, authorSub, createdAt, id])
   @@index([institutionId, state, createdAt, id])
@@ -1246,6 +1256,7 @@ model StudyImageRequest {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   receipts StudyImageRequestReceipt[]
+  seen StudyImageRequestSeen[]
 
   @@index([institutionId, requesterSub, createdAt, id])
   @@index([institutionId, state, createdAt, id])
@@ -1266,6 +1277,29 @@ model StudyImageRequestReceipt {
   at DateTime @default(now())
 
   @@unique([imageRequestId, appliedRevision])
+}
+
+/// In-app unread marks: the revision of a question thread a person's screen last showed them (one row per thread and
+/// person). A write only raises it. The person's reading state, not a record of the thread; it goes with the thread.
+model StudyQuestionSeen {
+  questionId String @db.Uuid
+  question StudyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  subjectSub String @db.VarChar(256)
+  revision Int
+  at DateTime @default(now())
+
+  @@id([questionId, subjectSub])
+}
+
+/// The same mark for an image request (its requester's screen).
+model StudyImageRequestSeen {
+  imageRequestId String @db.Uuid
+  imageRequest StudyImageRequest @relation(fields: [imageRequestId], references: [id], onDelete: Cascade, onUpdate: Restrict)
+  subjectSub String @db.VarChar(256)
+  revision Int
+  at DateTime @default(now())
+
+  @@id([imageRequestId, subjectSub])
 }
 
 /// S7-U1a 중요 결과 전달 기록(계약 S7-U1p §3.2, §12.1). 발신자 1명 → 수신자 1명, 고정 ReportVersion 1개, 메시지 1개.

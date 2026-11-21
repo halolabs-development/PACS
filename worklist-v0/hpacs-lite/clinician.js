@@ -88,6 +88,17 @@
     compareNone: '같은 환자 키의 다른 검사가 목록에 없어 나란히 비교할 검사가 없습니다.',
     compareNoKey: '이 검사에는 서버 환자 키가 없어 비교할 검사를 찾지 않습니다.',
     close: '이 검사를 패널에서 내립니다. 검사 목록은 그대로 남습니다.',
+    // a key image or a cited line opens its original frame with its mark in the read-only viewer.
+    openAnnotated: 'Open Annotated Image',
+    annotatedAsked: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.',
+    keyTarget: '키 이미지의 원본 식별(시리즈·영상·프레임)을 확인할 수 없어 열지 않았습니다.',
+    citedTitle: '이 문장이 가리키는 원본 영상과 표식을 엽니다.',
+    citedLooking: '인용한 표식의 원본 영상을 확인하는 중입니다…',
+    citedGone: '인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.',
+    citedSource: '인용한 표식의 원본 식별을 확인할 수 없어 영상을 열지 않았습니다.',
+    citedElsewhere: '인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.',
+    citedRevised: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r{0}, 지금 표시하는 표식은 r{1}입니다.',
+    citedUnread: '판독문의 인용 기록을 읽지 못해 문장에 영상 연결을 붙이지 않았습니다.',
     closeBack: label => `이 검사를 닫고 타임라인에서 옮기기 전 검사(${label})로 돌아갑니다.`,
   };
   // C-R02-120 사용자 단추의 역할 칸. /api/me의 역할 중 KIN 업무 역할만 영어 이름으로 보인다(Keycloak 기본 역할은 뺀다).
@@ -115,7 +126,7 @@
   // S5-U4b 질문 스레드 문구. 상태명·버튼·제목은 영어, 설명·확인·오류는 한국어다(AGENTS §4).
   const QUESTION = {
     hint: '이 검사에 대해 소속 기관 영상의학과에 질문을 남깁니다. 질문과 답변은 작성한 본인과 소속 기관의 판독의·관리자만 봅니다. '
-      + '새 답변은 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요. 답변은 판독문이 아니며 판독문을 대신하지 않습니다.',
+      + '새 답변은 목록의 ‘New Answers’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다). 답변은 판독문이 아니며 판독문을 대신하지 않습니다.',
     summary: '이 검사에 대한 질문과 답변을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     loading: '질문 목록을 불러오는 중입니다…',
     failed: '질문 목록을 불러오지 못했습니다.',
@@ -295,11 +306,11 @@
     line.textContent = notice;
   });
 
-  async function request(path) {
+  async function request(path, headers = null) {
     const context = KinWorkContext.capture('document');
     try {
       const response = await KinSessionTransport.page().request(API + path,
-        { context, deadlineMs: TIMEOUT_MS });
+        { context, deadlineMs: TIMEOUT_MS, ...(headers ? { headers } : {}) });
       if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
       if (!response.ok) throw failure(response.status, response.body);
       return response.body;
@@ -483,6 +494,8 @@
       if (!folderChosen) folders.setApplied('folder:' + MY_STUDIES);
     }
     paintRows(true);
+    // The unread counts are read with every complete list (its rows carry them from the next answer on).
+    if (unread) unread.refresh();
     rove(focusUid !== null && byUid.has(focusUid) ? focusUid : reopen, focusUid !== null);
     // 내려 둔 검사가 새 목록에 남아 있으면 판독문도 다시 읽어 식별 줄과 판독문이 같은 시점의 것이 되게 한다.
     if (reopen !== null) {
@@ -601,6 +614,7 @@
       tag.style.color = 'var(--danger-text)';
       cell.append(tag);
     }
+    paintRowUnread(cell, row);
   }
 
   /**
@@ -658,6 +672,148 @@
     rove(buttons[next].closest('tr').dataset.uid, true);
   }
 
+  // ── 검사 묶음의 원본 ──
+  /**
+   * The originals one per-study read covers: the selected study, and when the server answered for its exam (a merged or
+   * split exam whose report row is this one: the answer's scope names this row as its reportUid) every original that scope
+   * lists. A question or request of one of those originals belongs to this row's sections; anything else is malformed.
+   */
+  function examUids(uid, data) {
+    const out = new Set([uid]);
+    const scope = data && data.scope;
+    if (scope && typeof scope === 'object' && scope.reportUid === uid && Array.isArray(scope.sources))
+      for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+    return out;
+  }
+  // The originals of the last successful per-study read of each section ({ uid, uids }). A thread or single request read
+  // (which carries no scope) is checked against them; another study's answer falls back to the study alone.
+  let questionScope = null, requestScope = null;
+  const questionUids = uid => questionScope && questionScope.uid === uid ? questionScope.uids : new Set([uid]);
+  const requestUids = uid => requestScope && requestScope.uid === uid ? requestScope.uids : new Set([uid]);
+  /** A pane is drawn only when the browser lays it out (not collapsed, not in a hidden page part). */
+  const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
+  // ── 안 읽음 표시 ──
+  // In-app unread (unread-badges.js): the server's count of this person's own question threads with a new answer and own
+  // image requests with a new processing result, inside HALO only (no email, message or push). Read with the list, on
+  // Refresh and every minute while the page is visible. A thread or request drawn in an open section sends its seen mark.
+  // The words are state words (English); a count is the server's, never this page's.
+  const UNREAD_QUESTIONS = 'question-mine', UNREAD_REQUESTS = 'image-request-mine';
+  const UNREAD_POLL_MS = 60000;
+  const UNREAD = {
+    answers: n => `New Answers ${n}`,
+    processed: n => `Processed ${n}`,
+    row: 'New',
+    tip: '서버가 센 안 읽은 항목입니다. 질문 스레드나 영상 요청 칸을 열어 보면 없어집니다. 이메일·문자로 보내지 않습니다.',
+    stale: '안 읽음 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
+    outsideQuestion: '최신 50건 목록 밖의 질문입니다. 새 답변이 있습니다.',
+  };
+  let unread = null;
+
+  /** GET unread and the seen writes through this document's transport: any HTTP answer resolves with its status. */
+  async function unreadSend(method, path, body) {
+    const context = KinWorkContext.capture('document');
+    const response = await KinSessionTransport.page().request(API + path,
+      method === 'GET' ? { context, deadlineMs: TIMEOUT_MS } : { method, json: body, context, deadlineMs: TIMEOUT_MS });
+    if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+    if (!response.ok) throw failure(response.status, response.body);
+    return { status: response.status, body: response.body };
+  }
+
+  function mountUnread() {
+    if (unread || !root.KinUnread) return;
+    try {
+      unread = root.KinUnread.mount({ send: unreadSend, views: [UNREAD_QUESTIONS, UNREAD_REQUESTS], owner: () => owner,
+        allowed: () => !leaving && owner !== null, onChange: () => paintUnread(), onAccount: () => accountChanged(''),
+        pollMs: UNREAD_POLL_MS });
+    } catch (_) { unread = null; }
+  }
+
+  /** Unread items of a view on one listed row: those the server says open on that row now (openUid). */
+  function unreadOn(view, uid) {
+    const known = unread && unread.view(view);
+    if (!known || !known.available) return [];
+    return [...known.items].filter(([, item]) => item.openUid === uid).map(([id, item]) => ({ id, ...item }));
+  }
+
+  function unreadTag(text, kind) {
+    const tag = node('span', 'tag', text);
+    tag.dataset.unread = kind;
+    tag.title = UNREAD.tip;
+    tag.style.marginLeft = '6px';
+    // The page's emphasis colour (the theme's --accent), as the selected folder and focus use it.
+    tag.style.borderColor = 'var(--accent)';
+    tag.style.color = 'var(--accent)';
+    return tag;
+  }
+
+  /** The Report cell's unread tags of a list row (after its status), from the server's items. */
+  function paintRowUnread(cell, row) {
+    for (const old of cell.querySelectorAll('[data-unread]')) old.remove();
+    const answers = unreadOn(UNREAD_QUESTIONS, row.uid).length, processed = unreadOn(UNREAD_REQUESTS, row.uid).length;
+    if (answers) cell.append(unreadTag(UNREAD.answers(answers), 'answers'));
+    if (processed) cell.append(unreadTag(UNREAD.processed(processed), 'processed'));
+  }
+
+  /** The `New` tag of a thread or request row in the open sections. */
+  function paintItemUnread(li, view) {
+    const old = li.querySelector(':scope > [data-unread="item"], :scope > [data-part="info"] [data-unread="item"]');
+    const want = !!unread && unread.unread(view, li.dataset.id);
+    if (want && !old) {
+      const tag = unreadTag(UNREAD.row, 'item');
+      const head = view === UNREAD_REQUESTS ? li.querySelector('[data-part="info"] > p') : null;
+      if (head) head.append(tag); else li.prepend(tag, ' ');
+    } else if (!want && old) old.remove();
+  }
+
+  /** Unread threads of the selected study that its latest-50 list does not hold: a row each that opens the thread. */
+  function paintQuestionsOutside(uid) {
+    const list = $('#question-list');
+    if (!list || questionLock !== null || selected !== uid || $('#questions').dataset.state === 'failed') return;
+    for (const li of list.querySelectorAll('li[data-unread-outside]')) li.remove();
+    const listed = new Set([...list.children].map(li => li.dataset.id));
+    for (const item of unreadOn(UNREAD_QUESTIONS, uid)) {
+      if (listed.has(item.id)) continue;
+      const li = node('li');
+      li.dataset.id = item.id;
+      li.dataset.unreadOutside = '';
+      li.style.margin = '6px 0';
+      if (item.id === questionThread) li.setAttribute('aria-current', 'true');
+      const open = node('button', null, 'Open Thread');
+      open.type = 'button';
+      open.dataset.openThread = '';
+      open.addEventListener('click', () => openQuestionThread(uid, item.id));
+      li.append(UNREAD.outsideQuestion, ' ', open);
+      list.append(li);
+      paintItemUnread(li, UNREAD_QUESTIONS);
+    }
+    list.hidden = !list.children.length;
+  }
+
+  function paintUnread() {
+    if (leaving) return;
+    const box = $('#unread-summary');
+    const questions = unread && unread.view(UNREAD_QUESTIONS), requests = unread && unread.view(UNREAD_REQUESTS);
+    const answers = questions && questions.available ? questions.count : 0, processed = requests && requests.available ? requests.count : 0;
+    if (box) {
+      box.textContent = [answers ? UNREAD.answers(answers) : '', processed ? UNREAD.processed(processed) : ''].filter(Boolean).join(' · ');
+      box.title = (questions && questions.failed) || (requests && requests.failed) ? UNREAD.stale : UNREAD.tip;
+      box.hidden = !(answers || processed);
+    }
+    for (const tr of document.querySelectorAll('#studies tr[data-uid]')) {
+      const row = byUid.get(tr.dataset.uid), cell = tr.querySelector('td[data-report]');
+      if (row && cell) paintRowUnread(cell, row);
+    }
+    for (const li of document.querySelectorAll('#question-list > li[data-id]')) paintItemUnread(li, UNREAD_QUESTIONS);
+    if (selected !== null && $('#question-list') && !$('#question-list').closest('[hidden]')) paintQuestionsOutside(selected);
+    for (const li of document.querySelectorAll('#image-request-list > li[data-id]')) paintItemUnread(li, UNREAD_REQUESTS);
+    // An unread request of the open section that its latest-50 list does not hold is read on its own (readRequestsOutside).
+    const section = $('#image-requests');
+    if (section && section.open && selected !== null && requestsItems !== null && requestsLock === null) {
+      const listed = new Set([...document.querySelectorAll('#image-request-list > li[data-id]')].map(li => li.dataset.id));
+      if (unreadOn(UNREAD_REQUESTS, selected).some(item => requestUids(selected).has(item.studyUid) && !listed.has(item.id))) loadRequests(selected);
+    }
+  }
   // ── 선택한 검사 ──
 
   function field(label, value, note) {
@@ -789,14 +945,21 @@
    * 골랐으면 다른 환자의 검사를 나란히 열 수 있다. 그 창이 읽기 전용인지는 창의 문서(config/ohif.js)가 서버 /me로 정하고, 쓰기는
    * 서버가 거절한다. 이 화면은 역할을 보고 여기서 무엇을 막지 않는다.
    */
-  function openViewer(otherUid) {
-    if (leaving || selected === null) return;
+  /** A window taken at a click that ends up opening nothing: a blank one is closed, a viewer already there is left as it is. */
+  function dropWindow(popup) {
+    try { if (popup && !popup.closed && popup.location.href === 'about:blank') popup.close(); } catch (_) {}
+  }
+
+  // `part`: the stored report part of the comparison row an image belongs to (imageExam), opened beside as that version.
+  function openViewer(otherUid, image = null, held = null, asked = null, part = null) {
+    if (leaving || selected === null) { dropWindow(held); return; }
     const row = byUid.get(selected);
-    if (!row) return;
+    if (!row) { dropWindow(held); return; }
     const note = $('#viewer-note');
+    const refuse = text => { note.textContent = text; dropWindow(held); };
     const other = otherUid === null ? null : byUid.get(otherUid);
     if (otherUid !== null && (!other || other.uid === row.uid || patientKey(row) === null || patientKey(other) !== patientKey(row))) {
-      note.textContent = TEXT.compareGone;
+      refuse(TEXT.compareGone);
       return;
     }
     const at=++viewerSequence,mine=reportSeq,scope=displayedExam,target=displayedReport;
@@ -804,26 +967,28 @@
     // comparison alike, whether or not the row names its exam. A stored version the server let this panel read keeps its
     // own stored scope (that read already answered for it).
     const lost=(selectedReportTarget&&scope?null:root.KinExamScope.unavailable(row))||(other?root.KinExamScope.unavailable(other):null);
-    if(lost){note.textContent=lost.message;return;}
-    if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){note.textContent=TEXT.viewerUid;return;}
+    if(lost){refuse(lost.message);return;}
+    const priorUid=part&&other?part.uid:other?.uid,priorVersion=part&&other?part.version:other?.report?.final?other.report.version:null;
+    if(![target?.uid||row.uid,...(other?[other.uid,priorUid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){refuse(TEXT.viewerUid);return;}
     const expectedSession=KinAuth.sessionId();
-    if(!expectedSession){note.textContent='세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.';return;}
+    if(!expectedSession){refuse('세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.');return;}
     let input;
     try {
       if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
       input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
-        other&&(other.report?.scope||other.exam?.scope||other),target?.version??null,other?.report?.final?other.report.version:null);
-    } catch(error) { note.textContent=describe(error);return; }
-    let popup=null;try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}
+        other&&(part?part.scope:other.report?.scope||other.exam?.scope||other),target?.version??null,priorVersion);
+    } catch(error) { refuse(describe(error));return; }
+    // a cited line took the window at its click (its lookups came after); the address is then put in like a scoped one.
+    let popup=held;if(!popup){try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}}
     if(!popup){note.textContent=TEXT.viewerBlocked;return;}
+    const replace=!!held||input.scoped;
     const fresh=()=>!leaving&&selected===row.uid&&mine===reportSeq&&at===viewerSequence&&KinAuth.sessionId()===expectedSession;
     const apiRead=(_method,path)=>request(path);
     (async()=>{
       try {
-        const priorVersion=other?.report?.final?other.report.version:null;
         if(input.scoped){
           const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
-          const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+          const prior=other?await root.KinExamScope.fetch(apiRead,priorUid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
           if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
           input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
         }
@@ -831,10 +996,11 @@
         // B14: a viewer opened from the Physician screen is read-only for every account that opens it here (config/ohif
         // session.js keeps this mode for the window's reloads): a radiologist who also holds the clinician role annotates
         // from the Radiologist screen.
-        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician'});popup.opener=null;
-        if(input.scoped)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
-        note.textContent=other?TEXT.compareAsked:TEXT.viewerAsked;
-      }catch(error){if(fresh())note.textContent=describe(error);}
+        // the original image to open first (a key image, a cited line), as the server named it.
+        popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician',...(image?{target:image}:{})});popup.opener=null;
+        if(replace)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
+        note.textContent=asked||(image?say(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked);
+      }catch(error){if(fresh()){note.textContent=describe(error);dropWindow(held);}}
     })();
   }
 
@@ -964,20 +1130,48 @@
     return section;
   }
 
-  function bodySection(title, text) {
+  function bodySection(title, text, field) {
     const section = node('section', 'body-section');
+    if (field) section.dataset.field = field;
     section.append(node('h4', null, title));
     section.append(text.trim() ? node('p', 'body-text', text) : node('p', 'muted', TEXT.emptyField));
     return section;
   }
 
+  /**
+   * the original image a saved item names, as the server gave it (its own study, series, SOP and frame, and its id);
+   * null when one of them cannot be read. The viewer opens there and highlights that item (config/ohif/session.js).
+   */
+  function imageTarget(studyUid, item, itemId) {
+    if (![studyUid, item?.seriesUid, item?.sopUid].every(uid => typeof uid === 'string' && uid.length <= 64 && STUDY_UID.test(uid))
+        || !Number.isSafeInteger(item.frame) || item.frame < 1 || typeof itemId !== 'string' || !/^[0-9a-f-]{36}$/.test(itemId)) return null;
+    return { studyUid, seriesUid: item.seriesUid, sopUid: item.sopUid, frame: item.frame, itemId };
+  }
+
   function keyItem(key) {
     const item = key && typeof key.item === 'object' && key.item ? key.item : {};
     const entry = node('li', 'key');
-    entry.append(node('p', 'key-title', typeof item.title === 'string' && item.title.trim() ? item.title : TEXT.untitled));
-    if (typeof item.description === 'string' && item.description.trim()) entry.append(node('p', 'key-description', item.description));
+    const titled = typeof item.title === 'string' && item.title.trim();
+    const title = node('p', 'key-title', titled ? item.title : TEXT.untitled);
+    if (titled) title.setAttribute('translate', 'no');
+    entry.append(title);
+    if (typeof item.description === 'string' && item.description.trim()) {
+      const description = node('p', 'key-description', item.description);
+      description.setAttribute('translate', 'no');
+      entry.append(description);
+    }
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
     entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
+    const open = node('button', 'key-open', say(TEXT.openAnnotated));
+    open.type = 'button';
+    open.addEventListener('click', () => {
+      const target = imageTarget(key?.sourceUid || selected, item, key?.id);
+      if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
+      let place;
+      try { place = imageExam(selected, target); } catch (error) { $('#viewer-note').textContent = describe(error); return; }
+      openViewer(place.other, target, null, null, place.part);
+    });
+    entry.append(open);
     return entry;
   }
 
@@ -997,8 +1191,8 @@
         meta.replaceChildren(field('Version', view.version === null ? '—' : String(view.version)), field('Status', statusName(status)));
         meta.hidden = false;
         const text = view.text || { findings: '', conclusion: '', recommendation: '' };
-        $('#report-body').replaceChildren(bodySection('Findings', text.findings), bodySection('Conclusion', text.conclusion),
-          ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', text.recommendation));
+        $('#report-body').replaceChildren(bodySection('Findings', text.findings, 'findings'), bodySection('Conclusion', text.conclusion, 'conclusion'),
+          ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', text.recommendation, 'recommendation'));
         $('#report-body').hidden = false;
       } else {
         // A destroyed report has no final version to wait for: its line says only what happened to it.
@@ -1014,8 +1208,8 @@
       field('Signed On', window.KinReportPaper.versionStamp(view) || day(view.confirm)));
     meta.hidden = false;
     const body = $('#report-body');
-    body.replaceChildren(bodySection('Findings', view.findings), bodySection('Conclusion', view.conclusion),
-      ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation));
+    body.replaceChildren(bodySection('Findings', view.findings, 'findings'), bodySection('Conclusion', view.conclusion, 'conclusion'),
+      ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation, 'recommendation'));
     // FC-034: 고친 글로 바뀐 판독문은 머리에 그 사실과 시각을 한 줄 붙인다(목록의 상태 표기는 그대로).
     if (view.action === 'amend') {
       // The amendment shown is this version: its time is the one Signed On and History show for it.
@@ -1025,6 +1219,138 @@
     }
     body.hidden = false;
     paintKeys(view.keys);
+  }
+
+  /**
+   * the cited lines of the report shown. The server's citations of the head version (GET report/citations — the
+   * one read that carries each line's text and its source) are matched to the text this panel shows, by the same line-block
+   * rule the reading screen uses (report-citation.js blockSpans). A line is linked only when the read is of the very version
+   * shown, the citation's source is a saved image item, its text is cited once (sameTextCount 1) and stands at exactly one
+   * place of that field, and no other citation claims the same lines; everything else stays plain text. The text itself is
+   * written line for line as the server sent it (the comparison form only finds the lines).
+   */
+  let citeSequence = 0;
+  function citedLinks(text, entries) {
+    const C = root.KinReportCitation;
+    // Every citation whose text stands in this field claims its lines, whatever its source; only an image item cited once
+    // that stands at exactly one place, sharing no line with any other claim, becomes a link.
+    const claims = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry.insertedText !== 'string') continue;
+      const spans = C.blockSpans(text, entry.insertedText);
+      for (const [from, to] of spans) claims.push({ from, to, entry, single: spans.length === 1 });
+    }
+    const linkable = claim => claim.single && claim.entry.sameTextCount === 1 && claim.entry.sourceRef?.kind === 'item'
+      && typeof claim.entry.sourceRef.itemId === 'string' && typeof claim.entry.findingId === 'string'
+      && Number.isSafeInteger(claim.entry.findingRevision) && Number.isSafeInteger(claim.entry.sourceIndex) && claim.entry.sourceIndex >= 0;
+    return claims.filter(a => linkable(a) && !claims.some(b => b !== a && b.from < a.to && a.from < b.to)).sort((a, b) => a.from - b.from);
+  }
+  function linkedBody(text, links, reportUid) {
+    const p = node('p', 'body-text'), lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+    let at = 0;
+    const plain = (from, to) => { if (from < to) p.append(document.createTextNode(lines.slice(from, to).join('\n') + (to < lines.length ? '\n' : ''))); };
+    for (const link of links) {
+      plain(at, link.from);
+      const line = node('button', 'cited-line', lines.slice(link.from, link.to).join('\n'));
+      line.type = 'button'; line.title = say(TEXT.citedTitle); line.setAttribute('translate', 'no');
+      line.dataset.citation = link.entry.cid || '';
+      line.addEventListener('click', () => openCited(link.entry, reportUid));
+      p.append(line);
+      if (link.to < lines.length) p.append(document.createTextNode('\n'));
+      at = link.to;
+    }
+    plain(at, lines.length);
+    return p;
+  }
+  function paintCitations(mine, uid, reportUid, view) {
+    const shown = view.final ? view : view.text;
+    if (!shown || !Number.isSafeInteger(view.version) || !root.KinReportCitation) return;
+    request(`/studies/${encodeURIComponent(reportUid)}/report/citations`).then(body => {
+      if (!reportFresh(mine, uid)) return;
+      if (!body || body.version !== view.version || !Array.isArray(body.head)) return;
+      for (const field of ['findings', 'conclusion', 'recommendation']) {
+        const text = typeof shown[field] === 'string' ? shown[field] : '';
+        const links = text.trim() ? citedLinks(text, body.head.filter(e => e && e.field === field)) : [];
+        const section = $(`#report-body section[data-field="${field}"]`);
+        const old = section && section.querySelector('.body-text');
+        if (links.length && old) old.replaceWith(linkedBody(text, links, reportUid));
+      }
+    }, () => {
+      if (!reportFresh(mine, uid)) return;
+      const line = node('p', 'muted', say(TEXT.citedUnread)); line.id = 'report-citations-unread';
+      $('#report-body').append(line);
+    });
+  }
+  /**
+   * Which viewer opens an original image (a key image, a cited line): the exam shown when its scope holds that study and
+   * series, otherwise the listed exam of the same patient whose scope holds it (a split part by its series,
+   * KinExamScope.listedExam), opened beside it. One rule for both; anything else is refused.
+   */
+  // The list answers a split original as one row: its first part is the row's exam, the other part is only one of the
+  // row's `exam.reports` (a stored report version with its own scope). A peer row's own exam is asked first, as before;
+  // only when none holds the image is a part reported on a peer row asked, and that part opens beside this exam as its
+  // stored version (`part`: { uid, version }).
+  function imageExam(rowUid, image) {
+    const shown = displayedExam && Array.isArray(displayedExam.sources) ? displayedExam : null;
+    if (shown ? shown.sources.some(source => source.studyUid === image.studyUid && root.KinExamScope.allows(source, image.seriesUid))
+      : image.studyUid === rowUid) return { other: null, part: null };
+    const row = byUid.get(rowUid), key = row ? patientKey(row) : null;
+    const peerRows = key === null ? [] : studies.filter(other => other.uid !== rowUid && patientKey(other) === key);
+    const own = peerRows.map(other => ({ ...other, examScope: other.exam?.scope || other.report?.scope || undefined }));
+    const parts = peerRows.filter(other => !other.examUnavailable).flatMap(other => (Array.isArray(other.exam?.reports) ? other.exam.reports : [])
+      .filter(report => report && report.scope && typeof report.uid === 'string' && Number.isSafeInteger(report.version))
+      .map(report => ({ ...other, examScope: report.scope, part: { uid: report.uid, version: report.version, scope: report.scope } })));
+    const peer = root.KinExamScope.listedExam(own, image.studyUid, image.seriesUid)
+      || root.KinExamScope.listedExam(parts, image.studyUid, image.seriesUid);
+    if (!peer) throw new Error(say(TEXT.citedElsewhere));
+    return { other: peer.uid, part: peer.part || null };
+  }
+  /**
+   * The image a cited line points at: the finding revision it was cited from names the saved item and that item's own study
+   * (GET findings/:id/revisions, read as the record versions this page knows), and the study's current list says whether
+   * the item is still there and where it is (GET viewer-items?recheck=).
+   */
+  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '3' };
+  async function citedImage(rowUid, reportUid, entry) {
+    let revision = null, cursor = null;
+    for (let n = 0; n < 100 && !revision; n++) {
+      const page = await request(`/studies/${encodeURIComponent(reportUid)}/findings/${encodeURIComponent(entry.findingId)}/revisions?limit=100`
+        + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`), FINDING_SCHEMA);
+      if (!page || !Array.isArray(page.revisions)) throw new Error(say(TEXT.citedSource));
+      revision = page.revisions.find(r => r && r.revision === entry.findingRevision) || null;
+      if (revision || page.nextCursor === null || page.nextCursor === undefined || page.nextCursor === cursor) break;
+      cursor = page.nextCursor;
+    }
+    const source = Array.isArray(revision?.item?.sources) ? revision.item.sources[entry.sourceIndex] : null;
+    if (!source || source.itemId !== entry.sourceRef.itemId || typeof source.studyUid !== 'string' || !STUDY_UID.test(source.studyUid))
+      throw new Error(say(TEXT.citedSource));
+    const list = await request(`/studies/${encodeURIComponent(source.studyUid)}/viewer-items?limit=100&recheck=${encodeURIComponent(source.itemId)}`);
+    if (!list || !Array.isArray(list.items)) throw new Error(say(TEXT.citedSource));
+    const item = list.items.find(h => h && h.id === source.itemId && h.hidden !== true);
+    if (!item) throw new Error(say(TEXT.citedGone));
+    const image = imageTarget(source.studyUid, item.item, item.id);
+    if (!image) throw new Error(say(TEXT.citedSource));
+    const { other, part } = imageExam(rowUid, image);
+    const then = entry.sourceRef.sourceRevision;
+    return { image, other, part, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
+  }
+  function openCited(entry, reportUid) {
+    if (leaving || selected === null) return;
+    // `opened`: any other opening of the viewer meanwhile (Open Viewer, Compare, a key image) is newer than this press.
+    const note = $('#viewer-note'), uid = selected, mine = reportSeq, at = ++citeSequence, opened = viewerSequence;
+    // The window is taken at the click, before the lookups (a later open would be a pop-up the browser may refuse).
+    let held = null; try { held = root.open('', VIEWER_WINDOW); } catch (_) {}
+    if (!held) { note.textContent = TEXT.viewerBlocked; return; }
+    note.textContent = say(TEXT.citedLooking);
+    const newest = () => at === citeSequence && opened === viewerSequence;
+    const fresh = () => !leaving && selected === uid && mine === reportSeq && newest();
+    citedImage(uid, reportUid, entry).then(found => {
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
+      openViewer(found.other, found.image, held, found.asked, found.part);
+    }, error => {
+      if (!fresh()) { if (newest()) dropWindow(held); return; }
+      note.textContent = describe(error); dropWindow(held);
+    });
   }
 
   /** Key images as the server sent them: null is "not sent for this state", [] is "none". */
@@ -1107,6 +1433,8 @@
         return;
       }
       paintReport(view);
+      // Links only when the citation read (the head of that report) is of the very version shown (paintCitations).
+      paintCitations(mine, uid, reportUid, view);
       // A stored version opens its own images (purpose stored, that version), signed or not; the latest read opens the
       // exam as it is now.
       if (version) displayedReport = { uid: reportUid, version: view.version };
@@ -1146,7 +1474,7 @@
     summary: '이 검사에 남긴 외부영상·영상전송 요청을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     hint: 'External Images는 다른 병원의 영상을 이 기관으로 가져오도록, Send Images는 이 검사의 영상을 다른 병원에 보내도록 '
       + '소속 기관 직원에게 남기는 요청입니다. 요청은 처리 상태의 기록일 뿐 이 화면이 영상을 옮기지 않고, 실제 처리는 직원이 따로 합니다. '
-      + '처리 결과는 알림으로 오지 않으니 이 칸을 다시 열어 확인하세요.',
+      + '처리 결과는 목록의 ‘Processed’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다).',
     tele: '원격판독으로 받은 검사에는 영상 요청을 남기거나 읽지 않습니다. 요청은 검사를 소유한 기관 안에서만 오갑니다.',
     loading: '영상 요청을 불러오는 중입니다…',
     failed: '영상 요청을 불러오지 못했습니다.',
@@ -1165,6 +1493,7 @@
     ownFailed: '이 계정이 남긴 요청인지 확인하지 못해 취소 칸을 열지 않았습니다. Retry로 다시 읽으세요.',
     ownTooMany: '내 요청 목록을 끝까지 보지 못해 일부 요청을 찾지 못했습니다.',
     outside: '최신 50건 목록 밖으로 밀린 요청입니다. 결과를 모르는 취소가 남아 있어 이 요청만 따로 읽었습니다.',
+    outsideNew: '최신 50건 목록 밖으로 밀린 요청입니다. 새 처리 결과가 있어 이 요청만 따로 읽었습니다.',
     outsideUnread: '최신 50건 목록 밖으로 밀린 요청을 따로 읽지 못했습니다. 취소 결과는 Retry(같은 요청 ID)로 확인하거나 Discard로 버릴 수 있습니다.',
     outsideGone: '결과를 모르는 취소가 남은 요청을 서버가 지금 보여 주지 않습니다. 접근 조건이 바뀌었거나 요청이 없어졌을 수 있어 이 취소는 더 확인할 수 없습니다.',
     sending: '보내는 중입니다…',
@@ -1277,9 +1606,10 @@
    * (서버 CHECK와 같은 조건). 하나라도 어긋나면 답 전체를 그리지 않는다.
    */
   function requestItemOk(item, uid) {
+    const owned = uid instanceof Set ? uid : new Set([uid]);
     const text = value => typeof value === 'string';
     const person = value => !!value && typeof value === 'object' && text(value.actor) && text(value.name);
-    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && item.studyUid === uid
+    return !!item && typeof item === 'object' && text(item.id) && REQUEST_UUID.test(item.id) && owned.has(item.studyUid)
       && Object.prototype.hasOwnProperty.call(REQUEST_KINDS, item.kind) && REQUEST_STATES.includes(item.state)
       && Number.isSafeInteger(item.revision) && item.revision >= 1 && person(item.requester)
       && !!item.counterparty && typeof item.counterparty === 'object' && text(item.counterparty.text)
@@ -1289,10 +1619,11 @@
   }
 
   function readRequestItems(data, uid) {
-    const items = data && data.items;
-    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uid))
+    const items = data && data.items, uids = examUids(uid, data);
+    if (!Array.isArray(items) || items.length > 50 || !items.every(item => requestItemOk(item, uids))
         || new Set(items.map(item => item.id)).size !== items.length)
       throw new Error(REQUEST.malformed);
+    requestScope = { uid, uids };
     return items;
   }
 
@@ -1308,7 +1639,7 @@
     const at = applied && typeof applied.at === 'string' ? new Date(applied.at) : null;
     return sent.status === 201 && !!applied && typeof applied === 'object' && typeof reply.replayed === 'boolean'
       && typeof applied.requestId === 'string' && applied.requestId.toLowerCase() === attempt.requestId
-      && applied.studyUid === attempt.uid && applied.action === attempt.action
+      && applied.studyUid === (attempt.itemUid || attempt.uid) && applied.action === attempt.action
       && applied.id === (create ? attempt.requestId : attempt.itemId) && applied.kind === attempt.kind
       && applied.from === attempt.from && applied.to === (create ? 'Requested' : 'Cancelled')
       && applied.revision === (create ? 1 : attempt.payload.revision + 1)
@@ -1370,10 +1701,11 @@
    */
   function readRequestsOutside(uid, items, fresh) {
     const listed = new Set(items.map(item => item.id));
-    const waiting = [...requestAttempts.values()].filter(attempt => attempt.uid === uid && attempt.itemId !== null
-      && !listed.has(attempt.itemId));
-    return Promise.all(waiting.map(async attempt => {
-      const id = attempt.itemId;
+    const waiting = [...new Set([...requestAttempts.values()].filter(attempt => attempt.uid === uid && attempt.itemId !== null
+      && !listed.has(attempt.itemId)).map(attempt => attempt.itemId)
+      // An unread request of this study that the latest 50 do not hold (its new processing result is read on its own).
+      .concat(unreadOn(UNREAD_REQUESTS, uid).filter(item => requestUids(uid).has(item.studyUid) && !listed.has(item.id)).map(item => item.id)))];
+    return Promise.all(waiting.map(async id => {
       try {
         const data = await request(`/image-requests/${encodeURIComponent(id)}`);
         if (!fresh()) return { id, item: null, error: null };
@@ -1382,7 +1714,7 @@
           accountChanged('');
           return { id, item: null, error: null };
         }
-        if (same === null || !requestItemOk(data.item, uid) || data.item.id !== id) throw new Error(REQUEST.malformed);
+        if (same === null || !requestItemOk(data.item, requestUids(uid)) || data.item.id !== id) throw new Error(REQUEST.malformed);
         return { id, item: data.item, error: null };
       } catch (error) {
         return { id, item: null, error };
@@ -1451,6 +1783,7 @@
   function clearRequests() {
     requestsEpoch++;
     requestsItems = null;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     const old = $('#image-requests');
     if (old) old.remove();
   }
@@ -1467,6 +1800,7 @@
     }
     requestsEpoch++;
     requestsItems = null;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     section.dataset.state = 'closed';
     body.remove();
   }
@@ -1553,6 +1887,7 @@
         return;
       }
       requestsItems = null;
+      if (unread) unread.hidden(UNREAD_REQUESTS);
       $('#image-requests').dataset.state = 'failed';
       $('#image-request-list').hidden = true;
       setRequestsState('failed', REQUEST.failed, `${error.status === 404 ? `${REQUEST.notFound}\n` : ''}${describe(error)}`);
@@ -1600,6 +1935,11 @@
     setRequestsState(items.length ? 'ready' : 'empty', items.length ? REQUEST.ready(items.length) : REQUEST.empty,
       ownFailure ? `${REQUEST.ownFailed}\n${describe(ownFailure)}` : '', !!ownFailure);
     $('#image-request-new').hidden = false;
+    // The open section drew these requests: their seen marks go to the server (unread-badges.js decides whether to send).
+    if (unread) {
+      unread.hidden(UNREAD_REQUESTS);
+      if (drawnNow($('#image-request-list'))) for (const item of requestsItems) unread.shown(UNREAD_REQUESTS, item.id, item.revision);
+    }
   }
 
   function requestItem(uid, id, item, entry) {
@@ -1624,7 +1964,7 @@
     info.dataset.part = 'info';
     li.querySelector('[data-part="info"]').replaceWith(info);
     const aside = li.querySelector('[data-part="outside"]');
-    const text = !entry ? null : entry.item ? REQUEST.outside : requestAttempts.has(key)
+    const text = !entry ? null : entry.item ? (requestAttempts.has(key) ? REQUEST.outside : REQUEST.outsideNew) : requestAttempts.has(key)
       ? `${REQUEST.outsideUnread}\n${describe(entry.error)}` : null;
     if (text === null) {
       if (aside) aside.remove();
@@ -1640,6 +1980,7 @@
     const keep = !!item && REQUEST_ACTIVE.includes(item.state) && requestOwn.get(item.id) === true || requestAttempts.has(key);
     if (keep && !compose) li.querySelector('[data-request-note]').before(requestCancelComposer(uid, li.dataset.id));
     else if (!keep && compose) compose.remove();
+    paintItemUnread(li, UNREAD_REQUESTS);
   }
 
   function requestField(wrap, name, label, tag, max, hintId) {
@@ -1836,7 +2177,7 @@
       return;
     }
     // kind·from은 보낼 때 읽은 그 요청의 값이다. 적용 결과가 이 둘과 맞아야 저장 결과로 받는다(requestApplied).
-    const attempt = { requestId, owner: [...owner], uid, itemId: id, action: 'cancel', kind: item.kind, from: item.state, key, draft,
+    const attempt = { requestId, owner: [...owner], uid, itemId: id, itemUid: item.studyUid, action: 'cancel', kind: item.kind, from: item.state, key, draft,
       busy: false, unknown: false, path: `/image-requests/${encodeURIComponent(id)}`,
       payload: { revision: item.revision, action: 'cancel', note: draft.note } };
     requestDrafts.set(key, draft);
@@ -1942,6 +2283,7 @@
     if (requestsLock !== null && (requestsLock.account || !account)) return;
     requestsLock = { text, detail: detail || '', account };
     requestsEpoch++;
+    if (unread) unread.hidden(UNREAD_REQUESTS);
     requestsItems = null;
     requestDrafts.clear();
     requestAttempts.clear();
@@ -2304,14 +2646,15 @@
 
   /** #3 응답의 모양 검사. 다른 검사의 행이나 모르는 상태가 하나라도 있으면 답 전체를 그리지 않는다. */
   function readQuestionSummaries(data, uid) {
-    const items = data && data.items;
+    const items = data && data.items, uids = examUids(uid, data);
     if (!Array.isArray(items) || items.length > 50) throw new Error(QUESTION.malformed);
     for (const item of items) {
-      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || item.studyUid !== uid
+      if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !QUESTION_ID.test(item.id) || !uids.has(item.studyUid)
           || !QUESTION_STATES.includes(item.state) || !Number.isSafeInteger(item.revision) || item.revision < 1
           || !Number.isSafeInteger(item.entryCount) || item.entryCount < 1 || !item.author || typeof item.author !== 'object')
         throw new Error(QUESTION.malformed);
     }
+    questionScope = { uid, uids };
     return items;
   }
 
@@ -2326,7 +2669,7 @@
       && (!role || Object.prototype.hasOwnProperty.call(QUESTION_ROLE, value.role));
     const anchor = value => !!value && typeof value === 'object' && text(value.rs) && value.rs.length > 0
       && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
-    if (!item || typeof item !== 'object' || item.id !== id || item.studyUid !== uid || !QUESTION_STATES.includes(item.state)
+    if (!item || typeof item !== 'object' || item.id !== id || !questionUids(uid).has(item.studyUid) || !QUESTION_STATES.includes(item.state)
         || !person(item.author) || !Array.isArray(item.entries) || !item.entries.length
         || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
         || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -2353,7 +2696,7 @@
         || !QUESTION_ACTIONS[attempt.action].includes(applied.action)) return false;
     const step = QUESTION_STEPS[applied.action], entry = applied.entry, base = attempt.base;
     const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-    return mine(applied.requestId) && applied.studyUid === attempt.uid
+    return mine(applied.requestId) && applied.studyUid === (base && base.studyUid || attempt.uid)
       && applied.id === (attempt.threadId === null ? attempt.requestId : attempt.threadId)
       && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
       && applied.revision === (base ? base.revision + 1 : 1)
@@ -2391,6 +2734,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     const old = $('#questions');
     if (old) old.remove();
   }
@@ -2408,6 +2752,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     section.dataset.state = 'closed';
     body.remove();
   }
@@ -2561,6 +2906,7 @@
     $('#questions').dataset.state = items.length ? 'ready' : 'empty';
     setQuestionsState(items.length ? 'ready' : 'empty', items.length ? QUESTION.ready(items.length) : QUESTION.empty);
     $('.question-compose[data-action="ask"]').hidden = false;
+    paintQuestionsOutside(uid);
     paintQuestionPending(uid);
     if (questionThread !== null) loadQuestionThread(uid, questionThread);
     else hideQuestionThread();
@@ -2577,6 +2923,7 @@
     open.addEventListener('click', () => openQuestionThread(uid, item.id));
     li.append(questionBadge(item.state), ' ', QUESTION.item(questionTime(item.createdAt), item.entryCount, questionTime(item.lastEntryAt)),
       ' ', open);
+    paintItemUnread(li, UNREAD_QUESTIONS);
     return li;
   }
 
@@ -2594,6 +2941,7 @@
   function hideQuestionThread() {
     questionThreadSeq++;
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     const box = $('#question-thread');
     if (!box) return;
     box.hidden = true;
@@ -2688,6 +3036,7 @@
         return;
       }
       questionThreadItem = null;
+      if (unread) unread.hidden(UNREAD_QUESTIONS);
       box.dataset.state = 'failed';
       $('#question-thread-status').replaceChildren();
       $('#question-thread-meta').textContent = '';
@@ -2711,6 +3060,8 @@
     $('#question-closed-note').hidden = item.state !== 'Closed';
     setThreadState('ready', '');
     paintQuestionComposers(uid, item.id);
+    // The thread is drawn in the open section: its seen mark goes to the server (unread-badges.js decides whether to send).
+    if (unread) { unread.hidden(UNREAD_QUESTIONS); if (drawnNow($('#question-thread'))) unread.shown(UNREAD_QUESTIONS, item.id, item.revision); }
   }
 
   function questionEntry(entry, current, evidence) {
@@ -2873,7 +3224,7 @@
       return;
     }
     const attempt = { requestId, uid, threadId, action, noteKey, path, text, busy: false, unknown: false,
-      base: base ? { revision: base.revision, state: base.state } : null,
+      base: base ? { revision: base.revision, state: base.state, studyUid: base.studyUid } : null,
       payload: { ...(base ? { revision: base.revision } : {}), [action === 'close' ? 'note' : 'body']: text } };
     questionDrafts.set(key, text);
     questionAttempts.set(key, attempt);
@@ -2989,6 +3340,7 @@
     questionEpoch++;
     pickQuestionThread(null);
     questionThreadItem = null;
+    if (unread) unread.hidden(UNREAD_QUESTIONS);
     questionDrafts.clear();
     questionAttempts.clear();
     questionNotes.clear();
@@ -3029,6 +3381,7 @@
     questionNotes.clear();
     // 받은 중요 결과 영역도 같은 자리에서 끝낸다: 나간 요청을 멈추고 늦은 답·주기 읽기를 그리지 않는다.
     if (criticalInbox) criticalInbox.end();
+    if (unread) unread.end();
     listSeq++;
     reportSeq++;
     selected = null;
@@ -3169,6 +3522,7 @@
     mountMode();
     mountFolders();
     clearDetail();
+    mountUnread();
     loadList();
     // The shared inbox uses this document's defaults; verified owner replacement closes all work.
     try {

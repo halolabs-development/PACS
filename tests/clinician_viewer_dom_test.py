@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -187,16 +187,18 @@ DENIED = (403, {"statusCode": 403, "message": "열람 권한이 없습니다", "
 HIDDEN_REFUSED = (400, {"statusCode": 400, "message": "숨긴 표시 항목이나 형식이 잘못된 이어받기 값으로는 조회할 수 없습니다",
                         "error": "Bad Request"})
 
+# The server answers every reader of viewer-items in one shape, {items, nextCursor} (api/src/viewer.service.ts list; the
+# physician reads the same current items as the radiologist, tests/clinician_read_live.py), whatever the report's state.
 ITEMS = {
-    VA: {"version": 4, "pages": A_PAGES},
-    VP: {"version": 2, "pages": [[key_item(11, "SYN-P key")]]},
-    VW: "withheld",
-    VE: {"version": 3, "pages": [[]]},
+    VA: {"pages": A_PAGES},
+    VP: {"pages": [[key_item(11, "SYN-P key")]]},
+    VW: {"pages": [[key_item(91, "SYN-W unsigned report key")]]},
+    VE: {"pages": [[]]},
     VX: NOT_FOUND,
-    VY: CHANGED,
+    VY: HIDDEN_REFUSED,
     VZ: DENIED,
-    VO: {"version": 5, "pages": [[key_item(21, "SYN-O key")]], "answer_uid": VA},
-    VQ: {"version": 6, "pages": [[key_item(31, "SYN-Q key one")], [key_item(32, "SYN-Q key two")]], "versions": {1: 7}},
+    VO: (200, {"items": "SYN-not-a-list", "nextCursor": None}),
+    VQ: {"pages": [[key_item(31, "SYN-Q key one")], [key_item(32, "SYN-Q key two")]]},
 }
 
 WRITER_HEAD = {"id": item_id(41), "revision": 1, "hidden": False, "authorSub": None, "authorActor": "SYN Radiologist",
@@ -226,10 +228,10 @@ LATE_WRITE = key_item(85, "SYN LATE WRITTEN KEY")
 
 HELD_TITLE = "SYN HELD WRITER KEY"
 
-RO_NOTE = ("읽기 전용 · 확정 판독문에 저장된 측정·키 이미지만 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 "
+RO_NOTE = ("읽기 전용 · 이 검사에 저장된 측정·키 이미지를 표시합니다. 이 화면에서는 측정·키 이미지를 만들거나 저장하지 않으며 "
            "서버도 쓰기를 거절합니다.")
 
-RO_WITHHELD = "확정 판독문이 아니어서 저장된 측정·키 이미지를 표시하지 않습니다 · 읽기 전용"
+RO_EMPTY = "이 검사에 저장된 측정·키 이미지가 없습니다 · 읽기 전용"
 
 RO_TOOL = "읽기 전용 화면입니다. 측정을 만들지 않습니다."
 
@@ -240,7 +242,7 @@ RO_SR = "읽기 전용 화면에서는 SR을 만들거나 저장하지 않습니
 RO_DENIED = "이 검사의 저장 항목을 읽을 수 없습니다(HTTP 403). 서버가 거절했습니다."
 
 RO_UNMATCHED = ("현재 화면에서 원본 프레임을 확인할 수 없어 이 목록을 표시 영상과 맞추지 않았습니다. 마지막으로 확인한 검사 기준이며 "
-                "확정 여부는 계속 다시 확인합니다.")
+                "저장 항목은 계속 다시 확인합니다.")
 
 UNCONFIRMED_TOOL = "계정이 확인되기 전에는 영상 조작만 할 수 있습니다. 측정·표식을 만들지 않습니다."
 
@@ -325,18 +327,18 @@ VIEWER_STATE_MATRIX = {
     "marks_present": WRITER_ONLY,        # any native mark left after all of the attempts above
     "stray_mark_kept": WRITER_ONLY,      # a mark made outside every guard survives the next observation tick
     "viewing": (True, True, True, True, True, True, True, True, True),  # Zoom from the toolbar, then a drag: image viewing in every state
-    # Recheck paths, as the viewer-items requests the panel makes: read = the clinician list (limit=100), read-all = the writer
-    # list (includeHidden=true), check = limit=1 (the clinician final check / the writer's access probe), cursor = the next
+    # Recheck paths, as the viewer-items requests the panel makes: read = the read-only list (limit=100; its periodic and focus
+    # checks read it whole again), read-all = the writer list (includeHidden=true), check = limit=1 (the writer's access probe), cursor = the next
     # page asked with the handed-out cursor verbatim, none = no list request (unconfirmed: /me is asked again on focus and
     # every 15 s, and nothing is read until an answer; refused: the panel has ended).
     "initial_read": ("none", "none", "read", "read-all", "read", "none", "none", "none", "none"),
     "page_continuation": ("none", "none", "cursor", "cursor", "cursor", "none", "none", "none", "none"),
-    "focus": ("none", "none", "check", "check", "check", "none", "none", "none", "none"),
+    "focus": ("none", "none", "read", "check", "read", "none", "none", "none", "none"),
     "me_on_focus": (True, False, True, True, True, False, False, False, False),    # the same focus asks /me (the retry, the check, the probe)
-    "periodic": ("none", "none", "check", "check", "check", "none", "none", "none", "none"),  # the clock moved past 15 s since the last /me
+    "periodic": ("none", "none", "read", "check", "read", "none", "none", "none", "none"),  # the clock moved past 15 s since the last /me
     "frame_lost": ("none", "none", "none", "none", "none", "none", "none", "none", "none"),  # the active viewport stops showing a source frame
-    "frame_return": ("none", "none", "check", "none", "check", "none", "none", "none", "none"),  # the source frame comes back (clinician: checked at once)
-    "frameless_focus": ("none", "none", "check", "none", "check", "none", "none", "none", "none"),  # focus with no source frame (writer probe stays frame-bound)
+    "frame_return": ("none", "none", "read", "none", "read", "none", "none", "none", "none"),  # the source frame comes back (clinician: checked at once)
+    "frameless_focus": ("none", "none", "read", "none", "read", "none", "none", "none", "none"),  # focus with no source frame (writer probe stays frame-bound)
     "study_change": ("none", "none", "read", "read-all", "read", "none", "none", "none", "none"),  # the frame of another study
 }
 
@@ -367,6 +369,33 @@ MODULE_STUBS = {
 
 REAL_MODULES = {"jobs": ("viewer-stack-restore.js", "viewer-jobs.js"), "findings": ("finding-link-model.js", "viewer-findings.js"),
                 "tech-note": ("viewer-tech-note.js",)}
+
+# The read-only viewer's two panels docked off the image cells: the panels with their production styles (history.js and
+# layout.js float them over the viewer) docked by the shipped viewer-workspace-dock.js in an OHIF-like document.
+DOCK_SOURCE = HPACS / "viewer-workspace-dock.js"
+WORK_CONTEXT = HPACS / "work-context.js"
+def production_style(source, panel_id):
+    text = (ROOT / "config" / "ohif" / source).read_text(encoding="utf-8")
+    found = re.search(r"panel\.id = '" + panel_id + r"';.*?panel\.style\.cssText = '([^']+)'", text, re.S)
+    assert found, (source, panel_id)
+    return found.group(1)
+DOCK_PANEL_STYLES = {"kin-viewer-history": production_style("history.js", "kin-viewer-history"),
+                     "kin-viewer-layout": production_style("layout.js", "kin-viewer-layout")}
+DOCK_PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}
+#root > div { height: 100vh; display: flex; flex-direction: column; } #root header { height: 52px; flex: none; }
+#root > div > .flex { display: flex; height: calc(100vh - 52px); } .cell { flex: 1; background: #000; }</style></head><body>
+<div id="root"><div><header>SYN toolbar</header><div class="flex"><div class="cell"></div><div class="cell"></div></div></div></div>
+</body></html>"""
+DOCK_OVERLAP = """() => {
+  const cells = [...document.querySelectorAll('.cell')].map(c => c.getBoundingClientRect());
+  const panels = ['kin-viewer-history', 'kin-viewer-layout', 'kin-workspace-dock'].map(id => document.getElementById(id))
+    .filter(p => p && !p.hidden && getComputedStyle(p).display !== 'none').map(p => p.getBoundingClientRect())
+    .filter(r => r.width > 0 && r.height > 0);
+  let area = 0;
+  for (const p of panels) for (const c of cells)
+    area += Math.max(0, Math.min(p.right, c.right) - Math.max(p.left, c.left)) * Math.max(0, Math.min(p.bottom, c.bottom) - Math.max(p.top, c.top));
+  return { area: Math.round(area), cells: cells.map(c => Math.round(c.height)), panels: panels.length };
+}"""
 
 VIEWER_HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>SYN viewer harness</title></head><body>
 <script>
@@ -894,7 +923,10 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.writer_paged = False
         self.rows = copy.deepcopy(ROWS)
         self.extra_reports = {}
+        self.citations, self.finding_revisions, self.finding_reads = {}, {}, []
+        self.hold_findings, self.held_findings = False, []
         self.scope_reads = []
+        self.exam_scopes, self.scope_queries = {}, []
         self.files = dict(SHIPPED)
         self.config = CONFIG
         self.viewer_page = False
@@ -992,7 +1024,8 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 # B14: the hand-off names the screen that opened the window (mode) when a case sets viewer_mode; with
                 # viewer_handoff False the page loads as a reload of the tab does (no hand-off at all).
                 entry = {'session': 'SYN-SESSION-' + self.me['sub'], 'name': VIEWER_WINDOW,
-                         **({'mode': self.viewer_mode} if getattr(self, 'viewer_mode', None) else {})}
+                         **({'mode': self.viewer_mode} if getattr(self, 'viewer_mode', None) else {}),
+                         **({'target': self.viewer_target} if getattr(self, 'viewer_target', None) else {})}
                 handoff = '' if getattr(self, 'viewer_handoff', True) is False else '<script>window.name=' + json.dumps('kin-viewer-entry:' + json.dumps(entry)) + ';</script>'
                 route.fulfill(body=VIEWER_HARNESS.replace('<script>', handoff + '<script>', 1), content_type='text/html; charset=utf-8')
             else:
@@ -1019,6 +1052,15 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             else:
                 route.fulfill(json={**self.me, 'sessionId': 'SYN-SESSION-' + str(self.me.get('sub'))})
             return
+        # In-app unread (unread-badges.js): the page reads its unread views with the list; answered with nothing unread
+        # for this session (tests/in_app_unread_dom_test.py has the marks) and logged apart.
+        if method == "GET" and path == "/api/unread":
+            account = self.me if isinstance(self.me, dict) else {}
+            self.unread_reads = [*getattr(self, "unread_reads", []), request.url]
+            route.fulfill(json={"owner": [account.get("institution"), account.get("sub")],
+                                "view": parse_qs(url.query).get("view", [None])[0], "available": True, "count": 0, "items": [],
+                                "nextCursor": None})
+            return
         if method == 'GET' and path == '/api/clinician/studies':
             query = parse_qs(url.query, keep_blank_values=True)
             if query != {'limit': ['100']}:
@@ -1032,8 +1074,14 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         if method == 'GET' and scope_target:
             target = unquote(scope_target.group(1))
             self.scope_reads.append(target)
+            self.scope_queries.append((target, parse_qs(url.query)))
             row = next((row for row in self.rows if row['uid'] == target), None)
-            route.fulfill(json=self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
+            route.fulfill(json=self.exam_scopes[target] if target in self.exam_scopes else self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
+            return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
             return
         found = re.fullmatch('/api/clinician/studies/([^/]+)/report', path)
         if method == 'GET' and found and (not url.query or set(parse_qs(url.query)) == {'version'}):
@@ -1051,6 +1099,22 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         found = re.fullmatch('/api/studies/([^/]+)/viewer-items', path)
         if method == 'GET' and found:
             self.viewer_items(route, unquote(found.group(1)), parse_qs(url.query, keep_blank_values=True))
+            return
+        found = re.fullmatch('/api/studies/([^/]+)/findings/([^/]+)/revisions', path)
+        if method == 'GET' and found and not self.real_api:
+            # the finding revisions a cited line was cited from (its sources name the saved item and its study).
+            key = (unquote(found.group(1)), unquote(found.group(2)))
+            self.finding_reads.append((key, parse_qs(url.query, keep_blank_values=True)))
+            answer = getattr(self, 'finding_revisions', {}).get(key)
+            if request.headers.get('x-kin-finding-schema') != '3':
+                # api/src/finding.service.ts: a reader naming no record version reads version 1 only; these rows are 3.
+                route.fulfill(status=409, json={'statusCode': 409, 'code': 'FINDING_SCHEMA_OUTDATED', 'message': 'SYN client outdated'})
+            elif getattr(self, 'hold_findings', False):
+                self.held_findings.append((route, answer))
+            elif answer is None:
+                route.fulfill(status=NOT_FOUND[0], json=NOT_FOUND[1])
+            else:
+                route.fulfill(json=answer)
             return
         found = re.fullmatch('/api/studies/([^/]+)/(viewer-jobs|findings)', path)
         if method == 'GET' and found and self.real_api:
@@ -1093,16 +1157,17 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             return
         account = self.list_me or self.me
         if not self.clinician_session(account):
-            if query == {'limit': ['1']}:
+            if query == {'limit': ['1']} or set(query) == {'limit', 'cursor'} and query['limit'] == ['100'] and query['cursor'][0].startswith('eyJ2IjoxLCJTWU4i') and getattr(self, 'viewer_mode', None) != 'physician':
+                # The writer's access probe; or a later page of a read-only check still on its way when the harness changed the account.
                 route.fulfill(json={'items': [], 'nextCursor': None})
                 return
             if self.real_api and target == VP and (query == {'limit': ['100']}):
                 route.fulfill(json={'items': [], 'nextCursor': None})
                 return
-            if getattr(self, 'viewer_mode', None) == 'physician' and query == {'limit': ['100']}:
+            if getattr(self, 'viewer_mode', None) == 'physician' and set(query) <= {'limit', 'cursor'} and query.get('limit') == ['100']:
                 # B14: a writer account's viewer opened from the Physician mode asks the read-only list; the server answers
-                # every caller in its ordinary shape (viewer.service.ts). The read-only list reading it is a later item.
-                route.fulfill(json={'items': [], 'nextCursor': None})
+                # every caller in its ordinary shape (viewer.service.ts), the same items as to a clinician.
+                route.fulfill(**self.clinician_page(target, query.get('cursor', [None])[0]))
                 return
             first = {'includeHidden': ['true'], 'limit': ['100']}
             following = {**first, 'cursor': [WRITER_CURSOR]}
@@ -1130,7 +1195,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         if query.get('limit') == ['100'] and 'cursor' in query and (target in self.hold_next):
             self.held_next.append((target, query['cursor'][0], route))
             return
-        if query.get('limit') == ['1'] and target in self.hold_probes:
+        if (query.get('limit') == ['1'] or query == {'limit': ['100']}) and target in self.hold_probes:
             self.hold_probes.discard(target)
             self.held_probes.append((target, route))
             return
@@ -1140,20 +1205,18 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         spec = self.items.get(target, NOT_FOUND)
         if isinstance(spec, tuple):
             return {'status': spec[0], 'json': spec[1]}
-        if spec == 'withheld':
-            return {'json': {'uid': target, 'final': False, 'items': None, 'nextCursor': None}}
         index = 0
         if cursor is not None:
             if self.cursors.get(cursor, (None,))[0] != target:
                 self.unexpected.append(f'unknown cursor {cursor!r} for {target}')
-                return {'status': CHANGED[0], 'json': CHANGED[1]}
+                return {'status': HIDDEN_REFUSED[0], 'json': HIDDEN_REFUSED[1]}
             index = self.cursors[cursor][1]
         pages = spec['pages']
         following = None
         if issue and index + 1 < len(pages):
             following = f'eyJ2IjoxLCJTWU4iOnsicGFnZSI6{index + 1}.SYN-sig_{target[-2:]}-{len(self.cursors)}_Q'
             self.cursors[following] = (target, index + 1)
-        return {'json': {'uid': spec.get('answer_uid', target), 'final': True, 'reportVersion': spec.get('versions', {}).get(index, spec['version']), 'items': copy.deepcopy(pages[index]), 'nextCursor': following}}
+        return {'json': {'items': copy.deepcopy(pages[index]), 'nextCursor': following}}
 
     def wait_until(self, predicate, what, timeout=10.0):
         deadline = time.monotonic() + timeout
@@ -1229,7 +1292,8 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         return self.page.evaluate("() => { const p = document.querySelector('#kin-viewer-layout');\n          return {summary: p.querySelector('summary').textContent,\n            buttons: [...p.querySelectorAll('button')].map(b => [b.textContent, b.disabled])}; }")
 
     def probes(self):
-        return len([1 for _, query in self.item_requests if query.get('limit') == ['1']])
+        # A check: the writer's limit=1 probe, or a first-page read of the read-only list (its checks read the list whole).
+        return len([1 for _, query in self.item_requests if query.get('limit') == ['1'] or query == {'limit': ['100']}])
 
     def focus(self):
         self.page.evaluate('synFocus()')
@@ -1408,6 +1472,229 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual([A],query['StudyInstanceUIDs'])
         self.assertEqual(scope_reference(scope),json.loads(query['kinExamScopes'][0])['current'])
 
+    def test_01b_open_annotated_image_hands_the_key_images_original_frame(self):
+        """a key image's Open Annotated Image opens the one viewer window (the same named window, opener cut, the
+        Physician mode) and hands it the original image the server named for that key: its own study, series, SOP, frame and
+        the item id. A key whose original cannot be read opens nothing and says why."""
+        row = next(r for r in self.rows if r['uid'] == A)
+        good = {**key_item(5, 'SYN-A key five', 'SYN key note', frame=3), 'sourceUid': A}
+        broken = {**key_item(6, 'SYN-A key six'), 'sourceUid': A}
+        broken['item'] = {**broken['item'], 'sopUid': 'not-a-uid'}
+        self.extra_reports[A] = {**report_of(row), 'keys': [good, broken]}
+        self.open_home()
+        self.pick(A)
+        keys = self.page.locator('#key-list li')
+        expect(keys).to_have_count(2)
+        self.assertEqual(['Open Annotated Image', 'Open Annotated Image'], keys.locator('button').all_text_contents())
+        self.assertEqual(['no', 'no'], [keys.nth(0).locator('.key-title').get_attribute('translate'), keys.nth(0).locator('.key-description').get_attribute('translate')])
+        with self.page.expect_popup() as info:
+            keys.nth(0).get_by_role('button', name='Open Annotated Image').click()
+        popup = info.value
+        self.assertEqual(viewer_query(A), self.opened(1))
+        popup.wait_for_function('window.verified===true')
+        self.assertEqual([VIEWER_WINDOW, True], popup.evaluate('() => [window.name, window.opener === null]'))
+        self.assertEqual({'studyUid': A, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 3, 'itemId': item_id(5)},
+                         popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
+        self.assertEqual('physician', popup.evaluate("() => sessionStorage.getItem('kin-viewer-mode')"))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.',
+                         self.page.locator('#viewer-note').text_content())
+        keys.nth(1).get_by_role('button', name='Open Annotated Image').click()
+        self.settle()
+        self.assertEqual(1, len(self.viewer_opens), 'a key whose original cannot be read opens nothing')
+        self.assertEqual('키 이미지의 원본 식별(시리즈·영상·프레임)을 확인할 수 없어 열지 않았습니다.', self.page.locator('#viewer-note').text_content())
+        # Open Viewer after it hands no target: the same window opens the study, as before.
+        self.page.locator('#open-viewer').click()
+        self.opened(2)
+        popup.wait_for_function('() => window.verified === true && KIN_VIEWER_ENTRY_TARGET === null')
+
+    def test_01c_a_cited_line_opens_the_image_its_source_names(self):
+        """The report's sentence -> the lesion in the image: a line of the shown report that the server's head
+        citations name once, from a saved image item, is a button in the text; pressing it takes the viewer window at once,
+        reads which item and study that finding revision cited and whether the item is still in the study's list, and hands
+        the viewer that original frame and item. The text stays as sent. A line cited twice, a job source, an item hidden
+        since, or a citation read of another version link or open nothing; a blank window taken for nothing is closed."""
+        row = next(r for r in self.rows if r['uid'] == A)
+        finding = 'b0000000-0000-4000-8000-000000000001'
+        text = 'Liver lesion 12 mm.\nNo other finding.'
+        self.extra_reports[A] = {**report_of(row), 'report': {**report_of(row)['report'], 'findings': text, 'conclusion': 'SYN conclusion'}}
+        cite = lambda field, inserted, n=1, ref=None, cid='c-1': {'cid': cid, 'field': field, 'insertedText': inserted, 'sameTextCount': n,
+            'findingId': finding, 'findingRevision': 2, 'sourceIndex': 0, 'sourceRef': ref or {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
+            cite('conclusion', 'SYN conclusion', n=2, cid='c-2'), cite('conclusion', 'SYN conclusion', n=2, cid='c-3')], 'draft': []}
+        v3 = lambda *sources: {'schemaVersion': 3, 'title': 'SYN finding', 'text': '', 'characteristics': '', 'lesionLocation': '',
+                               'sources': list(sources), 'primary': 0}
+        self.finding_revisions[(A, finding)] = {'revisions': [
+            {'revision': 1, 'item': v3({'itemId': item_id(1), 'revision': 1, 'studyUid': A})},
+            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': A})}], 'nextCursor': None}
+        self.items[A] = {'pages': [[]]}
+        self.open_home()
+        self.pick(A)
+        links = self.page.locator('#report-body button.cited-line')
+        expect(links).to_have_count(1)
+        self.assertEqual(['Liver lesion 12 mm.'], links.all_text_contents())
+        self.assertEqual('no', links.first.get_attribute('translate'))
+        self.assertEqual(text, self.page.locator('#report-body section[data-field="findings"] .body-text').text_content(), 'the text as sent')
+        self.assertEqual('SYN conclusion', self.page.locator('#report-body section[data-field="conclusion"] .body-text').text_content())
+        # The item hidden since the line was cited: the window taken at the press (blank) is closed, nothing is opened.
+        with self.page.expect_popup() as info:
+            links.first.click()
+        blank = info.value
+        expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.')
+        self.wait_until(lambda: blank.is_closed(), 'the blank window closed')
+        self.assertEqual([], self.viewer_opens)
+        self.assertEqual([((A, finding), {'limit': ['100']})], self.finding_reads)
+        # The item there (revised since it was cited): the viewer opens at its frame with it named.
+        self.items[A] = {'pages': [[mark_item(2, 'length', 'SYN-A length', revision=2)]]}
+        with self.page.expect_popup() as info:
+            links.first.click()
+        popup = info.value
+        self.assertEqual(viewer_query(A), self.opened(1))
+        popup.wait_for_function('window.verified===true')
+        self.assertEqual({'studyUid': A, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
+                         popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r1, 지금 표시하는 표식은 r2입니다.',
+                         self.page.locator('#viewer-note').text_content())
+        self.assertIn((A, {'limit': ['100'], 'recheck': [item_id(2)]}), self.item_requests)
+        # The item hidden again: the open viewer window is left as it is.
+        self.items[A] = {'pages': [[]]}
+        links.first.click()
+        expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.')
+        self.assertFalse(popup.is_closed())
+        self.assertEqual(1, len(self.viewer_opens))
+        # A citation read of another version links nothing; nor does a job source, nor an image line that a job citation's
+        # lines overlap.
+        job = {'kind': 'job', 'jobId': finding, 'sourceRevision': 1}
+        for answer in ({'version': FINAL['version'] + 1, 'head': self.citations[A]['head'], 'draft': []},
+                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.', ref=job)], 'draft': []},
+                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
+                                                              cite('findings', text, ref=job, cid='c-4')], 'draft': []}):
+            with self.subTest(answer=answer['version']):
+                self.citations[A] = answer
+                self.pick(B)
+                self.pick(A)
+                expect(self.page.locator('#report-body section[data-field="findings"] .body-text')).to_have_text(text)
+                self.settle()
+                expect(links).to_have_count(0)
+        # A line citing a mark of the comparison study (the same server patient key): that study opens beside this one, at
+        # the mark's own frame of its own study.
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.')], 'draft': []}
+        self.finding_revisions[(A, finding)] = {'revisions': [
+            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': P1})}], 'nextCursor': None}
+        self.items[P1] = {'pages': [[mark_item(2, 'length', 'SYN-P1 length')]]}
+        self.pick(B)
+        self.pick(A)
+        expect(links).to_have_count(1)
+        links.first.click()
+        self.assertEqual(viewer_query(A, P1), self.opened(2))
+        popup.wait_for_function(f"() => window.verified === true && KIN_VIEWER_ENTRY_TARGET?.studyUid === '{P1}'")
+        self.assertEqual({'studyUid': P1, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
+                         popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+
+    def test_01d_cited_line_paths_split_part_late_answer_and_stored_head(self):
+        """A cited mark on a split comparison study opens the part whose series holds it, in the list's own shape: the
+        second part, which only the original row's exam.reports carries, opens as its stored version, the first as the row's
+        exam; another patient's or institution's split study opens nothing; a lookup answered after the user opened the viewer otherwise (Compare) does not take that window back; the
+        report opened by its version (an Exam Reports button) links its lines when that version is the head the citations
+        were read from."""
+        row = next(r for r in self.rows if r['uid'] == A)
+        finding = 'b0000000-0000-4000-8000-000000000002'
+        original, logical, other_series = P1, uid(78), uid(901)
+        text = 'Liver lesion 12 mm.'
+        cite = {'cid': 'c-9', 'field': 'findings', 'insertedText': text, 'sameTextCount': 1, 'findingId': finding, 'findingRevision': 1,
+                'sourceIndex': 0, 'sourceRef': {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
+        self.extra_reports[A] = {**report_of(row), 'report': {**report_of(row)['report'], 'findings': text}}
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite], 'draft': []}
+        source = {'itemId': item_id(2), 'revision': 1, 'studyUid': original}
+        self.finding_revisions[(A, finding)] = {'revisions': [{'revision': 1, 'item': {'schemaVersion': 3, 'title': 'SYN', 'text': '',
+            'characteristics': '', 'lesionLocation': '', 'sources': [source], 'primary': 0}}], 'nextCursor': None}
+        self.items[original] = {'pages': [[mark_item(2, 'length', 'SYN split length')]]}
+
+        def split(owner, second):
+            # The clinician list answers a split original as ONE row (api/src/pacs/clinician.ts clinicianStudies/examOf):
+            # its exam is the first part (the part whose logical UID is the original), and each part's readable report head
+            # is in that row's exam.reports (relatedExamReports, the scope examScopeView gives). The second part, a logical
+            # UID, is no row of the list.
+            scope = lambda report, n: {'reportUid': report, 'groupId': 'syn-split', 'kind': 'split', 'part': n, 'active': True,
+                'sources': [{'studyUid': owner, 'series': {'mode': 'exclude' if n == 0 else 'include', 'uids': [second]}}],
+                'generation': f'syn-split-{n}', 'hasMembership': True}
+            target = next(r for r in self.rows if r['uid'] == owner)
+            target['report'] = {**FINAL, 'version': 2, 'scope': scope(owner, 0)}
+            target['exam'] = {'id': 'syn-split', 'active': True, 'baseUid': owner, 'readable': True, 'studies': [owner],
+                              'scope': scope(owner, 0), 'reports': [
+                                  {'uid': owner, 'version': 2, 'action': 'approve', 'scope': scope(owner, 0)},
+                                  {'uid': logical, 'version': 1, 'action': 'approve', 'scope': scope(logical, 1)}]}
+            self.exam_scopes = {owner: scope(owner, 0), logical: scope(logical, 1)}
+
+        split(original, SERIES)
+        self.open_home()
+        self.pick(A)
+        link = self.page.locator('#report-body button.cited-line')
+        expect(link).to_have_count(1)
+        # The mark on the second part (its series): that part opens beside this exam, as its stored version, once.
+        with self.page.expect_popup() as info:
+            link.click()
+        popup = info.value
+        opened = self.opened(1)
+        self.assertEqual([A + ',' + original], opened['StudyInstanceUIDs'])
+        scopes = json.loads(opened['kinExamScopes'][0])
+        self.assertEqual({'reportUid': logical, 'groupId': 'syn-split', 'part': 1}, scopes['prior'], 'the part whose series holds the mark')
+        self.assertEqual(1, scopes['priorVersion'])
+        self.assertIn((logical, {'purpose': ['stored'], 'version': ['1']}), self.scope_queries)
+        popup.wait_for_function('window.verified===true')
+        self.assertEqual(original, popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET.studyUid'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+        # The mark on the first part: the row's own exam opens beside, as before.
+        split(original, other_series)
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        expect(link).to_have_count(1)
+        link.click()
+        scopes = json.loads(self.opened(2)['kinExamScopes'][0])
+        self.assertEqual({'reportUid': original, 'groupId': 'syn-split', 'part': 0}, scopes['prior'])
+        popup.wait_for_function(f"() => window.verified === true && KIN_VIEWER_ENTRY_TARGET?.studyUid === '{original}'")
+        # The same split shape on another patient's study, or another institution's: nothing opens.
+        for stranger in (N, T):
+            with self.subTest(stranger=stranger):
+                source['studyUid'] = stranger
+                self.items[stranger] = {'pages': [[mark_item(2, 'length', 'SYN stranger length')]]}
+                split(stranger, SERIES)
+                self.page.locator('#refresh').click()
+                expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+                self.pick(A)
+                expect(link).to_have_count(1)
+                link.click()
+                expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.')
+                self.settle()
+                self.assertEqual(2, len(self.viewer_opens))
+        source['studyUid'] = original
+        split(original, SERIES)
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        expect(link).to_have_count(1)
+        # A lookup still on its way when Compare is pressed: its late answer opens nothing.
+        self.hold_findings = True
+        link.click()
+        self.wait_until(lambda: self.held_findings, 'the finding lookup held')
+        self.page.locator(f'#compare-list li[data-uid="{P1}"] button').click()
+        self.wait_until(lambda: len(self.viewer_opens) == 3, 'the Compare opening')
+        route, answer = self.held_findings.pop()
+        self.hold_findings = False
+        route.fulfill(json=answer)
+        self.settle()
+        self.assertEqual(3, len(self.viewer_opens), 'the late lookup does not take the window back')
+        self.assertNotEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+        # The report opened by its version from Exam Reports: it is the head the citations were read from, so its line links.
+        row['exam'] = {'reports': [{'uid': A, 'version': FINAL['version'], 'action': 'approve', 'scope': exam_scope(A)}]}
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        self.page.get_by_role('button', name=f"Original exam · v{FINAL['version']}").click()
+        expect(self.page.locator('#report-target')).to_be_visible()
+        expect(link).to_have_count(1)
+
     def test_02_candidates_are_the_same_server_patient_key_only(self):
         self.open_home()
         seen = self.pick(A)
@@ -1475,7 +1762,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
     def test_05_clinician_viewer_offers_no_create_link_or_save_control(self):
         self.open_viewer()
         seen = self.wait_panel('ready', VA)
-        self.assertEqual('확정 판독문 r4의 저장 항목 4개 · 읽기 전용', seen['status'])
+        self.assertEqual('저장 항목 4개 · 읽기 전용', seen['status'])
         self.assertEqual(['Refresh', 'Go to Image', 'Go to Image', 'Go to Image', 'Go to Image'], seen['buttons'])
         self.assertEqual(([], 0, [RO_NOTE]), (seen['links'], seen['inputs'], seen['notes']))
         self.assertEqual([['Key Image · Saved r1', 'Read-only', 'SYN-A key', 'SYN-A key note', '프레임 1', 'Go to Image'], ['Length · Saved r2', 'Read-only', 'SYN-A length', '프레임 1', 'Go to Image'], ['Angle · Saved r1', 'Read-only', 'SYN-A angle', '프레임 1', UNVERIFIED, 'Go to Image'], ['Arrow · Saved r1', 'Read-only', 'SYN-A arrow', '프레임 2', 'Go to Image']], seen['rows'])
@@ -1496,7 +1783,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual([], self.page.evaluate('synMounted'))
         self.assertEqual({'summary': 'Viewer Status', 'buttons': [], 'note': '읽기 전용 화면입니다. 배치 저장·복원과 Hanging Protocol은 제공하지 않습니다. 화면 배치는 뷰어의 기본 레이아웃 도구로 바꿀 수 있습니다.'}, self.page.evaluate(LAYOUT))
         self.assertEqual(0, self.page.locator('[data-syn-module]').count())
-        for text in [seen['status'], RO_NOTE, RO_TOOL, RO_SR, RO_WITHHELD, RO_DENIED, *sum(seen['rows'], [])]:
+        for text in [seen['status'], RO_NOTE, RO_TOOL, RO_SR, RO_EMPTY, RO_DENIED, *sum(seen['rows'], [])]:
             self.assertIsNone(AVOIDED.search(text), text)
 
     def test_05b_writer_sessions_unanswered_me_and_controls(self):
@@ -1540,6 +1827,10 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                              & set(self.panel()['buttons']), self.panel()['buttons'])
             self.assertEqual('undefined', self.page.evaluate('synAddLength()'))
             self.assertEqual(RO_TOOL, self.panel()['status'])
+            # the list it reads is drawn (the server's {items, nextCursor}, to its last page) with its verified mark.
+            seen = self.wait_panel('ready', VA)
+            self.assertEqual(['SYN-A key', 'SYN-A length', 'SYN-A angle', 'SYN-A arrow'], [row[2] for row in seen['rows']])
+            self.assertEqual([['Length', 'SYN-A length', True]], self.page.evaluate('synDrawn()'))
             # A reload of the tab: no hand-off, the mode of the last one stays.
             self.viewer_handoff = False
             self.open_viewer()
@@ -1553,16 +1844,79 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         finally:
             self.viewer_mode, self.viewer_handoff = None, True
 
-    def test_06_states_loading_empty_withheld_failed_and_denied(self):
+    def test_05d_read_only_viewer_docks_its_panels_for_its_account(self):
+        """Secondary panels without obstructing the images: the read-only document mounts the workspace dock for its
+        two panels once both are there, keyed by its own account as a writer's dock is ([institution, sub]); a mode re-entry
+        mounts it again (the dock adopts the new panels). A writer's dock stays the Tech Note bridge's (not mounted here).
+        test_05e measures that the docked panels cover no image cell."""
+        recorder = """() => { window.synDocks = []; window.KinViewerWorkspaceDock = (w, p) => { synDocks.push({ owner: p.owner(), allowed: p.allowed(),
+          panels: ['kin-viewer-history', 'kin-viewer-layout'].every(id => !!document.getElementById(id)) }); }; }"""
+        for account, expected in ((CLINICIAN, 1), (RADIOLOGIST, 0)):
+            with self.subTest(roles=account['roles']):
+                self.me, self.item_requests, self.cursors = (account, [], {})
+                self.open_viewer(before_boot=recorder)
+                self.modules_settled()
+                self.settle()
+                docks = self.page.evaluate('synDocks')
+                owner = json.dumps([account['institution'], account['sub']], separators=(',', ':'))
+                self.assertEqual([{'owner': owner, 'allowed': True, 'panels': True}] * expected, docks)
+                if expected:
+                    self.page.evaluate('synReenter()')
+                    self.modules_settled()
+                    self.wait_until(lambda: len(self.page.evaluate('synDocks')) == 2, 'the dock mounted again at re-entry')
+        self.me = CLINICIAN
+
+    def test_05e_docked_panels_cover_no_image_cell(self):
+        """The secondary panels stay available without obstructing the images: in a 1366x768 window and a narrow one, with
+        the dock at the bottom and at the top, folded and with either panel open, no visible panel or dock row overlaps an
+        image cell, and the cells keep their height. The same panels floating (no dock) do overlap (the check bites)."""
+        def panels(width, height):
+            page = self.context.new_page()
+            page.set_viewport_size({'width': width, 'height': height})
+            page.set_content(DOCK_PAGE)
+            page.add_script_tag(path=str(WORK_CONTEXT))
+            page.evaluate("""styles => {
+              KinWorkContext.follow({ onLifecycle(listener) { listener({ state: 'active', session: 'SYN' }); } });
+              for (const [id, css] of Object.entries(styles)) {
+                const p = document.createElement('details'); p.id = id; p.open = true; p.style.cssText = css;
+                p.innerHTML = '<summary>' + id + '</summary><p role="status">SYN status</p><p>SYN line one</p><p>SYN line two</p>';
+                document.body.append(p);
+              } }""", DOCK_PANEL_STYLES)
+            return page
+        page = panels(1366, 768)
+        try:
+            self.assertGreater(page.evaluate(DOCK_OVERLAP)['area'], 0)
+        finally:
+            page.close()
+        for width, height in ((1366, 768), (900, 640)):
+            for placement in ('bottom', 'top'):
+                for shown in (-1, 0, 1):
+                    with self.subTest(size=(width, height), placement=placement, panel=shown):
+                        page = panels(width, height)
+                        try:
+                            page.add_script_tag(path=str(DOCK_SOURCE))
+                            mounted = page.evaluate("""pref => {
+                              const dock = KinViewerWorkspaceDock(window, { owner: () => JSON.stringify(['SYN-INST', 'SYN-CLIN']), allowed: () => true });
+                              return !!dock && dock.applyPreference(pref); }""",
+                                                    {'version': 2, 'placement': placement, 'panel': shown, 'autoHide': False})
+                            self.assertTrue(mounted)
+                            page.wait_for_timeout(50)
+                            seen = page.evaluate(DOCK_OVERLAP)
+                            self.assertEqual(0, seen['area'], seen)
+                            self.assertTrue(all(h > 200 for h in seen['cells']), seen)
+                        finally:
+                            page.close()
+
+    def test_06_states_loading_empty_failed_and_denied(self):
         self.hold_items = {VA}
         self.open_viewer()
         self.wait_until(lambda: self.held_items, 'the held first read')
         seen = self.panel()
         self.assertEqual(('loading', LOADING, ['Refresh'], []), (seen['state'], seen['status'], seen['buttons'], seen['rows']))
         self.hold_items = set()
-        self.release(self.held_items.pop()[1], {'uid': VA, 'final': True, 'reportVersion': 4, 'items': [], 'nextCursor': None})
+        self.release(self.held_items.pop()[1], {'items': [], 'nextCursor': None})
         self.assertEqual('empty', self.panel()['state'])
-        cases = [(VE, 'empty', '확정 판독문 r3에 저장된 측정·키 이미지가 없습니다 · 읽기 전용', ['Refresh']), (VW, 'withheld', RO_WITHHELD, ['Refresh']), (VX, 'failed', '저장 항목을 불러오지 못했습니다. 검사를 찾을 수 없습니다 (HTTP 404) Refresh로 다시 읽으세요.', ['Refresh']), (VY, 'failed', '저장 항목을 불러오지 못했습니다. 판독 상태가 바뀌었습니다. 새로고침하세요. (HTTP 409 · VIEWER_REPORT_CHANGED) Refresh로 다시 읽으세요.', ['Refresh']), (VO, 'failed', '저장 항목을 불러오지 못했습니다. 응답 형식을 확인할 수 없습니다. Refresh로 다시 읽으세요.', ['Refresh']), (VQ, 'failed', '저장 항목을 불러오지 못했습니다. 응답 형식을 확인할 수 없습니다. Refresh로 다시 읽으세요.', ['Refresh']), (VZ, 'denied', RO_DENIED, ['Recheck Access'])]
+        cases = [(VE, 'empty', RO_EMPTY, ['Refresh']), (VX, 'failed', '저장 항목을 불러오지 못했습니다. 검사를 찾을 수 없습니다 (HTTP 404) Refresh로 다시 읽으세요.', ['Refresh']), (VY, 'failed', '저장 항목을 불러오지 못했습니다. 숨긴 표시 항목이나 형식이 잘못된 이어받기 값으로는 조회할 수 없습니다 (HTTP 400) Refresh로 다시 읽으세요.', ['Refresh']), (VO, 'failed', '저장 항목을 불러오지 못했습니다. 응답 형식을 확인할 수 없습니다. Refresh로 다시 읽으세요.', ['Refresh']), (VZ, 'denied', RO_DENIED, ['Recheck Access'])]
         for target, state, status, buttons in cases:
             with self.subTest(study=target, state=state):
                 self.page.evaluate('study => synSwitch(study)', target)
@@ -1570,19 +1924,74 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 self.settle()
                 seen = self.panel()
                 self.assertEqual((state, status, buttons, []), (seen['state'], seen['status'], seen['buttons'], seen['rows']))
+        # the items of a study whose report is not signed are shown as the server sends them (to a radiologist alike),
+        # and a list of two pages is read to its end.
+        for target, rows in ((VW, [['Key Image · Saved r1', 'Read-only', 'SYN-W unsigned report key', '프레임 1', 'Go to Image']]),
+                             (VQ, [['Key Image · Saved r1', 'Read-only', 'SYN-Q key one', '프레임 1', 'Go to Image'],
+                                   ['Key Image · Saved r1', 'Read-only', 'SYN-Q key two', '프레임 1', 'Go to Image']])):
+            with self.subTest(study=target, state='ready'):
+                self.page.evaluate('study => synSwitch(study)', target)
+                seen = self.wait_panel('ready', target)
+                self.assertEqual((f'저장 항목 {len(rows)}개 · 읽기 전용', rows), (seen['status'], seen['rows']))
         self.assertEqual(2, len([1 for target, _ in self.reads() if target == VQ]))
         self.items[VE] = HIDDEN_REFUSED
         self.page.evaluate('study => synSwitch(study)', VE)
         self.wait_panel('failed', VE)
         self.assertEqual('저장 항목을 불러오지 못했습니다. 숨긴 표시 항목이나 형식이 잘못된 이어받기 값으로는 조회할 수 없습니다 (HTTP 400) Refresh로 다시 읽으세요.', self.panel()['status'])
-        self.items[VE] = {'version': 3, 'pages': [[key_item(51, 'SYN-E key')]]}
+        self.items[VE] = {'pages': [[key_item(51, 'SYN-E key')]]}
         self.page.get_by_role('button', name='Refresh', exact=True).click()
         seen = self.wait_panel('ready', VE)
         self.assertEqual([['Key Image · Saved r1', 'Read-only', 'SYN-E key', '프레임 1', 'Go to Image']], seen['rows'])
         self.item_requests, self.cursors = ([], {})
 
+    def test_06b_physician_hand_off_opens_the_named_frame_and_its_mark(self):
+        """Clinician Home's Open Annotated Image and a cited line hand the viewer the original image the server named
+        (study, series, SOP, frame and the saved item). The read-only viewer opens that frame once its list is drawn and
+        highlights that item, says so, and lets the opening hold go (Auto Save View may save the view after it). An item no
+        longer in the list, or a series this window does not hold, is said as such. A reload of the tab moves nowhere."""
+        entry_note = "() => { const n = document.getElementById('kin-viewer-entry-note'); return n && !n.hidden ? n.textContent : null; }"
+        highlighted = "() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.highlighted).map(a => a.data.label)"
+        holds = "() => [window.kinViewerOpeningRestore?.holds?.size ?? null, window.kinViewerOpeningRestore?.held ?? null]"
+        navigable = f"() => ({NAVIGABLE})({json.dumps([SERIES, SOP])})"
+        cases = [
+            (item_id(2), SERIES, '요청한 원본 영상(프레임 1)으로 이동했습니다. 표식을 강조했습니다.', ['SYN-A length'], 1),
+            (item_id(1), SERIES, '요청한 원본 영상(프레임 1)으로 이동했습니다. 키 이미지입니다.', [], 1),
+            (item_id(99), SERIES, '요청한 원본 영상(프레임 1)으로 이동했습니다. 그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제).', [], 1),
+            (item_id(2), '1.2.826.0.1.3680043.10.5432.999', '요청한 원본 영상으로 이동하지 못했습니다. 이 창에서 원본 시리즈를 찾을 수 없습니다.', [], 0),
+        ]
+        try:
+            for item, series, said, lit, moved in cases:
+                with self.subTest(item=item, series=series):
+                    self.me, self.viewer_mode = CLINICIAN, 'physician'
+                    self.viewer_target = {'studyUid': VA, 'seriesUid': series, 'sopUid': SOP, 'frame': 1, 'itemId': item}
+                    self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
+                    self.open_viewer(before_boot=navigable)
+                    self.wait_panel('ready', VA)
+                    self.wait_until(lambda: self.page.evaluate(entry_note) is not None, 'the target opened')
+                    self.assertEqual(said, self.page.evaluate(entry_note))
+                    self.assertEqual(lit, self.page.evaluate(highlighted))
+                    self.assertEqual(moved, self.page.evaluate('synIndexed.length'))
+                    self.assertEqual([0, 0], self.page.evaluate(holds), 'the opening hold let go')
+                    self.assertEqual('read-only', self.session())
+                    if moved:
+                        # A mode re-entry in the same document does not open the target again (the user's view stays).
+                        self.page.evaluate('synReenter()')
+                        self.wait_panel('ready', VA)
+                        self.settle()
+                        self.assertEqual(moved, self.page.evaluate('synIndexed.length'), 'no second move at a mode re-entry')
+            # A reload of the tab: no hand-off, so no target and no hold.
+            self.viewer_handoff = False
+            self.open_viewer(before_boot=navigable)
+            self.wait_panel('ready', VA)
+            self.settle()
+            self.assertEqual((None, [], 0, [None, None]), (self.page.evaluate(entry_note), self.page.evaluate(highlighted),
+                                                           self.page.evaluate('synIndexed.length'), self.page.evaluate(holds)))
+        finally:
+            self.viewer_mode, self.viewer_target, self.viewer_handoff = None, None, True
+            self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
+
     def test_07_a_b_a_across_the_comparison_study(self):
-        old = {'uid': VA, 'final': True, 'reportVersion': 4, 'items': [key_item(61, 'SYN-A-OLD')], 'nextCursor': None}
+        old = {'items': [key_item(61, 'SYN-A-OLD')], 'nextCursor': None}
         for name in ('shipped',):
             with self.subTest(file=name):
                 self.item_requests, self.cursors, self.held_items = ([], {}, [])
@@ -1706,31 +2115,48 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 self.assertEqual(('Viewer Status', []), (self.layout()['summary'], self.layout()['buttons']))
                 self.assertFalse(WRITER_CONTROLS & set(self.panel()['buttons']), self.panel()['buttons'])
 
-    def test_10_periodic_and_focus_checks_follow_the_final_report(self):
+    def test_10_periodic_and_focus_checks_follow_the_server_list(self):
+        """the read-only list is the server's current list. A check (focus, every 15 s) reads it whole again and redraws
+        only when an item, its revision or its source verdict changed: an item hidden or deleted leaves the rows and the image,
+        a new one appears, an unchanged list is left as drawn."""
         self.open_viewer()
         self.wait_panel('ready', VA)
         self.assertEqual([['Length', 'SYN-A length', True]], self.page.evaluate('synDrawn()'))
-        self.items[VA] = 'withheld'
+        # Unchanged: the rows stay the very same nodes.
+        self.page.evaluate("() => { window.synRowsBefore = [...document.querySelectorAll('#kin-viewer-history section[data-item-id]')]; }")
+        reads = len(self.reads())
         self.focus()
-        seen = self.wait_panel('withheld', VA)
-        self.assertEqual((RO_WITHHELD, [], ['Refresh']), (seen['status'], seen['rows'], seen['buttons']))
-        self.assertEqual([], self.page.evaluate('synDrawn()'))
-        self.items[VA] = {'version': 5, 'pages': [[key_item(71, 'SYN-A r5 key')]]}
+        self.wait_until(lambda: len(self.reads()) >= reads + 2, 'the whole list read again')
+        self.settle()
+        self.assertEqual(('ready', 4), (self.panel()['state'], len(self.panel()['rows'])))
+        self.assertTrue(self.page.evaluate("() => window.synRowsBefore.every(n => n.isConnected)"), 'an unchanged list is not redrawn')
+        # The length hidden by its radiologist: the server's list no longer has it.
+        self.items[VA] = {'pages': [[key_item(1, 'SYN-A key', 'SYN-A key note')]]}
         self.focus()
-        seen = self.wait_panel('ready', VA)
-        self.assertEqual(('확정 판독문 r5의 저장 항목 1개 · 읽기 전용', [['Key Image · Saved r1', 'Read-only', 'SYN-A r5 key', '프레임 1', 'Go to Image']]), (seen['status'], seen['rows']))
-        self.hold_items, self.items[VA] = ({VA}, {'version': 6, 'pages': [[key_item(72, 'SYN-A r6 key')]]})
+        self.wait_until(lambda: len(self.panel()['rows']) == 1, 'the hidden length taken off')
+        self.assertEqual(('저장 항목 1개 · 읽기 전용', []), (self.panel()['status'], self.page.evaluate('synDrawn()')))
+        # The same revision whose source the server could not confirm this time: its mark is withdrawn.
+        self.items[VA] = {'pages': [[mark_item(2, 'length', 'SYN-A length', revision=2)]]}
         self.focus()
-        self.wait_until(lambda: self.held_items, 'the r6 read held')
-        seen = self.panel()
-        self.assertEqual(('loading', []), (seen['state'], seen['rows']))
-        self.hold_items = set()
-        request = self.held_items[0][1].request
-        self.held_items.pop()[1].fulfill(status=CHANGED[0], json=CHANGED[1])
-        self.wait_until(lambda: any((item is request for item in self.finished)), 'the failed r6 read reaching the page')
+        self.wait_until(lambda: self.page.evaluate('synDrawn()') == [['Length', 'SYN-A length', True]], 'the length back')
+        self.items[VA] = {'pages': [[mark_item(2, 'length', 'SYN-A length', status='unverified', revision=2)]]}
+        self.focus()
+        self.wait_until(lambda: self.page.evaluate('synDrawn()') == [], 'the unverified length withdrawn')
+        self.assertEqual([['Length · Saved r2', 'Read-only', 'SYN-A length', '프레임 1', UNVERIFIED, 'Go to Image']], self.panel()['rows'])
+        # A check the server refuses (4xx) takes the list down; a check it could not answer (5xx) keeps it.
+        self.items[VA] = {'pages': [[key_item(71, 'SYN-A new key')]]}
+        self.focus()
+        seen = self.wait_until(lambda: [r[2] for r in self.panel()['rows']] == ['SYN-A new key'], 'the new key shown')
+        self.items[VA] = (503, {'statusCode': 503, 'message': 'SYN busy'})
+        self.focus()
+        self.wait_until(lambda: len(self.reads()) and self.reads()[-1] == (VA, {'limit': ['100']}), 'the check asked')
+        self.settle()
+        self.assertEqual(('ready', ['SYN-A new key']), (self.panel()['state'], [r[2] for r in self.panel()['rows']]))
+        self.items[VA] = NOT_FOUND
+        self.focus()
         seen = self.wait_panel('failed', VA)
-        self.assertEqual([], seen['rows'])
-        self.assertEqual([], self.page.evaluate('synDrawn()'))
+        self.assertEqual(([], []), (seen['rows'], self.page.evaluate('synDrawn()')))
+        # A->B->A: A's check answered after the study changed and came back changes nothing.
         self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
         self.open_viewer(uncancellable=True)
         self.wait_panel('ready', VA)
@@ -1741,7 +2167,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.wait_panel('ready', VP)
         self.page.evaluate('study => synSwitch(study)', VA)
         self.wait_panel('ready', VA)
-        self.release(self.held_probes.pop()[1], {'uid': VA, 'final': False, 'items': None, 'nextCursor': None})
+        self.release(self.held_probes.pop()[1], {'items': [], 'nextCursor': None})
         seen = self.panel()
         self.assertEqual(('ready', ['SYN-A key', 'SYN-A length', 'SYN-A angle', 'SYN-A arrow']), (seen['state'], [row[2] for row in seen['rows']]))
         self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
@@ -1827,7 +2253,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             self.assertFalse(self.page.evaluate('KinViewerSessionBoundary.ended()'))
             self.server_end();self.assert_closed()
 
-    def test_12_final_list_is_rechecked_without_a_source_frame(self):
+    def test_12_list_is_rechecked_without_a_source_frame(self):
         self.open_viewer()
         ready = self.wait_panel('ready', VA)['status']
         before = self.probes()
@@ -1837,25 +2263,25 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         seen = self.panel()
         self.assertEqual(('ready', 4, f'{ready} · {RO_UNMATCHED}'), (seen['state'], len(seen['rows']), seen['status']))
         self.assertEqual(before, self.probes())
-        self.items[VA] = 'withheld'
+        self.items[VA] = {'pages': [[]]}
         self.focus()
-        seen = self.wait_panel('withheld', VA)
-        self.assertEqual(([], f'{RO_WITHHELD} · {RO_UNMATCHED}', 'unmatched'), (seen['rows'], seen['status'], seen['frame']))
+        seen = self.wait_panel('empty', VA)
+        self.assertEqual(([], f'{RO_EMPTY} · {RO_UNMATCHED}', 'unmatched'), (seen['rows'], seen['status'], seen['frame']))
         self.assertEqual([], self.page.evaluate('synDrawn()'))
-        self.items[VA] = {'version': 5, 'pages': [[key_item(71, 'SYN-A r5 key')], [mark_item(72, 'length', 'SYN-A r5 length')]]}
+        self.items[VA] = {'pages': [[key_item(71, 'SYN-A new key')], [mark_item(72, 'length', 'SYN-A new length')]]}
         reads = len(self.reads())
         self.page.evaluate('synAdvance(16000)')
         seen = self.wait_panel('ready', VA)
         cursor = list(self.cursors)[-1]
         self.assertEqual([(VA, {'limit': ['100']}), (VA, {'limit': ['100'], 'cursor': [cursor]})], self.reads()[reads:])
-        self.assertEqual((['SYN-A r5 key', 'SYN-A r5 length'], 'unmatched', []), ([row[2] for row in seen['rows']], seen['frame'], self.page.evaluate('synDrawn()')))
+        self.assertEqual((['SYN-A new key', 'SYN-A new length'], 'unmatched', []), ([row[2] for row in seen['rows']], seen['frame'], self.page.evaluate('synDrawn()')))
         before = self.probes()
         self.frameless(False)
         self.wait_until(lambda: self.probes() > before and self.panel()['frame'] is None, "the check on the frame's return")
         self.settle()
         seen = self.panel()
-        self.assertEqual(('ready', '확정 판독문 r5의 저장 항목 2개 · 읽기 전용'), (seen['state'], seen['status']))
-        self.assertEqual([['Length', 'SYN-A r5 length', True]], self.page.evaluate('synDrawn()'))
+        self.assertEqual(('ready', '저장 항목 2개 · 읽기 전용'), (seen['state'], seen['status']))
+        self.assertEqual([['Length', 'SYN-A new length', True]], self.page.evaluate('synDrawn()'))
         self.assertIsNone(AVOIDED.search(RO_UNMATCHED))
         self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
         self.open_viewer(uncancellable=True)
@@ -1869,7 +2295,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.wait_panel('ready', VP)
         self.page.evaluate('study => synSwitch(study)', VA)
         self.wait_panel('ready', VA)
-        self.release(self.held_probes.pop()[1], {'uid': VA, 'final': False, 'items': None, 'nextCursor': None})
+        self.release(self.held_probes.pop()[1], {'items': [], 'nextCursor': None})
         seen = self.panel()
         self.assertEqual(('ready', None, ['SYN-A key', 'SYN-A length', 'SYN-A angle', 'SYN-A arrow']), (seen['state'], seen['frame'], [row[2] for row in seen['rows']]))
         self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
@@ -1949,24 +2375,25 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 self.assertEqual((a_labels, a_drawn), ([row[2] for row in seen['rows']], self.page.evaluate('synDrawn()')))
                 cursor = next(iter(self.cursors))
                 self.assertEqual([(VA, {'includeHidden': ['true'], 'limit': ['100']}), (VA, {'limit': ['100']}), (VA, {'limit': ['100'], 'cursor': [cursor]})], self.reads())
-                self.items[VA] = 'withheld'
+                self.items[VA] = {'pages': [[]]}
                 self.focus()
-                seen = self.wait_panel('withheld', VA)
-                self.assertEqual((RO_WITHHELD, [], []), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()')))
+                seen = self.wait_panel('empty', VA)
+                self.assertEqual((RO_EMPTY, [], []), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()')))
         with self.subTest(step='c'):
             self.writer_open(hold={(VA, 'first')})
             self.wait_until(lambda: self.held_writer, 'the first author page held')
-            self.items[VA] = 'withheld'
+            self.items[VA] = {'pages': [[]]}
             self.to_clinician_only()
-            seen = self.wait_panel('withheld', VA)
-            self.assertEqual((RO_WITHHELD, [], []), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()')))
+            seen = self.wait_panel('empty', VA)
+            self.assertEqual((RO_EMPTY, [], []), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()')))
             self.assertEqual('dropped', self.late(self.held_writer.pop()[2], author_page(LATE_MARK, LATE_KEY), 'SYN LATE'))
             self.items[VA], self.hold_next = (copy.deepcopy(ITEMS[VA]), {VA})
             self.focus()
-            self.wait_until(lambda: self.held_next, 'the second final page held')
-            self.assertEqual(('loading', [], []), self.snapshot())
+            self.wait_until(lambda: self.held_next, 'the second page of the check held')
+            # The list on screen stays as drawn while its check reads the whole list again.
+            self.assertEqual(('empty', [], []), self.snapshot())
             _, cursor, route = self.held_next.pop()
-            self.release(route, {**self.clinician_page(VA, cursor)['json'], 'reportVersion': 5})
+            self.release(route, {'items': 'SYN-not-a-list', 'nextCursor': None})
             seen = self.wait_panel('failed', VA)
             self.assertEqual(([], []), (seen['rows'], self.page.evaluate('synDrawn()')))
             self.hold_next = set()
@@ -2208,7 +2635,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.wait_panel('ready', VA)
         self.assertEqual(clear, self.list_view(length))
         self.assertTrue(self.page.evaluate(unsaved))
-        for step in ('refresh', 'frame lost and back', 'final:false, then final'):
+        for step in ('refresh', 'frame lost and back', 'emptied, then back'):
             with self.subTest(step=step):
                 if step == 'refresh':
                     self.refresh_final()
@@ -2220,10 +2647,10 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                     self.wait_until(lambda: self.probes() > before and self.panel()['frame'] is None, "the check on the frame's return")
                     self.settle()
                 else:
-                    self.items[VA] = 'withheld'
+                    self.items[VA] = {'pages': [[]]}
                     self.focus()
-                    seen = self.wait_panel('withheld', VA)
-                    self.assertEqual((RO_WITHHELD, [], [], ['Refresh']), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()'), seen['buttons']))
+                    seen = self.wait_panel('empty', VA)
+                    self.assertEqual((RO_EMPTY, [], [], ['Refresh']), (seen['status'], seen['rows'], self.page.evaluate('synDrawn()'), seen['buttons']))
                     self.items[VA] = copy.deepcopy(ITEMS[VA])
                     self.focus()
                     self.wait_panel('ready', VA)

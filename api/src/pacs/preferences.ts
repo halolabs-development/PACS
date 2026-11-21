@@ -298,6 +298,8 @@ export class PacsPreferences {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
     const v2 = v.version === 2;
     if (v2) names.push('finalize');
+    // Version 2 may also carry Finalize & Next (Approve & Next); a map saved before it existed has no such key.
+    if (v2 && Object.prototype.hasOwnProperty.call(v, 'finalizeNext')) names.push('finalizeNext');
     if (Object.keys(v).sort().join(',') !== [...names, ...(v2 ? ['version'] : [])].sort().join(',')) return false;
     const used = new Set();
     return names.every(id => {
@@ -393,9 +395,12 @@ export class PacsPreferences {
   async saveWorkspaceShortcuts(body: any, c: Caller) {
     const owner = this.workspaceOwner(c);
     const viewer = Object.prototype.hasOwnProperty.call(body ?? {}, 'viewerSettings');
+    const workspaceKeys = Object.prototype.hasOwnProperty.call(body ?? {}, 'bindings');
+    // Three forms: the workspace keys, the viewer settings, or both at one revision (the one shortcut tab saves both).
+    const shape = viewer && workspaceKeys ? 'bindings,expectedOwner,revision,viewerSettings' : viewer ? 'expectedOwner,revision,viewerSettings' : 'bindings,expectedOwner,revision';
     if (!body || typeof body !== 'object' || Array.isArray(body) ||
-        Object.keys(body).sort().join(',') !== (viewer ? 'expectedOwner,revision,viewerSettings' : 'bindings,expectedOwner,revision') ||
-        !(viewer ? this.validViewerSettings(body.viewerSettings) : this.validShortcutBindings(body.bindings)) ||
+        Object.keys(body).sort().join(',') !== shape ||
+        viewer && !this.validViewerSettings(body.viewerSettings) || workspaceKeys && !this.validShortcutBindings(body.bindings) ||
         !Number.isInteger(body.revision) || body.revision < 0 || body.revision >= 2147483647)
       throw new BadRequestException('단축키 설정 형식을 확인하세요');
     if (JSON.stringify(body.expectedOwner) !== JSON.stringify([owner.institution, owner.subject]))
@@ -409,10 +414,16 @@ export class PacsPreferences {
         const version = (stored?.bindings as any)?.version;
         const storedVersion = Number.isInteger(version) ? version : 1;
         // Invalid rows can be repaired at their current revision, as GET advertises.
-        if (!viewer && this.validShortcutBindings(workspace) && storedVersion > (body.bindings.version ?? 1)) throw conflict();
-        // A viewer save and a workspace save each retain the other surface's settings.
-        const bindings = viewer ? { ...workspace, viewerSettings: body.viewerSettings } :
-          { ...body.bindings, ...(viewerSettings ? { viewerSettings } : {}) };
+        if (workspaceKeys && this.validShortcutBindings(workspace) && storedVersion > (body.bindings.version ?? 1)) throw conflict();
+        // A map from a page that predates Finalize & Next keeps the stored Finalize & Next key; it may not take that key.
+        const kept = workspaceKeys && body.bindings.version === 2 && !Object.prototype.hasOwnProperty.call(body.bindings, 'finalizeNext') &&
+          this.validShortcutBindings(workspace) && typeof workspace.finalizeNext === 'string' ? workspace.finalizeNext : null;
+        if (kept && Object.values(body.bindings).includes(kept)) throw conflict();
+        const keys = kept ? { ...body.bindings, finalizeNext: kept } : body.bindings;
+        // A viewer save and a workspace save each retain the other surface's settings; a save of both replaces both.
+        const bindings = viewer && workspaceKeys ? { ...keys, viewerSettings: body.viewerSettings }
+          : viewer ? { ...workspace, viewerSettings: body.viewerSettings }
+          : { ...keys, ...(viewerSettings ? { viewerSettings } : {}) };
         if (body.revision === 0) return tx.workspaceShortcuts.create({ data: { ...owner, revision: 1, bindings } });
         const changed = await tx.workspaceShortcuts.updateMany({ where: { ...owner, revision: body.revision },
           data: { bindings, revision: { increment: 1 } } });

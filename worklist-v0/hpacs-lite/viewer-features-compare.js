@@ -683,6 +683,39 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     }
     if (!ratio.cells.size) { badge('ratio', ratio.reference, null); ratio = null; }
   }
+  // Matches every other shown cell to the reference cell's screen px per mm: the panel's Match Ratio button and the Match
+  // Ratio key (the selected cell as the reference) do this one thing. Null when the reference's spacing is not known.
+  function matchRatio(reference) {
+    const ref = scale(reference);
+    if (!ref?.perMm) return null;
+    clearBadges('ratio');
+    const detector = ref.spacing.source !== 'patient', matched = new Set(), skipped = new Set();
+    for (const id of cellIds()) {
+      if (id === reference) continue;
+      const now = scale(id);
+      if (!now) continue;
+      if (!now.perMm) { skipped.add(id); badge('ratio', id, null); continue; }
+      const zoom = model.ratioZoom(now.v.getZoom(), ref.perMm, now.perMm);
+      if (!zoom) { skipped.add(id); continue; }
+      now.v.setZoom(zoom); now.v.render(); matched.add(id);
+      badge('ratio', id, 'Match Ratio (same mm on screen)' + (detector || now.spacing.source !== 'patient' ? ' · detector scale' : ''));
+    }
+    if (matched.size) {
+      badge('ratio', reference, 'Match Ratio (same mm on screen) · reference' + (detector ? ' · detector scale' : ''));
+      ratio = { reference, cells: matched };
+    } else ratio = null;
+    return { matched, skipped };
+  }
+  const skippedText = skipped => '간격을 확인할 수 없어 제외한 칸: ' + cellIds().map((id, i) => skipped.has(id) ? i + 1 : null).filter(Boolean).join(', ');
+  // The Match Ratio key: the selected cell is the reference, matched at once without the panel; the outcome is said.
+  function matchRatioNow({ viewportId }) {
+    const done = matchRatio(viewportId);
+    if (!done) throw new Error('Match Ratio: 기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.');
+    const count = done.matched.size;
+    ui.toast(count ? 'Match Ratio: ' + count + ' other image' + (count === 1 ? '' : 's') + ' now at the same mm on screen as the selected image.'
+      + (done.skipped.size ? ' ' + skippedText(done.skipped) : '')
+      : 'Match Ratio: 맞출 다른 영상이 없습니다.' + (done.skipped.size ? ' ' + skippedText(done.skipped) : ''));
+  }
   function openMatchRatio({ viewportId }) {
     const panel = ui.panel({ id: 'match-ratio', title: 'Match Ratio' });
     if (!panel || panel.element.dataset.ready) return;
@@ -691,27 +724,10 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     const table = element('table', '', panel.body, 'kin-compare-table');
     const actions = element('div', '', panel.body, 'kin-compare-actions');
     const status = element('p', '', panel.body, 'kin-compare-status'); status.setAttribute('role', 'status');
-    const skipped = new Set();
     const match = button('Match Ratio', actions, () => {
-      const ref = scale(reference);
-      if (!ref?.perMm) { status.textContent = '기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.'; paint(); return; }
-      skipped.clear(); clearBadges('ratio');
-      const detector = ref.spacing.source !== 'patient', matched = new Set();
-      for (const id of cellIds()) {
-        if (id === reference) continue;
-        const now = scale(id);
-        if (!now) continue;
-        if (!now.perMm) { skipped.add(id); badge('ratio', id, null); continue; }
-        const zoom = model.ratioZoom(now.v.getZoom(), ref.perMm, now.perMm);
-        if (!zoom) { skipped.add(id); continue; }
-        now.v.setZoom(zoom); now.v.render(); matched.add(id);
-        badge('ratio', id, 'Match Ratio (same mm on screen)' + (detector || now.spacing.source !== 'patient' ? ' · detector scale' : ''));
-      }
-      if (matched.size) {
-        badge('ratio', reference, 'Match Ratio (same mm on screen) · reference' + (detector ? ' · detector scale' : ''));
-        ratio = { reference, cells: matched };
-      } else ratio = null;
-      status.textContent = skipped.size ? '간격을 확인할 수 없어 제외한 칸: ' + cellIds().map((id, i) => skipped.has(id) ? i + 1 : null).filter(Boolean).join(', ') : '';
+      const done = matchRatio(reference);
+      if (!done) { status.textContent = '기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.'; paint(); return; }
+      status.textContent = done.skipped.size ? skippedText(done.skipped) : '';
       requestAnimationFrame(paint);
     });
     function paint() {
@@ -746,6 +762,9 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   ui.menuItem('Compare', { id: 'compareScout', label: 'Scout Navigation', order: 6, run: withModel(openScout) });
   ui.menuItem('Compare', { id: 'compareMatchZoom', label: 'Match Zoom', order: 7, run: matchZoom });
   ui.menuItem('Compare', { id: 'compareMatchRatio', label: 'Match Ratio…', order: 8, run: withModel(openMatchRatio) });
+  // 05-8 "(Match Ratio, shortcut key)": a key of its own (none by default; Viewer Settings and Edit Shortcuts › Viewer give one)
+  // that matches at once; the menu item above still opens the panel.
+  ui.shortcut({ id: 'compareMatchRatioNow', label: 'Match Ratio', run: withModel(matchRatioNow) });
   ui.toolbarButton({ id: 'comparePrevPriorButton', label: '‹ Prior', title: 'Prev Prior Exam', order: 1, run: options => prior(-1, options) });
   ui.toolbarButton({ id: 'compareNextPriorButton', label: 'Prior ›', title: 'Next Prior Exam', order: 2, run: options => prior(1, options) });
 

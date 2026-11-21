@@ -1716,6 +1716,9 @@ jobs:
     - name: Auto Save View saved view per reader and study, read-back checks and Discard against an in-memory database
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-saved-view-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/viewer_auto_view_service_test.cjs -- node --test tests/viewer_auto_view_service_test.cjs
+    - name: In-app unread views and seen marks, input and role checks and the list's own filter, over a recording store
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/unread-marks-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/in_app_unread_service_test.cjs -- node --test tests/in_app_unread_service_test.cjs
     - name: Gateway operational status heartbeat rules, late beats, bounds and the admin read against the API memory table
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-status-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_status_server_test.cjs -- node --test tests/gateway_status_server_test.cjs

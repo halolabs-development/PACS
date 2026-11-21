@@ -6263,6 +6263,10 @@
         // issued itself for exactly this field and request (the mode checks and consumes it here, once per edit span).
         canEdit: (field, admission = null, at = null) => work.state() === "active" && !!selectedUid
           && !reportEditorBlock(admission && relatedMode.admits(admission, field, at) ? admission : null),
+        // An approved report that takes only an Addendum keeps its approved text (keepsApprovedText): every edit of the
+        // frame, typed or written, may only write after it. A refused typed edit is put back and said once.
+        keeps: (field, text, prior) => keepsApprovedText(field, text, prior),
+        kept: () => toast(kinSay(ADDENDUM_APPEND_ONLY), "err"),
       });
       return reportFrame;
     }
@@ -6387,6 +6391,8 @@
     function commitFailureRoute(e) {
       if (e?.code === "REPORT_HELD") return "held";
       if (e?.code === "REPORT_DRAFT_STALE") return "stale";
+      // The version lock: a head another window of this same account saved is "mine" (report-commit.ts head.mine).
+      if (e?.code === "REPORT_VERSION_CONFLICT" && e.body?.head?.mine === true) return "mine";
       if (String(e?.message ?? "").includes("저장했습니다")) return "reload";
       return "toast";
     }
@@ -6552,6 +6558,50 @@
       return RFIELDS.some(k => KinReportCitation.toLf(r[k] ?? "") !== KinReportCitation.toLf($("#" + k).value))
         || reportDrawingsChanged.get(uid) === true;
     }
+    /**
+     * An Addendum only adds to the approved report (the server decides it: report-commit.ts addendumRefusal - these are its
+     * words). `approvedHeadHere` is the approved text the editor's text stands on: the study is approved and the editor's
+     * text is based on its current version. A text based on an older version (a stale draft) has none here - the server
+     * answers its Addendum with the approved report to rebase on, and nothing local stands in that way.
+     */
+    const ADDENDUM_APPEND_ONLY = "추가기재는 승인본에 덧붙이기만 합니다 — 승인본의 글은 그대로 두고 그 뒤에 쓰세요";
+    const ADDENDUM_EMPTY = "덧붙인 내용이 없습니다 — 승인본 뒤에 추가기재할 글을 쓴 뒤 Addendum을 누르세요";
+    function approvedHeadHere(uid) {
+      const r = uid ? appState[uid] : null;
+      if (!serverMode || demoMode || !r || r.rs !== "A" || r.prelimHidden) return null;
+      if (reportBaseVersion(uid, r.version ?? 0) !== (r.version ?? 0)) return null;
+      return Object.fromEntries(RFIELDS.map(k => [k, KinReportCitation.toLf(String(r[k] ?? ""))]));
+    }
+    /**
+     * Where an approved report takes nothing but an Addendum from this reader (its 24-hour amendment is not open), the
+     * editor keeps each field's approved text: an edit - typed, or written by a command (template, dictation, Paste, a
+     * citation, a structured item, Related Report) - may only write after it. `prior` is the field's text before the edit:
+     * a text that did not keep the approved one already is not held (the server judges it).
+     */
+    function keepsApprovedText(field, text, prior) {
+      const head = approvedHeadHere(selectedUid);
+      const r = appState[selectedUid];
+      if (!head || !RFIELDS.includes(field) || (typeof amendApproval === "function" && amendApproval(r, true).open)) return true;
+      const lf = KinReportCitation.toLf;
+      if (prior !== undefined && !lf(String(prior)).startsWith(head[field])) return true;
+      return lf(String(text ?? "")).startsWith(head[field]);
+    }
+    /**
+     * Said before an Addendum is sent, with the server's words: nothing added to the approved text the editor stands on (the
+     * Addendum pressed with no change). Drawings count only when the draft is known to hold no drawing change (an attach or
+     * a removal goes to the server, which decides). Text that does not start with the approved text is not judged here:
+     * this page's approved text may be older than the server's, and the server then answers with the approved report to
+     * rebase on - the editor keeps the approved text it shows (keepsApprovedText) and the server decides the rest. Null: send.
+     */
+    function addendumRefusalHere(uid, texts) {
+      const head = approvedHeadHere(uid);
+      if (!head) return null;
+      const lf = KinReportCitation.toLf;
+      if (!RFIELDS.every(k => lf(String(texts[k] ?? "")).startsWith(head[k]))) return null;
+      const drawings = reportDraftDrawings.now(uid);
+      const added = RFIELDS.some(k => lf(String(texts[k] ?? "")).slice(head[k].length).trim());
+      return !added && drawings.known && drawings.drawings === null && reportDrawingsChanged.get(uid) !== true ? ADDENDUM_EMPTY : null;
+    }
     // 승인본에서는 고친 글이 생기거나 사라질 때 Approve가 열리고 닫힌다(위의 비교). 확정이 나가 있는 동안은 그 확정이 단추를 쥔다.
     onReportField("input", () => { if (appState[selectedUid]?.rs === "A" && !commitInFlight) updateReportButtons(); });
 
@@ -6696,7 +6746,9 @@
                    `다음 자동 저장이 다시 시도합니다`
          : deferred ? `<b>${lead}Unsaved Draft</b> — 이 화면에 담아 두었습니다 · 서버 저장은 아직 확인되지 않았습니다`
                   : `<b>${lead}Draft Saved${at ? " " + esc(draftTime(d.at)) : ""}</b> — ${apart ? "초안으로 " : "개인 초안으로 "}자동 저장됨 (확정 전)`) +
-        (behind ? ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 확정됐습니다`
+        // A version saved since is "saved" (Save, Defer, Preliminary are not a finalization); only an approved one is approved.
+        (behind ? (r.rs === "A" ? ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 승인됐습니다`
+                                : ` · <b>주의</b> 이 초안을 쓰기 시작한 뒤 v${esc(r.version)}이 저장됐습니다`)
                 : `<span id="drafthint"></span>`);
       renderDraftHint();
     }
@@ -7210,7 +7262,7 @@
      * 병합은 하지 않는다 — 두 판독문을 기계가 섞으면 누구의 진술도 아닌 글이 남는다.
      */
     let staleSeq = 0, stalePane = null, staleBusy = false;
-    function openStaleRebase(uid, seq, e) {
+    function openStaleRebase(uid, seq, e, action = null) {
       /**
        * **그리기 전에** UID와 선택 순번을 함께 확인한다.
        *
@@ -7227,7 +7279,8 @@
       const head = staleHeadOf(e);
       // 모양이 아니면 아무것도 "승인본"이라고 보여주지 않는다. 그때는 일반 실패로 끝낸다.
       if (!head) { toast("저장 실패: " + e.message, "err"); return; }
-      stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head };
+      // The refused decision rides with the pane: an Addendum is re-based as an addition to the new approved text.
+      stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, action };
       drawApprovedPane(head, {
         title: "Approved Report Changed",
         message: `이 초안은 v${head.draftBaseVersion ?? "?"}을 기준으로 씁니다. 그 뒤 v${head.version}이 승인됐습니다 — ` +
@@ -7302,6 +7355,40 @@
     }
     $("#b-approved-view").addEventListener("click", viewApprovedReport);
 
+    /**
+     * An Addendum re-based on the approved report the pane shows: for each field, this text's addition to the version it was
+     * written on (`draftBaseVersion` - its text read from the history; v0 is three empty fields) is put after the new approved
+     * text. A field that already starts with the new approved text stays as it is (nothing is added twice). `{ texts }`, or
+     * `{ refused }` with the reason: that version's text cannot be read (not answered, hidden from this reader), or a field
+     * does not start with it (its approved text was changed, which an Addendum never does).
+     */
+    async function staleAddition(pane, typed) {
+      const base = pane.head.draftBaseVersion;
+      const unread = kinSay("v{n0}의 글을 읽지 못해 기준을 다시 잡지 않았습니다 — 쓰던 글은 그대로 있습니다. 잠시 뒤 다시 누르세요.", base ?? 0);
+      if (!Number.isSafeInteger(base) || base < 0) return { refused: unread };
+      let old = base === 0 ? Object.fromEntries(RFIELDS.map(k => [k, ""])) : null;
+      if (!old) {
+        try {
+          const list = await api("GET", `/studies/${encodeURIComponent(pane.uid)}/report/versions`, undefined, undefined, work.capture("study"));
+          const row = (Array.isArray(list) ? list : []).find(v => v?.version === base && v.action !== "discarded");
+          if (row && !row.bodyHidden && row.group?.readable !== false && RFIELDS.every(k => typeof row[k] === "string")) old = row;
+        } catch (_) {}
+      }
+      if (!old) return { refused: unread };
+      const lf = KinReportCitation.toLf, texts = {};
+      for (const k of RFIELDS) {
+        const mine = lf(String(typed[k] ?? "")), was = lf(old[k]), now = lf(String(pane.head[k] ?? ""));
+        // The addition is what this text wrote after the version it stands on - never that version's own text, which the new
+        // approved report may have shortened (an amendment) - put after the new approved text. A field that already holds
+        // the new approved text grown from that version (it was taken in before) is not given it twice.
+        if (now.startsWith(was) && mine.startsWith(now)) texts[k] = mine;
+        else if (mine.startsWith(was)) texts[k] = now + mine.slice(was.length);
+        else if (mine.startsWith(now)) texts[k] = mine;
+        else return { refused: kinSay("이 화면의 글이 v{n0}의 글로 시작하지 않아 기준을 다시 잡지 않았습니다 — 추가기재는 승인본에 덧붙이기만 합니다. 쓰던 글은 그대로 있습니다.", base) };
+      }
+      return { texts };
+    }
+
     async function rebaseDraft() {
       const pane = stalePane;
       // 승인본 보기로 연 창에는 다시 잡을 기준이 없다(단추도 없다).
@@ -7315,7 +7402,27 @@
       }
       const why = reportWriteBlock();
       if (why) { $("#stale-status").textContent = why; return; }
-      const next = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      let next = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      /**
+       * An Addendum only adds to the approved report. Re-based for an Addendum, the text becomes the new approved text with
+       * what this text added to the version it was written on (staleAddition): that version's text is read from the
+       * history. When it cannot be read, or this text does not start with it, nothing is re-based - the text and its base
+       * stay as they are and the pane says why. An amendment is re-based as before (its approver may change the middle).
+       */
+      let typed = null;
+      if (pane.action === "addendum") {
+        typed = next;
+        staleBusy = true;
+        $("#stale-rebase").disabled = true;
+        kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 중…"));
+        let composed;
+        try { composed = await staleAddition(pane, typed); } finally { staleBusy = false; }
+        if (stalePane !== pane || pane.uid !== selectedUid || pane.seq !== staleSeq || pane.selSeq !== selectionSeq) return;
+        $("#stale-rebase").disabled = false;
+        if (RFIELDS.some(k => $("#" + k).value !== typed[k])) { kinWrite($("#stale-status"), kinSay("기준을 다시 잡는 사이 글이 바뀌었습니다 — 다시 누르세요.")); return; }
+        if (composed.refused) { kinWrite($("#stale-status"), composed.refused); return; }
+        next = composed.texts;
+      }
       // 빈 초안은 행을 지운다(서버 규칙). 기준을 잡을 대상이 없다.
       // Image Report: a draft that holds a drawing list (drawings attached, or removed) is a draft without text too - its
       // base is taken again by the same draft write, which names the list. Only "no text and no list" has nothing to
@@ -7357,11 +7464,14 @@
         // 서버에 남은 것은 이 검사의 초안이다. 화면 갱신은 지금 그 검사·그 안내일 때만 한다.
         const a = appState[pane.uid] ?? {};
         appState[pane.uid] = { ...a, draftRevision: result.envelope.revision };
-        if (RFIELDS.every(k => (a.draft ?? a)[k] === next[k])) {
+        // An Addendum's re-based text is what was saved: it replaces the text the editor still shows (the one it came from).
+        const shown = !!typed && pane.uid === selectedUid && pane.selSeq === selectionSeq && RFIELDS.every(k => $("#" + k).value === typed[k]);
+        if (shown || RFIELDS.every(k => (a.draft ?? a)[k] === next[k])) {
           appState[pane.uid].draft = { ...next, baseVersion: pane.head.version, at: new Date().toISOString() };
           recordReportOrigin(pane.uid, pane.head.version);
           reportConverge.delete(pane.uid);
         }
+        if (shown) loadReport({ force: true });
         if (pane.seq !== staleSeq) return;
         closeStaleRebase();
         if (selectedUid === pane.uid) renderDraftBar();
@@ -8317,6 +8427,13 @@
       // 위에서 확인한 그 검사다. 누르는 순간의 선택이 아니라 **창이 열린 검사**를 쓴다.
       const uid = pane.uid;
       const content = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
+      // An approved report that takes only an Addendum keeps its approved text: the item goes after it, or not at all (the
+      // draft is written before the editor, so the rule is met here first - keepsApprovedText).
+      if (typeof keepsApprovedText === "function" && !keepsApprovedText(pane.field, fresh.text, content[pane.field])) {
+        pane.status = ADDENDUM_APPEND_ONLY;
+        renderStructure();
+        return;
+      }
       content[pane.field] = fresh.text;
       const a = appState[uid] ?? {};
       const baseVersion = reportBaseVersion(uid, a.draft?.baseVersion ?? a.version ?? 0);
@@ -8956,6 +9073,13 @@
         // 구분자(LF)는 `insertedText` 바깥이다. 증언이 가리키는 것은 그 블록뿐이고,
         // 보내는 문자열과 화면에 들어갈 문자열은 **이 계획 하나**에서 나온다.
         const before = content[field];
+        // An approved report that takes only an Addendum keeps its approved text: the citation goes after it, or not at all
+        // (the draft is written before the editor, so the rule is met here first - keepsApprovedText).
+        if (typeof keepsApprovedText === "function" && !keepsApprovedText(field, plan2.text, before)) {
+          pane.status = ADDENDUM_APPEND_ONLY;
+          renderCitePreview();
+          return;
+        }
         content[field] = plan2.text;
         const a = appState[pane.uid] ?? {};
         const baseVersion = reportBaseVersion(pane.uid, a.draft?.baseVersion ?? a.version ?? 0);
@@ -9609,7 +9733,38 @@
       return learned;
     }
 
+    /**
+     * One press of a report decision. A Save refused because another window of this same account saved the report in the
+     * meantime asks once whether to save this window's text after that version (commitReportOnce, route "mine"): yes sends
+     * the same Save again on the version the question named - the editor's text is now based on it, and the server meets
+     * every check again. Each further round is another question; no is the end.
+     */
     async function commitReport(action, reason, reviewer) {
+      let again = null;
+      for (;;) {
+        const done = await commitReportOnce(action, reason, reviewer, again);
+        if (!done?.again) return done;
+        again = done.again;
+        recordReportOrigin(again.uid, again.version);
+      }
+    }
+
+    /** The server's refusal said in the page's words where they are known (code and action); null: the server's own. */
+    const SIGNING_KEY_WORDS = {
+      approve: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      amend: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인 후 수정을 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      addendum: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 추가기재(Addendum)를 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+      reset: "이 계정에서 사용할 수 있는 서명키를 확인하지 못해 판독 취소(Reset)를 하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.",
+    };
+    function refusalWords(e, action) {
+      if (e?.code === "DoctorSigningKeyUnavailable" && SIGNING_KEY_WORDS[action]) return kinSay(SIGNING_KEY_WORDS[action]);
+      if (e?.code === "REPORT_ADDENDUM_NOT_APPENDED") return kinSay(ADDENDUM_APPEND_ONLY);
+      if (e?.code === "REPORT_ADDENDUM_EMPTY") return kinSay(ADDENDUM_EMPTY);
+      return null;
+    }
+
+    // `again`: the version the reader confirmed to save this window's text after ({ uid, version }) - sent as the base as it is.
+    async function commitReportOnce(action, reason, reviewer, again = null) {
       if (!selectedUid) return;
       // 확정은 겹쳐 부르지 않는다. 더블클릭이 만든 판 하나가 더 쌓이는 걸 여기서 막는다.
       // 삽입이 나가 있는 동안도 같다 — 그 응답 전에 서명하면 사람이 확인한 문장이
@@ -9660,6 +9815,12 @@
         conclusion: $("#conclusion").value,
         recommendation: $("#recommendation").value,
       };
+      // An Addendum only adds to the approved report: said before anything is sent, with the server's words, where this page
+      // knows the approved text its editor stands on (addendumRefusalHere). The text stays as it is.
+      if (action === "addendum" && serverMode) {
+        const refused = addendumRefusalHere(uid, content);
+        if (refused) { toast(kinSay(refused), "err"); return; }
+      }
       // 받아들여진 확정이 싣지 않은, 그 뒤에 친 글이 남았는가(아래) — 완료 안내가 그 사실을 함께 말한다.
       let lateText = false;
       // 진행 중 판독 되돌리기의 답이 말하는 남의 점유·글의 자리(있을 때만). 완료 안내가 그대로 옮긴다.
@@ -9678,8 +9839,8 @@
         // my text - it releases the head the screen shows, so it is sent on that version; my draft stays mine (keepCallerDraft).
         const takeover = action === "reset" && !!inProgressReset(cur());
         const mine = !takeover && (!!appState[uid]?.draft || reportDirty());
-        const baseVersion = mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0)
-                                 : (appState[uid]?.version ?? 0);
+        const baseVersion = again?.uid === uid ? again.version
+          : mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0) : (appState[uid]?.version ?? 0);
         // 응답이 돌아왔을 때 "그때 그 선택인가"를 판단할 기준. 요청이 떠나기 전에 잡는다.
         const seq = selectionSeq;
         /**
@@ -9746,8 +9907,24 @@
            * textarea도, 초안 행도 그대로 두고 **서버가 보낸 승인본**을 옆에 펼쳐
            * 사람이 읽고 정하게 한다. 다시 불러오기(force)는 하지 않는다.
            */
-          if (route === "stale") { openStaleRebase(uid, seq, e); return; }
-          if (route === "reload") {
+          if (route === "stale") { openStaleRebase(uid, seq, e, action); return; }
+          /**
+           * Another window of this same account saved the report in the meantime (head.mine). This window's text is not
+           * overwritten and not merged: a Save asks once whether to save it after that version - yes sends the same Save
+           * on it (commitReport); no leaves the text as it is. Other decisions (signing, Reset) take the reload path below.
+           */
+          const head = e.body?.head;
+          if (route === "mine" && action === "save" && Number.isSafeInteger(head?.version)) {
+            const askedEdits = reportEdits;
+            const question = String(kinSay("다른 창에서 이 계정으로 v{n0}을 저장했습니다. 이 창의 글을 v{n0} 다음 판으로 저장할까요?\n(취소하면 이 창의 글은 그대로 있고 아무것도 저장하지 않습니다)", head.version));
+            const reportWindowNow = window.KinReportPopout?.current?.();
+            const yes = await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question));
+            // Asked in the report window, the page went on meanwhile: a yes counts only for the same study, selection, text
+            // and work context.
+            if (!yes || uid !== selectedUid || seq !== selectionSeq || reportEdits !== askedEdits || !work.admits(at)) return;
+            return { again: { uid, version: head.version } };
+          }
+          if (route === "reload" || route === "mine") {
             toast(e.message, "err");
             const askedEdits = reportEdits;
             // While the report is in its separate window the question is asked there (KinReportPopout), else as before.
@@ -9796,7 +9973,9 @@
           }
           // 문맥이 무효가 된 뒤의 실패(이어진 읽기의 취소 등)는 알릴 실패가 아니다.
           // 서명키가 없어 거절된 승인은 판독의가 풀 수 없다: 서버가 말한 까닭을 읽고 관리자에게 전할 만큼 오래 보인다.
-          if (work.admits(at)) toast("저장 실패: " + e.message, "err", e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
+          const words = refusalWords(e, action);
+          if (work.admits(at)) toast(words ? kinSay("저장 실패: {e0}", words) : "저장 실패: " + e.message, "err",
+            e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
           return;
         } finally {
           // 이 확정이 세운 표시는 이 확정이 내린다(자기 것만). 단추를 다시 그리는 것은 문맥이 그대로일 때만 한다 — 편집으로
@@ -9935,6 +10114,16 @@
       if (mode !== "Radiology" || commitInFlight || insertInFlight || reportCommandBlocked("finalize")) return false;
       commitReport("approve");
       return true;
+    }
+    /**
+     * 단축키 목록의 "Finalize & Next (Approve & Next)"(기본 미배정). Approve & Next 단추와 같은 approveAndNext()다 — 잠기는 때와
+     * 그 까닭, 승인이 받아들여져 그려진 뒤에만 옮기는 것이 단추와 같다. 승인을 시작했으면 true(막혔으면 까닭을 말하고 false).
+     */
+    function finalizeNextCommand() {
+      if (mode !== "Radiology" || commitInFlight || insertInFlight) return false;
+      const started = !reportCommandBlocked("finalize-next");
+      approveAndNext();
+      return started;
     }
 
     /**
@@ -14144,6 +14333,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const root = $('#question-p'), summary = $('#question-summary'), toggle = $('#question-toggle');
       const inboxButton = $('#question-inbox'), pane = $('#question-pane'), notice = $('#question-notice');
+      // In-app unread (unread-badges.js): the band's count of the pool's Open questions this reader has not opened.
+      const unreadButton = $('#question-unread');
       const TEXT = {
         unread: '이 검사의 질문은 읽지 않습니다(원격판독 검사·권한).',
         // 끊긴 동안(online() — 화면의 한 연결 규칙)은 읽은 것을 그대로 보이고, 답변·닫기·Retry는 보내지 않는다(쓰던 글은 남는다).
@@ -14177,6 +14368,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         inboxFailed: '받은 질문을 불러오지 못했습니다.',
         inboxEmpty: '이 조건의 질문이 없습니다.',
         inboxReady: (n, more) => `질문 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
+        unreadTip: '서버가 센 안 읽은 질문입니다(소속 기관의 Open 질문 중 이 계정이 아직 열어 보지 않은 것). 누르면 Inbox를 엽니다. 이메일·문자로 보내지 않습니다.',
+        unreadStale: '안 읽은 질문 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
+        unreadOutside: '최신 50건 목록 밖의 질문입니다. 새 질문이 있습니다.',
         notListed: '이 검사는 지금 워크리스트에 없어 열 수 없습니다. 목록을 새로고침하거나 검색 조건을 바꾸세요.',
         unlisted: '워크리스트에 없는 검사',
         noText: '내용을 입력하세요.',
@@ -14336,17 +14530,37 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
       }
 
+      /**
+       * The originals one per-study read covers: the target, and when the server answered for its exam (a merged or split
+       * exam whose report study is the target: the answer's scope names it as reportUid) every original that scope lists.
+       * A thread of one of those originals is this target's; anything else is another study's. The thread read (no scope)
+       * is checked against the last list read of the same target (listUids).
+       */
+      const examUids = (target, data) => {
+        const out = new Set([target]), scope = data && data.scope;
+        if (scope && typeof scope === 'object' && scope.reportUid === target && Array.isArray(scope.sources))
+          for (const source of scope.sources) if (source && typeof source.studyUid === 'string' && source.studyUid) out.add(source.studyUid);
+        return out;
+      };
+      let listUids = null;
+      const targetUids = target => listUids && listUids.target === target ? listUids.uids : new Set([target]);
+      /** A pane is drawn only when the browser lays it out (not in a folded row, not under another work tab). */
+      const drawnNow = element => !!element && element.isConnected && element.getClientRects().length > 0;
+
       /** #3·#1 응답의 모양 검사. target이 있으면 모든 행이 그 검사의 것이어야 한다. 하나라도 틀리면 답 전체를 그리지 않는다. */
       function readSummaries(data, target) {
-        const rows = data && data.items;
+        const rows = data && data.items, uids = target === null ? null : examUids(target, data);
         if (!Array.isArray(rows) || rows.length > 50) throw new Error(TEXT.malformed);
         for (const row of rows) {
           if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !ID.test(row.id) || typeof row.studyUid !== 'string'
-              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : row.studyUid !== target)
+              || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : !uids.has(row.studyUid))
+              // An Inbox row names the row it opens on (openUid: a study UID, or null when none answers for this reader).
+              || (target === null && !(row.openUid === null || typeof row.openUid === 'string' && row.openUid.length <= 64 && STUDY.test(row.openUid)))
               || !STATES.includes(row.state) || !Number.isSafeInteger(row.revision) || row.revision < 1
               || !Number.isSafeInteger(row.entryCount) || row.entryCount < 1 || !row.author || typeof row.author !== 'object')
             throw new Error(TEXT.malformed);
         }
+        if (target !== null) listUids = { target, uids };
         return rows;
       }
 
@@ -14360,7 +14574,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
         if (!item || typeof item !== 'object' || item.id !== id) throw new Error(TEXT.malformed);
         // 다른 검사의 질문이면 판독 대상 곁에 열지 않고 그 이유를 보인다(Inbox에서 고른 질문도 이 단건 읽기로 확인한다).
-        if (item.studyUid !== target) throw new Error(TEXT.otherStudy);
+        if (!targetUids(target).has(item.studyUid)) throw new Error(TEXT.otherStudy);
         if (!STATES.includes(item.state) || !who(item.author) || !Array.isArray(item.entries) || !item.entries.length
             || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
             || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
@@ -14386,7 +14600,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             || !ACTIONS[attempt.action].includes(applied.action)) return false;
         const step = STEPS[applied.action], entry = applied.entry, base = attempt.base;
         const mine = value => typeof value === 'string' && value.toLowerCase() === attempt.requestId;
-        return mine(applied.requestId) && applied.studyUid === attempt.uid && applied.id === attempt.threadId
+        return mine(applied.requestId) && applied.studyUid === (base.studyUid || attempt.uid) && applied.id === attempt.threadId
           && !!entry && typeof entry === 'object' && mine(entry.id) && entry.kind === step.kind && entry.seq === applied.revision
           && applied.revision === base.revision + 1 && step.from.includes(applied.from) && applied.from === base.state
           && applied.to === step.to && typeof applied.at === 'string' && !Number.isNaN(Date.parse(applied.at));
@@ -14437,7 +14651,58 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       inboxMore.id = 'question-inbox-more';
       inboxView.append(make('p', 'question-muted', kinSay(TEXT.inboxHint)), inboxHead, inboxLine, inboxList, inboxMore);
       pane.append(lockBox, studyView, inboxView);
-
+      // The server's unread count of this reader's inbox view (question-inbox). Its reads and seen writes go through call()
+      // like every request of this row, wait while offline or locked, and stop with the row.
+      const UNREAD = 'question-inbox';
+      let unread = null, unreadAsked = false;
+      try {
+        if (window.KinUnread) unread = window.KinUnread.mount({ send: (method, path, body) => call(method, path, body).then(sent => ({ status: sent.status, body: sent.data })),
+          views: [UNREAD], owner, allowed: () => !ended && lock === null && allowed() && online(), onChange: () => paintUnread(),
+          onAccount: () => accountChanged('') });
+      } catch (_) { unread = null; }
+      const unreadTag = () => { const tag = make('span', 'question-status', kinSay('New')); tag.dataset.unread = ''; kinWrite(tag, kinSay(TEXT.unreadTip), 'title'); return tag; };
+      /** A row of the study list or the Inbox: its `New` tag follows the server's unread items. */
+      const paintRowUnread = li => {
+        const old = li.querySelector(':scope > [data-unread]'), want = !!unread && unread.unread(UNREAD, li.dataset.id);
+        if (want && !old) li.prepend(unreadTag(), ' ');
+        else if (!want && old) { if (old.nextSibling && old.nextSibling.nodeType === 3) old.nextSibling.remove(); old.remove(); }
+      };
+      /** The band's button and the rows' tags. Shown only when the server answered a count above 0 for this reader. */
+      function paintUnread() {
+        const known = unread && unread.view(UNREAD);
+        const count = !ended && lock === null && known && known.available ? known.count : 0;
+        if (unreadButton) {
+          unreadButton.hidden = count === 0;
+          if (count) {
+            kinWrite(unreadButton, kinSay('New Questions {0}', count));
+            kinWrite(unreadButton, kinSay(known.failed ? TEXT.unreadStale : TEXT.unreadTip), 'title');
+          }
+        }
+        for (const li of list.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        for (const li of inboxList.querySelectorAll(':scope > li[data-id]')) paintRowUnread(li);
+        if (mode === 'study' && items !== null && !listFailure && !listLoading) renderOutside();
+      }
+      /** Unread questions of the reading target that its latest-50 list does not hold: a row each that opens the thread. */
+      function renderOutside() {
+        for (const li of list.querySelectorAll(':scope > li[data-unread-outside]')) li.remove();
+        const known = unread && unread.view(UNREAD);
+        if (!known || !known.available || uid === null || items === null) return;
+        const listed = new Set(items.map(item => item.id));
+        for (const [id, item] of known.items) {
+          // The server names the row each unread question opens on (openUid); only that row's list shows it.
+          if (item.openUid !== uid || listed.has(id)) continue;
+          const li = make('li');
+          li.dataset.id = id;
+          li.dataset.unreadOutside = '';
+          if (id === threadId) li.setAttribute('aria-current', 'true');
+          const open = button(kinSay('Open Thread'), () => openThread(id));
+          open.dataset.openThread = '';
+          li.append(make('span', 'question-muted', kinSay(TEXT.unreadOutside)), ' ', open);
+          list.append(li);
+          paintRowUnread(li);
+        }
+        list.hidden = !list.children.length;
+      }
       /**
        * 줄과 창의 겉모습. 줄은 읽는 사람이 연 동안(mode)만 선다 — 답이 줄을 만들거나 없애지 않는다. 질문·실패·잠금은 줄이 접혀
        * 있는 동안 안내 띠의 알림이 말한다. 읽는 중(아직 모름)에는 알림을 그대로 두고, 성공한 빈 답이면 내린다.
@@ -14477,6 +14742,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         lockBox.querySelector('.question-detail').textContent = lock ? lock.detail : '';
         studyView.hidden = lock !== null || mode !== 'study';
         inboxView.hidden = lock !== null || mode !== 'inbox';
+        // A thread is seen only while the study pane shows it.
+        if (unread && (mode !== 'study' || lock !== null || ended)) unread.hidden(UNREAD);
+        paintUnread();
       }
 
       function renderList() {
@@ -14485,6 +14753,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           || TEXT.ready(items.length), listFailure ? readDetail(listFailure) : '');
         listRetry.hidden = !listFailure;
         list.replaceChildren(...(listFailure || !items ? [] : items).map(listItem));
+        if (!listFailure && items) renderOutside();
         list.hidden = !list.children.length;
       }
 
@@ -14496,6 +14765,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
           TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -14542,6 +14812,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
 
       function renderThread() {
         if (uid === null || threadId === null || listFailure !== null) {
+          if (unread) unread.hidden(UNREAD);
           clearThreadBox();
           return;
         }
@@ -14559,6 +14830,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         part('retry').hidden = !threadFailure;
         part('entries').replaceChildren(...(loaded ? loaded.entries.map(item => entryItem(item, loaded.current, loaded.emr)) : []));
         part('closed').hidden = !loaded || loaded.state !== 'Closed';
+        // A thread drawn in the open pane is seen by this reader: its seen mark goes to the server (unread-badges.js decides).
+        if (unread) {
+          unread.hidden(UNREAD);
+          if (loaded && mode === 'study' && !ended && lock === null && drawnNow(threadBox)) unread.shown(UNREAD, loaded.id, loaded.revision);
+        }
         for (const wrap of threadBox.querySelectorAll('.question-compose')) {
           paintComposer(wrap);
           // 닫힌 스레드에는 쓰는 칸을 두지 않는다. 쓰던 글이나 결과를 모르는 요청이 남은 칸만 그대로 둔다.
@@ -14695,7 +14971,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
         const path = `/questions/${encodeURIComponent(id)}/${action === 'close' ? 'close' : 'entries'}`;
         const attempt = { requestId, owner: who, uid: target, threadId: id, action, noteKey, path, text: value, busy: false, unknown: false,
-          base: { revision: loaded.revision, state: loaded.state },
+          base: { revision: loaded.revision, state: loaded.state, studyUid: loaded.studyUid },
           payload: { revision: loaded.revision, [action === 'close' ? 'note' : 'body']: value } };
         drafts.set(key, value);
         attempts.set(key, attempt);
@@ -14761,6 +15037,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         drafts.delete(key);
         setNote(attempt.noteKey, 'saved', sent.data.replayed ? TEXT.replayed : TEXT.saved);
         repaintComposer(key);
+        // An answer or a close ends what this reader's inbox waited for: the count is read again.
+        if (unread) unread.refresh();
         // 화면의 스레드는 쓰기 응답(적용 결과)이 아니라 읽기 route로 다시 읽은 현재 상태로만 그린다.
         if (lock === null && attempt.uid === uid) loadList();
       }
@@ -14809,6 +15087,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       function lockPanel(text, detail, account = false) {
         if (ended || (lock !== null && (lock.account || !account))) return;
         lock = { text, detail: detail || '', account };
+        if (unread) unread.hidden(UNREAD);
         epoch++;
         listSeq++;
         threadSeq++;
@@ -15002,7 +15281,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         const li = make('li');
         li.dataset.id = item.id;
         li.dataset.uid = item.studyUid;
-        const row = study(item.studyUid);
+        const row = inboxRow(item);
         const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
         const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
@@ -15012,6 +15291,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         }
         li.append(badge(item.state), ' ', make('span', null, label), ' ',
           make('span', 'question-muted', TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);
+        paintRowUnread(li);
         return li;
       }
 
@@ -15019,18 +15299,24 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * Inbox의 질문을 연다: 그 검사를 판독 대상으로 고르고(select) 그 검사의 목록을 읽은 뒤 이 스레드를 단건 읽기(#2)로 연다.
        * 스레드는 그 검사의 목록(최신 50)에 있는지와 무관하게 연다(sync·loadList).
        */
+      /** The worklist row an Inbox question opens on: the row the server answers its study on now (openUid), when it is listed. */
+      function inboxRow(item) {
+        return typeof item.openUid === 'string' ? study(item.openUid) || null : null;
+      }
+
       function openFromInbox(item) {
-        if (ended || lock !== null || !study(item.studyUid)) return;
+        const row = inboxRow(item);
+        if (ended || lock !== null || !row) return;
         inboxSeq++;
         mode = 'study';
-        if (item.studyUid === uid) {
+        if (row.uid === uid) {
           paint();
           openThread(item.id);
           return;
         }
-        pendingThread = { uid: item.studyUid, id: item.id };
+        pendingThread = { uid: row.uid, id: item.id };
         paint();
-        openStudy(item.studyUid);
+        openStudy(row.uid);
       }
 
       /**
@@ -15039,6 +15325,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        */
       function sync() {
         if (ended) return;
+        // The first time this reader may read: the inbox count once now, then with the list polling (refresh).
+        if (unread && !unreadAsked && lock === null && allowed() && online()) { unreadAsked = true; unread.refresh(); }
         const shown = current(), selectedUid = allowed() ? shown : null;
         const row = selectedUid ? study(selectedUid) : null;
         const next = row && row.tele !== true ? selectedUid : null;
@@ -15111,6 +15399,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         clearThreadBox();
         list.replaceChildren();
         inboxList.replaceChildren();
+        if (unread) unread.end();
         paint();
       }
 
@@ -15131,12 +15420,15 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         paint();
         if (uid !== null && online()) loadList();
         if (mode === 'inbox') loadInbox(false);
+        if (unread) unread.refresh();
       }
       /**
        * 목록 폴링이 부른다(worklist-polling.js): 같은 판독 대상의 질문을 다시 읽는다 — 판독 칸을 연 뒤에 온 질문도 알게 된다.
        * 답은 글(줄이 접혀 있으면 안내 띠의 알림)만 바꾼다. 읽는 중이면 그 답을 기다린다.
        */
       function refresh() {
+        // The inbox count is the reader's, not the reading target's: read with every poll, a study chosen or not.
+        if (unread && !ended && lock === null && allowed() && online()) unread.refresh();
         if (ended || lock !== null || uid === null || listLoading || !online()) return;
         loadList();
       }
@@ -15164,6 +15456,14 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       });
       // 안내 띠의 알림: 읽는 사람이 누르면 이 검사의 줄과 창을 제자리에 연다(Show Questions와 같다). 알림은 줄이 서면
       // 내려가므로 초점은 그 줄의 Hide Questions로 옮긴다.
+      // The band's unread count opens the Inbox on the Open questions (whatever state it last showed).
+      unreadButton?.addEventListener('click', () => {
+        if (ended) return;
+        inboxState = 'open';
+        mode = 'inbox';
+        paint();
+        if (lock === null) loadInbox(false);
+      });
       notice?.addEventListener('click', () => {
         if (ended) return;
         inboxSeq++;
@@ -17486,11 +17786,25 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // `related` (W5): the Related Report / Report Editor keys of another document (the viewer frame) and the workspace buttons.
     // `isFinalize(event)`: whether a keydown of another document (the report pop-up window) is the Finalize key under this
     // page's bindings and gates (editable workspace, no dialog open here, no composition) - the dispatcher's own test below.
-    window.KinReportCommands = Object.freeze({ finalize: () => finalizeCommand(), related: which => relatedModeCommand(which),
-      isFinalize: event => workspaceEditable() && !event.isComposing && !studyPanelComposing && event.keyCode !== 229
-        && !document.querySelector('dialog[open], .modal.show, [popover]:popover-open')
-        && KinWorkspaceShortcuts.action((KinWorkspaceShortcuts.readV2 ?? KinWorkspaceShortcuts.read)(workspaceStorage,
-          workspaceOwner?.slice(KinWorkspaceLayout.PREFIX.length)), event) === 'finalize' });
+    // `finalizeNext(node)`: Finalize & Next (Approve & Next) by its key, as the button of the place it was pressed in: pressed
+    // inside the report's in-page box, the box's Approve (Approve & Next with its Pin); anywhere else on the page or in the
+    // viewer frame, the page's Approve & Next button. (A key typed in the report's own window goes to that window's Approve
+    // through report-popout.js.) True when started.
+    // `isFinalizeNext(event)`: the same test as isFinalize for that key (the report window's own keydown asks it).
+    const commandOf = event => workspaceEditable() && !event.isComposing && !studyPanelComposing && event.keyCode !== 229
+      && !document.querySelector('dialog[open], .modal.show, [popover]:popover-open')
+      ? KinWorkspaceShortcuts.action((KinWorkspaceShortcuts.readV2 ?? KinWorkspaceShortcuts.read)(workspaceStorage,
+        workspaceOwner?.slice(KinWorkspaceLayout.PREFIX.length)), event) : null;
+    const finalizeNext = node => {
+      const out = window.KinReportPopout?.current?.();
+      return out?.holds?.(node) ? out.approveNext() : finalizeNextCommand();
+    };
+    // A key typed in a field of other writing (a search, a job title, a note) never moves the reader to the next patient;
+    // the report's own fields (Findings, Conclusion, Recommendation) may, as the Finalize key does there.
+    const otherWriting = node => !!node?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')
+      && !node.closest('#findings, #conclusion, #recommendation');
+    window.KinReportCommands = Object.freeze({ finalize: () => finalizeCommand(), finalizeNext, otherWriting, related: which => relatedModeCommand(which),
+      isFinalize: event => commandOf(event) === 'finalize', isFinalizeNext: event => commandOf(event) === 'finalizeNext' });
     window.addEventListener('keydown', event => {
       if (!workspaceEditable() || event.defaultPrevented || event.isComposing || studyPanelComposing || event.keyCode === 229
           || document.querySelector('dialog[open], .modal.show, [popover]:popover-open')) return;
@@ -17507,6 +17821,10 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       // Finalize (Approve), Ctrl+S by default: the browser's Save Page is prevented only when the command ran.
       if (command === 'finalize') {
         if (KinReportCommands.finalize() === true) { event.preventDefault(); event.stopImmediatePropagation(); }
+        return;
+      }
+      if (command === 'finalizeNext') {
+        if (!otherWriting(event.target) && finalizeNext(event.target) === true) { event.preventDefault(); event.stopImmediatePropagation(); }
         return;
       }
       // W5: Related Report (Ctrl+Alt+3) opens the mode for the viewed Related study; Report Editor (Ctrl+Alt+4) is its Back.

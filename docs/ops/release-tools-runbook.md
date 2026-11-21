@@ -739,6 +739,54 @@ not a refusal: for a location that is not `encrypted`, the private release recor
 be moved onto encrypted storage. Never re-partition or encrypt a disk inside this procedure. A backup key that is not
 `configured` stops the nightly backup (Nightly job): settle it before the window.
 
+### Network access
+
+Before the window, check that access to the server is limited by network separation, firewall rules and a secure
+remote-administration path. What the production Compose set (`docker-compose.yml`, `docker-compose.prod.yml`,
+`docker-compose.monitor.yml`) publishes is the whole list of ports the product needs on the server:
+
+- **Open to the outside:** TCP 80 and 443 of the site proxy (`kin-proxy`; 80 only redirects to HTTPS and answers
+  certificate renewal). Nothing else of the product. The one other inbound port is the remote-administration path
+  below (SSH).
+- **Never outside the server:** the database (no host port), the API (no host port), Orthanc (`127.0.0.1:8042`, its DICOM
+  port is not published) and Keycloak (`127.0.0.1:8080`; the proxy answers 404 for its administration console and the
+  `master` realm). A base-file port (9443, 8081, 5432, 8042, 4242, 8080, 3000) on a non-loopback address means the
+  production overlay was left out.
+- **Remote administration:** SSH by key only (no passwords), from the administration addresses the private release
+  record names. Keycloak and Orthanc are administered only through an SSH tunnel to their loopback ports. The
+  product's own administration screens go through 443 with administrator OTP (Inputs and read-only preparation).
+- **Hospital Gateway host** (a separate machine, `gateway/`): its DICOM port (`GW_DICOM_PORT`, default 4243) answers only
+  inside the hospital network; its local REST port stays on loopback; towards the server it needs only outbound HTTPS
+  443. Remote support travels over that same outbound connection and the hospital can turn it off
+  (`GW_REMOTE_SUPPORT=off`).
+
+Then read what the host itself shows, changing nothing (no root needed):
+
+```sh
+python3 -B scripts/ops_deploy_preflight.py --network-only
+```
+
+One line lists every listening TCP and bound UDP socket (IPv4 and IPv6) and every port the local Docker publishes for a
+running container, each as `loopback`, `public-web` (only the site proxy's own TCP 80->80 and 443->443) or `exposed`
+(any other non-loopback address, with the container's name when Docker publishes it). The status is `web-only` when
+nothing is `exposed`, `exposed` when something is, and `unknown` when the sockets or the local Docker could not be read
+completely (`not read:` names which; a remote Docker context is not asked). SSH shows as `exposed`: that is expected.
+For every other `exposed` endpoint the private release record names what it is and why it may stay open, or it is
+closed in a maintenance window of its own. The report only shows bindings: whether an endpoint can be reached from
+outside is decided by the firewalls, which the host cannot show. So the same report always ends with three operator
+checks, never judged by the script, each recorded in the private release record:
+
+- `firewall`: the cloud and host firewall rules (IPv4 and IPv6, and Docker's forwarding rules, which bypass the host
+  firewall for published ports) open inbound only TCP 80, 443 and the SSH port, the SSH port only from the
+  administration addresses.
+- `network-separation`: from a machine outside the server, the database, Orthanc and Keycloak ports do not answer; on
+  the hospital side, the Gateway's DICOM port answers only inside the hospital network.
+- `remote-administration`: the SSH daemon accepts keys only (`sshd -T` shows `passwordauthentication no`), and the
+  administrators with access are the ones the record names.
+
+This is a report, not a refusal; it does not run inside the deployment or rollback stages. Never change firewall rules
+inside this procedure.
+
 ### The host declaration
 
 The host is not enumerated and nothing on it is blocked. A reviewed host declaration names only what the

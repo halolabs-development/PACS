@@ -1,7 +1,8 @@
 window.KinViewerUXToolbar = (() => {
   // A3 C-R01-029 #52: Pointer is added at the end of the default bar. A bar already saved to an account is not
   // changed, so there it is offered in More.
-  const frequent = ['WindowLevel', 'Pan', 'Zoom', 'StackScroll', 'Length', 'Angle', 'EllipticalROI', 'Pointer'];
+  // The default bar is viewer-ux-shortcuts.js's defaultBar (WindowLevel, Pan, Zoom, StackScroll, Length, Angle, EllipticalROI,
+  // Pointer), which a record made on the work page's Edit Shortcuts starts from too.
   const symbols = { WindowLevel: '◐', Pan: '✥', Zoom: '⌕', StackScroll: '↕', Length: '↔',
     Angle: '∠', EllipticalROI: '◯', RectangleROI: '□', ArrowAnnotate: '↗', invert: '◑', Cine: '▷', Crosshairs: '⊕',
     flipHorizontal: '⇆', flipVertical: '⇅', 'rotate-left': '↺', 'rotate-right': '↻', Pointer: '↖' };
@@ -65,7 +66,7 @@ window.KinViewerUXToolbar = (() => {
     const element = (tag, text, parent) => { const node = document.createElement(tag); if (text) node.textContent = text; parent?.append(node); return node; };
     const button = (text, parent, click) => { const node = element('button', text, parent); node.type = 'button'; node.onclick = click; return node; };
     const keys = window.KinViewerUXShortcuts;
-    const defaults = () => ({ version: 2, bar: [...frequent],
+    const defaults = () => ({ version: 2, bar: [...keys.defaultBar],
       shortcuts: { ...Object.fromEntries([...catalog.keys()].map(id => [id, null])), ...keys.defaults } });
     record = cached && JSON.stringify(cached.owner) === initialOwner ? cached : null;
     loaded = !!record;

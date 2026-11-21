@@ -1826,6 +1826,37 @@ class ViewerSessionDOMTest(unittest.TestCase):
         self.wait_declared([])
         self.assertEqual(len(server["posts"]), 1)
 
+    def test_a_held_viewer_window_chord_runs_once_and_its_repeats_reach_no_viewer_hotkey(self):
+        """A work-page chord this Viewer window acts on (Image, Control+Alt+2) and patient ID copy (Control+Alt+C), with a
+        viewer hotkey of its own on the same keys (a binding set in the viewer's Hotkeys table, a document listener):
+        held down, the chord runs once and none of its repeats reaches the viewer's hotkey; let go and pressed again, it
+        runs again."""
+        self.extra_html = '<div id="kin-viewer-layout"></div><div id="syn-cell" style="width:40px;height:40px"></div>'
+        view = self.open_viewer()
+        view.wait_for_function('window.started===true')
+        view.route(BASE + "/api/me", lambda route: route.fulfill(json=self.ME))
+        view.route(BASE + "/api/studies/1.2.3/tech-note",
+                   lambda route: route.fulfill(json={"uid": "1.2.3", "writable": True, "note": None}))
+        for name in ("tech-note.js", "viewer-tech-note.js"):
+            view.add_script_tag(path=str(HPACS / name))
+        services = (self.NOTE_SERVICES
+                    .replace("action:()=>null", "action:(map,e)=>e.code==='Digit2'?'image':null")
+                    .replace("getCurrentImageId:()=>image}", "getCurrentImageId:()=>image,element:document.querySelector('#syn-cell')}"))
+        self.assertTrue(view.evaluate(services))
+        view.wait_for_function("document.querySelector('#kin-viewer-note-status')?.textContent.includes('검사 메모')")
+        counts = view.evaluate("""() => {
+          window.synHotkeys = []; let focused = 0;
+          const cell = document.querySelector('#syn-cell'), focus = cell.focus;
+          cell.focus = function (...args) { focused++; return focus.apply(this, args); };
+          document.addEventListener('keydown', e => synHotkeys.push(e.code));
+          const send = (type, code, repeat = false) => document.body.dispatchEvent(new KeyboardEvent(type,
+            { code, key: code.slice(-1).toLowerCase(), ctrlKey: true, altKey: true, repeat, bubbles: true, cancelable: true }));
+          const hold = code => { send('keydown', code); for (let n = 0; n < 3; n++) send('keydown', code, true); send('keyup', code); };
+          hold('Digit2'); const once = focused; hold('KeyC'); hold('Digit2');
+          return { once, again: focused, hotkeys: synHotkeys };
+        }""")
+        self.assertEqual({'once': 1, 'again': 2, 'hotkeys': []}, counts)
+
 
 if __name__ == "__main__":
     unittest.main()

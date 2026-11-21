@@ -156,8 +156,10 @@ MIGRATIONS = ['api/prisma/migrations/0_init/migration.sql',
               'api/prisma/migrations/20261120140000_order_modality_worklist/migration.sql',
               'api/prisma/migrations/20261120150000_owner_account_keys/migration.sql',
               'api/prisma/migrations/20261120180000_gateway_receipt_series/migration.sql',
+              'api/prisma/migrations/20261121120000_unread_seen/migration.sql',
               'api/prisma/migrations/20261121130000_access_alerts/migration.sql',
-              'api/prisma/migrations/20261121160000_report_version_signer_name/migration.sql']
+              'api/prisma/migrations/20261121160000_report_version_signer_name/migration.sql',
+              'api/prisma/migrations/20261121220000_patient_consent_record/migration.sql']
 # S9-U4b (52 tables, 47 migrations): ImportOperation, its twelve synthetic rows (one import with every attempt phase over four
 # studies, a prepared, a Sent and a still-sending download, four Study and four SOP reservations with their holders), one
 # primary key, two checks and three indexes. Not measured on a stack when written: estimated at about 16 KB of catalog and
@@ -182,6 +184,7 @@ TABLES = sorted(['PreloadCacheKey', 'ImportOperation', 'AuthSession', 'MemberIso
                  'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
                  'FavoriteWorkspace', 'StudyTagCatalog', 'ReaderAssignment', 'ReadingPreferences', 'ReadingAppearance', 'WorkspaceShortcuts', 'HangingProtocolPreference', 'UserFilterCollection', 'SharedFilterLibrary', 'StudyConsultation', 'StudyAccessPolicy', 'StudyAccessRevision',
                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt',
+                 'StudyQuestionSeen', 'StudyImageRequestSeen',
                  'CriticalResult', 'CriticalResultEvent', 'CriticalResultReceipt',
                  'GatewayReceipt', 'GatewayRetryRequest'])
 SEQUENCES = ['AuditLog_id_seq', 'ProviderChange_id_seq', 'ReadingTemplate_id_seq', 'ReportVersion_id_seq', 'UserFilter_id_seq']
@@ -556,6 +559,10 @@ def expected_rows(uid):
         result=dict(id=parent, studyUid=uid, requestId=request_id, kind=kind, action=action, to=to, revision=revision,
             at='2026-09-06T00:00:00.123Z', **{'from': before}), at=STAMP)
         for index, (request_id, parent, kind, subject, action, before, to, revision) in enumerate(receipts)]
+    # In-app unread: one radiologist's seen mark of the question and the requester's of the processed request (their
+    # revisions as the screens drew them), so a restore keeps each person's unread state.
+    rows['StudyQuestionSeen'] = [dict(questionId=question_id, subjectSub='SYNTHETIC-reader-sub', revision=1, at=STAMP)]
+    rows['StudyImageRequestSeen'] = [dict(imageRequestId=closed_request, subjectSub='SYNTHETIC-clinician-sub', revision=3, at=STAMP)]
     # S7-U1a: four critical result records (contract S7-U1p section 12.3-3) - an acknowledged one to a clinician (v1), a
     # superseded one to a radiologist (v1) with its replacement still created (v2, supersedes the old one), and a cancelled
     # one to another clinician (v2) - their seven events (created seq 1 and one terminal seq 2 each; the replacement has
@@ -642,7 +649,12 @@ def expected_rows(uid):
     rows['MemberRightsImport'] = [dict(id='realm-v1',completedAt=STAMP)]
     rows['TransferBasis'] = [dict(id=basis_id,studyUid=uid,institutionId='SYNTHETIC-hospital',kind='PATIENT_CONSENT',
         reference='SYNTHETIC consent reference',obtainedAt=STAMP,expiresAt=None,recordedBy='SYNTHETIC-admin',recordedAt=STAMP,
-        revokedBy=None,revokedAt=None,revokeReason=None)]
+        revokedBy=None,revokedAt=None,revokeReason=None,patientId=None,purpose=None,requestId=None,recordedBySub=None),
+        # Patient Consent: a patient row of the same table (no study; the patient's original ID, the purpose, the request).
+        dict(id='00000000-0000-4000-8000-0000000000c1',studyUid=None,patientId='SYNTHETIC-patient',purpose='SYNTHETIC consent purpose',
+        requestId='00000000-0000-4000-8000-0000000000c2',recordedBySub='SYNTHETIC-admin-sub',institutionId='SYNTHETIC-hospital',
+        kind='PATIENT_CONSENT',reference='SYNTHETIC patient consent reference',obtainedAt=STAMP,expiresAt=None,recordedBy='SYNTHETIC-admin',
+        recordedAt=STAMP,revokedBy=None,revokedAt=None,revokeReason=None)]
     rows['ProcessingAgreement'] = [dict(id=agreement_id,fromInstitutionId='SYNTHETIC-hospital',toInstitutionId='SYNTHETIC-tele',
         kind='CONTRACT',reference='SYNTHETIC agreement reference',validFrom=STAMP,validTo=None,status='active',
         recordedBy='SYNTHETIC-admin',recordedAt=STAMP,terminatedBy=None,terminatedAt=None,terminationReason=None)]
@@ -970,7 +982,7 @@ def create_product(name, db, uid):
                   'ViewerItem', 'ViewerRevision', 'ViewerStorageBudget', 'ViewerRequest', 'Finding', 'FindingRevision', 'WorkspaceLayout', 'WorklistColumns',
                   'TransferBasis', 'ProcessingAgreement', 'Transfer', 'ViewerJob', 'ViewerJobRevision', 'ViewerAutoView', 'ManualSr', 'TechNoteRevision',
                   'FavoriteWorkspace', 'StudyTagCatalog', 'ReaderAssignment', 'ReadingPreferences', 'ReadingAppearance', 'WorkspaceShortcuts', 'HangingProtocolPreference', 'UserFilterCollection', 'SharedFilterLibrary', 'StudyConsultation', 'StudyAccessPolicy', 'StudyAccessRevision',
-                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt', 'ReportDraftInsertReceipt',
+                  'StudyQuestion', 'StudyQuestionEntry', 'StudyImageRequest', 'StudyImageRequestReceipt', 'StudyQuestionSeen', 'StudyImageRequestSeen', 'ReportDraftInsertReceipt',
                   'ReportDraftPurposeEnd', 'PurposeLedgerAnchor', 'ReportLedgerAnchor', 'CriticalResult', 'CriticalResultEvent', 'CriticalResultReceipt', 'MemberIsolation', 'ProviderChange', 'MemberRights', 'MemberRightsImport',
                   'ImportOperation', 'GatewayReceipt', 'GatewayRetryRequest'):
         rows = data[table]
@@ -1275,6 +1287,10 @@ def constraint_probes(name, product):
         RAISE EXCEPTION 'missing transfer basis FK'; EXCEPTION WHEN foreign_key_violation THEN NULL; END;
       BEGIN UPDATE "TransferBasis" SET "revokedAt"=now(),"revokedBy"='SYNTHETIC';
         RAISE EXCEPTION 'missing revocation reason check'; EXCEPTION WHEN check_violation THEN NULL; END;
+      BEGIN UPDATE "TransferBasis" SET purpose=NULL WHERE "studyUid" IS NULL;
+        RAISE EXCEPTION 'missing patient consent purpose check'; EXCEPTION WHEN check_violation THEN NULL; END;
+      BEGIN UPDATE "TransferBasis" SET "patientId"='SYNTHETIC-patient' WHERE "studyUid" IS NOT NULL;
+        RAISE EXCEPTION 'missing transfer basis subject check'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "StudyAccessPolicy" SET policy='{}'::jsonb;
         RAISE EXCEPTION 'missing access shape'; EXCEPTION WHEN check_violation THEN NULL; END;
       BEGIN UPDATE "StudyAccessPolicy" SET revision=0;

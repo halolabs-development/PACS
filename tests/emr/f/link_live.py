@@ -86,8 +86,12 @@ class AuditLinkPg(pg.PgLedgerFixture):
         document = DocumentText()
         document.feed((spool / 'fixed-copy.html').read_text(encoding='utf-8'))
         authors = [document.text[i + 1] for i, text in enumerate(document.text[:-1]) if text == 'Author']
-        self.assertEqual(authors, ['synthetic-doctor-registration'] * 2)
-        self.assertTrue(all('doctor' not in author.split() for author in authors), 'bare IdP subject is not a printed Author')
+        # The member name on the doctor's account (memberRights.name), with the signing registration beside it.
+        self.assertEqual(authors, ['Synthetic doctor (synthetic-doctor-registration)'] * 2)
+        self.assertTrue(all(author.split(' (')[0] != 'doctor' for author in authors), 'bare IdP subject is not a printed Author')
+        printed = (spool / 'fixed-copy.html').read_text(encoding='utf-8')
+        self.assertNotIn('"envelope"', printed, 'the signed originals are not on paper')
+        self.assertNotRegex(printed, r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}', 'paper times are printed in KST, not as UTC timestamps')
         (logs / 'printed-authors.json').write_text(json.dumps(authors), encoding='utf-8')
         # Native restore preserves original bytes, roster history, request/hold
         # history and identity sequences. Restore consumers use the same functions.

@@ -610,21 +610,22 @@ class WorklistE2E(unittest.TestCase):
     def test_12_stale_draft_addendum_rebase_keeps_both_versions(self):
         """E2E-B2-12 (REQ-S3-U3, contract test 21): a draft written against v1 cannot
         replace the v2 somebody else approved. The refusal carries that approved text,
-        the pane shows those same bytes, an explicit rebase keeps every typed byte, and
-        both addenda survive in the history."""
+        the pane shows those same bytes, an explicit rebase puts what this draft added to v1
+        after v2's text (an Addendum only adds), and both addenda survive in the history."""
         fixture = self.fixture()
-        self.seed_report(fixture, action="approve")                       # v1 by doctor
+        self.seed_report(fixture, action="approve")                       # v1 by doctor: secret / E2E conclusion
         # Seed the draft through the API: the row must exist with baseVersion 1 and a
         # draft-less addendum would legitimately meet the old optimistic lock instead.
-        draft_text = f"{fixture.secret} addendum draft"
+        # Every Addendum is written after the approved text it stands on.
+        draft_text = f"{fixture.secret}\naddendum draft"
         put = self.stack.request("PUT", f"/studies/{fixture.uid}/report", "doctor", {
-            "findings": draft_text, "conclusion": "", "recommendation": "", "baseVersion": 1,
+            "findings": draft_text, "conclusion": "E2E conclusion", "recommendation": "", "baseVersion": 1,
         })
         self.assertEqual(put.status, 200)
-        head_text = "SECOND READER LINE 1\nSECOND READER LINE 2"
+        head_text = f"{fixture.secret}\nSECOND READER LINE 1\nSECOND READER LINE 2"
         other = self.stack.request("POST", f"/studies/{fixture.uid}/report/commit", "doctor2", {
             "action": "addendum", "baseVersion": 1,
-            "findings": head_text, "conclusion": "", "recommendation": "",
+            "findings": head_text, "conclusion": "E2E conclusion", "recommendation": "",
         })
         self.assertEqual(other.status, 201)
         self.assertEqual(other.body["version"], 2)
@@ -658,16 +659,18 @@ class WorklistE2E(unittest.TestCase):
             page.locator("#stale-rebase").click()
         self.assertEqual(rebase.value.status, 200)
         sent = rebase.value.request.post_data_json
-        self.assertEqual((sent["baseVersion"], sent["findings"]), (2, draft_text))
+        # v2's text with what this draft added to v1 after it: the second reader's lines stay.
+        rebased = head_text + "\naddendum draft"
+        self.assertEqual((sent["baseVersion"], sent["findings"], sent["conclusion"]), (2, rebased, "E2E conclusion"))
         expect(page.locator("#stalemodal")).to_be_hidden()
-        expect(page.locator("#findings")).to_have_value(draft_text)
+        expect(page.locator("#findings")).to_have_value(rebased)
         self.wait_state(page, fixture, lambda s: (s.get("draft") or {}).get("baseVersion") == 2)
         audit = self.stack.request("GET", f"/audit?uid={fixture.uid}", "jmryu")
         self.assertEqual(audit.status, 200)
         rebases = [json.loads(row["detail"]) for row in audit.body if row["action"] == "report.draft.rebase"]
         self.assertEqual(rebases, [{"institution": "hallym", "from": 1, "to": 2}])
 
-        final_text = f"{draft_text} — written after reading v2"
+        final_text = f"{rebased} — written after reading v2"
         page.locator("#findings").fill(final_text)
         self.open_toolbar_group(page, "#b-addendum")
         self.commit(page, fixture, "#b-addendum", "A")

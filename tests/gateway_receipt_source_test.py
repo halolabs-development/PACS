@@ -391,7 +391,8 @@ class AgentPins(unittest.TestCase):
         # 70 -> 76: the receipt's series count (SeriesCountTests, five cases; one routing case).
         # 76 -> 82: the DICOM receive self-check (DicomListenerCheckTests, six cases against a real DICOM SCP).
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
-        self.assertEqual(count, 95)
+        # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
+        self.assertEqual(count, 115)
 
 
 class ServerPins(unittest.TestCase):
@@ -571,7 +572,8 @@ class MigrationPins(unittest.TestCase):
         # 59 -> 60: Image Report added 20261114180000_report_drawing (ReportDrawing).
         # 60 -> 61: Auto Save View added 20261114180000_viewer_auto_view (ViewerAutoView).
         # 61 -> 63: Merge Exam / Split added 20261114180000_exam_group (StudyGroup, StudyGroupMember).
-        self.assertEqual(len(restore_fixture.TABLES), 63)
+        # 63 -> 65: in-app unread added 20261121120000_unread_seen (StudyQuestionSeen, StudyImageRequestSeen).
+        self.assertEqual(len(restore_fixture.TABLES), 65)
         self.assertEqual(len(restore_fixture.expected_rows("2.25.1")["GatewayReceipt"]), 1)
 
 
