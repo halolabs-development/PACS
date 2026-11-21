@@ -141,13 +141,13 @@
   // Preload, PF and every viewer opening ask this one answer. A temporary archive failure is not this: the list read fails
   // or the Preload entry fails with the server's reason and Retry.
   const UNAVAILABLE = {
-    merge:()=>kinText('합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.'),
-    split:()=>kinText('나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.'),
+    merge:'합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+    split:'나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
   };
   function unavailable(row) {
     if(row?.examUnavailable!==true)return null;
     const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
-    return {kind,message:kind?UNAVAILABLE[kind]():kinText('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.')};
+    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
   }
   // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
   // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
@@ -166,7 +166,7 @@
   }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
     const lost=unavailable(current)||unavailable(prior);
-    if(lost)throw Object.assign(Error(lost.message),{kinWords:true});
+    if(lost)throw kinError(lost.message);
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw kinError('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw kinError('원본 검사 UID를 확인할 수 없습니다.');

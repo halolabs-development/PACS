@@ -583,7 +583,10 @@ window.KinReadingWorkspace = function (app) {
   document.addEventListener('keydown', parentKeyboard, true);
   function label(uid, image = false) {
     const s = image && shown?.viewingSet === viewingSet?.opening && viewingSetRow(uid) || app.study(uid);
-    return s ? [s.name || s.patientName || '', s.patientId || s.id || '', s.date || kinSayEn('날짜 미확인'), s.modality || '', s.desc || s.description || '', uid].filter(Boolean).join(' · ') : uid;
+    if (!s) return uid;
+    // The missing-date words stay a sentence inside the label: the screen it is written on reads them in its language.
+    const parts = [s.name || s.patientName || '', s.patientId || s.id || '', s.date || kinSayEn('날짜 미확인'), s.modality || '', s.desc || s.description || '', uid].filter(Boolean);
+    return kinSayEn(parts.map((_, i) => '{' + i + '}').join(' · '), ...parts);
   }
   const sameTarget = () => shown?.reportUid === app.current();
   function noteWindow() {

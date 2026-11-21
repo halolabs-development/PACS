@@ -141,13 +141,13 @@
   // Preload, PF and every viewer opening ask this one answer. A temporary archive failure is not this: the list read fails
   // or the Preload entry fails with the server's reason and Retry.
   const UNAVAILABLE = {
-    merge:()=>kinText('합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.'),
-    split:()=>kinText('나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.'),
+    merge:'합친 검사의 원본 일부를 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
+    split:'나눈 검사의 원본을 볼 수 없어 열거나 미리 받지 않습니다. 원본이 영상 저장소에 없거나 이 계정이 볼 수 없습니다. 목록을 새로고침하세요.',
   };
   function unavailable(row) {
     if(row?.examUnavailable!==true)return null;
     const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
-    return {kind,message:kind?UNAVAILABLE[kind]():kinText('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.')};
+    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
   }
   // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
   // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
@@ -166,7 +166,7 @@
   }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
     const lost=unavailable(current)||unavailable(prior);
-    if(lost)throw Object.assign(Error(lost.message),{kinWords:true});
+    if(lost)throw kinError(lost.message);
     const scope=read(current),comparison=prior?read(prior):null;
     if(!scope || prior&&!comparison)throw kinError('검사 범위를 확인할 수 없습니다.');
     if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw kinError('원본 검사 UID를 확인할 수 없습니다.');
@@ -5170,6 +5170,9 @@ window.KinLanguageTerms = {
     ["회원을 찾을 수 없습니다.", "Member not found.", "s"],
     // Words of the clinician, administration, audit and sign-in pages and of the viewer document (English only:
     // a reader who chose Korean keeps those screens as they are).
+    ["이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.", "Not available in this window — an image tool key takes it first (set in Viewer Settings · Edit Shortcuts › Viewer). Choose another key.", "m"],
+    ["이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.", "Not available in this window — Space goes to F.Leader (Viewer Settings › Space opens F.Leader). Choose another key.", "m"],
+    ["이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.", "Not available in this window — a work screen shortcut takes it (Edit Shortcuts). Choose another key.", "m"],
     ["최신 50건 목록 밖으로 밀린 요청입니다. 새 처리 결과가 있어 이 요청만 따로 읽었습니다.", "A request pushed out of the latest 50. It has a new result, so only this request was read separately.", "m"],
     ["서버가 센 안 읽은 항목입니다. 질문 스레드나 영상 요청 칸을 열어 보면 없어집니다. 이메일·문자로 보내지 않습니다.", "Unread items counted by the server. They clear when you open the question thread or the image request. Not sent by email or text message.", "m"],
     ["안 읽음 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.", "Could not check the unread count again. The count shown is the last one checked.", "m"],
@@ -8777,7 +8780,7 @@ window.KinLanguageTerms = {
   ],
   skip: [
     // viewer-ux-shortcuts.js (loaded for Edit Shortcuts): the viewer's tool names, shown as the viewer shows them (translate=no),
-    // its key code parts, and the notes it writes only inside a Viewer window's own hotkey table.
+    // and its key code parts.
     "Shift",
     "Stack Scroll",
     "Rectangle ROI",
@@ -8819,9 +8822,6 @@ window.KinLanguageTerms = {
     "Control",
     "Alt",
     "Meta",
-    "이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.",
-    "이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.",
-    "이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.",
     "\"Batang\", \"Noto Serif KR\", serif",
     "\"Batang\", serif",
     "\"Consolas\", monospace",
@@ -11051,7 +11051,7 @@ function kinCreateViewerHistory() {
     // out of all of those even when the calibration is no longer found. This is the one place that answers "may a Length be
     // measured here with a screen calibration"; an image with spacing of its own keeps its rules (a calibration over it is refused
     // as before), and so do Angle and Ellipse.
-    const SCREEN_LABEL = kinText("화면 보정 · 저장 안 됨");
+    const SCREEN_LABEL = '화면 보정 · 저장 안 됨';
     const NO_SPACING = kinText("원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다");
     const SCREEN_SR = kinText("화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.");
     // Any tag that gives the original a spacing of its own, valid or not (a spacing tag that cannot be read is refused by the
@@ -11098,7 +11098,7 @@ function kinCreateViewerHistory() {
       if (!freshStats(data, target)) return [kinText("재확인 필요: 현재 좌표로 계산되지 않았습니다")];
       const s = data.cachedStats[target], value = s?.length;
       if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return [kinText("측정을 완료하세요")];
-      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', SCREEN_LABEL];
+      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', kinText(SCREEN_LABEL)];
     }
     // A reason the reader must see where the press was: over the cell, for a few seconds (the panel may be folded away).
     const cellNotes = new Set();
@@ -11254,7 +11254,7 @@ function kinCreateViewerHistory() {
     const nativeRemove = measurementService.remove;
     const ownRemove = uid => nativeRemove.call(measurementService, uid);
     const numericMeasurement = m => manual(kinds[m?.toolName]);
-    const unverifiedReport = () => ({ columns: ['Verification'], values: [kinText("재확인 필요")] });
+    const unverifiedReport = () => ({ columns: ['Verification'], values: ['재확인 필요'] });
     function checkedMeasurement(m) {
       if (!m || ended || suspended || held()) return null;
       const a = ct.annotation.state.getAnnotation(m.uid);

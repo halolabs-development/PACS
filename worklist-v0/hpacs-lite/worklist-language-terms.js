@@ -4827,6 +4827,9 @@ window.KinLanguageTerms = {
     ["회원을 찾을 수 없습니다.", "Member not found.", "s"],
     // Words of the clinician, administration, audit and sign-in pages and of the viewer document (English only:
     // a reader who chose Korean keeps those screens as they are).
+    ["이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.", "Not available in this window — an image tool key takes it first (set in Viewer Settings · Edit Shortcuts › Viewer). Choose another key.", "m"],
+    ["이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.", "Not available in this window — Space goes to F.Leader (Viewer Settings › Space opens F.Leader). Choose another key.", "m"],
+    ["이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.", "Not available in this window — a work screen shortcut takes it (Edit Shortcuts). Choose another key.", "m"],
     ["최신 50건 목록 밖으로 밀린 요청입니다. 새 처리 결과가 있어 이 요청만 따로 읽었습니다.", "A request pushed out of the latest 50. It has a new result, so only this request was read separately.", "m"],
     ["서버가 센 안 읽은 항목입니다. 질문 스레드나 영상 요청 칸을 열어 보면 없어집니다. 이메일·문자로 보내지 않습니다.", "Unread items counted by the server. They clear when you open the question thread or the image request. Not sent by email or text message.", "m"],
     ["안 읽음 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.", "Could not check the unread count again. The count shown is the last one checked.", "m"],
@@ -8434,7 +8437,7 @@ window.KinLanguageTerms = {
   ],
   skip: [
     // viewer-ux-shortcuts.js (loaded for Edit Shortcuts): the viewer's tool names, shown as the viewer shows them (translate=no),
-    // its key code parts, and the notes it writes only inside a Viewer window's own hotkey table.
+    // and its key code parts.
     "Shift",
     "Stack Scroll",
     "Rectangle ROI",
@@ -8476,9 +8479,6 @@ window.KinLanguageTerms = {
     "Control",
     "Alt",
     "Meta",
-    "이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.",
-    "이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.",
-    "이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.",
     "\"Batang\", \"Noto Serif KR\", serif",
     "\"Batang\", serif",
     "\"Consolas\", monospace",

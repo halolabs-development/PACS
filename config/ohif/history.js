@@ -108,7 +108,7 @@ function kinCreateViewerHistory() {
     // out of all of those even when the calibration is no longer found. This is the one place that answers "may a Length be
     // measured here with a screen calibration"; an image with spacing of its own keeps its rules (a calibration over it is refused
     // as before), and so do Angle and Ellipse.
-    const SCREEN_LABEL = kinText("화면 보정 · 저장 안 됨");
+    const SCREEN_LABEL = '화면 보정 · 저장 안 됨';
     const NO_SPACING = kinText("원본에 픽셀 간격이 없습니다 · Calibration으로 화면 보정 후 잴 수 있습니다");
     const SCREEN_SR = kinText("화면 보정 측정은 저장되지 않아 SR에 넣지 않습니다.");
     // Any tag that gives the original a spacing of its own, valid or not (a spacing tag that cannot be read is refused by the
@@ -155,7 +155,7 @@ function kinCreateViewerHistory() {
       if (!freshStats(data, target)) return [kinText("재확인 필요: 현재 좌표로 계산되지 않았습니다")];
       const s = data.cachedStats[target], value = s?.length;
       if (!Number.isFinite(value) || value <= 0 || typeof s.unit === 'string' && /^px/i.test(s.unit)) return [kinText("측정을 완료하세요")];
-      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', SCREEN_LABEL];
+      return [(Math.round(value * 10) / 10).toFixed(1) + ' mm', kinText(SCREEN_LABEL)];
     }
     // A reason the reader must see where the press was: over the cell, for a few seconds (the panel may be folded away).
     const cellNotes = new Set();
@@ -311,7 +311,7 @@ function kinCreateViewerHistory() {
     const nativeRemove = measurementService.remove;
     const ownRemove = uid => nativeRemove.call(measurementService, uid);
     const numericMeasurement = m => manual(kinds[m?.toolName]);
-    const unverifiedReport = () => ({ columns: ['Verification'], values: [kinText("재확인 필요")] });
+    const unverifiedReport = () => ({ columns: ['Verification'], values: ['재확인 필요'] });
     function checkedMeasurement(m) {
       if (!m || ended || suspended || held()) return null;
       const a = ct.annotation.state.getAnnotation(m.uid);
