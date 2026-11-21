@@ -24,6 +24,7 @@ import { DicomwebReadRecorder } from './emr-viewing/dicomweb-read';
 import { OrthancService } from './orthanc.service';
 import { orthancFetch } from './orthanc-transport';
 import { Caller, PacsService } from './pacs.service';
+import { admitDicomRead } from './auth.service';
 
 export const IMAGE_RELAY_SURFACE = 'GET image-relay/*';
 const PREFIX = '/api/image-relay';
@@ -79,7 +80,7 @@ export class ImageRelayController {
     const target = relayTarget(String(req.originalUrl ?? req.url ?? ''));
     if (!target) throw new NotFoundException('영상 경로가 올바르지 않습니다');
     const uri = target.path + target.query;
-    const admitted = await this.pacs.authzDicom(uri, req.method, member(req));
+    const admitted = await admitDicomRead(res, () => this.pacs.authzDicom(uri, req.method, member(req)));
     // A HEAD or a description is no delivery (image-delivery-record.ts lease()); an instance description is a 열람 of
     // the study's metadata, recorded apart from the deliveries (describe()).
     const lease = await this.deliveries.lease(req, IMAGE_RELAY_SURFACE, target.path, () => archiveRead(admitted));

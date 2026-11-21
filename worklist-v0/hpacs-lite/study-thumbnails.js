@@ -15,6 +15,9 @@
      * A의 실패 메시지가 B의 썸네일을 덮으면 그것도 같은 종류의 거짓말이다.
      */
     let thumbSeq = 0, thumbController = null, thumbDone = Promise.resolve(), thumbUrls = [], thumbSort = "source";
+    // The series whose details the reader opened, for the study they were opened on: a redraw of that study (a list read
+    // after Refresh or after a document was attached) opens them again. Another study starts with none open.
+    let thumbOpen = { uid: null, series: new Set() };
     function orderedThumbs(reps) {
       if (thumbSort === "source") return reps;
       const number = value => /^[+-]?\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
@@ -46,6 +49,8 @@
       if (imageThumbnails?.sync()) return;
       cancelThumbs();
       if (!uid) { wrap.innerHTML = ""; return; }
+      if (thumbOpen.uid !== uid) thumbOpen = { uid, series: new Set() };
+      const opened = thumbOpen;
       const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.screenStamp(viewed());
       const controller = thumbController = new AbortController();
       const signal = controller.signal;
@@ -126,6 +131,9 @@
             disclosure.className = "thumb-details"; summary.textContent = "상세 정보";
             full.className = "thumb-full"; full.textContent = `${heading}\n${description}\nSeries UID: ${rep.seriesUid || "없음"}`;
             disclosure.append(summary, full);
+            const seriesKey = rep.sourceUid + ":" + rep.seriesUid;
+            disclosure.open = opened.series.has(seriesKey);
+            disclosure.ontoggle = () => { if (disclosure.open) opened.series.add(seriesKey); else opened.series.delete(seriesKey); };
             const open = document.createElement("button");
             open.type = "button"; open.className = "chip thumb-open"; open.textContent = "시리즈 열기"; open.disabled = true;
             open.setAttribute("aria-label", `시리즈 열기 · ${heading} · ${description} · Series UID: ${rep.seriesUid || "없음"}`);

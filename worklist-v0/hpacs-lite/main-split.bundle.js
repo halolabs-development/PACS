@@ -233,6 +233,19 @@
     const overlayValue = (key, value) => typeof value === "string" || (key === "age" && Number.isFinite(value));
 
     /**
+     * 검사 쓰기의 한 관문(Match·Unmatch·Verify·Unverify·Delete·Modify Exam과 saveApp). 로그인한 화면(데모가 아님)에서
+     * 검사 쓰기는 서버가 받아들인 답에서만 행을 바꾸고 성공을 알린다. 연결이 끊긴 것으로 보이는 동안은 보내지도 그리지도
+     * 않고 저장되지 않았다고 한 번 말한다 — 끊김을 데모(이 브라우저에만 남는) 경로로 떨어뜨리면 저장되지 않은 쓰기가
+     * 성공처럼 보인다. 답: "server" 서버에 보낸다 · "local" 데모 모드(로그인 안 함) · null 막힘(say이면 토스트로 말함;
+     * 아니면 부른 쪽이 NOT_CONNECTED를 제 자리에 보인다 — Match…·Unmatch… 창).
+     */
+    const NOT_CONNECTED = "서버에 연결돼 있지 않습니다 — 저장되지 않았습니다";
+    function studyWriteRoute(say = true) {
+      if (offline) { if (say) toast(NOT_CONNECTED, "err"); return null; }
+      return serverMode ? "server" : "local";
+    }
+
+    /**
      * 상태 저장. 로컬 모드면 통째로 localStorage에, 서버 모드면 **바뀐 필드만** PATCH.
      *
      * 전체를 보내면 안 되는 이유: 서버가 필드별로 권한을 본다. 방사선사가 Verify(ss)만
@@ -242,8 +255,9 @@
     function saveApp(uid, patch) {
       // 로그인한 계정으로 일하는 중에 서버가 죽었다면, localStorage는 안전한 곳이 아니라
       // **다음 로그인에 조용히 버려질 곳**이다. 쌓지 않고 막는다.
-      if (offline) { toast("서버에 연결돼 있지 않습니다 — 저장되지 않았습니다", "err"); return false; }
-      if (!serverMode) {
+      const route = studyWriteRoute();
+      if (!route) return false;
+      if (route === "local") {
         try { localStorage.setItem("kin-app", JSON.stringify(appState)); } catch (e) {}
         return;
       }
@@ -1169,7 +1183,7 @@
       referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
-      pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 받기 시작한 때부터 72시간이 지나면 자동으로 정리됨\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",
+      pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 그 패널에 표시된 기한에 자동으로 정리됨 (받은 때나 마지막으로 본 때부터 72시간 이내)\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",
     };
     function renderHeads() {
       // The first header also holds the "+" button; its own label keeps the column named by its title, not "Choose columns <title>".
@@ -3529,6 +3543,9 @@
      * A의 실패 메시지가 B의 썸네일을 덮으면 그것도 같은 종류의 거짓말이다.
      */
     let thumbSeq = 0, thumbController = null, thumbDone = Promise.resolve(), thumbUrls = [], thumbSort = "source";
+    // The series whose details the reader opened, for the study they were opened on: a redraw of that study (a list read
+    // after Refresh or after a document was attached) opens them again. Another study starts with none open.
+    let thumbOpen = { uid: null, series: new Set() };
     function orderedThumbs(reps) {
       if (thumbSort === "source") return reps;
       const number = value => /^[+-]?\d+$/.test(value) && Number.isSafeInteger(Number(value)) ? Number(value) : null;
@@ -3560,6 +3577,8 @@
       if (imageThumbnails?.sync()) return;
       cancelThumbs();
       if (!uid) { wrap.innerHTML = ""; return; }
+      if (thumbOpen.uid !== uid) thumbOpen = { uid, series: new Set() };
+      const opened = thumbOpen;
       const seq = thumbSeq, scope = KinExamScope.read(viewed()), scopeStamp = KinExamScope.screenStamp(viewed());
       const controller = thumbController = new AbortController();
       const signal = controller.signal;
@@ -3640,6 +3659,9 @@
             disclosure.className = "thumb-details"; summary.textContent = "상세 정보";
             full.className = "thumb-full"; full.textContent = `${heading}\n${description}\nSeries UID: ${rep.seriesUid || "없음"}`;
             disclosure.append(summary, full);
+            const seriesKey = rep.sourceUid + ":" + rep.seriesUid;
+            disclosure.open = opened.series.has(seriesKey);
+            disclosure.ontoggle = () => { if (disclosure.open) opened.series.add(seriesKey); else opened.series.delete(seriesKey); };
             const open = document.createElement("button");
             open.type = "button"; open.className = "chip thumb-open"; open.textContent = "시리즈 열기"; open.disabled = true;
             open.setAttribute("aria-label", `시리즈 열기 · ${heading} · ${description} · Series UID: ${rep.seriesUid || "없음"}`);
@@ -4900,6 +4922,7 @@
       const s = cur(), o = curOrder();
       if (!s || !o) { alert("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요."); return; }
       if (s.matched === "M" || o.matched === "M") { alert("이미 매칭된 항목입니다."); return; }
+      if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       if (!confirm(`아래 오더 정보를 검사에 덮어씁니다.\n\n검사: ${s.name} (${s.id}) ${s.date}\n오더: ${o.name} (${o.id}) ${o.sched}\n\n진행할까요?`)) return;
       await runMatch(s, o, message => alert("매칭 실패: " + message));
     }
@@ -4911,11 +4934,15 @@
      * or `{ ok: false, message }`; `refused` is called at the moment the page shows a refusal (not after a session end).
      */
     async function runMatch(s, o, refused = null) {
+      // 끊긴 동안은 보내지도 그리지도 않는다(study-state.js studyWriteRoute). 행 메뉴(refused가 있음)는 토스트로 한 번,
+      // Match… 창은 답의 message를 창 안에 한 번 보인다 — 매칭 실패 alert는 없다.
+      const route = studyWriteRoute(!!refused);
+      if (!route) return { ok: false, message: NOT_CONNECTED, reloaded: Promise.resolve(false) };
       const a = appState[s.uid] ??= {};
       const orig = a.orig ?? { id: s.id, name: s.name, sex: s.sex, birth: s.birth, age: s.age, desc: s.desc, ward: s.ward };
       const ov = { id: o.id, name: o.name, sex: o.sex, birth: o.birth, age: ageOf(o.birth, s.date), desc: o.desc, ward: o.ward };
 
-      if (serverMode) {
+      if (route === "server") {
         // 검사와 오더를 함께 바꾸는 일이라 서버 트랜잭션에 맡긴다.
         // 한쪽만 바뀌면 M/U가 어긋난 유령 상태가 남는다.
         // S4-U5: the server stores a claimed original only in the overlay shape, so only those fields are sent
@@ -4963,14 +4990,17 @@
     async function doUnmatch() {
       const s = cur();
       if (!s || s.matched !== "M") { alert("매칭(M)된 검사를 선택하세요."); return; }
+      if (!studyWriteRoute()) return;
       await runUnmatch(s, undefined, message => alert("매칭 해제 실패: " + message));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */
     async function runUnmatch(s, reason, refused = null) {
+      const route = studyWriteRoute(!!refused);
+      if (!route) return { ok: false, message: NOT_CONNECTED, reloaded: Promise.resolve(false) };
       const a = appState[s.uid] ?? {};
 
-      if (serverMode) {
+      if (route === "server") {
         const at = work.capture("document");
         let st;
         try {
@@ -5017,15 +5047,31 @@
     }
 
     // ── Verify / Unverify (8.1.3) ──
-    function setSs(uid, ss) {
+    /**
+     * Verify / Unverify (the Technician bar and the row menu). With a server the row is painted from the accepted answer
+     * (saveApp) and only then announced; a refusal keeps the row as the server has it and says the server's reason
+     * (saveApp). Disconnected, nothing is sent or painted (studyWriteRoute). The demo path is the previous behavior.
+     */
+    async function setSs(uid, ss) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
+      const route = studyWriteRoute();
+      if (!route) return;
+      const said = () => toast(ss === "Verified"
+        ? "검사를 확인했습니다 — 판독할 수 있습니다"
+        : "확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "info");
+      if (route === "server") {
+        // The row is the accepted answer's (saveApp); the report pane only if that study is still the selected one.
+        const at = work.capture("document"), view = uid === selectedUid ? work.capture("study") : null;
+        if (await saveApp(uid, { ss }) !== true) return;
+        work.commit(at, () => { renderClinical(); said(); });
+        if (view) work.commit(view, () => { loadReport(); updateReportButtons(); });
+        return;
+      }
       s.ss = ss;
       appState[uid] = { ...appState[uid], ss };
       saveApp(uid, { ss }); render(); renderClinical();
       if (uid === selectedUid) { loadReport(); updateReportButtons(); }
-      toast(ss === "Verified"
-        ? "검사를 확인했습니다 — 판독할 수 있습니다"
-        : "확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "info");
+      said();
     }
     $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
     $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
@@ -5067,7 +5113,9 @@
       Object.assign(ov, {
         id: $("#m-id").value.trim(), name: $("#m-name").value.trim(), sex: $("#m-sex").value,
         birth, age: ageOf(birth, s.date), desc: $("#m-desc").value.trim(), ward: $("#m-ward").value.trim() });
-      if (serverMode || offline) {
+      const route = studyWriteRoute();
+      if (!route) return;   // disconnected: nothing sent or painted; the modal keeps what was typed
+      if (route === "server") {
         const guidance = $("#m-guidance");
         guidance.hidden = true; guidance.textContent = "";
         button.disabled = true;
@@ -5110,6 +5158,7 @@
     async function doDelete(uid) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
       if (s.rs !== "W") { alert("RS가 W(Wait)인 검사만 삭제할 수 있습니다."); return; }
+      if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       // 영상 자체(Orthanc)를 지우는 것은 아직 안 한다. 되돌릴 수 없는 동작이라
       // 권한·감사로그·연쇄 해제를 갖춰야 한다 (교훈 §5). 지금 지울 수 있는 건
       // "영상에 대한 사람의 결정"뿐이고, 그러면 다음 목록 조회 때 그 검사는
@@ -5118,8 +5167,10 @@
                    `영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?`)) return;
       // 서버가 거절했는데 화면부터 지우면 검사가 사라진 것처럼 거짓말한다.
       // 응답을 기다려야 판독 이력·다른 사람의 초안 때문에 거절된 이유도 메뉴의 catch가 보여준다.
+      const route = studyWriteRoute();
+      if (!route) return;
       const at = work.capture("document");
-      if (serverMode) await api("DELETE", `/studies/${encodeURIComponent(uid)}`, undefined, undefined, at);
+      if (route === "server") await api("DELETE", `/studies/${encodeURIComponent(uid)}`, undefined, undefined, at);
       else saveApp();
       work.commit(at, () => {
         studies = studies.filter(x => x.uid !== uid);
@@ -10024,12 +10075,12 @@
     }
 
     const LOGOUT_TITLES = { waiting: "Logging Out", saving: "Saving Draft", failed: "Draft Not Saved", closing: "Logging Out",
-      ended: "Session Ended" };
+      ended: "Draft Not Saved" };
     const LOGOUT_NOTES = {
       waiting: "진행 중인 저장 또는 초안 버리기가 끝나는 대로 로그아웃을 이어 갑니다. 다시 누를 필요가 없습니다.",
       saving: "작성 중인 판독문 초안을 저장한 뒤 로그아웃합니다. 저장을 확인하면 바로 이어 갑니다.",
       closing: "로그아웃하는 중입니다. 업무 화면은 닫혔습니다.",
-      ended: "로그인 세션이 끝나 판독문 초안을 저장하지 못했습니다. 입력한 내용은 이 창의 메모리에만 있고 새로고침하거나 창을 닫으면 "
+      ended: "업무 화면이 닫혀 판독문 초안을 저장하지 못했습니다. 입력한 내용은 이 창의 메모리에만 있고 새로고침하거나 창을 닫으면 "
         + "사라집니다. 다른 창에서 같은 계정으로 다시 로그인한 뒤 Recover Draft를 누르면 저장을 다시 시도합니다.",
     };
     const LOGOUT_FAILED = {
@@ -10383,6 +10434,12 @@
                * 화면은 옛 글을 그리고, 수렴 저장이 그 옛 글을 서버에 밀어 넣는다.
                */
               appState[uid] = mergeObservedReportState(uid, st);
+            }
+            // Modality changes when a series of another modality arrives (an attached document, too): written like Count and
+            // Series, as the list read draws it (fromApi, then applyState's display overlay over the server's value).
+            if (existing) {
+              const overlay = appState[uid]?.ov?.modality, modality = typeof overlay === 'string' ? overlay : s.modality;
+              if (typeof modality === 'string') existing.modality = modality;
             }
             syncStudy(uid);
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }
@@ -11967,6 +12024,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     const studyAttachments=KinStudyAttachments({api:API,transport,allowed:()=>!!sess&&serverMode&&!demoMode&&!offline,
       can:role=>KinAuth.has(role),demo:()=>!!KinAuth.session()?.demo,study:uid=>studies.find(s=>s.uid===uid),
       current:()=>selectedUid,button:$('#t-attach'),notice:message=>toast(message,'err'),
+      // A stored document or a withdrawal changes the row's Count, Series and Modality: the list is read again as Refresh does.
+      reload:()=>load(),
     });
 
 
@@ -15586,7 +15645,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const opened = { uid, seq: selectionSeq, oid: selectedOid };
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
         label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
-          if (!confirm(`${displayActor(s.holder)} 님의 점유를 강제로 해제합니다. 그쪽 화면은 다음 저장에서 거절됩니다. 계속할까요?`)) return;
+          // 서버가 하는 일 그대로: 점유만 풀린다(api/src/pacs/hold.ts forceRelease). 이름은 자료라 번역되지 않는 자리({0})로.
+          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", displayActor(s.holder)))) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
@@ -15684,6 +15744,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         technicianItem({ label: kinSay("Unmatch"), dis: o.matched !== "M", act: async () => {
             const s2 = studies.find(x => x.uid === o.studyUid);
             if (!s2) { toast("이 오더에 매칭된 검사를 목록에서 찾을 수 없습니다", "err"); return; }
+            // 끊긴 동안은 그 검사로 옮기지도 않는다(study-state.js studyWriteRoute) — 해제할 수 없는 동작이 선택과 판독 화면부터 바꾸지 않게.
+            if (!studyWriteRoute()) return;
             // 그 검사로 옮겨졌을 때만 한다 — 옮겨지지 않았으면(글자 조합·쓰던 글의 저장) Unmatch가 지금 선택에 닿는다.
             await select(s2.uid);
             if (selectedUid !== s2.uid) return;
@@ -15819,7 +15881,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const note = document.createElement("p");
       note.className = "kin-closed-note";
       note.setAttribute("role", "status");
-      note.textContent = "세션을 닫았습니다. 로그인 화면으로 이동하는 중입니다…";
+      // 서버가 종료를 확인하기 전에도 참인 글만 쓴다: 닫힌 것은 이 업무 화면이고, 로그인 세션의 끝은 랜딩이 서버의 답으로 말한다.
+      kinWrite(note, kinSay("업무 화면을 닫았습니다. 로그인 화면으로 이동하는 중입니다…"));
       document.body.append(note);
     }
     onCommonEnd(closeWork);
