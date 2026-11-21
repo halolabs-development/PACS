@@ -140,7 +140,8 @@ for (const aliases of [false, true]) {
     console.log(JSON.stringify({ aliases, tables: after.tables.map(({signature,...row}) => row) }));
     const normal = login('ordinary',ordinary), changed = login('changed',current), successor = login('next',reused);
     for (const [index,account,who] of [[1,'ordinary',normal],[2,'changed',changed],[3,aliases?'previous':null,successor],[4,null,null]]) {
-      const study = await db.studyState.findUnique({ where: { uid: uid(index) } });
+      // A later StudyState column (the reading request's) is not there yet at this migration: read the ones this test needs.
+      const study = await db.studyState.findUnique({ where: { uid: uid(index) }, select: { uid: true, holderSub: true, preDocSub: true, preReviewerSub: true } });
       assert.deepEqual([study.holderSub,study.preDocSub,study.preReviewerSub],[account,account,'ordinary']);
       const historical = index === 2 && !aliases ? null : account;
       const head = await db.report.findUnique({ where: { uid: study.uid } });

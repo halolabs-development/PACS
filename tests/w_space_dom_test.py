@@ -925,7 +925,7 @@ class WSpaceDOM(unittest.TestCase):
                 stored = page.evaluate('(key) => JSON.parse(localStorage.getItem(key))', COLUMNS_KEY)
                 part = stored['modes']['Radiology']
                 self.assertEqual(['rs', 'no'], part['order'][:2])
-                shown_keys = {'rs', 'no', 'confirm', 'date', 'referredAt', 'id', 'modality', 'name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass', 'desc', 'pf'}
+                shown_keys = {'rs', 'no', 'confirm', 'readReq', 'date', 'referredAt', 'id', 'modality', 'name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass', 'desc', 'pf'}
                 self.assertEqual(set(part['order']) - shown_keys, set(part['hidden']))
                 self.assertTrue({'assignedReader', 'age', 'institutionName'} <= set(part['hidden']))
                 # Reload: order and hidden columns kept; sorting and the Name filter behave as before.
