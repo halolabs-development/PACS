@@ -72,11 +72,11 @@ window.KinReadingWorkspace = function (app) {
     preferenceGeneration++;
     const wanted = autoNote.checked, previousOwner = autoOwner;
     syncAutoNote();
-    if (autoOwner !== previousOwner) { app.notice('계정이 바뀌었습니다. 자동 열기 설정을 다시 확인하세요.'); return; }
+    if (autoOwner !== previousOwner) { app.notice(kinSayEn('계정이 바뀌었습니다. 자동 열기 설정을 다시 확인하세요.')); return; }
     autoNote.checked = wanted; autoLast = null;
     if (!autoOwner) return;
     try { localStorage.setItem(autoOwner, autoNote.checked ? 'true' : 'false'); }
-    catch (_) { app.notice('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.'); }
+    catch (_) { app.notice(kinSayEn('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.')); }
     maybeAutoNote();
   };
   const separate = button(kinSay('Open Viewer Window'), () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
@@ -84,7 +84,7 @@ window.KinReadingWorkspace = function (app) {
   const target = node('div', '', bar); target.id = 'reading-target';
   const shortcutHelp = node('details', '', bar); shortcutHelp.id = 'reading-shortcut-help';
   node('summary', 'Keyboard Shortcuts', shortcutHelp);
-  const hints = node('div', 'Ctrl+Alt+1 목록 · 2 영상 · 3 과거 판독 · 4 작성 · 5 정보 · 6 영상 Tech 메모 · 7 작업 패널 · 9 기본 영상 도구 (Tab 이동·Enter 선택) · ←/→ 이전/다음 검사 (입력 중 이동 제외)', shortcutHelp);
+  const hints = node('div', kinSayEn('Ctrl+Alt+1 목록 · 2 영상 · 3 과거 판독 · 4 작성 · 5 정보 · 6 영상 Tech 메모 · 7 작업 패널 · 9 기본 영상 도구 (Tab 이동·Enter 선택) · ←/→ 이전/다음 검사 (입력 중 이동 제외)'), shortcutHelp);
   hints.id = 'reading-shortcuts';
   const shortcutButtons = {list,image:imageFocus,prior:priorFocus,report:reportFocus,context,note,tools:toolsFocus,nativeTools:nativeToolsFocus,previous,next};
   const shortcuts = KinWorkspaceShortcuts.create({host:nav,owner:app.noteOwner,allowed:app.allowed,changed:map=>{
@@ -583,7 +583,7 @@ window.KinReadingWorkspace = function (app) {
   document.addEventListener('keydown', parentKeyboard, true);
   function label(uid, image = false) {
     const s = image && shown?.viewingSet === viewingSet?.opening && viewingSetRow(uid) || app.study(uid);
-    return s ? [s.name || s.patientName || '', s.patientId || s.id || '', s.date || '날짜 미확인', s.modality || '', s.desc || s.description || '', uid].filter(Boolean).join(' · ') : uid;
+    return s ? [s.name || s.patientName || '', s.patientId || s.id || '', s.date || kinSayEn('날짜 미확인'), s.modality || '', s.desc || s.description || '', uid].filter(Boolean).join(' · ') : uid;
   }
   const sameTarget = () => shown?.reportUid === app.current();
   function noteWindow() {
@@ -654,7 +654,7 @@ window.KinReadingWorkspace = function (app) {
     if (!selected) return;
     autoLast = key;
     const summary = app.hasNote(selected.uid);
-    if (summary === undefined) { app.notice('메모 상태가 미확인입니다. 현재 영상 Tech 메모에서 확인하세요.'); return; }
+    if (summary === undefined) { app.notice(kinSayEn('메모 상태가 미확인입니다. 현재 영상 Tech 메모에서 확인하세요.')); return; }
     if (!summary) return;
     if (document.visibilityState !== 'visible' || modalOpen(document)) return;
     try {
@@ -668,7 +668,7 @@ window.KinReadingWorkspace = function (app) {
   function showNote() {
     updateNote(); if (note.disabled) return false;
     const selected = noteTarget();
-    if (!selected) { app.notice('원본 검사가 확인되는 영상 칸을 선택하세요. 메모 대상을 확인할 수 없습니다.'); return false; }
+    if (!selected) { app.notice(kinSayEn('원본 검사가 확인되는 영상 칸을 선택하세요. 메모 대상을 확인할 수 없습니다.')); return false; }
     app.openNote(selected.uid); autoLast = JSON.stringify([epoch, shown.reportUid, shown.uid]); return true;
   }
   function redrawRetainedViewer() {
@@ -748,13 +748,13 @@ window.KinReadingWorkspace = function (app) {
   function request(uid, prior = null, series = null) {
     const valid = x => typeof x === 'string' && x.length <= 64 && /^\d+(?:\.\d+)+$/.test(x);
     if (!valid(uid) || prior !== null && !valid(prior) || series !== null && !valid(series) || !app.current()) {
-      app.notice('검사·시리즈 정보를 확인할 수 없어 열지 않았습니다.'); return null;
+      app.notice(kinSayEn('검사·시리즈 정보를 확인할 수 없어 열지 않았습니다.')); return null;
     }
-    if (!app.allowed()) { app.notice('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.'); return null; }
+    if (!app.allowed()) { app.notice(kinSayEn('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.')); return null; }
     // WORKLIST-SPLIT-UID: a new launch or replacement takes only studies the current list carries. A UID the list excluded
     // because two patient resources answer it is not one of them; the image gate refuses its sources on the server too.
     if (!app.study(uid) || prior && prior !== uid && !app.study(prior)) {
-      app.notice('현재 목록에 없는 검사(환자 식별 불일치로 제외된 검사 포함)는 영상 작업공간에서 열지 않았습니다.'); return null;
+      app.notice(kinSayEn('현재 목록에 없는 검사(환자 식별 불일치로 제외된 검사 포함)는 영상 작업공간에서 열지 않았습니다.')); return null;
     }
     let exam;
     try { const input=app.viewerInput?.(uid,prior); if(input?.scoped)exam=input; }
@@ -782,16 +782,16 @@ window.KinReadingWorkspace = function (app) {
   function openViewingSet(uid, prior, set) {
     const valid = x => typeof x === 'string' && x.length <= 64 && /^\d+(?:\.\d+)+$/.test(x);
     const refused = message => ({ status: 'refused', message });
-    if (ended) return refused('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.');
+    if (ended) return refused(String(kinSayEn('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.')));
     if (!valid(uid) || prior !== null && (!valid(prior) || prior === uid) || !(set?.metadata instanceof Map) ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(set.opening || '') ||
-        !set.metadata.has(uid) || prior && !set.metadata.has(prior)) return refused('검사 정보를 확인할 수 없어 열지 않았습니다.');
-    if (!app.current()) return refused('판독 대상을 선택하세요');
-    if (!app.allowed()) return refused('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.');
+        !set.metadata.has(uid) || prior && !set.metadata.has(prior)) return refused(String(kinSayEn('검사 정보를 확인할 수 없어 열지 않았습니다.')));
+    if (!app.current()) return refused(String(kinSayEn('판독 대상을 선택하세요')));
+    if (!app.allowed()) return refused(String(kinSayEn('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.')));
     const before = viewingSet;
     viewingSet = { opening: set.opening, metadata: new Map([...set.metadata].filter(([key]) => key === uid || key === prior)) };
     const accepted = attempt({ uid, prior: prior || null, series: null, reportUid: app.current(), viewingSet: set.opening }, false);
-    if (!accepted) { viewingSet = before; identify(); return refused(status.textContent || '영상 작업공간에서 열지 않았습니다.'); }
+    if (!accepted) { viewingSet = before; identify(); return refused(status.textContent || String(kinSayEn('영상 작업공간에서 열지 않았습니다.'))); }
     const openedFrame = frame;
     return { status: 'accepted', isOpen: () => !ended && active && frame === openedFrame && sameTarget() && shown?.viewingSet === set.opening };
   }
@@ -808,7 +808,7 @@ window.KinReadingWorkspace = function (app) {
     } catch (_) { return false; }
   }
   function attempt(r, abandon) {
-    if (ended) { app.notice('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.'); return false; }
+    if (ended) { app.notice(kinSayEn('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.')); return false; }
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
     pending = r; active = true; layout(); identify();
     if (frame && !failed && !frameFailed() && JSON.stringify(shown) === JSON.stringify(r)) {
@@ -903,7 +903,7 @@ window.KinReadingWorkspace = function (app) {
   function resume(uid, prior = null) { return shown?.reportUid === app.current() && !failed ? attempt(shown, false) : open(uid, prior); }
   function openJob(uid,job) {
     const ids=job?.snapshot?.studies;
-    if(job?.studyUid!==uid||!Array.isArray(ids)||ids[0]!==uid||ids.length<1||ids.length>2||typeof job.id!=='string'||!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(job.id)){app.notice('저장 보기의 검사 정보를 확인할 수 없습니다.');return false;}
+    if(job?.studyUid!==uid||!Array.isArray(ids)||ids[0]!==uid||ids.length<1||ids.length>2||typeof job.id!=='string'||!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(job.id)){app.notice(kinSayEn('저장 보기의 검사 정보를 확인할 수 없습니다.'));return false;}
     const r=request(uid,ids[1]??null);if(!r)return false;r.job=job.id;return attempt(r,false);
   }
   function selectionChanged(deferOpen = false) {

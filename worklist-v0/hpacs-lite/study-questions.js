@@ -31,24 +31,24 @@
         offline: '서버 연결이 끊겼습니다. 표시된 질문은 최신이 아닐 수 있습니다.',
         writeOffline: '서버 연결이 끊겨 지금은 보낼 수 없습니다. 쓴 내용은 그대로 있습니다.',
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게): 개수와 0이 아닌 상태, 전문은 툴팁.
-        notice: { counts: (n, parts) => `질문 ${n}건${parts ? ` · ${parts}` : ''}`, failed: '질문 읽기 실패', refused: '질문 읽기 거절',
+        notice: { counts: (n, parts) => kinSayEn('질문 {n0}건{1}', n, parts ? ` · ${parts}` : ''), failed: '질문 읽기 실패', refused: '질문 읽기 거절',
           account: '질문: 계정 바뀜' },
         loading: '이 검사의 질문을 불러오는 중입니다…',
         failed: '이 검사의 질문을 불러오지 못했습니다.',
         empty: '이 검사에는 질문이 없습니다.',
         none: '판독 대상 검사를 고르면 그 검사의 질문을 표시합니다.',
-        counts: (n, open, answered, closed) => `이 검사의 질문 ${n}건 · Open ${open} · Answered ${answered} · Closed ${closed}`,
-        ready: n => `이 검사의 질문 ${n}건을 최신순으로 표시합니다.`,
+        counts: (n, open, answered, closed) => kinSayEn('이 검사의 질문 {n0}건 · Open {1} · Answered {2} · Closed {3}', n, open, answered, closed),
+        ready: n => kinSayEn('이 검사의 질문 {n0}건을 최신순으로 표시합니다.', n),
         malformed: '질문 응답 형식을 확인할 수 없습니다. 다시 불러오세요.',
         notFound: '검사나 질문을 찾을 수 없습니다. 접근 조건이 바뀌었거나 검사가 옮겨졌을 수 있습니다.',
-        item: (created, name, count, last) => `${created} 등록 · ${name} · 항목 ${count}개 · 최근 ${last}`,
+        item: (created, name, count, last) => kinSayEn('{0} 등록 · {1} · 항목 {n2}개 · 최근 {3}', created, name, count, last),
         threadLoading: '질문 스레드를 불러오는 중입니다…',
         threadFailed: '질문 스레드를 불러오지 못했습니다.',
         otherStudy: '이 질문은 판독 대상 검사의 질문이 아니어서 열지 않았습니다. Inbox를 다시 불러오세요.',
-        threadMeta: (created, name) => `${created} 등록 · 질문 ${name}`,
+        threadMeta: (created, name) => kinSayEn('{0} 등록 · 질문 {1}', created, name),
         closedNote: '닫힌 질문입니다. 새 답변·닫기는 서버가 거절합니다.',
         anchorChanged: '답변 이후 판독 상태가 바뀌었습니다.',
-        anchorDetail: (then, now) => `답변 때 ${then} → 지금 ${now}`,
+        anchorDetail: (then, now) => kinSayEn('답변 때 {0} → 지금 {1}', then, now),
         closeEmpty: '사유 없이 닫았습니다.',
         nonFinal: '확정 전 소견을 적으면 임상의에게 그대로 보입니다.',
         replyHint: '질문한 임상의가 이 스레드에서 그대로 읽습니다. 답변은 판독문에 들어가지 않습니다.',
@@ -57,7 +57,7 @@
         inboxLoading: '받은 질문을 불러오는 중입니다…',
         inboxFailed: '받은 질문을 불러오지 못했습니다.',
         inboxEmpty: '이 조건의 질문이 없습니다.',
-        inboxReady: (n, more) => `질문 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
+        inboxReady: (n, more) => kinSayEn('질문 {n0}건을 최신순으로 표시합니다.{t1}', n, more ? kinSayEn(' More로 이어서 읽습니다.') : ''),
         unreadTip: '서버가 센 안 읽은 질문입니다(소속 기관의 Open 질문 중 이 계정이 아직 열어 보지 않은 것). 누르면 Inbox를 엽니다. 이메일·문자로 보내지 않습니다.',
         unreadStale: '안 읽은 질문 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
         unreadOutside: '최신 50건 목록 밖의 질문입니다. 새 질문이 있습니다.',
@@ -168,7 +168,7 @@
         const parts = [];
         if (error && error.status) parts.push(`HTTP ${error.status}`);
         if (error && error.code) parts.push(error.code);
-        const message = error && error.message ? error.message : TEXT.rejected;
+        const message = error && error.message ? error.message : String(kinSayEn(TEXT.rejected));
         return parts.length ? `${message} (${parts.join(' · ')})` : message;
       };
       const readDetail = error => error && error.status === 404 ? kinSayEn('{t0}\n{1}', { t: kinSayEn(TEXT.notFound) }, describe(error)) : describe(error);
@@ -204,8 +204,8 @@
         try {
           const answer = await transport.request(apiBase + path, { method, json: body, signal: controller.signal, context: at,
             deadlineMs: TIMEOUT_MS, abortWhenStale: false });
-          if (!work.admits(at)) throw Object.assign(new Error(TEXT.noResponse), { status: 0, code: null, stale: true });
-          if (answer.auth) throw Object.assign(new Error(TEXT.expired), { status: answer.status, code: null, auth: true });
+          if (!work.admits(at)) throw Object.assign(new Error(kinSayEn(TEXT.noResponse)), { status: 0, code: null, stale: true });
+          if (answer.auth) throw Object.assign(new Error(kinSayEn(TEXT.expired)), { status: answer.status, code: null, auth: true });
           if (!answer.ok) {
             throw Object.assign(new Error(answer.body && typeof answer.body.message === 'string' ? answer.body.message : `HTTP ${answer.status}`),
               { status: answer.status, code: answer.code });
@@ -213,7 +213,7 @@
           return { status: answer.status, data: answer.incomplete ? null : answer.body };
         } catch (error) {
           if (error && Number.isInteger(error.status)) throw error;
-          throw Object.assign(new Error(error && error.transport === 'timeout' ? TEXT.noResponse : TEXT.noServer),
+          throw Object.assign(new Error(error && error.transport === 'timeout' ? kinSayEn(TEXT.noResponse) : kinSayEn(TEXT.noServer)),
             { status: 0, code: null, stale: !work.admits(at) });
         } finally {
           inflight.delete(controller);
@@ -240,7 +240,7 @@
       /** #3·#1 응답의 모양 검사. target이 있으면 모든 행이 그 검사의 것이어야 한다. 하나라도 틀리면 답 전체를 그리지 않는다. */
       function readSummaries(data, target) {
         const rows = data && data.items, uids = target === null ? null : examUids(target, data);
-        if (!Array.isArray(rows) || rows.length > 50) throw new Error(TEXT.malformed);
+        if (!Array.isArray(rows) || rows.length > 50) throw new Error(kinSayEn(TEXT.malformed));
         for (const row of rows) {
           if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !ID.test(row.id) || typeof row.studyUid !== 'string'
               || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : !uids.has(row.studyUid))
@@ -248,7 +248,7 @@
               || (target === null && !(row.openUid === null || typeof row.openUid === 'string' && row.openUid.length <= 64 && STUDY.test(row.openUid)))
               || !STATES.includes(row.state) || !Number.isSafeInteger(row.revision) || row.revision < 1
               || !Number.isSafeInteger(row.entryCount) || row.entryCount < 1 || !row.author || typeof row.author !== 'object')
-            throw new Error(TEXT.malformed);
+            throw new Error(kinSayEn(TEXT.malformed));
         }
         if (target !== null) listUids = { target, uids };
         return rows;
@@ -262,18 +262,18 @@
           && (!role || Object.prototype.hasOwnProperty.call(ROLES, value.role));
         const anchor = value => !!value && typeof value === 'object' && text(value.rs) && value.rs.length > 0
           && (value.version === null || (Number.isSafeInteger(value.version) && value.version > 0));
-        if (!item || typeof item !== 'object' || item.id !== id) throw new Error(TEXT.malformed);
+        if (!item || typeof item !== 'object' || item.id !== id) throw new Error(kinSayEn(TEXT.malformed));
         // 다른 검사의 질문이면 판독 대상 곁에 열지 않고 그 이유를 보인다(Inbox에서 고른 질문도 이 단건 읽기로 확인한다).
-        if (!targetUids(target).has(item.studyUid)) throw new Error(TEXT.otherStudy);
+        if (!targetUids(target).has(item.studyUid)) throw new Error(kinSayEn(TEXT.otherStudy));
         if (!STATES.includes(item.state) || !who(item.author) || !Array.isArray(item.entries) || !item.entries.length
             || item.revision !== item.entries.length || item.entryCount !== item.entries.length || !anchor(item.current)
             || (item.state === 'Closed') !== (!!item.closed && typeof item.closed === 'object'))
-          throw new Error(TEXT.malformed);
+          throw new Error(kinSayEn(TEXT.malformed));
         item.entries.forEach((entry, index) => {
           if (!entry || typeof entry !== 'object' || entry.seq !== index + 1
               || !Object.prototype.hasOwnProperty.call(KINDS, entry.kind) || (index === 0) !== (entry.kind === 'question')
               || !text(entry.body) || (entry.kind !== 'close' && !entry.body.trim()) || !who(entry.author, true) || !anchor(entry.reportAnchor))
-            throw new Error(TEXT.malformed);
+            throw new Error(kinSayEn(TEXT.malformed));
         });
         return { ...item, emr: data.emr };
       }
@@ -428,8 +428,8 @@
         pane.hidden = mode === null;
         pane.dataset.mode = mode || '';
         lockBox.hidden = lock === null;
-        lockBox.querySelector('.question-text').textContent = lock ? lock.text : '';
-        lockBox.querySelector('.question-detail').textContent = lock ? lock.detail : '';
+        kinWrite(lockBox.querySelector('.question-text'), lock ? lock.text : '');
+        kinWrite(lockBox.querySelector('.question-detail'), lock ? lock.detail : '');
         studyView.hidden = lock !== null || mode !== 'study';
         inboxView.hidden = lock !== null || mode !== 'inbox';
         // A thread is seen only while the study pane shows it.
@@ -454,7 +454,7 @@
         const open = button(kinSay('Open Thread'), () => openThread(item.id));
         open.dataset.openThread = '';
         li.append(badge(item.state), ' ',
-          TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt)), ' ', open);
+          kinWrite(document.createTextNode(''), TEXT.item(time(item.createdAt), person(item.author), item.entryCount, time(item.lastEntryAt))), ' ', open);
         paintRowUnread(li);
         return li;
       }
@@ -489,13 +489,13 @@
         entries.dataset.part = 'entries';
         const closed = make('p', 'question-muted', kinSay(TEXT.closedNote));
         closed.dataset.part = 'closed';
-        const reply = composer(target, id, 'reply', { label: 'Reply', hint: TEXT.replyHint, button: 'Reply', multiline: true });
+        const reply = composer(target, id, 'reply', { label: 'Reply', hint: kinSayEn(TEXT.replyHint), button: 'Reply', multiline: true });
         // OQ-11 (a): 서버는 답변 문장을 거르지 않는다. 확정 전 소견이 그대로 전해진다는 사실을 입력 곁에 둔다.
         const nonFinal = make('p', 'question-nonfinal', kinSay(TEXT.nonFinal));
         nonFinal.id = 'question-nonfinal';
         reply.querySelector('textarea').before(nonFinal);
         reply.querySelector('textarea').setAttribute('aria-describedby', 'question-reply-hint question-nonfinal');
-        const close = composer(target, id, 'close', { label: 'Close Reason', hint: TEXT.closeHint, button: 'Close', multiline: false });
+        const close = composer(target, id, 'close', { label: 'Close Reason', hint: kinSayEn(TEXT.closeHint), button: 'Close', multiline: false });
         const note = noteBox(noteOf(target, id));
         threadBox.replaceChildren(head, meta, state, entries, closed, reply, close, note);
       }
@@ -512,9 +512,9 @@
         const loaded = !threadFailure && thread !== null && thread.id === threadId ? thread : null;
         threadBox.dataset.state = loaded ? loaded.state : threadFailure ? 'failed' : 'loading';
         part('status').replaceChildren(...(loaded ? [badge(loaded.state)] : []));
-        part('meta').textContent = loaded ? TEXT.threadMeta(time(loaded.createdAt), person(loaded.author)) : '';
+        kinWrite(part('meta'), loaded ? TEXT.threadMeta(time(loaded.createdAt), person(loaded.author)) : '');
         const state = threadFailure ? 'failed' : threadLoading || !loaded ? 'loading' : 'ready';
-        setState(part('state'), state, { failed: TEXT.threadFailed, loading: TEXT.threadLoading }[state] || '',
+        setState(part('state'), state, { failed: kinSayEn(TEXT.threadFailed), loading: kinSayEn(TEXT.threadLoading) }[state] || '',
           threadFailure ? readDetail(threadFailure) : '');
         part('state').hidden = state === 'ready';
         part('retry').hidden = !threadFailure;
@@ -546,7 +546,7 @@
         if (entry.kind === 'answer' && (entry.reportAnchor.rs !== current.rs || entry.reportAnchor.version !== current.version)) {
           const note = make('p', 'question-anchor');
           note.dataset.anchor = '';
-          note.append(make('strong', null, kinSay(TEXT.anchorChanged)), ' ', TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current)));
+          note.append(make('strong', null, kinSay(TEXT.anchorChanged)), ' ', kinWrite(document.createTextNode(''), TEXT.anchorDetail(reportText(entry.reportAnchor), reportText(current))));
           li.append(note);
         }
         return li;
@@ -600,12 +600,12 @@
         // 기준 revision은 마지막으로 읽힌 그 스레드에서만 온다. 한 번도 읽히지 않았거나 읽기에 실패했으면 보내지 않는다.
         const ready = !threadFailure && thread !== null && thread.id === id;
         // 끊긴 동안은 보내는 단추(Reply·Close·Retry)만 잠그고 까닭을 말한다. Discard는 이 화면 안의 일이라 그대로다.
-        const reach = online(), why = reach ? '' : TEXT.writeOffline;
+        const reach = online(), why = reach ? '' : kinSayEn(TEXT.writeOffline);
         const send = wrap.querySelector('[data-send]'), retry = wrap.querySelector('[data-retry]');
         send.disabled = attempt !== null || !ready || !reach;
-        send.title = attempt === null && ready ? why : '';
+        kinWrite(send, attempt === null && ready ? why : '', 'title');
         retry.disabled = !reach;
-        retry.title = why;
+        kinWrite(retry, why, 'title');
         for (const name of ['retry', 'discard']) wrap.querySelector(`[data-${name}]`).hidden = !attempt || attempt.busy;
       }
 
@@ -649,14 +649,14 @@
         if (ended || lock !== null || !online() || target !== uid || attempts.has(key) || !loaded || !who) return;
         const value = field.value;
         if (!(action === 'close' && value === '') && (!value.trim())) {
-          setNote(noteKey, 'failed', TEXT.noText);
+          setNote(noteKey, 'failed', kinSayEn(TEXT.noText));
           return;
         }
         let requestId;
         try {
           requestId = newRequestId();
         } catch (_) {
-          setNote(noteKey, 'failed', TEXT.noRequestId);
+          setNote(noteKey, 'failed', kinSayEn(TEXT.noRequestId));
           return;
         }
         const path = `/questions/${encodeURIComponent(id)}/${action === 'close' ? 'close' : 'entries'}`;
@@ -681,7 +681,7 @@
         if (ended || !attempt || attempt.busy) return;
         attempts.delete(key);
         drafts.set(key, attempt.text);
-        setNote(attempt.noteKey, 'discarded', TEXT.discarded);
+        setNote(attempt.noteKey, 'discarded', kinSayEn(TEXT.discarded));
         repaintComposer(key);
         // 끊긴 동안 버렸으면 다시 읽기는 연결이 돌아올 때(kinOnConnection → refresh) — 실패한 읽기가 연 스레드를 내리지 않게.
         if (lock === null && attempt.uid === uid && online()) loadList();
@@ -690,7 +690,7 @@
       async function transmit(key, attempt) {
         attempt.busy = true;
         attempt.unknown = false;
-        setNote(attempt.noteKey, 'busy', TEXT.sending);
+        setNote(attempt.noteKey, 'busy', kinSayEn(TEXT.sending));
         repaintComposer(key);
         let sent = null, error = null;
         try {
@@ -705,7 +705,7 @@
         // Retry가 서버의 결과를 확인한다(보낸 것을 잊지 않는다).
         if (error && error.stale) {
           attempt.unknown = true;
-          notes.set(attempt.noteKey, { state: 'unknown', text: TEXT.unknown, detail: '' });
+          notes.set(attempt.noteKey, { state: 'unknown', text: kinSayEn(TEXT.unknown), detail: '' });
           return;
         }
         if (error) {
@@ -719,13 +719,13 @@
         }
         if (same === null || !appliedOf(sent, attempt)) {
           attempt.unknown = true;
-          setNote(attempt.noteKey, 'unknown', TEXT.writeMalformed, sent.status === 201 ? '' : `HTTP ${sent.status}`);
+          setNote(attempt.noteKey, 'unknown', kinSayEn(TEXT.writeMalformed), sent.status === 201 ? '' : `HTTP ${sent.status}`);
           repaintComposer(key);
           return;
         }
         attempts.delete(key);
         drafts.delete(key);
-        setNote(attempt.noteKey, 'saved', sent.data.replayed ? TEXT.replayed : TEXT.saved);
+        setNote(attempt.noteKey, 'saved', sent.data.replayed ? kinSayEn(TEXT.replayed) : kinSayEn(TEXT.saved));
         repaintComposer(key);
         // An answer or a close ends what this reader's inbox waited for: the count is read again.
         if (unread) unread.refresh();
@@ -745,13 +745,13 @@
         }
         if (error.status === 0 || error.status >= 500 || error.code === 'STUDY_ACCESS_CHANGED') {
           attempt.unknown = true;
-          setNote(attempt.noteKey, 'unknown', TEXT.codes[error.code] || TEXT.unknown, describe(error));
+          setNote(attempt.noteKey, 'unknown', kinSayEn(TEXT.codes[error.code] || TEXT.unknown), describe(error));
           repaintComposer(key);
           return;
         }
         attempts.delete(key);
         setNote(attempt.noteKey, 'failed',
-          TEXT.codes[error.code] || (error.status === 404 ? TEXT.notFound : TEXT.statuses[error.status]) || TEXT.rejected, describe(error));
+          kinSayEn(TEXT.codes[error.code] || (error.status === 404 ? TEXT.notFound : TEXT.statuses[error.status]) || TEXT.rejected), describe(error));
         repaintComposer(key);
         // 질문이 바뀌었거나 닫혔거나 보이지 않게 되었으면 지금 서버 상태를 다시 읽는다(쓰던 글은 칸에 남는다).
         if ((error.status === 404 || error.status === 409) && lock === null && attempt.uid === uid) loadList();
@@ -765,7 +765,7 @@
        * 아니라서 lockPanel로 이 줄만 잠근다.
        */
       function accountChanged(detail) {
-        lockPanel(TEXT.ownerChanged, detail, true);
+        lockPanel(kinSayEn(TEXT.ownerChanged), detail, true);
         notifyAccountChanged(detail);
       }
 
@@ -826,7 +826,7 @@
           listLoading = false;
           if (error.auth) return;
           if (error.status === 403) {
-            lockPanel(TEXT.refused, describe(error));
+            lockPanel(kinSayEn(TEXT.refused), describe(error));
             return;
           }
           items = null;
@@ -845,7 +845,7 @@
           return;
         }
         try {
-          if (same === null) throw new Error(TEXT.malformed);
+          if (same === null) throw new Error(kinSayEn(TEXT.malformed));
           items = readSummaries(data, target);
         } catch (error) {
           items = null;
@@ -886,7 +886,7 @@
           threadLoading = false;
           if (error.auth) return;
           if (error.status === 403) {
-            lockPanel(TEXT.refused, describe(error));
+            lockPanel(kinSayEn(TEXT.refused), describe(error));
             return;
           }
           thread = null;
@@ -902,7 +902,7 @@
           return;
         }
         try {
-          if (same === null) throw new Error(TEXT.malformed);
+          if (same === null) throw new Error(kinSayEn(TEXT.malformed));
           thread = readThread(data, target, id);
         } catch (error) {
           thread = null;
@@ -930,7 +930,7 @@
           inboxLoading = false;
           if (error.auth) return;
           if (error.status === 403) {
-            lockPanel(TEXT.refused, describe(error));
+            lockPanel(kinSayEn(TEXT.refused), describe(error));
             return;
           }
           inboxFailure = error;
@@ -945,9 +945,9 @@
           return;
         }
         try {
-          if (same === null) throw new Error(TEXT.malformed);
+          if (same === null) throw new Error(kinSayEn(TEXT.malformed));
           const page = readSummaries(data, null), next = data.nextCursor;
-          if (!(next === null || (typeof next === 'string' && CURSOR.test(next) && next !== cursor))) throw new Error(TEXT.malformed);
+          if (!(next === null || (typeof next === 'string' && CURSOR.test(next) && next !== cursor))) throw new Error(kinSayEn(TEXT.malformed));
           inboxItems = [...inboxItems, ...page];
           inboxCursor = next;
         } catch (error) {
@@ -958,7 +958,7 @@
 
       function renderInbox() {
         const state = inboxLoading ? 'loading' : inboxFailure ? 'failed' : inboxItems.length ? 'ready' : 'empty';
-        setState(inboxLine, state, { loading: TEXT.inboxLoading, failed: TEXT.inboxFailed, empty: TEXT.inboxEmpty }[state]
+        setState(inboxLine, state, { loading: kinSayEn(TEXT.inboxLoading), failed: kinSayEn(TEXT.inboxFailed), empty: kinSayEn(TEXT.inboxEmpty) }[state]
           || TEXT.inboxReady(inboxItems.length, inboxCursor !== null), inboxFailure ? describe(inboxFailure) : '');
         inboxRetry.hidden = !inboxFailure;
         inboxList.replaceChildren(...inboxItems.map(inboxItem));
@@ -972,7 +972,7 @@
         li.dataset.id = item.id;
         li.dataset.uid = item.studyUid;
         const row = inboxRow(item);
-        const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${item.studyUid}`;
+        const label = row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : kinSayEn('{t0} · {1}', kinSayEn(TEXT.unlisted), item.studyUid);
         const open = button(kinSay('Open Study'), () => openFromInbox(item));
         open.dataset.openStudy = '';
         if (!row) {
@@ -1065,7 +1065,7 @@
        */
       function end(reason, detail) {
         if (reason === 'account-changed') {
-          lockPanel(TEXT.ownerChanged, detail, true);
+          lockPanel(kinSayEn(TEXT.ownerChanged), detail, true);
           return;
         }
         if (ended) return;
@@ -1189,4 +1189,4 @@
         // The one connection rule (page-core.js), the same the Mark CVR window uses: Reply, Close and Retry wait for it.
         online: serverReachable,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
-    } catch (_) { toast('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.', 'err'); }
+    } catch (_) { toast(kinSayEn('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.'), 'err'); }
