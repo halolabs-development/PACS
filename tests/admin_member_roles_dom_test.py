@@ -68,6 +68,8 @@ ADMIN_HTML = lf_text(HPACS / "admin.html")
 ORIGIN = "https://members.test"
 PAGE_PATH = "/worklist/hpacs-lite/admin.html"
 SCRIPTS = {
+    "/worklist/hpacs-lite/worklist-language-terms.js": lf_text(HPACS / "worklist-language-terms.js"),
+    "/worklist/hpacs-lite/worklist-language.js": lf_text(HPACS / "worklist-language.js"),
     "/worklist/hpacs-lite/auth.js": lf_text(HPACS / "auth.js"),
     "/worklist/hpacs-lite/work-context.js": lf_text(HPACS / "work-context.js"),
     "/worklist/hpacs-lite/session-transport.js": lf_text(HPACS / "session-transport.js"),

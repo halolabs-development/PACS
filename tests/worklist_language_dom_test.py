@@ -216,6 +216,16 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertEqual({"version": 1, "worklist": None, "reading": "ko"}, self.site.appearance["language"])
         self.assertEqual("— · KO", self.page.locator("#language-label").inner_text().strip())
 
+    def test_the_applied_choice_is_kept_in_the_browser_for_the_other_pages(self):
+        self.boot()
+        stored = "localStorage.getItem('kin-language:v1')"
+        self.assertIsNone(self.page.evaluate(stored))
+        self.apply("en")
+        self.assertEqual({"version": 1, "worklist": "en", "reading": "en"}, json.loads(self.page.evaluate(stored)))
+        self.page.locator("#language-revert").click()
+        expect(self.page.locator("#language-applied")).to_be_hidden()
+        self.assertEqual(NONE, json.loads(self.page.evaluate(stored)))
+
     def test_the_account_choice_comes_back_on_another_start(self):
         self.boot()
         self.apply("ko", reading=False)

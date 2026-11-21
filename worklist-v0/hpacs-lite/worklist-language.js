@@ -239,14 +239,24 @@
       v.version === 1 && valid(v.worklist) && valid(v.reading) ? { version: 1, worklist: v.worklist, reading: v.reading } : null;
   }
   const value = () => ({ version: 1, worklist: state.worklist, reading: state.reading });
+  // The other documents (clinician, administration, audit and sign-in pages) keep no choice of their own: they follow the
+  // choice the work page last applied in this browser, English only (a reader who chose Korean keeps them as they are).
+  const BROWSER = 'kin-language:v1';
+  const follows = document.documentElement.hasAttribute('data-kin-lang-browser');
   function set(next) {
     const clean = normalize(next);
     if (!clean) return false;
     generation += 1;
     const changed = REGIONS.some(r => state[r] !== clean[r]);
     state.worklist = clean.worklist; state.reading = clean.reading;
+    if (!follows) try { localStorage.setItem(BROWSER, JSON.stringify(clean)); } catch (_) { /* the other documents keep their words */ }
     if (changed) { repaint(); paintDialog(); }
     return true;
+  }
+  function followBrowser() {
+    let stored = null;
+    try { stored = normalize(JSON.parse(localStorage.getItem(BROWSER))); } catch (_) { stored = null; }
+    if (stored?.worklist === 'en') set({ version: 1, worklist: 'en', reading: null });
   }
 
   // The header mark: what the account chose (EN / KO, both when the screens differ); an account that never chose keeps
@@ -412,6 +422,7 @@
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
+    if (follows) followBrowser();
     if (active()) repaint(); else showLabel();
   }
   start();
