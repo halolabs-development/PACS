@@ -89,7 +89,9 @@ function kinPlanarGeometry(tags, frame) {
     if (kind !== 'ellipse' || Math.abs(cosine) > 1e-4 || size(p[0].map((n, i) => (n + p[1][i] - p[2][i] - p[3][i]) / 2)) > .001) return fail();
     return Math.PI * size(a) * size(b) / 4;
   };
-  const label = mg?.label || { pixel: kinText("PixelSpacing · 원본 기준면"), detector: kinText("ImagerPixelSpacing · 검출기 기준"), ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정") }[basis];
+  // The basis name is a value of the measurement (the exported report carries it): kept as written, never in the screen's
+  // language. Where it is drawn is the panel's and the marks' business (history.js).
+  const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
     calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
 }
