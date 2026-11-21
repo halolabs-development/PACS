@@ -1,5 +1,5 @@
 
-// B18: the original image a Physician-mode hand-off asks this document to open first (a key image or a cited line of the
+// the original image a Physician-mode hand-off asks this document to open first (a key image or a cited line of the
 // report): its study, series, SOP, frame and the saved item, as the server gave them to Clinician Home. Only the document
 // that read the hand-off has it - a reload has none and opens as the viewer always does. From the hand-off until
 // history.js has moved there or given up, the opening is held as a restore the address chose holds it (viewer-jobs.js

@@ -1046,7 +1046,7 @@ function kinCreateViewerHistory() {
       toolbar(); hydrate(); frameMatch(current());
       openEntryTarget(study);
     }
-    // B18: the original image this document was opened at (session.js KIN_VIEWER_ENTRY_TARGET: a key image or a cited line in
+    // the original image this document was opened at (session.js KIN_VIEWER_ENTRY_TARGET: a key image or a cited line in
     // Clinician Home), opened once, after the first read-only list is drawn. The study the target names is shown in the one
     // viewport that shows it, else the active viewport takes the target's series; then the exact frame (kinViewerNavigateTo,
     // which proves arrival on the frame shown) and the saved item highlighted. A user who changes the active viewport meanwhile

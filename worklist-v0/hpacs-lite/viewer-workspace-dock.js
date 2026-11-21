@@ -34,7 +34,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
     body.kin-docked #root > div { height: 100%; display: flex; flex-direction: column; }
     body.kin-docked #root > div > * { flex-shrink: 0; }
     body.kin-docked #root > div > .flex { flex: 1; min-height: 0; height: auto !important; }
-    #kin-workspace-dock { position: fixed; bottom: 0; left: 0; right: 0; height: var(--kin-dock-height); display: flex; flex-direction: column; background: #0d1726; color: #dce6f3; border-top: 1px solid #34465f; font: 13px sans-serif; }
+    #kin-workspace-dock { position: fixed; bottom: 0; left: 0; right: 0; height: var(--kin-dock-height); box-sizing: border-box; display: flex; flex-direction: column; background: #0d1726; color: #dce6f3; border-top: 1px solid #34465f; font: 13px sans-serif; }
     body.kin-dock-top #kin-workspace-dock { top: 0; bottom: auto; border-top: 0; border-bottom: 1px solid #657c9f; }
     #kin-workspace-dock nav { display: flex; gap: 8px; align-items: center; height: 42px; padding: 4px 10px; flex: none; overflow-x: auto; white-space: nowrap; }
     #kin-workspace-dock nav > * { flex-shrink: 0; }

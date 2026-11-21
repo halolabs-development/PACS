@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -369,6 +369,33 @@ MODULE_STUBS = {
 
 REAL_MODULES = {"jobs": ("viewer-stack-restore.js", "viewer-jobs.js"), "findings": ("finding-link-model.js", "viewer-findings.js"),
                 "tech-note": ("viewer-tech-note.js",)}
+
+# The read-only viewer's two panels docked off the image cells: the panels with their production styles (history.js and
+# layout.js float them over the viewer) docked by the shipped viewer-workspace-dock.js in an OHIF-like document.
+DOCK_SOURCE = HPACS / "viewer-workspace-dock.js"
+WORK_CONTEXT = HPACS / "work-context.js"
+def production_style(source, panel_id):
+    text = (ROOT / "config" / "ohif" / source).read_text(encoding="utf-8")
+    found = re.search(r"panel\.id = '" + panel_id + r"';.*?panel\.style\.cssText = '([^']+)'", text, re.S)
+    assert found, (source, panel_id)
+    return found.group(1)
+DOCK_PANEL_STYLES = {"kin-viewer-history": production_style("history.js", "kin-viewer-history"),
+                     "kin-viewer-layout": production_style("layout.js", "kin-viewer-layout")}
+DOCK_PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;height:100%}
+#root > div { height: 100vh; display: flex; flex-direction: column; } #root header { height: 52px; flex: none; }
+#root > div > .flex { display: flex; height: calc(100vh - 52px); } .cell { flex: 1; background: #000; }</style></head><body>
+<div id="root"><div><header>SYN toolbar</header><div class="flex"><div class="cell"></div><div class="cell"></div></div></div></div>
+</body></html>"""
+DOCK_OVERLAP = """() => {
+  const cells = [...document.querySelectorAll('.cell')].map(c => c.getBoundingClientRect());
+  const panels = ['kin-viewer-history', 'kin-viewer-layout', 'kin-workspace-dock'].map(id => document.getElementById(id))
+    .filter(p => p && !p.hidden && getComputedStyle(p).display !== 'none').map(p => p.getBoundingClientRect())
+    .filter(r => r.width > 0 && r.height > 0);
+  let area = 0;
+  for (const p of panels) for (const c of cells)
+    area += Math.max(0, Math.min(p.right, c.right) - Math.max(p.left, c.left)) * Math.max(0, Math.min(p.bottom, c.bottom) - Math.max(p.top, c.top));
+  return { area: Math.round(area), cells: cells.map(c => Math.round(c.height)), panels: panels.length };
+}"""
 
 VIEWER_HARNESS = r"""<!doctype html><html><head><meta charset="utf-8"><title>SYN viewer harness</title></head><body>
 <script>
@@ -896,6 +923,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.writer_paged = False
         self.rows = copy.deepcopy(ROWS)
         self.extra_reports = {}
+        self.citations, self.finding_revisions, self.finding_reads = {}, {}, []
         self.scope_reads = []
         self.files = dict(SHIPPED)
         self.config = CONFIG
@@ -1038,6 +1066,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             row = next((row for row in self.rows if row['uid'] == target), None)
             route.fulfill(json=self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
             return
+        cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
+        if method == "GET" and cited:
+            # the head version's citations Clinician Home reads after a report it shows (none unless a case sets them).
+            route.fulfill(json=getattr(self, "citations", {}).get(unquote(cited.group(1)), {"version": 0, "head": [], "draft": []}))
+            return
         found = re.fullmatch('/api/clinician/studies/([^/]+)/report', path)
         if method == 'GET' and found and (not url.query or set(parse_qs(url.query)) == {'version'}):
             target = unquote(found.group(1))
@@ -1054,6 +1087,17 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         found = re.fullmatch('/api/studies/([^/]+)/viewer-items', path)
         if method == 'GET' and found:
             self.viewer_items(route, unquote(found.group(1)), parse_qs(url.query, keep_blank_values=True))
+            return
+        found = re.fullmatch('/api/studies/([^/]+)/findings/([^/]+)/revisions', path)
+        if method == 'GET' and found and not self.real_api:
+            # the finding revisions a cited line was cited from (its sources name the saved item and its study).
+            key = (unquote(found.group(1)), unquote(found.group(2)))
+            self.finding_reads.append((key, parse_qs(url.query, keep_blank_values=True)))
+            answer = getattr(self, 'finding_revisions', {}).get(key)
+            if answer is None:
+                route.fulfill(status=NOT_FOUND[0], json=NOT_FOUND[1])
+            else:
+                route.fulfill(json=answer)
             return
         found = re.fullmatch('/api/studies/([^/]+)/(viewer-jobs|findings)', path)
         if method == 'GET' and found and self.real_api:
@@ -1105,7 +1149,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 return
             if getattr(self, 'viewer_mode', None) == 'physician' and set(query) <= {'limit', 'cursor'} and query.get('limit') == ['100']:
                 # B14: a writer account's viewer opened from the Physician mode asks the read-only list; the server answers
-                # every caller in its ordinary shape (viewer.service.ts), the same items as to a clinician (F40).
+                # every caller in its ordinary shape (viewer.service.ts), the same items as to a clinician.
                 route.fulfill(**self.clinician_page(target, query.get('cursor', [None])[0]))
                 return
             first = {'includeHidden': ['true'], 'limit': ['100']}
@@ -1412,7 +1456,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual(scope_reference(scope),json.loads(query['kinExamScopes'][0])['current'])
 
     def test_01b_open_annotated_image_hands_the_key_images_original_frame(self):
-        """B18: a key image's Open Annotated Image opens the one viewer window (the same named window, opener cut, the
+        """a key image's Open Annotated Image opens the one viewer window (the same named window, opener cut, the
         Physician mode) and hands it the original image the server named for that key: its own study, series, SOP, frame and
         the item id. A key whose original cannot be read opens nothing and says why."""
         row = next(r for r in self.rows if r['uid'] == A)
@@ -1445,6 +1489,84 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.page.locator('#open-viewer').click()
         self.opened(2)
         popup.wait_for_function('() => window.verified === true && KIN_VIEWER_ENTRY_TARGET === null')
+
+    def test_01c_a_cited_line_opens_the_image_its_source_names(self):
+        """The report's sentence -> the lesion in the image: a line of the shown report that the server's head
+        citations name once, from a saved image item, is a button in the text; pressing it takes the viewer window at once,
+        reads which item and study that finding revision cited and whether the item is still in the study's list, and hands
+        the viewer that original frame and item. The text stays as sent. A line cited twice, a job source, an item hidden
+        since, or a citation read of another version link or open nothing; a blank window taken for nothing is closed."""
+        row = next(r for r in self.rows if r['uid'] == A)
+        finding = 'b0000000-0000-4000-8000-000000000001'
+        text = 'Liver lesion 12 mm.\nNo other finding.'
+        self.extra_reports[A] = {**report_of(row), 'report': {**report_of(row)['report'], 'findings': text, 'conclusion': 'SYN conclusion'}}
+        cite = lambda field, inserted, n=1, ref=None, cid='c-1': {'cid': cid, 'field': field, 'insertedText': inserted, 'sameTextCount': n,
+            'findingId': finding, 'findingRevision': 2, 'sourceIndex': 0, 'sourceRef': ref or {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
+            cite('conclusion', 'SYN conclusion', n=2, cid='c-2'), cite('conclusion', 'SYN conclusion', n=2, cid='c-3')], 'draft': []}
+        self.finding_revisions[(A, finding)] = {'revisions': [
+            {'revision': 1, 'item': {'sources': [{'itemId': item_id(1), 'revision': 1, 'studyUid': A}]}},
+            {'revision': 2, 'item': {'sources': [{'itemId': item_id(2), 'revision': 1, 'studyUid': A}]}}], 'nextCursor': None}
+        self.items[A] = {'pages': [[]]}
+        self.open_home()
+        self.pick(A)
+        links = self.page.locator('#report-body button.cited-line')
+        expect(links).to_have_count(1)
+        self.assertEqual(['Liver lesion 12 mm.'], links.all_text_contents())
+        self.assertEqual('no', links.first.get_attribute('translate'))
+        self.assertEqual(text, self.page.locator('#report-body section[data-field="findings"] .body-text').text_content(), 'the text as sent')
+        self.assertEqual('SYN conclusion', self.page.locator('#report-body section[data-field="conclusion"] .body-text').text_content())
+        # The item hidden since the line was cited: the window taken at the press (blank) is closed, nothing is opened.
+        with self.page.expect_popup() as info:
+            links.first.click()
+        blank = info.value
+        expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.')
+        self.wait_until(lambda: blank.is_closed(), 'the blank window closed')
+        self.assertEqual([], self.viewer_opens)
+        self.assertEqual([((A, finding), {'limit': ['100']})], self.finding_reads)
+        # The item there (revised since it was cited): the viewer opens at its frame with it named.
+        self.items[A] = {'pages': [[mark_item(2, 'length', 'SYN-A length', revision=2)]]}
+        with self.page.expect_popup() as info:
+            links.first.click()
+        popup = info.value
+        self.assertEqual(viewer_query(A), self.opened(1))
+        popup.wait_for_function('window.verified===true')
+        self.assertEqual({'studyUid': A, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
+                         popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r1, 지금 표시하는 표식은 r2입니다.',
+                         self.page.locator('#viewer-note').text_content())
+        self.assertIn((A, {'limit': ['100'], 'recheck': [item_id(2)]}), self.item_requests)
+        # The item hidden again: the open viewer window is left as it is.
+        self.items[A] = {'pages': [[]]}
+        links.first.click()
+        expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식이 지금 저장 항목에 없습니다(숨김 또는 삭제). 영상을 열지 않았습니다.')
+        self.assertFalse(popup.is_closed())
+        self.assertEqual(1, len(self.viewer_opens))
+        # A citation read of another version links nothing; nor does a job source.
+        for answer in ({'version': FINAL['version'] + 1, 'head': self.citations[A]['head'], 'draft': []},
+                       {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.', ref={'kind': 'job', 'jobId': finding, 'sourceRevision': 1})], 'draft': []}):
+            with self.subTest(answer=answer['version']):
+                self.citations[A] = answer
+                self.pick(B)
+                self.pick(A)
+                expect(self.page.locator('#report-body section[data-field="findings"] .body-text')).to_have_text(text)
+                self.settle()
+                expect(links).to_have_count(0)
+        # A line citing a mark of the comparison study (the same server patient key): that study opens beside this one, at
+        # the mark's own frame of its own study.
+        self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.')], 'draft': []}
+        self.finding_revisions[(A, finding)] = {'revisions': [
+            {'revision': 2, 'item': {'sources': [{'itemId': item_id(2), 'revision': 1, 'studyUid': P1}]}}], 'nextCursor': None}
+        self.items[P1] = {'pages': [[mark_item(2, 'length', 'SYN-P1 length')]]}
+        self.pick(B)
+        self.pick(A)
+        expect(links).to_have_count(1)
+        links.first.click()
+        self.assertEqual(viewer_query(A, P1), self.opened(2))
+        popup.wait_for_function(f"() => window.verified === true && KIN_VIEWER_ENTRY_TARGET?.studyUid === '{P1}'")
+        self.assertEqual({'studyUid': P1, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
+                         popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
 
     def test_02_candidates_are_the_same_server_patient_key_only(self):
         self.open_home()
@@ -1578,7 +1700,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                              & set(self.panel()['buttons']), self.panel()['buttons'])
             self.assertEqual('undefined', self.page.evaluate('synAddLength()'))
             self.assertEqual(RO_TOOL, self.panel()['status'])
-            # F40: the list it reads is drawn (the server's {items, nextCursor}, to its last page) with its verified mark.
+            # the list it reads is drawn (the server's {items, nextCursor}, to its last page) with its verified mark.
             seen = self.wait_panel('ready', VA)
             self.assertEqual(['SYN-A key', 'SYN-A length', 'SYN-A angle', 'SYN-A arrow'], [row[2] for row in seen['rows']])
             self.assertEqual([['Length', 'SYN-A length', True]], self.page.evaluate('synDrawn()'))
@@ -1594,6 +1716,69 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             self.assertEqual('writer', self.session())
         finally:
             self.viewer_mode, self.viewer_handoff = None, True
+
+    def test_05d_read_only_viewer_docks_its_panels_for_its_account(self):
+        """Secondary panels without obstructing the images: the read-only document mounts the workspace dock for its
+        two panels once both are there, keyed by its own account as a writer's dock is ([institution, sub]); a mode re-entry
+        mounts it again (the dock adopts the new panels). A writer's dock stays the Tech Note bridge's (not mounted here).
+        test_05e measures that the docked panels cover no image cell."""
+        recorder = """() => { window.synDocks = []; window.KinViewerWorkspaceDock = (w, p) => { synDocks.push({ owner: p.owner(), allowed: p.allowed(),
+          panels: ['kin-viewer-history', 'kin-viewer-layout'].every(id => !!document.getElementById(id)) }); }; }"""
+        for account, expected in ((CLINICIAN, 1), (RADIOLOGIST, 0)):
+            with self.subTest(roles=account['roles']):
+                self.me, self.item_requests, self.cursors = (account, [], {})
+                self.open_viewer(before_boot=recorder)
+                self.modules_settled()
+                self.settle()
+                docks = self.page.evaluate('synDocks')
+                owner = json.dumps([account['institution'], account['sub']], separators=(',', ':'))
+                self.assertEqual([{'owner': owner, 'allowed': True, 'panels': True}] * expected, docks)
+                if expected:
+                    self.page.evaluate('synReenter()')
+                    self.modules_settled()
+                    self.wait_until(lambda: len(self.page.evaluate('synDocks')) == 2, 'the dock mounted again at re-entry')
+        self.me = CLINICIAN
+
+    def test_05e_docked_panels_cover_no_image_cell(self):
+        """The secondary panels stay available without obstructing the images: in a 1366x768 window and a narrow one, with
+        the dock at the bottom and at the top, folded and with either panel open, no visible panel or dock row overlaps an
+        image cell, and the cells keep their height. The same panels floating (no dock) do overlap (the check bites)."""
+        def panels(width, height):
+            page = self.context.new_page()
+            page.set_viewport_size({'width': width, 'height': height})
+            page.set_content(DOCK_PAGE)
+            page.add_script_tag(path=str(WORK_CONTEXT))
+            page.evaluate("""styles => {
+              KinWorkContext.follow({ onLifecycle(listener) { listener({ state: 'active', session: 'SYN' }); } });
+              for (const [id, css] of Object.entries(styles)) {
+                const p = document.createElement('details'); p.id = id; p.open = true; p.style.cssText = css;
+                p.innerHTML = '<summary>' + id + '</summary><p role="status">SYN status</p><p>SYN line one</p><p>SYN line two</p>';
+                document.body.append(p);
+              } }""", DOCK_PANEL_STYLES)
+            return page
+        page = panels(1366, 768)
+        try:
+            self.assertGreater(page.evaluate(DOCK_OVERLAP)['area'], 0)
+        finally:
+            page.close()
+        for width, height in ((1366, 768), (900, 640)):
+            for placement in ('bottom', 'top'):
+                for shown in (-1, 0, 1):
+                    with self.subTest(size=(width, height), placement=placement, panel=shown):
+                        page = panels(width, height)
+                        try:
+                            page.add_script_tag(path=str(DOCK_SOURCE))
+                            mounted = page.evaluate("""pref => {
+                              const dock = KinViewerWorkspaceDock(window, { owner: () => JSON.stringify(['SYN-INST', 'SYN-CLIN']), allowed: () => true });
+                              return !!dock && dock.applyPreference(pref); }""",
+                                                    {'version': 2, 'placement': placement, 'panel': shown, 'autoHide': False})
+                            self.assertTrue(mounted)
+                            page.wait_for_timeout(50)
+                            seen = page.evaluate(DOCK_OVERLAP)
+                            self.assertEqual(0, seen['area'], seen)
+                            self.assertTrue(all(h > 200 for h in seen['cells']), seen)
+                        finally:
+                            page.close()
 
     def test_06_states_loading_empty_failed_and_denied(self):
         self.hold_items = {VA}
@@ -1612,7 +1797,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 self.settle()
                 seen = self.panel()
                 self.assertEqual((state, status, buttons, []), (seen['state'], seen['status'], seen['buttons'], seen['rows']))
-        # F40: the items of a study whose report is not signed are shown as the server sends them (to a radiologist alike),
+        # the items of a study whose report is not signed are shown as the server sends them (to a radiologist alike),
         # and a list of two pages is read to its end.
         for target, rows in ((VW, [['Key Image · Saved r1', 'Read-only', 'SYN-W unsigned report key', '프레임 1', 'Go to Image']]),
                              (VQ, [['Key Image · Saved r1', 'Read-only', 'SYN-Q key one', '프레임 1', 'Go to Image'],
@@ -1633,7 +1818,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.item_requests, self.cursors = ([], {})
 
     def test_06b_physician_hand_off_opens_the_named_frame_and_its_mark(self):
-        """B18: Clinician Home's Open Annotated Image and a cited line hand the viewer the original image the server named
+        """Clinician Home's Open Annotated Image and a cited line hand the viewer the original image the server named
         (study, series, SOP, frame and the saved item). The read-only viewer opens that frame once its list is drawn and
         highlights that item, says so, and lets the opening hold go (Auto Save View may save the view after it). An item no
         longer in the list, or a series this window does not hold, is said as such. A reload of the tab moves nowhere."""
@@ -1798,7 +1983,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                 self.assertFalse(WRITER_CONTROLS & set(self.panel()['buttons']), self.panel()['buttons'])
 
     def test_10_periodic_and_focus_checks_follow_the_server_list(self):
-        """F40: the read-only list is the server's current list. A check (focus, every 15 s) reads it whole again and redraws
+        """the read-only list is the server's current list. A check (focus, every 15 s) reads it whole again and redraws
         only when an item, its revision or its source verdict changed: an item hidden or deleted leaves the rows and the image,
         a new one appears, an unchanged list is left as drawn."""
         self.open_viewer()
