@@ -108,6 +108,37 @@ class WorklistLanguageE2E(base.WorklistE2E):
             page.locator("#hist-close").click()
             page.unroute(history)
 
+    def open_viewer(self, page, fixture):
+        """The viewer of the study in this browser, which keeps the choice the work page last applied."""
+        viewer = page.context.new_page()
+        viewer.goto(self.stack.proxy + "/ohif/viewer?StudyInstanceUIDs=" + fixture.uid)
+        zoom = viewer.locator('#root button[data-cy="Zoom"]')
+        # The toolbar labels are ours (config/ohif toolbar-labels): the English name and our description in the title.
+        expect(zoom).to_have_attribute("data-kin-tool-label", "Zoom", timeout=60000)
+        return viewer, zoom
+
+    def test_language_03_the_viewer_follows_english_and_keeps_korean(self):
+        # The words our viewer code writes follow English chosen for the reading screen. With no choice or Korean chosen
+        # they stay exactly as written; OHIF's own words and the study's data are never ours to change.
+        patient = "LANG-" + uuid.uuid4().hex[:12]
+        fixture = self.fixture(patient_id=patient)
+        page = self.login()
+        korean = re.compile(r"^확대/축소( · 사용 중)?$")
+        viewer, zoom = self.open_viewer(page, fixture)
+        expect(zoom).to_have_attribute("title", korean)
+        viewer.close()
+        self.choose(page, "en")
+        viewer, zoom = self.open_viewer(page, fixture)
+        expect(zoom).to_have_attribute("title", re.compile(r"^Zoom in/out( · [A-Za-z][^가-힣]*)?$"))
+        expect(zoom).to_have_attribute("aria-label", "Zoom")
+        self.assertEqual(viewer.evaluate("() => window.KinLanguage.lang(document.body)"), "en")
+        viewer.close()
+        self.choose(page, "ko")
+        viewer, zoom = self.open_viewer(page, fixture)
+        expect(zoom).to_have_attribute("title", korean)
+        self.assertIsNone(viewer.evaluate("() => window.KinLanguage.lang(document.body)"))
+        viewer.close()
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(WorklistLanguageE2E(name) for name in loader.getTestCaseNames(WorklistLanguageE2E)
