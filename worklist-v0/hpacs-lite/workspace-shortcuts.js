@@ -58,8 +58,9 @@
     const storage=()=>{try{return root.localStorage;}catch(_){return undefined;}};
     const d = host.ownerDocument;
     const el = (tag, text, parent) => { const n = d.createElement(tag); kinWrite(n, text); parent?.append(n); return n; };
-    // Notices of a saved map: each its own text on the write path (a later language choice repaints it), a space between.
-    const notices = (node, list) => node.replaceChildren(...list.flatMap((notice, i) => [...(i ? [' '] : []), kinWrite(d.createTextNode(''), notice)]));
+    // Notices of a saved map: one sentence of the notices, a space between (as they were joined), so a later language choice
+    // repaints each of them.
+    const notices = (node, list) => kinWrite(node, list.length ? kinSayEn(list.map((_, i) => '{t' + i + '}').join(' '), ...list) : '');
     let map = {...defaultsV2}, currentOwner = null, ended = false, draftOwner = null, baseline = null;
     let accountRequest=null, accountEpoch=0, accountRevision=null, accountBusy=false;
     const edit = el('button','Edit Shortcuts',host); edit.type='button'; edit.className='chip'; edit.id='workspace-shortcuts-edit';

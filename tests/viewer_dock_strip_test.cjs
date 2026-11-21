@@ -181,9 +181,9 @@ test('the return path lives on Return to Report, not in the row; a refused short
   const writes=note.match(/returnStatus\.textContent=[^;]*;/g);assert.ok(writes.length>=8);
   for(const w of writes)for(const g of guide)assert.equal(w.includes(g),false,w);
   assert.equal((note.match(/returnStatus\.textContent=linked/g)||[]).length,0);
-  assert.match(note,/\{returnStatus\.textContent='';describeReturn\('판독 화면의 영상 새 창으로 열면 돌아갈 수 있습니다\.'\);refresh\(\);return;\}/);
-  assert.match(note,/returnStatus\.textContent=cancelled\?'이전 복귀 요청은 취소되었습니다\. 다시 눌러 돌아가세요\.':'';describeReturn\(linked\);/);
-  assert.match(note,/if\(readingChannel\)describeReturn\('연결된 판독문으로 · '\+api\.display\(shortcutMap\.report\)\);/);
+  assert.match(note,/\{returnStatus\.textContent='';describeReturn\(kinText\("판독 화면의 영상 새 창으로 열면 돌아갈 수 있습니다\."\)\);refresh\(\);return;\}/);
+  assert.match(note,/returnStatus\.textContent=cancelled\?kinText\("이전 복귀 요청은 취소되었습니다\. 다시 눌러 돌아가세요\."\):'';describeReturn\(linked\);/);
+  assert.match(note,/if\(readingChannel\)describeReturn\(kinText\("연결된 판독문으로 · \{0\}", api\.display\(shortcutMap\.report\)\)\);/);
   // Unlinked Ctrl+Alt+4: after the live/owner/pending/modal gate, before the tracked gate.
   const gate=note.indexOf("if(!readingChannel){returnStatus.textContent=returnHint.textContent;return;}");
   assert.ok(gate>0);assert.ok(note.lastIndexOf('if(!live()||!owner||pendingReturn||',gate)>note.indexOf('function returnToReading(){'));

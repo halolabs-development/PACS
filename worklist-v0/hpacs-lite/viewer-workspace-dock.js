@@ -5,7 +5,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   // The screen-language write path of the window the dock is built in: its words read in English on an English screen and
   // stay as written otherwise.
   const kinSayEn=(t,...p)=>w.KinLanguage?.sayEnglish?w.KinLanguage.sayEnglish(t,...p):t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]));
-  const kinWrite=(el,value,name)=>{if(w.KinLanguage)return w.KinLanguage.write(el,value,name);if(name)el.setAttribute(name,value);else el.textContent=value;return el;};
+  const kinWrite=(el,value,name)=>{if(w.KinLanguage)return w.KinLanguage.write(el,value,name);if(name==='title')el.title=value;else if(name)el.setAttribute(name,value);else el.textContent=value;return el;};
   const work=w.KinWorkContext;
   if(!work)return;
   const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
