@@ -3571,7 +3571,7 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(added.body["ts"], "completed")
             self.assert_status(self.stack.request("PATCH", path, "doctor", {"ts": "cancelled"}), 400)
             seen = self.state(f2, "doctor2")
-            self.assertEqual((seen["rs"], seen["ts"], seen["findings"], seen["prelimHidden"]), ("A", "completed", "add", False))
+            self.assertEqual((seen["rs"], seen["ts"], seen["findings"], seen["prelimHidden"]), ("A", "completed", "x\nadd", False))
 
         with self.stack.fixture() as f3:   # 대조: 소유 기관 스스로 승인하면 completed가 아니다
             self.assert_status(self.stack.request("PATCH", f"/studies/{quote(f3.uid)}", "doctor", {"ts": "wait", "teleTo": "kin-center"}), 200)

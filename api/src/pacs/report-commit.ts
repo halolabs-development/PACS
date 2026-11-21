@@ -362,20 +362,25 @@ export class PacsReportCommit {
          * 막으려는 손실이다. 거절 본문은 이미 잠가서 읽은 `cur` 행 그대로이므로
          * 추가 조회가 없고, 여기까지 온 호출자는 예비 판독·기관·역할 관문을 모두 지났다.
          *
-         * 심층 방어다. 초안이 없는 확정은 구조적으로 이 관문을 지나가고,
-         * `baseVersion`의 출처가 틀린 화면은 조용히 통과한다.
+         * 심층 방어다. 초안이 아직 서버에 없는 확정(첫 초안 쓰기 전에 누른 Addendum)은 화면이 보낸 `baseVersion`을
+         * 그 글의 기준으로 보고 같은 관문을 지난다 — 판 번호 충돌로 가서 쓰던 글을 서버 글로 덮는 길로 보내지 않는다.
+         * `baseVersion`의 출처가 틀린 화면은 여전히 조용히 통과한다.
          */
-        if ((action === 'addendum' || action === 'amend') && draft && draft.baseVersion < (cur?.version ?? 0))
+        // The version the text stands on: my draft's, or - before my first draft write reached the server - the one the
+        // screen sends (the text it typed on). Either older than the approved head is re-based on that head, not reloaded.
+        const textBase = draft ? draft.baseVersion
+          : Number.isSafeInteger(body.baseVersion) && body.baseVersion >= 0 ? body.baseVersion : null;
+        if ((action === 'addendum' || action === 'amend') && textBase !== null && textBase < (cur?.version ?? 0))
           throw new ConflictException({
             code: 'REPORT_DRAFT_STALE',
-            message: `이 초안은 v${draft.baseVersion}을 기준으로 씁니다. 지금 승인본은 ` +
+            message: `이 초안은 v${textBase}을 기준으로 씁니다. 지금 승인본은 ` +
               `v${cur.version}입니다 — 승인본을 확인한 뒤 기준을 다시 잡아 주세요.`,
             head: {
               version: cur.version, updatedBy: cur.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : null,
               ...await signerName(tx, cur, c),
               findings: cur.findings, conclusion: cur.conclusion, recommendation: cur.recommendation,
             },
-            draftBaseVersion: draft.baseVersion,
+            draftBaseVersion: textBase,
           });
 
         /**

@@ -590,6 +590,23 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertEqual(4, value["base"])
         self.assertFalse(any(c["path"].endswith("/report/commit") for c in calls[1:]), "a re-base signs nothing")
 
+    def test_an_addendum_rebased_on_an_amended_head_does_not_bring_back_what_the_amendment_took_out(self):
+        """The approver's amendment shortened a field (v4 "A B" after v2 "A B C"): the re-based text is v4's text with only
+        what this draft wrote after v2 - the line the amendment took out does not come back."""
+        self.open(draft={"findings": "A B C\nMINE", "conclusion": "", "recommendation": "", "baseVersion": 2,
+                         "at": "2026-09-20T01:00"})
+        self.page.evaluate("type(['A B C\\nMINE', '', ''])")
+        self.page.evaluate("reply(%s)" % json.dumps(stale_body(findings="A B", head={"recommendation": ""})))
+        self.page.evaluate("commit('addendum')")
+        self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
+        self.page.evaluate("reply(%s)" % json.dumps({"status": 200, "body": [
+            {"version": 2, "action": "approve", "findings": "A B C", "conclusion": "", "recommendation": ""}]}))
+        self.page.evaluate("reply({status: 200, body: {uid: '%s', baseVersion: 4}})" % UID)
+        self.page.click("#stale-rebase")
+        self.page.wait_for_function("()=>calls.length===3")
+        put = self.page.evaluate("snapshot().calls")[2]
+        self.assertEqual(("PUT", "A B\nMINE", 4), (put["method"], put["body"]["findings"], put["body"]["baseVersion"]))
+
     def test_an_addendum_that_does_not_start_with_its_version_or_cannot_read_it_is_not_rebased(self):
         """The re-base needs the exact text of the version the draft was written on. When the typed text does not start with
         it (an approved line was changed) or it cannot be read, nothing is written: the text, the draft and its base stay,

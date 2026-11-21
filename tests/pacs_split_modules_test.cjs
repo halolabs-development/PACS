@@ -2321,7 +2321,17 @@ test('a Save on a version another window of the same account saved is named as m
   assert.deepEqual(versionsOf(w, s.uid).map(v => v.slice(0, 3)), [[1, 'save', 'Window one.'], [2, 'save', 'Window two.']]);
   // A head another account signed is not mine: the refusal names its writer as before.
   const a = await approvedStudy(w);
-  const other = await refused(() => w.commit.commitReport(a.uid, commitBody(RAD_A2, 'addendum', a.draftEpoch, 0, 0, { findings: 'Line one.\nLine two.\nMore.', conclusion: 'Impression.' }), RAD_A2, null), 409, 'REPORT_VERSION_CONFLICT');
+  const other = await refused(() => w.commit.commitReport(a.uid, commitBody(RAD_A2, 'reset', a.draftEpoch, 0, 0, { reason: 'wrong patient' }), RAD_A2, null), 409, 'REPORT_VERSION_CONFLICT');
   assert.deepEqual(other.head, { version: 1, mine: false });
   assert.match(other.message, /^그 사이 .+가 v1을 저장했습니다/);
+});
+
+test('an Addendum pressed before the first draft write, on a version older than the approved head, is re-based - not reloaded', async () => {
+  const w = world(), s = await approvedStudy(w, { findings: 'Base.' });
+  await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', s.draftEpoch, 0, 1, { findings: 'Base.\nSecond reader.' }), RAD_A2, null);
+  // The first reader typed on v1 and pressed Addendum before any draft of theirs reached the server.
+  const stale = await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A, 'addendum', s.draftEpoch, 1, 1, { findings: 'Base.\nFirst reader.' }), RAD_A, null), 409, 'REPORT_DRAFT_STALE');
+  assert.equal(stale.draftBaseVersion, 1);
+  assert.deepEqual({ version: stale.head.version, findings: stale.head.findings }, { version: 2, findings: 'Base.\nSecond reader.' });
+  assert.equal(versionsOf(w, s.uid).length, 2, 'nothing was signed');
 });

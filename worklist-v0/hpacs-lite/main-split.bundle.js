@@ -7348,8 +7348,12 @@
       const lf = KinReportCitation.toLf, texts = {};
       for (const k of RFIELDS) {
         const mine = lf(String(typed[k] ?? "")), was = lf(old[k]), now = lf(String(pane.head[k] ?? ""));
-        if (mine.startsWith(now)) texts[k] = mine;
+        // The addition is what this text wrote after the version it stands on - never that version's own text, which the new
+        // approved report may have shortened (an amendment) - put after the new approved text. A field that already holds
+        // the new approved text grown from that version (it was taken in before) is not given it twice.
+        if (now.startsWith(was) && mine.startsWith(now)) texts[k] = mine;
         else if (mine.startsWith(was)) texts[k] = now + mine.slice(was.length);
+        else if (mine.startsWith(now)) texts[k] = mine;
         else return { refused: kinSay("이 화면의 글이 v{n0}의 글로 시작하지 않아 기준을 다시 잡지 않았습니다 — 추가기재는 승인본에 덧붙이기만 합니다. 쓰던 글은 그대로 있습니다.", base) };
       }
       return { texts };
@@ -9627,10 +9631,12 @@
      * every check again. Each further round is another question; no is the end.
      */
     async function commitReport(action, reason, reviewer) {
+      let again = null;
       for (;;) {
-        const done = await commitReportOnce(action, reason, reviewer);
+        const done = await commitReportOnce(action, reason, reviewer, again);
         if (!done?.again) return done;
-        recordReportOrigin(done.again.uid, done.again.version);
+        again = done.again;
+        recordReportOrigin(again.uid, again.version);
       }
     }
 
@@ -9648,7 +9654,8 @@
       return null;
     }
 
-    async function commitReportOnce(action, reason, reviewer) {
+    // `again`: the version the reader confirmed to save this window's text after ({ uid, version }) - sent as the base as it is.
+    async function commitReportOnce(action, reason, reviewer, again = null) {
       if (!selectedUid) return;
       // 확정은 겹쳐 부르지 않는다. 더블클릭이 만든 판 하나가 더 쌓이는 걸 여기서 막는다.
       // 삽입이 나가 있는 동안도 같다 — 그 응답 전에 서명하면 사람이 확인한 문장이
@@ -9723,8 +9730,8 @@
         // my text - it releases the head the screen shows, so it is sent on that version; my draft stays mine (keepCallerDraft).
         const takeover = action === "reset" && !!inProgressReset(cur());
         const mine = !takeover && (!!appState[uid]?.draft || reportDirty());
-        const baseVersion = mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0)
-                                 : (appState[uid]?.version ?? 0);
+        const baseVersion = again?.uid === uid ? again.version
+          : mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0) : (appState[uid]?.version ?? 0);
         // 응답이 돌아왔을 때 "그때 그 선택인가"를 판단할 기준. 요청이 떠나기 전에 잡는다.
         const seq = selectionSeq;
         /**

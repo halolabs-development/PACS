@@ -1647,6 +1647,21 @@ class ReportFlowPage(unittest.TestCase):
         self.assertEqual(("T", "SYN window two"), (self.site.store[h.UID_B]["report"]["rs"], self.site.store[h.UID_B]["report"]["findings"]))
         expect(self.page.locator("#findings")).to_have_value("SYN window two")
 
+    def test_a_save_without_a_draft_after_another_window_saved_is_sent_again_on_the_confirmed_version(self):
+        """The same two windows, but this one holds no draft and no typing (its editor still shows what it read): the Save
+        sent again after yes stands on the version the question named - not on the one this window last read - and is asked
+        once."""
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.settle(300)
+        self.site.store[h.UID_B]["report"] = {"version": 2, "rs": "T", "findings": "SYN window one", "conclusion": "", "recommendation": ""}
+        mine = "다른 창에서 이 계정으로 v2을 저장했습니다. 이 창의 글은 그대로 있습니다."
+        self.site.commit_answers = [(409, {"code": "REPORT_VERSION_CONFLICT", "message": mine, "head": {"version": 2, "mine": True}})]
+        self.page.evaluate("() => commitReport('save')")
+        self.wait(lambda: len(self.site.flow_commits) == 2, "the Save sent again on v2")
+        self.assertEqual([0, 2], [body["baseVersion"] for _, body in self.site.flow_commits])
+        self.assertEqual(1, len(self.dialogs))
+
 
 # Each mutant is a one-off copy of one bundle source (or main.html) served to the page; the product tree is never written.
 MUTANTS = [

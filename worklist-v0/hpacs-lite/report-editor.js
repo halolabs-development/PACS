@@ -1147,8 +1147,12 @@
       const lf = KinReportCitation.toLf, texts = {};
       for (const k of RFIELDS) {
         const mine = lf(String(typed[k] ?? "")), was = lf(old[k]), now = lf(String(pane.head[k] ?? ""));
-        if (mine.startsWith(now)) texts[k] = mine;
+        // The addition is what this text wrote after the version it stands on - never that version's own text, which the new
+        // approved report may have shortened (an amendment) - put after the new approved text. A field that already holds
+        // the new approved text grown from that version (it was taken in before) is not given it twice.
+        if (now.startsWith(was) && mine.startsWith(now)) texts[k] = mine;
         else if (mine.startsWith(was)) texts[k] = now + mine.slice(was.length);
+        else if (mine.startsWith(now)) texts[k] = mine;
         else return { refused: kinSay("이 화면의 글이 v{n0}의 글로 시작하지 않아 기준을 다시 잡지 않았습니다 — 추가기재는 승인본에 덧붙이기만 합니다. 쓰던 글은 그대로 있습니다.", base) };
       }
       return { texts };
