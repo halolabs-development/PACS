@@ -2,6 +2,7 @@
  * 판독문 확정(commitReport): RS 상태 머신, 판(ReportVersion) 추가, 초안 경계 종료와 감사를 한 트랜잭션으로 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { closeReadingRequests } from './reading-request';
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
 import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
 import { rightsAllow, lockMemberRights, memberNames, versionWriterName } from '../member-rights';
@@ -531,6 +532,9 @@ export class PacsReportCommit {
         }
 
         const state = await tx.studyState.update({ where: { uid }, data: stateData });
+        // Reading request: this approval closes the open requests of the studies this row answers for, with its own time; the
+        // signing below runs in this transaction, so an approval it refuses leaves them open (pacs/reading-request.ts).
+        if (action === 'approve') await closeReadingRequests(tx, uid, scope, at);
         const report = await tx.report.upsert({ where: { uid },
           create: { uid, ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId },
           update: { ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId } });

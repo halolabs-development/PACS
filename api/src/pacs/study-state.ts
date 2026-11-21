@@ -406,6 +406,10 @@ export class PacsStudyState {
     // its revision at 0 and an earlier screen's answer could pass for a newer one.
     if ((prev.qcRevision ?? 0) > 0)
       throw new ConflictException({ code: 'STUDY_HAS_QC_HISTORY', message: 'QC 표시 이력이 있는 검사는 삭제할 수 없습니다' });
+    // Reading request (pacs/reading-request.ts): a study a clinician asked to be read keeps its row - deleting it would end
+    // the request without an approval, and the images (kept) would list the study again with no request.
+    if (prev.readingRequestAt != null)
+      throw new ConflictException({ code: 'STUDY_HAS_READING_REQUEST', message: '판독 의뢰 기록이 있는 검사는 삭제할 수 없습니다' });
     if (await tx.viewerJob.findFirst({ where: { studies: { has: uid } }, select: { id: true } }))
       throw new ConflictException('저장한 비교 작업에서 참조하는 검사는 삭제할 수 없습니다');
     // S5-U4a: 질문 스레드와 그 영수증은 검사에 묶인 기록이라 함께 지우지 않는다(FK Restrict). 처리되지 않은 FK 오류

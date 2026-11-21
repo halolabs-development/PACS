@@ -17,6 +17,9 @@
         { k: "rs", t: "RS", f: ["W", "T", "P", "H", "A"] },
         // Report approval date and time. Confirmed = RS Approved, with or without a stored time (see confirmText).
         { k: "confirm", t: "Confirm", f: ["Confirmed", "Not Confirmed"] },
+        // Read Req: the open reading request a clinician made on the study (server readingRequest, this screen's local time);
+        // blank when none or once the report is approved. The filter compares Requested / None (testSourceCol).
+        { k: "readReq", t: "Read Req", f: ["Requested", "None"] },
         { k: "acc", t: "Accession No", f: "text" },
         { k: "ts", t: "TS" },
         { k: "id", t: "ID", f: "text" },
@@ -195,6 +198,8 @@
         const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
       confirm: s => esc(confirmText({ ...appState[s.uid], rs: s.rs })),
+      // Read Req: the time of the open request (data) and who asked as its title (data, kept from translation).
+      readReq: s => s.readReq ? `<span class="read-req" data-kin-keep="title" title="${esc(s.readReqBy)}"><span translate="no">${esc(s.readReq)}</span></span>` : "",
       // Missing images (Technician tab only): a mark beside the count, the same answer as the Info panel's Needs Check line
       // (studyReceiptGap; renderObservation repaints it between renders). Its words are its title; the mark itself is CSS
       // and there is no text around it, so a copy or export of the cell reads the count alone.
@@ -303,6 +308,7 @@
     const HEAD_HELP = {
       rs: "RS (Report Status, 판독 상태)\nW: Unread — 판독 전\nT: In Progress — 저장했지만 승인 전\nP: Preliminary — 상급 판독의 승인 대기\nH: On Hold — 보류\nA: Approved — 승인됨\nA: Finalized — 승인 후 24시간이 지남, Addendum으로만 덧붙임\nD: Destroyed — 보존 기간 만료로 파기됨",
       referredAt: "Referred: 의뢰 병원의 Gateway가 이 검사를 처음 보낸 시각(서버 기준)\n비어 있음: 최초 Gateway 접수 시각이 기록되지 않은 검사",
+      readReq: "Read Req: 진료과 의사가 이 검사의 판독을 의뢰한 시각\n칸에 마우스를 올리면 의뢰한 사람이 보입니다\n비어 있음: 의뢰가 없거나 판독문이 승인되어 의뢰가 닫힌 검사",
       em: "EM (Emergency)\nE: 응급\nN: 일반",
       ss: "SS (촬영 확인 상태)\nVerified: 촬영 확인됨\nUnverified: 촬영 미확인",
       pf: "PF (Prefetch, 미리 받기): 이 브라우저에 영상을 미리 받아 두는 상태입니다. 자세한 내용은 선택 막대의 Preload 패널에 있습니다.\nQueued: 받을 차례나 저장 공간을 기다림\nDownloading: 받는 중 (진행률 %)\nReady: 받아 둠 — 그 패널에 표시된 기한에 자동으로 정리됨 (받은 때나 마지막으로 본 때부터 72시간 이내)\nFailed: 받지 못함 — Preload 패널의 Retry로 다시 받음\nEvicted: 미리 받은 사본이 지워짐 (저장 공간·기한·Clear All 등) — Retry로 다시 받음\n· (None): 이 로그인의 미리 받기 상태가 없거나 아직 확인되지 않음",

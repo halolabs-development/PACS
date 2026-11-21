@@ -13,9 +13,9 @@ import type { Caller, PacsAccess } from './access';
  * 소유 기관 전용 감사 action(S5-U4p §11.1). 이 행은 `GET audit`의 두 경로 모두에서 생성 기관(detail.institution)
  * = 대상 검사의 **현재** 소유 기관 = caller 기관일 때만 나간다. 기존 action은 원격판독 기관에도 보이지만 질문은
  * 소유 기관 안의 대화라서, 질문 API가 404여도 감사 통로로 존재·행위자·전이가 새지 않게 한다. 한 action을 처음
- * 쓰는 단위가 여기에 이름을 더한다(S5-U4a: study.question, S5-U4c: study.image-request, S7-U1a: study.critical-result).
+ * 쓰는 단위가 여기에 이름을 더한다(S5-U4a: study.question, S5-U4c: study.image-request, S7-U1a: study.critical-result, reading request: study.reading-request).
  */
-export const OWNER_ONLY_AUDIT_ACTIONS: readonly string[] = Object.freeze(['study.question', 'study.image-request', 'study.critical-result']);
+export const OWNER_ONLY_AUDIT_ACTIONS: readonly string[] = Object.freeze(['study.question', 'study.image-request', 'study.critical-result', 'study.reading-request']);
 /**
  * 기록 기관 전용 감사 action(S7-U3a, D-S7-09 a). 소유 기관과 원격판독 수신 기관이 한 검사에 각자의 판독의 배정을 두므로,
  * 이 행은 `GET audit`의 두 경로에서 기록 기관(detail.institution) = caller 기관일 때만 나간다 — 상대 기관의 배정이

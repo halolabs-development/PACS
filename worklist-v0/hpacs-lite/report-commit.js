@@ -508,6 +508,8 @@
         loadReport({ force: true });
         cur().rs = rs;
         cur().holdReason = appState[uid].holdReason;
+        // Read Req: this approval closed the reading request the row showed (the server writes it in the same commit).
+        if (action === "approve") Object.assign(cur(), { readReq: "", readReqBy: "" });
         saveApp();
       }
       render(); renderRelated(); updateReportButtons();

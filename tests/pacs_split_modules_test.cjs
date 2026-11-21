@@ -98,6 +98,7 @@ const DEFAULTS = {
     reqHosp: null, holder: null, heldAt: null, holdReason: null, preDoc: null, preReviewer: null, preDocSub: null,
     preReviewerSub: null, repDoc: null, confirm: null, ov: null, orig: null, orderOid: null, origin: 'device',
     qcReason: null, qcBy: null, qcAt: null, qcRevision: 0,
+    readingRequestAt: null, readingRequestBySub: null, readingRequestBy: null, readingRequestByName: null, readingRequestClosedAt: null,
     // Referred: a row created without the two fields waits for its first Gateway announce (the database default).
     draftEpoch: randomUUID(), createdAt: new Date(), referredAt: null, referredOpen: true }),
   auditLog: () => ({ detail: null, at: new Date() }),

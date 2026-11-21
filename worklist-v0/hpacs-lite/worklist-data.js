@@ -214,6 +214,16 @@
     function referredFields(s) {
       return { referredAt: localStamp(s?.referredAt), referredAtIso: serverInstant(s?.referredAt) };
     }
+    /**
+     * Read Req (server `readingRequest`, api/src/pacs/reading-request.ts): the open reading request a clinician made on this
+     * row - its local "YYYY-MM-DD HH:mm" (the cell and its sort) and who asked (the cell's title). Blank both when the server
+     * sent none. The filters compare Requested / None. A rebuild and a poll pass here alike.
+     */
+    function readingRequestFields(s) {
+      const r = s?.readingRequest;
+      return r && typeof r.at === "string" ? { readReq: localStamp(r.at), readReqBy: typeof r.by === "string" ? r.by : "" }
+        : { readReq: "", readReqBy: "" };
+    }
     function fromApi(s) {
       observeExamScope(s);
       updateReaderAssignment(s.uid,s.readerAssignment);
@@ -249,6 +259,7 @@
         // Request columns as the server decided them (matched order first); a value it did not send stays blank.
         reqDate: localStamp(s.reqDate), reqDept: requestText(s.reqDept), reqDoc: requestText(s.reqDoc), ptClass: requestText(s.ptClass),
         ...referredFields(s),
+        ...readingRequestFields(s),
         // Merge Exam: the studies of a merged exam (the base first); Count and Series above are already of all of them.
         examScope: s.examScope ?? null, reportScope: s.reportScope ?? null,
         relatedExamReports: s.relatedExamReports ?? [], examUnavailable: s.examUnavailable === true,
@@ -371,7 +382,7 @@
         const s = { ...row, pf: preloadWord(row) };
         // A compound rule on Confirm compares the same Confirmed / Not Confirmed word the header filter uses (RS based).
         return cols.every(c => testCol(s, c, values))
-          && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed",
+          && matchCompound({ ...s, confirm: confirmedRow(s) ? "Confirmed" : "Not Confirmed", readReq: s.readReq ? "Requested" : "None",
             ...(needsParts ? { bodyPart: worklistBodyParts.get(s.uid) } : {}) });
       };
     }

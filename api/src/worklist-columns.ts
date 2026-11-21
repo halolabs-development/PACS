@@ -1,17 +1,17 @@
 // Persist column identifiers only, never cell values, filters or report content.
 export const COLUMN_KEYS = {
-  Radiology: ['pf','assignedReader','techNote','no','viewing','count','series','em','ss','rs','confirm','acc','ts','id','name','reqDate','reqDept','reqDoc','ptClass','age','birth','sex','modality','desc','date','referredAt','preDoc','preReviewer','institutionName','time'],
+  Radiology: ['pf','assignedReader','techNote','no','viewing','count','series','em','ss','rs','confirm','readReq','acc','ts','id','name','reqDate','reqDept','reqDoc','ptClass','age','birth','sex','modality','desc','date','referredAt','preDoc','preReviewer','institutionName','time'],
   Technician: ['assignedReader','techNote','qc','no','count','series','em','ss','matched','rs','acc','id','name','age','sex','modality','desc','date','ward','reqHosp','time'],
 };
 
 /**
  * Columns that join a stored layout at a fixed place instead of at the end: each one, when the stored order lacks it,
- * goes right after its anchor (the request columns after Name, Confirm after RS, Referred after StudyDate). Applied in this sequence, so the
+ * goes right after its anchor (the request columns after Name, Confirm after RS, Read Req after Confirm, Referred after StudyDate). Applied in this sequence, so the
  * request columns keep their own order. Every other missing key is still added at the end, and the stored order and
  * hidden list are kept as they are. The page's normalizer (worklist-columns.js) uses the same list.
  */
 export const PLACED_COLUMNS: Record<string, [string, string][]> = {
-  Radiology: [['reqDate','name'],['reqDept','reqDate'],['reqDoc','reqDept'],['ptClass','reqDoc'],['confirm','rs'],['referredAt','date']],
+  Radiology: [['reqDate','name'],['reqDept','reqDate'],['reqDoc','reqDept'],['ptClass','reqDoc'],['confirm','rs'],['readReq','confirm'],['referredAt','date']],
   // QC Flag (Technician only) joins a stored Technician layout right after Tech Note.
   Technician: [['qc','techNote']],
 };
