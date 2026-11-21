@@ -538,16 +538,25 @@ def backup_admission(output, *, checkout=None, config_path=None):
     parent = Path(output).resolve()
     if _within(parent, root):
         raise RuntimeError("Backups containing secrets must be outside the Git repository")
-    # The wrapping custody the backup will write into is kept apart from this destination (and the repository).
-    wrapping_custody_root(parent, checkout=root)
+    # The wrapping custody the backup will write into is kept apart from this destination (and the repository), and
+    # is admitted as a backup parent like the destination itself.
+    custody, _ = wrapping_custody_root(parent, checkout=root)
     key = usable_backup_key(parent, checkout=root, config_path=config_path)
-    owner = backup_parent_owner(parent)
-    # This account can write there: into the destination, or - where it does not exist yet - into the nearest
-    # existing folder above it, where the backup will make it.
-    place = next(folder for folder in (parent, *parent.parents) if folder.exists())
-    if owner is None and not (place.is_dir() and os.access(place, os.W_OK | os.X_OK)):
-        raise RuntimeError("The backup destination cannot be written or made by this account")
+    owner = writable_backup_parent(parent)
+    if custody is not None:
+        writable_backup_parent(custody)
     return parent, key, owner
+
+
+def writable_backup_parent(parent):
+    """A backup parent the writer can use, changing nothing: backup_parent_owner (an existing one private), and this
+    account can write there - into it, or, where it does not exist yet, into the nearest existing folder above it,
+    where the writer will make it. Returns backup_parent_owner's answer."""
+    owner = backup_parent_owner(parent)
+    place = next(folder for folder in (parent, *parent.parents) if folder.exists())
+    if not (place.is_dir() and os.access(place, os.W_OK | os.X_OK)):
+        raise RuntimeError("The backup destination cannot be written or made by this account")
+    return owner
 
 
 class SealedComponent:
@@ -1236,10 +1245,12 @@ def _stored_backup(directory, manifest=None, *, config_path=None, identity=None,
     # digests or its sizes) but the table no longer asks for - a held capture's shortened configuration list - is a
     # changed set, not a smaller one. A set records the size of every component; only the oldest daily sets record
     # none of their table's (an audit checkpoint attached to one later records its own).
-    exact_sizes = (record is not None or manifest.get("kind") == HELD_KIND
-                   or bool(set(sizes) - {AUDIT_CHECKPOINT}))
-    if (set(sums) != set(components) or not set(sizes) <= set(components)
-            or (exact_sizes and set(sizes) != set(components))):
+    # An audit checkpoint records its size wherever it is attached, so a set carrying one has at least that size.
+    if record is not None or manifest.get("kind") == HELD_KIND or set(sizes) - {AUDIT_CHECKPOINT}:
+        sized = set(components)
+    else:
+        sized = {AUDIT_CHECKPOINT} & set(components)
+    if set(sums) != set(components) or set(sizes) != sized:
         raise StoredSetError("Backup component inventory differs")
     # One pause is attested by every set whose table holds the EMR state - by the table (a post-EMR held capture, a
     # daily set with EMR storage), not by whether the manifest still carries the entry.

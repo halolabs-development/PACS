@@ -1441,6 +1441,28 @@ class BackupEncryptionTests(unittest.TestCase):
             with self.subTest(destination="holds the wrapping custody"):
                 refused_without_a_command(holding)
                 self.assertEqual(reported(holding), "invalid")
+            if os.name == "posix":
+                # A custody root beside it that is not this account's private directory.
+                shared = Path(self.temp) / "shared-wrapping"
+                shared.mkdir()
+                shared.chmod(0o755)
+                custody.write_text(json.dumps({"backup_root": str(shared), "files": {}}))
+                with self.subTest(destination="custody readable by others"):
+                    refused_without_a_command(holding)
+                    self.assertEqual(reported(holding), "invalid")
+            # A custody root that is another operating account's private directory, which this account cannot write
+            # (a root run beside a read-only mounted custody of the operating account).
+            foreign = (Path(self.temp) / "other-account-wrapping").resolve()
+            foreign.mkdir(mode=0o700)
+            custody.write_text(json.dumps({"backup_root": str(foreign), "files": {}}))
+            owner_of, can = ops.backup_parent_owner, os.access
+            with patch.object(ops, "backup_parent_owner",
+                              side_effect=lambda parent: (4242, 4242) if Path(parent).resolve() == foreign else owner_of(parent)), \
+                    patch.object(ops.os, "access",
+                                 side_effect=lambda path, *a, **kw: False if Path(path).resolve() == foreign else can(path, *a, **kw)):
+                with self.subTest(destination="custody of another account that cannot be written"):
+                    refused_without_a_command(holding)
+                    self.assertEqual(reported(holding), "invalid")
             custody.write_text(json.dumps({"backup_root": str(Path(self.temp) / "wrapping"), "files": {}}))
             self.assertEqual(reported(holding), "configured")
         body = json.loads(self.config.read_text())
@@ -1504,6 +1526,17 @@ class BackupEncryptionTests(unittest.TestCase):
         ops.write_json(plain / "manifest.json", changed)
         with ops.opened_set(plain):
             pass
+        # An audit checkpoint records its own size wherever it is attached: without it, refused.
+        checkpoint = plain / ops.AUDIT_CHECKPOINT
+        checkpoint.write_text("{}")
+        changed["sha256"][ops.AUDIT_CHECKPOINT] = ops.digest(checkpoint)
+        ops.write_json(plain / "manifest.json", changed)
+        refused(plain, "inventory differs")
+        changed["bytes"] = {ops.AUDIT_CHECKPOINT: checkpoint.stat().st_size}
+        ops.write_json(plain / "manifest.json", changed)
+        with ops.opened_set(plain):
+            pass
+        checkpoint.unlink()
         (plain / "manifest.json").write_bytes(written)
         with ops.opened_set(plain) as opened:
             self.assertEqual((opened.path, opened.manifest), (plain.resolve(), opened.stored))
