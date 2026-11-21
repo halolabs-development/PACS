@@ -672,6 +672,46 @@ class AdminAuditDOMTest(unittest.TestCase):
                           ["roles", "technician", "value"], ["enabled", "true", "value"], ["approvalState", "APPROVED", "value"],
                           ["emailVerified", NOT_RECORDED, "not_recorded"], ["institution", INSTITUTION, "value"]], lines)
 
+    def test_13_change_name_email_reads_old_to_new_one_line_per_field_and_refuses_any_other_shape(self):
+        # Change Name / Email's row as the server projects it (admin-audit.ts): before/after snapshots without email,
+        # and `identity` with the old and new value of each field that changed.
+        identity_row = {"at": at(6), "actor": "syn-admin@members.test", "action": "admin.user.identity", "target": MEMBER_ID,
+                        "rule": "member_snapshots", "detail": {
+                            "before": snapshot(INSTITUTION, "APPROVED"),
+                            "after": snapshot(INSTITUTION, "APPROVED", name="SYN Renamed", emailVerified=False),
+                            "verificationOverride": False,
+                            "identity": {"email": {"from": "syn-m@members.test", "to": "syn-m-new@members.test"},
+                                         "name": {"from": "SYN Member", "to": "SYN Renamed"}}}}
+        self.open()
+        self.refresh((200, answer([identity_row], 1)))
+        row = self.table()[0]
+        self.assertEqual("admin.user.identity", row["act"])
+        self.assertIn("name: SYN Member", row["previous"])
+        self.assertEqual(["email: syn-m@members.test → syn-m-new@members.test", "name: SYN Member → SYN Renamed"],
+                         [line for line in row["detail"] if line.startswith(("email:", "name:"))])
+        self.assertIn("after.name: SYN Renamed", row["detail"])
+        verdicts = self.page.evaluate("""(good) => {
+          const M = window.KinAdminAudit, clone = v => JSON.parse(JSON.stringify(v));
+          const with_ = (change) => { const a = clone(good); change(a); return M.readAnswer(a) === null; };
+          return {
+            good: M.readAnswer(clone(good)) !== null,
+            otherAction: with_(a => { a.rows[0].action = 'admin.user.update'; }),
+            emptyIdentity: with_(a => { a.rows[0].detail.identity = {}; }),
+            unknownField: with_(a => { a.rows[0].detail.identity.username = {from: 'a', to: 'b'}; }),
+            extraKey: with_(a => { a.rows[0].detail.identity.email.at = 'x'; }),
+            notText: with_(a => { a.rows[0].detail.identity.email.to = 7; }),
+            notObject: with_(a => { a.rows[0].detail.identity = 'email'; }),
+            emailInSnapshot: with_(a => { a.rows[0].detail.after.email = 'syn-m-new@members.test'; }),
+            noIdentity: with_(a => { delete a.rows[0].detail.identity; }),
+            withheldSide: with_(a => { a.rows[0].detail.after = {withheld: 'other_institution'}; }),
+            notRecordedSide: with_(a => { a.rows[0].detail.before = null; }),
+            twoInstitutions: with_(a => { a.rows[0].detail.after.institution = 'SYN-INST-B'; }),
+            onAFieldRow: with_(a => { a.rows[0] = {at: a.rows[0].at, actor: 'syn-m@members.test', action: 'auth.login',
+              target: 'SYN-SUB-M', rule: 'field:detail.institution', detail: {institution: 'SYN-INST-A', identity: a.rows[0].detail.identity}}; }),
+          };
+        }""", answer([identity_row], 1))
+        self.assertEqual({key: True for key in verdicts}, verdicts)
+
     # ── S7-U5 access records (TEST-S7-U5-DOM AD-01..AD-03, OP-1 A): the unmodified page, stub answers, answer order and
     # session end only. The card sentence is the card's contract value; the replaced sentence is judged by meaning rules. ──
 

@@ -1062,7 +1062,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             elif kind == 'viewer-jobs':
                 route.fulfill(json={'jobs': []})
             else:
-                route.fulfill(status=200, headers={'content-type': 'application/json', 'X-KIN-Finding-Schema': '3'}, body='{"items":[],"nextCursor":null}')
+                route.fulfill(status=200, headers={'content-type': 'application/json', 'X-KIN-Finding-Schema': '4'}, body='{"items":[],"nextCursor":null}')
             return
         if method == 'GET' and path == '/api/syn-note' and self.real_api:
             self.module_requests.append(('note', None, {}))

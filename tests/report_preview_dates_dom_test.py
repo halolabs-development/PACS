@@ -119,6 +119,15 @@ class ReportPreviewDatesDOMTest(unittest.TestCase):
         css = "".join("\\%x " % ord(c) for c in "검사 2026-11-16")
         self.assertIn(css, self.page.evaluate("ui.srcdoc()"))
 
+    def test_the_writer_is_the_name_the_version_was_signed_under_else_its_stored_login(self):
+        # After a rename the server still sends the name the version was signed under; a version that kept none prints
+        # the login it stored, as is (no name looked up now).
+        self.open(answer(author="syn-reader@example.test", authorName="SYN Kim Reader", repDoc="SYN Kim Reader"))
+        self.assertIn("작성자: SYN Kim Reader · 승인 판독의: SYN Kim Reader", self.header())
+        self.page.close()
+        self.open(answer(author="syn-reader@example.test", repDoc="syn-reader"))
+        self.assertIn("작성자: syn-reader@example.test ·", self.header())
+
     def test_the_printed_popup_is_the_previewed_paper(self):
         paper = self.open(answer())
         self.assertFalse(self.page.evaluate("ui.printDisabled()"), "this Chromium cannot print page identity")

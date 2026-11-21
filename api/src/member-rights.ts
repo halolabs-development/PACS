@@ -51,8 +51,9 @@ export async function lockInstitution(tx: any, institution: string): Promise<voi
 
 /**
  * The one place a report screen's signer name comes from: the member's name on the account row (the identity provider's
- * family and given name, or the username when it has none), by account id. It is shown only - the stored login, the account
- * id, the audit and the signed content stay as they are. An account without a row or with a blank name is left out, and the
+ * family and given name, or the username when it has none), by account id, read when a version is written and kept with it
+ * (report-commit.ts; shown through versionWriterName). It is shown only - the stored login, the account id, the audit and
+ * the signed content stay as they are. An account without a row or with a blank name is left out, and the
  * caller keeps what it showed before.
  */
 export async function memberNames(db: any, subs: readonly (string | null | undefined)[]): Promise<Map<string, string>> {
@@ -62,6 +63,18 @@ export async function memberNames(db: any, subs: readonly (string | null | undef
     select: { sub: true, name: true } });
   return new Map(rows.filter(row => typeof row.name === 'string' && row.name.trim())
     .map(row => [row.sub, (row.name as string).trim()] as [string, string]));
+}
+
+/**
+ * The one rule for the name a report version shows for its writer: the member name it was written under
+ * (`ReportVersion.authorName`, kept by report-commit.ts from memberNames when the version is written - the login before the @
+ * for an account without a name), so renaming the member
+ * later does not change who a signed version names. A version without one (written before the name was kept, or a copy kept
+ * by Reset or a forced discard) names none, and the screen shows its stored login as before - the account's current name and
+ * the time of a rename never stand in for it.
+ */
+export function versionWriterName(row: { authorName?: unknown } | null | undefined): string | undefined {
+  return typeof row?.authorName === 'string' && row.authorName.trim() ? row.authorName.trim() : undefined;
 }
 
 export function rightsAllow(row: any): boolean {

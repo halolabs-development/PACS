@@ -12,7 +12,7 @@ const caller = (req: any): Caller => ({ sub: req.sub, actor: req.actor, roles: r
 // S2-L1 handshake: every findings answer names the record format this API writes, set before the service
 // runs so its refusals carry it too. A client that sends the same header may receive records up to that version.
 const SCHEMA = 'X-KIN-Finding-Schema';
-const announce = (res: any) => { res.setHeader(SCHEMA, '3'); };
+const announce = (res: any) => { res.setHeader(SCHEMA, '4'); };
 const requested = (req: any) => { const value = req.headers?.['x-kin-finding-schema']; return typeof value === 'string' ? value : undefined; };
 
 @Controller()
