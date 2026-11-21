@@ -1469,6 +1469,74 @@ test('SPLIT-16 the clinician list is the worklist narrowed; a report state that 
   await refused(() => w.clinician.clinicianReportRead(foreign.uid, CLIN_A), 404);
 });
 
+test('SPLIT-16b a signer is shown by the member name on the account; the approval that opened the cycle is shown at the time the study keeps', async () => {
+  const w = world();
+  await w.boot();
+  const rights = (c, name) => w.db.seed('memberRights', { sub: c.sub, username: c.actor.split('@')[0], email: c.actor, name,
+    emailVerified: true, approved: true, suspended: false, institution: c.institution, roles: c.roles, version: 1 });
+  rights(RAD_A, 'SYN Kim Reader'); rights(RAD_A2, 'SYN Lee Second');
+  const s = w.study();
+  const epoch = s.draftEpoch;
+  const approved = await w.commit.commitReport(s.uid, commitBody(RAD_A, 'approve', epoch, 0, 0, { findings: 'SYN approved' }), RAD_A, null);
+  assert.equal(approved.state.repDoc, 'SYN Kim Reader', 'a new approval writes the member name, not the login');
+  const approvedAt = new Date(w.db.rows('studyState').find(r => r.uid === s.uid).approvedAt).toISOString();
+  const addendum = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'addendum', epoch, 0, 1, { findings: 'SYN approved + more' }), RAD_A2, null);
+  assert.equal(addendum.state.repDoc, 'SYN Lee Second');
+  const addendumAt = new Date(w.db.rows('studyState').find(r => r.uid === s.uid).addendumAt).toISOString();
+  // The ledger keeps the login and the account of each version as they were.
+  assert.deepEqual(w.db.rows('reportVersion').filter(v => v.uid === s.uid).map(v => [v.version, v.action, v.author, v.authorSub]),
+    [[1, 'approve', RAD_A.actor, RAD_A.sub], [2, 'addendum', RAD_A2.actor, RAD_A2.sub]]);
+
+  const versions = readBody(await w.evidence.versions(s.uid, RAD_A2));
+  // The current cycle's kept events (the approval, the last addendum) are shown at the times the study keeps for them.
+  assert.deepEqual(versions.map(v => [v.version, v.author, v.authorName, v.keptAt, v.keptOn]),
+    [[2, RAD_A2.actor, 'SYN Lee Second', addendumAt, undefined], [1, RAD_A.actor, 'SYN Kim Reader', approvedAt, undefined]]);
+
+  // The clinician read names the signer and the time of the version it shows; a version opened by number names its own.
+  w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
+  const head = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A)).report;
+  assert.deepEqual([head.version, head.signedBy, head.keptAt], [2, 'SYN Lee Second', addendumAt]);
+  const first = readBody(await w.clinician.clinicianReportRead(s.uid, CLIN_A, '1')).report;
+  assert.deepEqual([first.version, first.signedBy, first.keptAt], [1, 'SYN Kim Reader', approvedAt]);
+
+  // Two amendments: the last one is shown at the study's amendedAt (the editor's "수정됨"), the first at its own time.
+  const fixed = w.study();
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'approve', fixed.draftEpoch, 0, 0, { findings: 'SYN one' }), RAD_A, null);
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'amend', fixed.draftEpoch, 1, 1, { findings: 'SYN two' }), RAD_A, null);
+  await w.commit.commitReport(fixed.uid, commitBody(RAD_A, 'amend', fixed.draftEpoch, 2, 2, { findings: 'SYN three' }), RAD_A, null);
+  const kept = w.db.rows('studyState').find(r => r.uid === fixed.uid);
+  const amended = readBody(await w.evidence.versions(fixed.uid, RAD_A)).map(v => [v.version, v.action, v.keptAt]);
+  assert.deepEqual(amended, [[3, 'amend', new Date(kept.amendedAt).toISOString()], [2, 'amend', undefined],
+    [1, 'approve', new Date(kept.approvedAt).toISOString()]]);
+
+  // An approval stored before its time was kept shows its stored date (no time added) while nothing follows it; with an
+  // addendum after it, the stored date belongs to the addendum and each version shows its own time.
+  const legacy = w.study({ rs: 'A', repDoc: 'syn-rad-a', confirm: '2026-11-17' });
+  w.db.seed('report', { uid: legacy.uid, findings: 'SYN old', conclusion: '', recommendation: '', version: 1, updatedBy: RAD_A.actor, updatedBySub: RAD_A.sub });
+  w.db.seed('reportVersion', { uid: legacy.uid, version: 1, action: 'approve', findings: 'SYN old', conclusion: '', recommendation: '',
+    author: RAD_A.actor, authorSub: RAD_A.sub, at: new Date('2026-11-17T18:05:00.000Z') });
+  assert.deepEqual(readBody(await w.evidence.versions(legacy.uid, RAD_A)).map(v => [v.version, v.keptAt, v.keptOn]), [[1, undefined, '2026-11-17']]);
+  w.db.seed('reportVersion', { uid: legacy.uid, version: 2, action: 'addendum', findings: 'SYN old + more', conclusion: '', recommendation: '',
+    author: RAD_A.actor, authorSub: RAD_A.sub, at: new Date('2026-11-18T01:00:00.000Z') });
+  assert.deepEqual(readBody(await w.evidence.versions(legacy.uid, RAD_A)).map(v => [v.version, v.keptAt, v.keptOn]),
+    [[2, undefined, undefined], [1, undefined, undefined]]);
+
+  // An account without a member name keeps the login before the @, as before; a repDoc already written is not rewritten.
+  const other = w.study({ institutionId: INST_B });
+  const plain = await w.commit.commitReport(other.uid, commitBody(RAD_B, 'approve', other.draftEpoch, 0, 0, { findings: 'SYN b' }), RAD_B, null);
+  assert.equal(plain.state.repDoc, RAD_B.actor.split('@')[0]);
+  assert.equal(w.db.rows('studyState').find(r => r.uid === s.uid).repDoc, 'SYN Lee Second');
+
+  // A writer the history does not show (a discarded copy of someone's private draft) is not named either.
+  const hidden = w.study();
+  w.db.seed('reportVersion', { uid: hidden.uid, version: 1, action: 'discarded', findings: 'SYN private', conclusion: '', recommendation: '',
+    author: RAD_A2.actor, authorSub: RAD_A2.sub, reason: '관리자 강제 초안 해제' });
+  const [copy] = readBody(await w.evidence.versions(hidden.uid, RAD_A));
+  assert.notEqual(copy.author, RAD_A2.actor);
+  assert.equal(copy.authorName, undefined);
+  assert.equal(readBody(await w.evidence.versions(hidden.uid, RAD_A2))[0].authorName, 'SYN Lee Second');
+});
+
 // ── SPLIT-17 Tech Note attempts (M19, M20) ──
 
 test('SPLIT-17 a Tech Note attempt sent again answers its revision without a second revision or audit row; permission is judged before the attempt id', async () => {

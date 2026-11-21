@@ -284,9 +284,11 @@ class WorklistE2E(unittest.TestCase):
     def versions(self, fixture):
         result = self.stack.request("GET", f"/studies/{fixture.uid}/report/versions", "doctor")
         self.assertEqual(result.status, 200)
-        # MODULE_A A2: accessRef names this read's own access record, so it differs per read by contract. The stored
-        # version content these cases compare across reads is every other field.
-        return sorted(({k: v for k, v in row.items() if k != "accessRef"} for row in result.body), key=lambda row: row["version"])
+        # MODULE_A A2: accessRef names this read's own access record, so it differs per read by contract. keptAt/keptOn name the
+        # time the study keeps for an event of its current approval (they follow the study, not the stored version). The
+        # stored version content these cases compare across reads is every other field.
+        return sorted(({k: v for k, v in row.items() if k not in ("accessRef", "keptAt", "keptOn")} for row in result.body),
+                      key=lambda row: row["version"])
 
     def patch(self, fixture, **body):
         result = self.stack.request("PATCH", f"/studies/{fixture.uid}", "tech", body)

@@ -970,6 +970,31 @@ class ReportFlowPage(unittest.TestCase):
             expect(badge).to_have_text(label)
             expect(badge).to_have_attribute('title', meaning)
 
+    def test_history_names_each_signer_and_shows_this_screens_minute(self):
+        """History names who signed each version by the member name the server sends (the stored login when it sends none)
+        and shows its time as this screen's (Asia/Seoul) YYYY-MM-DD HH:mm; the approval that opened the current cycle shows
+        the approval time the study keeps (the worklist Confirm cell's), not its row's own clock."""
+        self.open(); self.open_study(h.PATIENT)
+        versions = [dict(version=3, action='addendum', author='syn.second@example.test', authorName='SYN Lee Second',
+                         at='2026-11-18T01:30:00.000Z'),
+                    dict(version=2, action='approve', author='syn.reader@example.test', authorName='SYN Kim Reader',
+                         at='2026-11-17T18:05:59.990Z', keptAt='2026-11-17T18:06:00.000Z'),
+                    dict(version=1, action='save', author='SYN Doctor', at='2026-11-17T17:00:00.000Z')]
+        self.page.route('**/api/studies/*/report/versions', lambda route: route.fulfill(json=versions))
+        self.page.locator('#report-more > summary').click()
+        self.page.locator('#b-history').click()
+        heads = self.page.locator('#hist-body .ver .vh')
+        expect(heads).to_have_count(3)
+        expect(heads.nth(0)).to_contain_text('SYN Lee Second')
+        expect(heads.nth(0)).to_contain_text('2026-11-18 10:30')
+        expect(heads.nth(1)).to_contain_text('SYN Kim Reader')
+        expect(heads.nth(1)).to_contain_text('2026-11-18 03:06')
+        expect(heads.nth(2)).to_contain_text('SYN Doctor')
+        expect(heads.nth(2)).to_contain_text('2026-11-18 02:00')
+        shown = self.page.locator('#hist-body').inner_text()
+        for leaked in ('syn.second@', 'syn.reader@', '2026-11-17 18:0', '2026-11-18 01:30', 'T18:', ':59'):
+            self.assertNotIn(leaked, shown)
+
     def test_existing_report_recommendation_is_a_read_only_line(self):
         self.site.store[h.UID]['report'].update(version=1, rs='A', findings='SYN existing findings',
             conclusion='SYN existing conclusion', recommendation='SYN existing recommendation')

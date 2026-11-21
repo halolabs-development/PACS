@@ -891,6 +891,8 @@ function endWorld({ commit, reject, confirmFails = 0, ledger = null, refusal = n
       report: { findUnique: async () => null, upsert: async ({ create }) => structuredClone(create) },
       reportVersion: { findFirst: async () => null, create: async ({ data }) => structuredClone(data) },
       studyState: { findUnique:async()=>structuredClone(study),update: async ({ data }) => ({ ...structuredClone(study), ...data }) },
+      // An approval reads the signer's member name (no member row here: the login is written, as before).
+      memberRights: { findMany: async () => [] },
     };
     let value;
     try {

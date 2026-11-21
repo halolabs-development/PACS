@@ -206,7 +206,7 @@ test('the record names the reader, the link state, the local time and its own li
 // ── P6 · the node surface of the shipped module ──
 
 test('the module still exports the saved label beside the citation wording', () => {
-  assert.deepEqual(Object.keys(preview), ['savedLabel', 'citationSection', 'citationAnswerOk', 'paperStamp', 'approvalText', 'paperDate']);
+  assert.deepEqual(Object.keys(preview), ['savedLabel', 'citationSection', 'citationAnswerOk', 'paperStamp', 'approvalText', 'versionStamp', 'paperDate']);
   for (const name of Object.keys(preview)) assert.equal(typeof preview[name], 'function', name);
   assert.equal(typeof globalThis.KinReportPreview, 'function', 'the browser factory still reaches the page');
   // Loading the module must not need a DOM: the job-print identity test and the

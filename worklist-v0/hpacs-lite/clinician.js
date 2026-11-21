@@ -773,6 +773,11 @@
     return { uid, final: true, scope: body.scope || report.scope || null, action: report.action, version: report.version,
       repDoc: typeof report.repDoc === 'string' ? report.repDoc : null,
       confirm: typeof report.confirm === 'string' ? report.confirm : null,
+      // Who signed the version shown and when, as the History of that version shows it (the server names them).
+      signedBy: typeof report.signedBy === 'string' ? report.signedBy : null,
+      at: typeof report.at === 'string' ? report.at : null,
+      keptAt: typeof report.keptAt === 'string' ? report.keptAt : null,
+      keptOn: typeof report.keptOn === 'string' ? report.keptOn : null,
       // FC-034: 승인 후 24시간 안에 승인한 판독의가 고친 판이 머리일 때만 시각이 온다.
       amendedAt: report.action === 'amend' && typeof report.amendedAt === 'string' ? report.amendedAt : null,
       findings: report.findings, conclusion: report.conclusion, recommendation: report.recommendation,
@@ -842,14 +847,16 @@
     setReport('final', view.action === 'addendum' ? TEXT.addendum : TEXT.approved);
     const meta = $('#report-meta');
     meta.replaceChildren(field('Version', String(view.version)), field('Type', FINAL_TYPE[view.action]),
-      field('Signed By', dash(view.repDoc)), field('Signed On', day(view.confirm)));
+      field('Signed By', dash(view.signedBy || view.repDoc)),
+      field('Signed On', window.KinReportPaper.versionStamp(view) || day(view.confirm)));
     meta.hidden = false;
     const body = $('#report-body');
     body.replaceChildren(bodySection('Findings', view.findings), bodySection('Conclusion', view.conclusion),
       ...(view.drawings.length ? [drawingsSection(view)] : []), bodySection('Recommendation', view.recommendation));
     // FC-034: 고친 글로 바뀐 판독문은 머리에 그 사실과 시각을 한 줄 붙인다(목록의 상태 표기는 그대로).
     if (view.action === 'amend') {
-      const amended = node('p', 'amended', `수정됨 (${view.amendedAt ? requestTime(view.amendedAt) : '—'})`);
+      // The amendment shown is this version: its time is the one Signed On and History show for it.
+      const amended = node('p', 'amended', `수정됨 (${window.KinReportPaper.versionStamp(view) || '—'})`);
       amended.id = 'report-amended';
       body.prepend(amended);
     }
