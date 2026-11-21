@@ -10,11 +10,14 @@ const { pathToFileURL } = require('node:url');
 const { randomUUID, createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const api = process.env.KIN_D_API || path.resolve(__dirname, '../../../api');
-const { PrismaClient } = require(path.join(api, 'node_modules/@prisma/client'));
+const { PrismaClient, Prisma } = require(path.join(api, 'node_modules/@prisma/client'));
 const migration = '20261120150000_owner_account_keys';
 // The database here stops at this migration; a version is read by the columns it has then (a later column is not there yet).
 const VERSION_COLUMNS = Object.fromEntries(['id', 'uid', 'version', 'action', 'findings', 'conclusion', 'recommendation', 'reason',
   'author', 'authorSub', 'citations', 'structured', 'drawings', 'at', 'groupId', 'snapshotFormat'].map(key => [key, true]));
+// The StudyState columns there then: every scalar column of the model but the reading request's, which a later migration adds.
+const STATE_COLUMNS = Object.fromEntries(Prisma.dmmf.datamodel.models.find(model => model.name === 'StudyState').fields
+  .filter(field => field.kind === 'scalar' && !field.name.startsWith('readingRequest')).map(field => [field.name, true]));
 const { PacsFilters } = require(path.join(api, 'dist/pacs/filters'));
 const { PacsPreferences } = require(path.join(api, 'dist/pacs/preferences'));
 const { draftOf } = require(path.join(api, 'dist/owner-identity'));
@@ -140,8 +143,8 @@ for (const aliases of [false, true]) {
     console.log(JSON.stringify({ aliases, tables: after.tables.map(({signature,...row}) => row) }));
     const normal = login('ordinary',ordinary), changed = login('changed',current), successor = login('next',reused);
     for (const [index,account,who] of [[1,'ordinary',normal],[2,'changed',changed],[3,aliases?'previous':null,successor],[4,null,null]]) {
-      // A later StudyState column (the reading request's) is not there yet at this migration: read the ones this test needs.
-      const study = await db.studyState.findUnique({ where: { uid: uid(index) }, select: { uid: true, holderSub: true, preDocSub: true, preReviewerSub: true } });
+      // A later StudyState column (the reading request's) is not there yet at this migration: read the ones it has then.
+      const study = await db.studyState.findUnique({ where: { uid: uid(index) }, select: STATE_COLUMNS });
       assert.deepEqual([study.holderSub,study.preDocSub,study.preReviewerSub],[account,account,'ordinary']);
       const historical = index === 2 && !aliases ? null : account;
       const head = await db.report.findUnique({ where: { uid: study.uid } });
