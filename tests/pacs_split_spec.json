@@ -9510,6 +9510,19 @@
       }
     ]
   },
+  "source_unavailable_api": {
+    "unit": "source-unavailable",
+    "note": "The DICOM admission (GET authz/dicom) answers 403 with X-KIN-Auth-Code AUTH_SOURCE_UNAVAILABLE when the image archive could not be observed (auth.service.ts admitDicomRead): the route takes its response in passthrough mode to set that header. Every other answer is unchanged.",
+    "route_args": [
+      {
+        "controller": "PacsController",
+        "handler": "authzDicom",
+        "added": [
+          "1:1@1:null:0"
+        ]
+      }
+    ]
+  },
   "di_additions_held": {
     "unit": "held-unknown-source",
     "decision": "D1882",

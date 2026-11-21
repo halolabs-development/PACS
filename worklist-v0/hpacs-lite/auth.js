@@ -533,11 +533,29 @@ const KinAuth = (() => {
   }
 
   /**
+   * 서버가 이 브라우저의 세션을 알려 주지 못했다(연결 끊김·시간 초과·5xx·신원이 아닌 답). 이 브라우저의 가장 나중의 사람의
+   * 로그아웃이 서버가 끝내지 못한 것(요청 중·미확인)이면 그 기록의 상태·사유가 이 문서의 상태다 — 닿지 않는 서버를 기다리며
+   * 들어가겠다고 하지 않고, 끝내지 못한 로그아웃의 사유와 Retry Log Out을 보인다(서버가 돌아오면 Login·Retry Log Out이 그때의
+   * 세션을 다시 확인한다). 서버가 끝낸 로그아웃의 기록(confirmed)은 남은 세션이 없다는 뜻이라 지금처럼 다시 묻는다 — 그사이
+   * 다른 로그인의 살아 있는 세션이면 들어간다. 기록이 없어도 확인 실패 그대로 던진다(재시도·실패 안내).
+   */
+  function unanswered(error) {
+    const record = undecided() ? blocking(readAll().records) : null;
+    if (record && record.status !== 'confirmed') {
+      classify();
+      return null;
+    }
+    throw error;
+  }
+
+  /**
    * 종료 기록 없는 평소의 진입: 쿠키의 세션을 서버에 한 번 묻는다. 세션 식별값 없이 보내는 인증 요청은 이 문서에서 이것
    * 하나다(U5S-REQ-09) — 그 뒤의 모든 요청은 여기서 받은 식별값을 싣는다.
    */
   async function bootstrap() {
-    const answer = await send('/me');
+    let answer, read;
+    try { answer = await send('/me'); }
+    catch (error) { return unanswered(error); }
     if (!undecided()) return null;
     // 세션이 없다고 서버가 답했다. 종료 기록도 없고 저장소도 믿을 수 있는 문서이므로(undecided) 페이지가 자동 로그인을
     // 시작할 수 있다(autoLogin). 5xx·시간 초과·읽을 수 없는 답은 "세션 없음"이 아니라 확인 실패다 — 아래에서 던진다.
@@ -546,7 +564,9 @@ const KinAuth = (() => {
       classify();
       return null;
     }
-    const { id, identity } = readIdentity(answer);
+    try { read = readIdentity(answer); }
+    catch (error) { return unanswered(error); }
+    const { id, identity } = read;
     const own = readAll().records.get(id);
     if (own?.status === 'leaving') {
       pendingLeaving = own;
@@ -658,7 +678,8 @@ const KinAuth = (() => {
   /**
    * 서버 응답만이 종료를 확인한다(코드로 읽는다 — 문구는 안내문이다). 204와 "그 세션은 끝났다"(AUTH_SESSION_ENDED)만 종료
    * 확인이다. 결속 불일치(AUTH_SESSION_MISMATCH)는 이 브라우저의 쿠키가 다른 로그인의 것이라는 뜻이다 — 그 로그인을 끝내지
-   * 않고 이 문서만 닫힌 채 남는다. 나머지는 실패 구분과 함께 종료 미확인이다.
+   * 않고 이 문서만 닫힌 채 남는다. 나머지는 실패 구분과 함께 종료 미확인이다. 502·503·504는 이 API의 로그아웃이 내지 않는
+   * 답이다 — 멈춘(다시 시작하는) API 앞의 중계가 낸다. 요청이 서버에 닿지 않은 것이라 연결 실패와 같게 읽는다(거절이 아니다).
    */
   async function post(session) {
     let answer;
@@ -666,6 +687,7 @@ const KinAuth = (() => {
     catch (e) { return { state: 'unconfirmed', reason: e.kind === 'timeout' ? 'timeout' : 'network' }; }
     if (answer.status === 204 || (answer.status === 401 && answer.code === 'AUTH_SESSION_ENDED'))
       return { state: 'confirmed', reason: null };
+    if ([502, 503, 504].includes(answer.status)) return { state: 'unconfirmed', reason: 'network' };
     if (answer.code === 'AUTH_SESSION_MISMATCH') return { state: 'unconfirmed', reason: 'replaced' };
     if (answer.status === 401 && answer.code === 'AUTH_CREDENTIALS_MISSING') return { state: 'unconfirmed', reason: 'credentials' };
     if (answer.status === 409) return { state: 'unconfirmed', reason: 'conflict' };

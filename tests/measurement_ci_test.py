@@ -76,8 +76,10 @@ REGRESSION_SUITES = {
         tests/row_menu_rights_dom_test.py
         tests/study_identity_dom_test.py
         tests/unavailable_controls_dom_test.py
+        tests/unsaved_study_writes_dom_test.py
         tests/viewing_cell_dom_test.py
         tests/worklist_arrivals_dom_test.py
+        tests/worklist_attach_refresh_dom_test.py
         tests/worklist_body_parts_dom_test.py
         tests/worklist_header_dom_test.py
         tests/worklist_image_thumbnails_dom_test.py
