@@ -1282,7 +1282,8 @@ function kinCreateSRProvenance() {
         const keys = ids.map(key);
         if (!ids.length || current && keys.includes(key(current))) continue;
         const index = ds.measurements.map(m => keys.indexOf(key(m.imageId))).find(i => i >= 0);
-        if (index !== undefined) { try { viewport.setImageIdIndex(index); } catch (_) {} }
+        // The stack is set again at that frame: a stack set at no image has not built what the SR marks are drawn on.
+        if (index !== undefined) { try { void Promise.resolve(viewport.setStack(ids, index)).catch(() => {}); } catch (_) {} }
       }
     };
     const timer = setInterval(() => { try { atMeasurementFrame(); } catch (_) {} refresh(); }, 250);

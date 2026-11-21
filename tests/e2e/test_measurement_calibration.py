@@ -620,9 +620,10 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         try:
             expect(p.locator('svg.svg-layer')).to_contain_text(' mm')
         except AssertionError:
+            p.screenshot(path=str(Path(__file__).parent / 'artifacts/measurement-accuracy-ci/us-cine-sr-reopen.png'))
             self.fail('The SR mark is not drawn: ' + json.dumps(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
                 const marks=cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='DICOMSRDisplay');
-                return {viewport:{id:v?.id, type:v?.type, frameOfReference:v?.getFrameOfReferenceUID?.(), current:v?.getCurrentImageId?.()},
+                return {viewport:{id:v?.id, type:v?.type, frameOfReference:v?.getFrameOfReferenceUID?.(), current:v?.getCurrentImageId?.(), actors:v?._actors?.size ?? null, index:v?.getCurrentImageIdIndex?.()},
                   marks:marks.map(a=>({frameOfReference:a.metadata.FrameOfReferenceUID, image:a.metadata.referencedImageId, visible:a.isVisible, tracking:a.data?.TrackingUniqueIdentifier})),
                   groups:Object.keys(cornerstoneTools.annotation.state.getAnnotationManager().getFramesOfReference?.()||{})};}''')))
         p.close()
