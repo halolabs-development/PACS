@@ -299,6 +299,8 @@ function fieldAttribution(rule: string, base: Omit<AuditProjection, 'rule' | 'de
   const key = source.startsWith('detail.') ? source.slice('detail.'.length) : null;
   const value = key === null ? base.target : own(detail, key) ? detail[key] : undefined;
   if (typeof value !== 'string' || !value) return hidden(rule, 'no_institution_recorded');
+  // A member's old and new email travel only on Change Name / Email's own member row: no other action projects them.
+  if (own(detail, 'identity')) { const { identity: _identity, ...rest } = detail; detail = rest; }
   // A local administrator may release a foreign writer. Attribution of the
   // action does not grant access to that writer's identity. Never alter storage.
   if (base.action === 'hold.force-release') {

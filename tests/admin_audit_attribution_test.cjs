@@ -1075,4 +1075,9 @@ test('Change Name / Email: the old -> new email and name reach the one instituti
   // Another member action carrying an `identity` key: the key is not projected.
   const other = A.projectAuditRow(row(99, 'admin.user.update', M1, { ...base, identity }), 'inst-a');
   assert.ok(other && !('identity' in other.detail));
+  // Nor does a field-rule row (an access row with an `identity` key): its own fields only.
+  const login = A.projectAuditRow(row(100, 'auth.login', M1, { institution: 'inst-a', ip: null, dataSubject: null, outcome: 'success',
+    identity }, 'syn-m1@members.test'), 'inst-a');
+  assert.deepEqual(json(login.detail), { institution: 'inst-a', ip: null, dataSubject: null, outcome: 'success' });
+  assert.ok(!JSON.stringify(login).includes('old@members.test'));
 });

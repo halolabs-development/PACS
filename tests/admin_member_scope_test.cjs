@@ -1365,6 +1365,33 @@ const sameAsUnknown = error => { assert.equal(error?.getStatus?.(), 404); assert
       assert.deepEqual(w.kcCalls.filter(call => call[0] === 'reset').map(call => call[2]), ['temp', 'email']);
     }
 
+    // 13n. The audit row names every field that changed in either store: the login account corrected back to the row's
+    //      value, or only the family/given split moved (the shown name the same); a commit that fails on a save that
+    //      needed no provider write is still this request's failure to record.
+    {
+      const w = world(), p = separate(w);
+      p.accounts.get('reader-a').email = 'typo@example.test';
+      await change(w, 'reader-a', { email: 'reader-a@example.test' });
+      assert.deepEqual(p.writes, [['reader-a', { email: 'reader-a@example.test', emailVerified: false }]]);
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { email: { from: 'typo@example.test', to: 'reader-a@example.test' } },
+        'a correction of the login account alone is recorded');
+      // Shown "Synthetic reader-a" either way: family "Synthetic reader-a", given "" -> family "Synthetic", given "reader-a".
+      p.accounts.get('reader-a').lastName = 'Synthetic reader-a';
+      p.accounts.get('reader-a').firstName = '';
+      await change(w, 'reader-a', { lastName: 'Synthetic', firstName: 'reader-a' });
+      assert.deepEqual(JSON.parse(w.audits.at(-1).detail).identity, { name: { from: 'Synthetic reader-a / ', to: 'Synthetic / reader-a' } });
+      assert.equal(w.audits.filter(a => a.action === 'admin.user.identity').every(a => Object.keys(JSON.parse(a.detail).identity).length), true);
+      // The row differs, the provider already holds the values (no write), and the commit fails: recorded, nothing put back.
+      p.accounts.get('reader-a').email = 'provider-ahead@example.test';
+      const updateMany = w.db.memberRights.updateMany;
+      w.db.memberRights.updateMany = async () => { throw new Error('synthetic database failure'); };
+      const writes = p.writes.length;
+      await assert.rejects(change(w, 'reader-a', { email: 'provider-ahead@example.test' }), /synthetic database failure/);
+      w.db.memberRights.updateMany = updateMany;
+      assert.equal(p.writes.length, writes, 'no provider write to put back');
+      assert.equal(w.audits.at(-1).action, 'admin.user.patch.failed');
+    }
+
     // 13m. The administrator corrects their own email: saved, and their own sessions end too (they sign in again).
     {
       const w = world(), p = separate(w);

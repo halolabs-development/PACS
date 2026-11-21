@@ -1067,6 +1067,19 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
             "() => ['#identity-target', '#identity-form input[name=lastName]', '#identity-form input[name=firstName]', "
             "'#identity-form input[name=email]'].map(s => document.querySelector(s).getAttribute('translate'))"))
 
+    def test_14_change_name_email_a_member_without_an_email_has_the_name_changed(self):
+        self.editable()
+        clinician = self.user("syn-clinician")
+        clinician.update(email="", provider=dict(clinician["provider"], email=""))
+        self.load()
+        self.open_identity("syn-clinician")
+        self.assertEqual("", self.identity_fields()["email"])
+        self.page.locator("#identity-form input[name=lastName]").fill("Renamed")
+        reads = self.list_reads
+        self.page.locator("#identity-form button[type=submit]").click()
+        self.wait_until(lambda: self.list_reads > reads, "the reload after the rename")
+        self.assertEqual(("SYN-U-CLIN", {"identity": {"lastName": "Renamed", "firstName": "Clinician"}, "version": 3}), self.patches[-1])
+
     def test_13_change_name_email_unconfirmed_member_late_answers_and_closing(self):
         self.editable()
         self.load()

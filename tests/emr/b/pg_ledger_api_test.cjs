@@ -1298,6 +1298,17 @@ async function rightsIdentity() {
     for(const [sub,roles] of [['admin-1',['admin']],['admin-2',['admin']],['target',['radiologist']]]){await member(sub,roles);accounts.set(sub,account(sub));}
     await witness.authSession.create({data:{sid:randomUUID(),sub:'target',accessToken:'synthetic-unused',refreshToken:randomUUID(),
       atExpiresAt:new Date(Date.now()+600000),lastSeenAt:new Date(),rightsVersion:1,institution:X}});
+    // The member's records written before any change, under the old email: a draft, a signed version, an audit trail.
+    const UID='1.2.826.0.1.3680043.10.999.2';
+    await witness.studyState.create({data:{uid:UID,institutionId:X}});
+    await witness.reportDraft.create({data:{uid:UID,author:'target@synthetic.invalid',authorSub:'target',revision:1,present:true,
+      findings:'synthetic draft written before the change',conclusion:'',recommendation:'',baseVersion:0,
+      workUnit:'disposal:'+randomUUID(),workSince:new Date(),workIntent:'approve'}});
+    await witness.reportVersion.create({data:{uid:UID,version:1,action:'commit',findings:'synthetic signed text',author:'target@synthetic.invalid'}});
+    await witness.auditLog.create({data:{actor:'target@synthetic.invalid',action:'report.synthetic-history',target:UID,detail:'{}'}});
+    const history=async()=>JSON.stringify([await witness.reportDraft.findMany({orderBy:{uid:'asc'}}),
+      await witness.reportVersion.findMany({orderBy:{id:'asc'}}),await witness.auditLog.findMany({where:{action:'report.synthetic-history'}})]);
+    const kept=await history();
     // 1. Two administrators, the same opened version, both past their reads before either takes the locks.
     let arrived=0,release;const together=new Promise(resolve=>{release=resolve;});
     gate=async()=>{if(++arrived===2){release();}if(arrived<=2)await together;};
@@ -1340,6 +1351,9 @@ async function rightsIdentity() {
     assert.equal(writes.length,5,'nothing put back while the commit is unknown');
     assert.equal(accounts.get('target').email,'lost@synthetic.invalid','the provider keeps the unconfirmed write: the list marks it');
     assert.equal(await witness.auditLog.count({where:{action:'admin.user.patch.failed',target:'target'}}),1);
+    // 5. Reopened after every change: the draft, the signed version and the audit trail keep the old email and their text.
+    assert.equal(await history(),kept,'no stored record is rewritten');
+    assert.equal((await witness.reportDraft.findFirst({where:{uid:UID,authorSub:'target'}})).findings,'synthetic draft written before the change');
     console.log(JSON.stringify({status:'PASS',boundary:'actual AdminController + AdminService.changeIdentity + request work + PG locks and rollback',
       green:['two administrators: one commit, loser writes nothing to the provider','real rollback puts the provider back and records the failure',
         'lost commit answer over a commit stands','lost commit answer over a rollback is unconfirmed, nothing put back']}));

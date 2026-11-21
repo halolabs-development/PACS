@@ -702,6 +702,12 @@ class AdminAuditDOMTest(unittest.TestCase):
             notText: with_(a => { a.rows[0].detail.identity.email.to = 7; }),
             notObject: with_(a => { a.rows[0].detail.identity = 'email'; }),
             emailInSnapshot: with_(a => { a.rows[0].detail.after.email = 'syn-m-new@members.test'; }),
+            noIdentity: with_(a => { delete a.rows[0].detail.identity; }),
+            withheldSide: with_(a => { a.rows[0].detail.after = {withheld: 'other_institution'}; }),
+            notRecordedSide: with_(a => { a.rows[0].detail.before = null; }),
+            twoInstitutions: with_(a => { a.rows[0].detail.after.institution = 'SYN-INST-B'; }),
+            onAFieldRow: with_(a => { a.rows[0] = {at: a.rows[0].at, actor: 'syn-m@members.test', action: 'auth.login',
+              target: 'SYN-SUB-M', rule: 'field:detail.institution', detail: {institution: 'SYN-INST-A', identity: a.rows[0].detail.identity}}; }),
           };
         }""", answer([identity_row], 1))
         self.assertEqual({key: True for key in verdicts}, verdicts)

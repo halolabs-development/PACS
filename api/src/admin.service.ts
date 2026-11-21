@@ -541,7 +541,9 @@ export class AdminService {
     const issuer = facts.actor.issuer;
     if (!issuer) throw new Error('Missing member identity issuer');
     const affected = { issuer, subject: id, id: await facts.request.work.resolveRequestIdentity(issuer, id) };
-    let sent = false, auditId: number | null = null;
+    // `committing`: decided and about to commit (a failure from here on is this request's to record, with or without a
+    // provider write).
+    let sent = false, committing = false, auditId: number | null = null;
     try {
       const committed = await facts.request.work.transactionWithRecords(async (tx: any, record: any) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
@@ -569,9 +571,18 @@ export class AdminService {
           if (!reread || !holds(reread, send)) throw new IdentityUnconfirmed();
           identity = reread;
         }
+        // Old -> new of each field that changed in either store: the member row's value when the row changed, otherwise
+        // the login account's (a correction of the account alone). The name is the shown name, or — when only the family
+        // and given parts moved — those parts.
         const name = shownName(identity), changed: Record<string, { from: string; to: string }> = {};
         if (current.email !== identity.email) changed.email = { from: current.email, to: identity.email };
+        else if (account.email !== identity.email) changed.email = { from: account.email, to: identity.email };
+        const parts = (u: { lastName: string; firstName: string }) => `${u.lastName} / ${u.firstName}`;
         if (current.name !== name) changed.name = { from: current.name, to: name };
+        else if (account.firstName !== identity.firstName || account.lastName !== identity.lastName)
+          changed.name = { from: parts(account), to: parts(identity) };
+        if (!Object.keys(changed).length) throw new BadRequestException('바뀐 값이 없습니다');
+        committing = true;
         const [{ boundary }] = await tx.$queryRaw<{ boundary: Date }[]>`SELECT clock_timestamp() AS boundary`;
         const result = await this.applyMember(tx, record, { id, register: null, version: current.version, observed: current,
           identity, adopt: true, fields: { approved: current.approved, suspended: current.suspended, institution: current.institution,
@@ -593,8 +604,8 @@ export class AdminService {
         return { ...after, rosterUnconfirmed: await this.rosterUnconfirmed(id).catch(() => true) };
       }
       // Not committed: put back what this request wrote, then record the failure.
-      if (sent) {
-        await this.restoreIdentity(id, admin, existing.version, send, back);
+      if (sent) await this.restoreIdentity(id, admin, existing.version, send, back);
+      if (sent || committing) {
         await this.audit(c.actor, 'admin.user.patch.failed', id, { before: this.row(existing), after: null,
           verificationOverride: false, failed: true }).catch(() => undefined);
       }
@@ -621,7 +632,10 @@ export class AdminService {
         const now = await this.keycloak.getUser(id, within(IDENTITY_READ_MS));
         if (!now || !holds(now, wrote)) return;
         await this.keycloak.updateIdentity(id, back, within(IDENTITY_WRITE_MS), async () => {});
-      }, { maxWait: 4000, timeout: 8000 });
+        // Read back: a put-back that did not land leaves the member marked in the list (nothing else to do here).
+        const after = await this.keycloak.getUser(id, within(IDENTITY_READ_MS)).catch(() => null);
+        if (!after || !holds(after, back)) console.warn('[KIN API] identity put-back not confirmed by the read-back');
+      }, { maxWait: 4000, timeout: 10000 });
     } catch {}
   }
 

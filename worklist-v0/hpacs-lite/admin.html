@@ -446,7 +446,7 @@
       <div class="form-grid">
         <label>성<input name="lastName" maxlength="128" autocomplete="off" translate="no"></label>
         <label>이름<input name="firstName" maxlength="128" autocomplete="off" translate="no"></label>
-        <label class="full">이메일<input name="email" type="email" required maxlength="254" autocomplete="off" translate="no"></label>
+        <label class="full">이메일<input name="email" type="email" maxlength="254" autocomplete="off" translate="no"></label>
         <p class="full" id="identity-unconfirmed" hidden>명부(로그인 계정)의 값이 회원 표와 다릅니다. 칸에는 명부의 값이 들어 있습니다 — Save하면 두 곳 모두 칸의 값으로 맞춥니다.</p>
         <p class="full">바꾸면 이 회원은 다시 로그인합니다. 지난 기록의 옛 이메일은 그대로 남습니다.</p>
         <p class="full" id="identity-self" hidden>본인 계정입니다. Save하면 이 화면에서 로그아웃되고, 다시 로그인하면 새 값이 보입니다.</p>
@@ -1862,11 +1862,15 @@
             || Object.keys(raw.detail).some(key => key !== "before" && key !== "after" && !EVENT_FIELDS.includes(key))) return null;
           const before = side(raw.detail.before), after = side(raw.detail.after);
           if (!before || !after) return null;
-          if (owns(raw.detail, "identity") && (raw.action !== "admin.user.identity" || !identityChange(raw.detail.identity))) return null;
+          // Change Name / Email: its `identity`, on both sides a snapshot of one same institution; `identity` nowhere else.
+          if (raw.action === "admin.user.identity") {
+            if (!identityChange(raw.detail.identity) || before.kind !== "snapshot" || after.kind !== "snapshot"
+              || before.value.institution === null || before.value.institution !== after.value.institution) return null;
+          } else if (owns(raw.detail, "identity")) return null;
           return { ...base, member: true, before, after,
             events: EVENT_FIELDS.filter(key => owns(raw.detail, key)).map(key => [key, raw.detail[key]]) };
         }
-        if (!raw.rule.startsWith("field:")) return null;
+        if (!raw.rule.startsWith("field:") || owns(raw.detail, "identity")) return null;
         return { ...base, member: false, detail: raw.detail };
       }
 
