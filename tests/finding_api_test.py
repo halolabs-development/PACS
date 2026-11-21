@@ -1600,14 +1600,15 @@ class FindingAPI(unittest.TestCase):
         held = self.citations()['draft']
         self.assertEqual(len(held), 1)
         # Another reader adds to the approved report (an Addendum: a colleague's approved report is open to it).
-        self.call(path=report+'/commit', body=dict(action='addendum', baseVersion=1, findings='다른 판독의의 승인본', conclusion='', recommendation=''), user='doctor', status=201)
+        # (An Addendum adds to the approved text: it is written after it.)
+        self.call(path=report+'/commit', body=dict(action='addendum', baseVersion=1, findings=text + '\n다른 판독의의 승인본', conclusion='', recommendation=''), user='doctor', status=201)
         # The approved report is v2 now while this draft still stands on v1. Addendum is the only way
         # out of A, and U3's gate names the refusal before the optimistic lock can answer with the
         # wording that sends an old tab down the destructive reload path.
         refusal = self.call(path=report+'/commit', body=dict(action='addendum', baseVersion=1, findings='두 번째 줄', conclusion='', recommendation=''), user='xauthor', status=409)
         self.assertEqual(refusal['code'], 'REPORT_DRAFT_STALE')
         self.assertEqual(self.citations()['draft'], held, 'the refused signer keeps every byte of their attestation')
-        self.assertEqual(self.call(method='GET', path=report+'/versions', user='xauthor')[0]['findings'], '다른 판독의의 승인본')
+        self.assertEqual(self.call(method='GET', path=report+'/versions', user='xauthor')[0]['findings'], text + '\n다른 판독의의 승인본')
 
     def test_14_a_deleted_source_reads_as_hidden_and_is_not_cited_again(self):
         # A measurement deleted in the viewer (its head hidden and marked deleted): the finding citing it keeps its frozen

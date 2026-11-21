@@ -32,6 +32,34 @@ async function signerName(tx: any, cur: { updatedBy?: string | null; updatedBySu
   const name = (await memberNames(tx, [cur.updatedBySub])).get(cur.updatedBySub);
   return name ? { updatedByName: name } : {};
 }
+/** Line ends only (CRLF and CR as LF): a text field gives back LF, a stored head may hold either. Nothing else is changed. */
+const lf = (text: unknown) => String(text ?? '').replace(/\r\n?/g, '\n');
+const REPORT_FIELDS = ['findings', 'conclusion', 'recommendation'] as const;
+/**
+ * An Addendum only adds to the approved report it is signed on. Judged against the head version this commit locked (the
+ * `Report` row and its drawings): every field starts with that field of the head and every head drawing stays, and then
+ * something is added - text that is not only blank after a field's head text, or a drawing the head does not hold.
+ * Null when the Addendum may be signed; otherwise the refusal to throw. The one place this rule is decided.
+ */
+export function addendumRefusal(head: Partial<Record<typeof REPORT_FIELDS[number], unknown>> | null | undefined,
+    content: Record<typeof REPORT_FIELDS[number], string>, headDrawingIds: readonly string[], drawingIds: readonly string[]) {
+  if (!REPORT_FIELDS.every(k => lf(content[k]).startsWith(lf(head?.[k]))) || headDrawingIds.some(id => !drawingIds.includes(id)))
+    return new BadRequestException({ code: 'REPORT_ADDENDUM_NOT_APPENDED',
+      message: '추가기재는 승인본에 덧붙이기만 합니다 — 승인본의 글은 그대로 두고 그 뒤에 쓰세요' });
+  if (!REPORT_FIELDS.some(k => lf(content[k]).slice(lf(head?.[k]).length).trim())
+      && !drawingIds.some(id => !headDrawingIds.includes(id)))
+    return new BadRequestException({ code: 'REPORT_ADDENDUM_EMPTY',
+      message: '덧붙인 내용이 없습니다 — 승인본 뒤에 추가기재할 글을 쓴 뒤 Addendum을 누르세요' });
+  return null;
+}
+
+/** A signing refusal for want of a usable key, said by the action it refused (the approval's words are unchanged). */
+const SIGNING_KEY_REFUSAL = Object.freeze({
+  approve: '이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.',
+  amend: '이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인 후 수정을 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.',
+  addendum: '이 계정에서 사용할 수 있는 서명키를 확인하지 못해 추가기재(Addendum)를 저장하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.',
+  reset: '이 계정에서 사용할 수 있는 서명키를 확인하지 못해 판독 취소(Reset)를 하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.',
+});
 export class PacsReportCommit {
   constructor(
     private readonly keycloak: KeycloakService,
@@ -350,10 +378,19 @@ export class PacsReportCommit {
             draftBaseVersion: draft.baseVersion,
           });
 
-        if ((cur?.version ?? 0) !== body.baseVersion)
-          throw new ConflictException(
-            `그 사이 ${cur?.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
-            `내용을 다시 불러온 뒤 작성해 주세요.`);
+        /**
+         * The version lock. A head written by this same account (another window of the same reader) is not "someone": the
+         * refusal says so, and names it (`head.mine`) so the screen can offer to save this window's text on that version -
+         * an explicit choice that comes back here and meets every check again.
+         */
+        if ((cur?.version ?? 0) !== body.baseVersion) {
+          const mine = !!cur?.updatedBy && sameAccount(cur.updatedBySub, c);
+          throw new ConflictException({ code: 'REPORT_VERSION_CONFLICT',
+            message: mine ? `다른 창에서 이 계정으로 v${cur.version}을 저장했습니다. 이 창의 글은 그대로 있습니다.`
+              : `그 사이 ${cur?.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
+                `내용을 다시 불러온 뒤 작성해 주세요.`,
+            head: { version: cur?.version ?? 0, mine } });
+        }
 
         /**
          * Image Report: the drawings this version holds. My draft's list (a drawing it removed stays out; one it seeded from
@@ -377,6 +414,13 @@ export class PacsReportCommit {
             message: `판독문 하나에 붙일 수 있는 그림은 ${DRAWING_LIMITS.perReport}장입니다 — 그림을 빼고 다시 확정하세요` });
         const drawings = await drawingEntries(tx, uid, drawingIds, scope);
         const sameDrawings = drawingIds.length === headDrawings.length && drawingIds.every((id, i) => headDrawings[i].id === id);
+
+        // An Addendum adds to the approved head and adds something (addendumRefusal - the one rule; a stale draft met
+        // REPORT_DRAFT_STALE above and is re-based first).
+        if (action === 'addendum') {
+          const refusal = addendumRefusal(cur, content, headDrawings.map(d => d.id), drawingIds);
+          if (refusal) throw refusal;
+        }
 
         // FC-034: 수정은 고친 글이 있어야 한다 — 같은 글의 재서명은 판만 늘린다. 잠가 읽은 머리 판과 세 칸을 견준다.
         // 그림만 고친 수정도 고친 것이다(Image Report).
@@ -500,9 +544,10 @@ export class PacsReportCommit {
             // 이 계정이 쓸 수 있는 서명키가 없어 거절된 승인은 그 까닭과 할 일을 말한다 — 일반 문구만 실으면 판독의는 다시 눌러
             // 볼 뿐이고, 풀 수 있는 사람(기관 관리자)에게 닿지 않는다. 그 code는 키가 없을 때(만든 적 없음·폐기·정지)와 키의 신원이
             // 이 계정과 다를 때 모두 나오므로 어느 하나로 단정하지 않는다. 상태와 code는 그대로다(문구만 다르다).
+            // The refusal names the action that was refused (an amendment, an Addendum and a Reset are not an approval).
             if (error instanceof ContractError) throw new ServiceUnavailableException({ code: error.code,
               message: error.code === 'DoctorSigningKeyUnavailable'
-                ? '이 계정에서 사용할 수 있는 서명키를 확인하지 못해 승인하지 못했습니다. 기관 관리자에게 서명키(Signing Key)와 계정 정보 확인을 요청하세요. 판독 입력은 보존됩니다.'
+                ? SIGNING_KEY_REFUSAL[action as keyof typeof SIGNING_KEY_REFUSAL]
                 : '온라인 서명을 완료하지 못했습니다. 판독 입력은 보존됩니다.' });
             throw error;
           }

@@ -160,7 +160,9 @@ test('the stale guard is decided before the optimistic lock, so an honest screen
 test('callers without a draft, and drafts standing on the head, keep the existing behaviour', async () => {
   for (const draft of [null, { baseVersion: 4 }, { baseVersion: 5 }]) {
     const f = fixture({ draft });
-    await f.svc.commitReport(UID, { action: 'addendum', baseVersion: 4, ...BODY }, CALLER);
+    // An Addendum adds to the approved head (each field starts with the head's), so the text here is written after it.
+    await f.svc.commitReport(UID, { action: 'addendum', baseVersion: 4, ...BODY,
+      findings: HEAD.findings + BODY.findings, recommendation: HEAD.recommendation }, CALLER);
     assert.deepEqual(f.writes, ['studyState.update', 'report.upsert:v5', 'reportVersion.create:v5:addendum', 'reportDraft.tombstone'],
       `draft ${JSON.stringify(draft)}`);
     // Was a bare count of 2. A commit now also locks the draft row it is about to delete, so that a
