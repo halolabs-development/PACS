@@ -592,8 +592,8 @@ class FakeNetwork:
     """ss, docker context/ps/inspect answers of one synthetic Linux host; None answers fail like a missing tool."""
 
     def __init__(self, ss4=SS4, ss6=SS6, containers=SITE, context="unix:///var/run/docker.sock", ps=None, inspect=None,
-                 warnings=None):
-        self.warnings = warnings or {}
+                 warnings=None, exit_codes=None):
+        self.warnings, self.exit_codes = warnings or {}, exit_codes or {}
         self.answers = {"ss4": ss4, "ss6": ss6, "context": context,
                         "ps": ps if ps is not None else ("\n".join("id%d" % i for i in range(len(containers))) + "\n"
                                                          if containers is not None else None),
@@ -607,8 +607,8 @@ class FakeNetwork:
         answer = self.answers.get(key)
         if answer is None and kwargs.get("check", True):
             raise RuntimeError(f"{args[0]} failed")
-        return SimpleNamespace(returncode=0 if answer is not None else 1, stdout=(answer or "").encode(),
-                               stderr=self.warnings.get(key, "").encode())
+        return SimpleNamespace(returncode=self.exit_codes.get(key, 0 if answer is not None else 1),
+                               stdout=(answer or "").encode(), stderr=self.warnings.get(key, "").encode())
 
     def report(self, platform="linux"):
         with patch.object(ops, "run", side_effect=self.run), patch.object(deploy.sys, "platform", platform), \
@@ -740,6 +740,28 @@ class NetworkAccessTests(unittest.TestCase):
         report = FakeNetwork(warnings={"ss4": "Dump was interrupted and may be inconsistent.\n"}).report()
         self.assertEqual(len(report["listeners"]), 13)
         self.assertEqual(report["status"], "unknown")
+
+    def test_rows_printed_before_a_failing_exit_are_kept(self):
+        # ss prints a whole row, then exits non-zero: the row stays, the source is incomplete.
+        ss4 = "tcp LISTEN 0 4096 192.0.2.7:5432 0.0.0.0:*\n"
+        report = FakeNetwork(ss4, "", [], exit_codes={"ss4": 1}).report()
+        self.assertEqual(bindings(report), {("tcp", "192.0.2.7", 5432): ("exposed", None)})
+        self.assertEqual((report["status"], report["unreadable"]), ("unknown", ["sockets"]))
+        # ...and a line it cannot read is still dropped, the source still incomplete.
+        report = FakeNetwork("tcp LISTEN 0 4096 garbled\n", "", [], exit_codes={"ss4": 1}).report()
+        self.assertEqual((report["status"], report["listeners"], report["unreadable"]), ("unknown", [], ["sockets"]))
+        # docker inspect of two containers where one has gone: it prints the other's JSON and exits 1.
+        found = [site_container("kin-db", {"5432/tcp": published(("192.0.2.7", "5432"))})]
+        report = FakeNetwork("", "", ps="id0\nid1\n", inspect=json.dumps(found), exit_codes={"inspect": 1}).report()
+        self.assertEqual(bindings(report), {("tcp", "192.0.2.7", 5432): ("exposed", "kin-db")})
+        self.assertEqual((report["status"], report["unreadable"]), ("unknown", ["docker"]))
+        # A failing inspect is incomplete even when it lists every container.
+        report = FakeNetwork("", "", found, exit_codes={"inspect": 1}).report()
+        self.assertEqual(bindings(report), {("tcp", "192.0.2.7", 5432): ("exposed", "kin-db")})
+        self.assertEqual((report["status"], report["unreadable"]), ("unknown", ["docker"]))
+        # Output it cannot parse is dropped and unknown.
+        report = FakeNetwork("", "", ps="id0\n", inspect="[{", exit_codes={"inspect": 1}).report()
+        self.assertEqual((report["status"], report["listeners"], report["unreadable"]), ("unknown", [], ["docker"]))
 
     def test_interface_scoped_wildcard(self):
         ss6 = "tcp LISTEN 0 4096 *%eth0:8443 *:*\n"

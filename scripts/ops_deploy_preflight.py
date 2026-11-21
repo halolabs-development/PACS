@@ -387,7 +387,8 @@ def _is_loopback(address):
 
 # The one rule for both sources: every entry that can be placed is kept; an entry that cannot (an unreadable line, a
 # binding without its address or port), a failed or refused command, or a command that warns (ss exits 0 after an
-# interrupted dump, saying so on stderr) makes that source incomplete - never a reason to drop what was read.
+# interrupted dump, saying so on stderr) makes that source incomplete - never a reason to drop what was read, including
+# what a command printed before it exited non-zero (docker inspect of a container that has gone prints the others).
 def _socket_rows(family):
     """([(protocol, address, port)] of the listening TCP and bound UDP sockets of one address family, complete)."""
     try:
@@ -396,7 +397,7 @@ def _socket_rows(family):
     except Exception:
         return [], False
     rows = []
-    for line in out.splitlines() if result.returncode == 0 else []:
+    for line in out.splitlines():
         if not line.strip():
             continue
         fields = line.split()
@@ -422,12 +423,13 @@ def _published_rows():
     if not ids.split():
         return [], True
     try:
-        items = json.loads(_read(["docker", "inspect", *ids.split()]) or "")
-    except ValueError:
+        result = ops.run(["docker", "inspect", *ids.split()], check=False, timeout=30)
+        items = json.loads(result.stdout.decode("utf-8", "replace") or "")
+    except Exception:
         return [], False
     if type(items) is not list:
         return [], False
-    rows, complete = [], len(items) == len(ids.split())
+    rows, complete = [], result.returncode == 0 and len(items) == len(ids.split())
     for item in items:
         ports = (item.get("NetworkSettings") or {}).get("Ports", False) if type(item) is dict else False
         if not (ports is None or type(ports) is dict):
