@@ -139,6 +139,12 @@ export class AuthGuard implements CanActivate {
     req.actor = payload.email ?? payload.preferred_username ?? payload.sub;
     req.displayName = [payload.family_name, payload.given_name].filter(Boolean).join(' ')
       || payload.name || req.actor;
+    // The name parts as the identity provider holds them (null when absent), for screens that compare the account with a
+    // name written in a study (Clinician Home's My Studies). displayName cannot tell a family name from a login.
+    const part = (value: unknown) => typeof value === 'string' && value.trim() ? value : null;
+    req.familyName = part(payload.family_name);
+    req.givenName = part(payload.given_name);
+    req.fullName = part(payload.name);
     req.roles = Array.isArray(payload.realm_access?.roles) ? payload.realm_access.roles : [];
 
     /**

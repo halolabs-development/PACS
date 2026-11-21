@@ -285,11 +285,22 @@
     return a.SeriesInstanceUID.localeCompare(b.SeriesInstanceUID)*sign;
   }
   function descriptionMatches(actual,rule){if(rule===null)return true;if(typeof actual!=='string')return false;const a=folded(actual.trim()),b=folded(rule.value);return rule.operator==='equals'?a===b:a.includes(b);}
-  function fieldsMatch(actual,rule){return ['modality','retrieveAE','bodyPart','laterality'].every(k=>!(k in rule)||rule[k]===null||actual[k]===rule[k])&&descriptionMatches(actual.description,rule.description);}
+  // `kind` is the study's one image modality (studyKind); a rule written with one modality may match it as well as the whole value.
+  function fieldsMatch(actual,rule){return ['modality','retrieveAE','bodyPart','laterality'].every(k=>!(k in rule)||rule[k]===null||actual[k]===rule[k]||
+    k==='modality'&&actual.kind!=null&&actual.kind===rule[k])&&descriptionMatches(actual.description,rule.description);}
   function common(values){if(!values.length||values.some(value=>value===null)||new Set(values).size!==1)return null;return values[0];}
+  // Objects that ride along with the images and are not images themselves (the viewer's own list, viewer-compare-model.js).
+  const NOT_IMAGES=new Set(['SR','SEG','PR','KO','DOC','RTSTRUCT']);
+  /** Modalities in Study (the study list joins them with commas, DICOM with a backslash) without the objects that are not images:
+   *  the one image modality left, or the one kind of object when the study holds nothing else; two kinds of images name none. */
+  function studyKind(value){
+    if(typeof value!=='string')return null;
+    const all=[...new Set(value.split(/[,\\]/).map(part=>part.trim().toUpperCase()).filter(Boolean))],images=all.filter(m=>!NOT_IMAGES.has(m));
+    const kinds=images.length?images:all;return kinds.length===1&&kinds[0].length<=16?kinds[0]:null;
+  }
   function studyMetadata(study,sets){
-    const metadata=sets.map(displayMetadata);
-    return {modality:exactToken(study?.modality??study?.ModalitiesInStudy,16),retrieveAE:exactToken(study?.retrieveAE??study?.RetrieveAETitle,16)??common(metadata.map(value=>value.retrieveAE)),
+    const metadata=sets.map(displayMetadata),modalities=study?.modality??study?.ModalitiesInStudy;
+    return {modality:exactToken(modalities,16),kind:studyKind(modalities),retrieveAE:exactToken(study?.retrieveAE??study?.RetrieveAETitle,16)??common(metadata.map(value=>value.retrieveAE)),
       bodyPart:exactToken(study?.bodyPart??study?.BodyPartExamined,64)??common(metadata.map(value=>value.bodyPart)),description:String(study?.desc??study?.StudyDescription??'')};
   }
   function resolve(value,context,selectedRuleId=null){

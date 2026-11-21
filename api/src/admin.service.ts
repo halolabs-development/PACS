@@ -2,12 +2,14 @@ import {
   BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import {
   AUDIT_CANDIDATE_ACTIONS, AUDIT_TARGET_ACTIONS, AuditCursor, AuditLogRow, AuditSource, auditMention, auditPageQuery,
   openAuditCursor, readAuditPage, sealAuditCursor,
 } from './admin-audit';
-import { lockMemberRights, rightsAllow, rosterOverlap, rightsAccessEvent, RightsRequestFacts } from './member-rights';
+import {
+  lockInstitution, lockMemberRights, lockMembersInOrder, rightsAllow, rosterOverlap, rightsAccessEvent, RightsRequestFacts,
+} from './member-rights';
 import { AuthService, lockWaitExceeded } from './auth.service';
 // 역할 목록은 clinician-policy 한 곳에서 온다. 여기서 별도 literal을 두면 guard와 어긋난다.
 import { APP_ROLES } from './clinician-policy';
@@ -19,6 +21,7 @@ import { Caller } from './pacs.service';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
 import { sessionEndEvent } from './emr-runtime/auth-events';
+import { OutcomeUndetermined } from './first-admin-command';
 import type { RequestWorkContext } from './emr-runtime/request-context';
 import { adminAuditRead } from './emr-viewing/consumer-read';
 
@@ -57,6 +60,64 @@ const OPERATOR_NAME = /^[A-Za-z0-9._@-]{1,64}$/;
 const signedIn = () => new FirstAdminRefusal('FIRST_ADMIN_TARGET_SIGNED_IN', '대상이 로그인 중입니다. 로그아웃한 뒤 다시 실행하세요');
 const activeAdmins = (db: any, institution: string) => db.memberRights.count({
   where: { institution, approved: true, suspended: false, roles: { has: 'admin' } } });
+/** The administrator replacement's own ledger surface (emr-contract/routes.ts INTERNAL_SURFACES): the one service job
+ * that may end a member's sessions as an isolation. */
+export const REPLACEMENT_SURFACE = 'service:sole-admin-replacement';
+const OPERATOR_ISSUER = 'urn:kin:pacs:operator';
+
+/** An administrator-replacement refusal: nothing written. */
+export class ReplaceAdminRefusal extends ConflictException {
+  constructor(code: string, message: string) { super({ code, message }); }
+}
+/** One run's arguments: a later run with the same ones is the same replacement. */
+type ReplacementRun = { institution: string; from: string; to: string; name: string; reason: string };
+/** The latest audit rows of this replacement (same institution, pair, operator and reason) — the predecessor's
+ * suspension and the successor's approval, written in one transaction — as their parsed details, or null. */
+async function savedReplacement(db: any, run: ReplacementRun): Promise<{ from: any; to: any } | null> {
+  const rows: { target: string; action: string; detail: string | null }[] = await db.auditLog.findMany({
+    where: { target: { in: [run.from, run.to] }, action: { in: ['admin.user.suspend', 'admin.user.approve', 'admin.user.update'] } },
+    orderBy: { id: 'desc' } });
+  const ours = (row: { detail: string | null }) => {
+    const detail = JSON.parse(row.detail ?? '{}'), o = detail?.operator;
+    return o && o.by === run.name && o.institution === run.institution && o.reason === run.reason
+      && o.replaced?.from === run.from && o.replaced?.to === run.to ? detail : null;
+  };
+  const from = rows.find(row => row.target === run.from && row.action === 'admin.user.suspend' && ours(row));
+  const to = rows.find(row => row.target === run.to && row.action !== 'admin.user.suspend' && ours(row));
+  return from && to ? { from: ours(from), to: ours(to) } : null;
+}
+const adminsOf = (db: any, institution: string): Promise<{ sub: string }[]> => db.memberRights.findMany({
+  where: { institution, approved: true, suspended: false, roles: { has: 'admin' } }, select: { sub: true } });
+/** The predecessor is X's approved, active administrator, and the only one. */
+function replacementGate(fromRow: any, admins: { sub: string }[], from: string, institution: string) {
+  if (!fromRow || fromRow.institution !== institution || !fromRow.approved || fromRow.suspended || !fromRow.roles.includes('admin'))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_FROM_NOT_ADMIN', '전임은 이 기관의 승인·활성 관리자가 아닙니다');
+  if (admins.some(admin => admin.sub !== from))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_NOT_SOLE', '이 기관에는 다른 활성 관리자가 있습니다. 그 관리자가 화면에서 바꿉니다');
+}
+/**
+ * Every condition on the successor, in one place (before the locks, and again under them): their rights row, if any,
+ * is X's or the waiting room's and not suspended; they are not isolated; their provider account is a usable person
+ * account — enabled, no `gateway` among its effective roles (composites included), in no group but X. Private drafts
+ * and report history belong to an account id (owner-identity.ts), so a successor who now has the predecessor's old
+ * email or username is not refused: none of the predecessor's rows answers to them.
+ */
+function successorGate(s: { toRow: any; isolated: boolean; identity: KeycloakUser;
+  standing: { groups: string[]; effectiveRoles: string[] }; institution: string }) {
+  if (s.toRow?.institution && s.toRow.institution !== s.institution)
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임은 다른 기관의 회원입니다');
+  if (s.toRow?.suspended) throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_SUSPENDED', '정지된 계정은 후임으로 지정할 수 없습니다');
+  if (s.isolated) throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_ISOLATED', '격리된 계정은 후임으로 지정할 수 없습니다');
+  if (!s.identity.enabled || s.standing.effectiveRoles.includes('gateway'))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_UNUSABLE', '후임 계정은 사용할 수 없는 상태입니다(비활성 또는 게이트웨이 계정)');
+  const groups = s.standing.groups;
+  if (groups.length && !(groups.length === 1 && groups[0] === s.institution))
+    throw new ReplaceAdminRefusal('REPLACE_ADMIN_TO_CONFLICT', '후임의 소속 그룹이 이 기관과 다릅니다');
+}
+function memberSubject(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value || value.length > 256 || value.trim() !== value) throw new BadRequestException(`${field}가 올바르지 않습니다`);
+  return value;
+}
 function text(value: unknown, field: string, max: number, required = true): string {
   if (value == null && !required) return '';
   if (typeof value !== 'string') throw new BadRequestException(`${field}은(는) 문자열이어야 합니다`);
@@ -324,6 +385,9 @@ export class AdminService {
       const affected = { issuer, subject: id, id: await work.resolveRequestIdentity(issuer, id) };
       const committed = await work.transactionWithRecords(async (tx, record) => {
         await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        // Every member change of X runs under X's lock, before the member lock (lockInstitution): an administrator
+        // replacement or a first-administrator designation of X never interleaves with it.
+        await lockInstitution(tx, operator ? operator.institution : admin);
         // The first-administrator condition is decided under the institution lock, before the member lock.
         if (operator) await this.firstAdminGate(tx, id, operator.institution);
         await lockMemberRights(tx, id);
@@ -338,51 +402,10 @@ export class AdminService {
         await facts.request.requireCurrent(tx);
         // The observed version precedes the remote pre-read. CAS rejects an older command after any
         // newer command commits, so its captured identity cannot rewind that newer identity. No I/O holds this lock.
-        const version = existing ? observed.version : 1;
-        let result: { after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean };
-        const event = rightsAccessEvent(facts, affected, version + 1, new Date().toISOString());
-        if (operator) Object.assign(event, OPERATOR_EVENT);
-        await record(event, async () => {
-          if (!existing) await this.register(tx, identity!);
-          const [{ boundary }] = await tx.$queryRaw<{ boundary: Date }[]>`SELECT now() AS boundary`;
-          const { count } = await tx.memberRights.updateMany({ where: { sub: id, version }, data: {
-            approved, suspended, institution, roles, ...(identity ? this.identity(identity) : {}),
-            version: { increment: 1 }, newAuthAfter: boundary,
-          } });
-          if (count !== 1) throw new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 새로고침하세요' });
-          const sessions = await tx.authSession.findMany({ where: { sub: id } });
-          for (const session of sessions) {
-            const ending = sessionEndEvent({ status: 'known', value: affected }, {
-              surface: facts.surface, roles: facts.roles, rightsVersion: facts.rightsVersion,
-              institution: facts.institution, auditRef: session.auditRef, ip: facts.ip,
-              occurredAt: event.occurredAt, endCause: 'isolation', trigger: null,
-            });
-            ending.userId = { status: 'known', value: facts.actor };
-            ending.trustedProxyIp = event.trustedProxyIp;
-            ending.requestId = facts.requestId;
-            ending.managingInstitution = session.institution ? { status: 'known', value: session.institution }
-              : { status: 'unresolved', reason: 'not-resolved' };
-            await record(ending, async () => {
-              const deleted = await tx.authSession.deleteMany({ where: { sid: session.sid } });
-              if (deleted.count !== 1) return null;
-              const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
-                actor: observed.email || observed.username, action: 'auth.logout', target: id,
-                detail: JSON.stringify({ institution: session.institution, ip: facts.ip, dataSubject: null, cause: 'isolation' }) } });
-              return { kind: 'AuditLog', id: String(audit.id), version: null };
-            });
-          }
-          const after = this.row(await tx.memberRights.findUnique({ where: { sub: id } }));
-          const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
-            actor: c.actor, action: `admin.user.${action}`, target: id,
-            detail: JSON.stringify({ before, after, verificationOverride,
-              ...(operator ? { operator: { by: operator.name, institution: operator.institution, reason: operator.reason } } : {}) }) } });
-          const change = approvalMutation ? await tx.providerChange.create({ data: {
-            kind: 'credentials', target: id, sub: id, generation: after.version, state: 'unknown', createdAt: new Date(),
-          } }) : null;
-          result = { after, change, rosterUnconfirmed: !!change || await this.rosterUnconfirmed(id, tx) };
-          return { kind: 'AuditLog', id: String(audit.id), version: null };
-        });
-        return result!;
+        return this.applyMember(tx, record, { id, register: existing ? null : identity!, version: existing ? observed.version : 1,
+          observed, identity, fields: { approved, suspended, institution, roles }, action, before, verificationOverride,
+          approvalMutation, affected, actor: c.actor, facts, service: !!operator,
+          operatorDetail: operator ? { by: operator.name, institution: operator.institution, reason: operator.reason } : null });
       }, { maxWait: 4000, timeout: 8000 });
       if (committed.change) this.auth.publishCredentials({ id: committed.change.id, kind: 'credentials', target: id }, institution!, roles);
       return { ...committed.after, rosterUnconfirmed: committed.rosterUnconfirmed };
@@ -395,6 +418,75 @@ export class AdminService {
         throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 시도하세요' });
       throw error;
     }
+  }
+
+  /**
+   * One member's rights change inside the caller's records transaction, after the caller has locked the member and decided
+   * the change on the locked row: the ledger event, the version CAS, the re-login boundary, every product session of the
+   * member ended (isolation), the audit row and — for an approval or a change of institution/roles — the roster intent.
+   * Every member change of this service goes through here (the screen's PATCH, and the operator commands).
+   * `service`: an operator command's in-process service job (its events carry the service executor, never an address).
+   */
+  private async applyMember(tx: any, record: any, w: {
+    id: string; register: KeycloakUser | null; version: number; observed: any; identity: KeycloakUser | null;
+    fields: { approved: boolean; suspended: boolean; institution: string | null; roles: string[] };
+    action: string; before: ReturnType<AdminService['row']>; verificationOverride: boolean; approvalMutation: boolean;
+    affected: { issuer: string; subject: string; id: string }; actor: string; facts: AdminRequestFacts; service: boolean;
+    operatorDetail: Record<string, unknown> | null;
+    /** The executor is the operator's service identity alone (the replacement): its rights events record no member
+     * roles and no acting institution, as its session ends do; the institution changed stays the managed one. */
+    operatorIdentity?: boolean;
+    /** The re-login boundary the caller read from the database; by default this transaction's `now()`. */
+    boundary?: Date;
+  }): Promise<{ after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean; auditId: number }> {
+    const { id, facts } = w;
+    let result: { after: ReturnType<AdminService['row']>; change: any; rosterUnconfirmed: boolean; auditId: number };
+    const event = rightsAccessEvent(facts, w.affected, w.version + 1, new Date().toISOString());
+    if (w.service) Object.assign(event, OPERATOR_EVENT);
+    if (w.operatorIdentity) Object.assign(event, { rolesAtTime: { status: 'known', value: [] },
+      actingInstitution: { status: 'not-applicable', reason: 'in-process-service' } });
+    await record(event, async () => {
+      if (w.register) await this.register(tx, w.register);
+      const boundary = w.boundary ?? (await tx.$queryRaw<{ boundary: Date }[]>`SELECT now() AS boundary`)[0].boundary;
+      const { count } = await tx.memberRights.updateMany({ where: { sub: id, version: w.version }, data: {
+        ...w.fields, ...(w.identity ? this.identity(w.identity) : {}),
+        version: { increment: 1 }, newAuthAfter: boundary,
+      } });
+      if (count !== 1) throw new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 새로고침하세요' });
+      const sessions = await tx.authSession.findMany({ where: { sub: id } });
+      for (const session of sessions) {
+        const ending = sessionEndEvent({ status: 'known', value: w.affected }, {
+          surface: facts.surface, roles: facts.roles, rightsVersion: facts.rightsVersion,
+          institution: facts.institution, auditRef: session.auditRef, ip: facts.ip,
+          occurredAt: event.occurredAt, endCause: 'isolation', trigger: null,
+          ...(w.service ? { service: { status: 'known' as const, value: facts.actor } } : {}),
+        });
+        ending.userId = { status: 'known', value: facts.actor };
+        ending.trustedProxyIp = event.trustedProxyIp;
+        ending.requestId = facts.requestId;
+        ending.managingInstitution = session.institution ? { status: 'known', value: session.institution }
+          : { status: 'unresolved', reason: 'not-resolved' };
+        await record(ending, async () => {
+          const deleted = await tx.authSession.deleteMany({ where: { sid: session.sid } });
+          if (deleted.count !== 1) return null;
+          const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
+            actor: w.observed.email || w.observed.username, action: 'auth.logout', target: id,
+            detail: JSON.stringify({ institution: session.institution, ip: facts.ip, dataSubject: null, cause: 'isolation' }) } });
+          return { kind: 'AuditLog', id: String(audit.id), version: null };
+        });
+      }
+      const after = this.row(await tx.memberRights.findUnique({ where: { sub: id } }));
+      const audit = await tx.auditLog.create({ data: { at: new Date(event.occurredAt),
+        actor: w.actor, action: `admin.user.${w.action}`, target: id,
+        detail: JSON.stringify({ before: w.before, after, verificationOverride: w.verificationOverride,
+          ...(w.operatorDetail ? { operator: w.operatorDetail } : {}) }) } });
+      const change = w.approvalMutation ? await tx.providerChange.create({ data: {
+        kind: 'credentials', target: id, sub: id, generation: after.version, state: 'unknown', createdAt: new Date(),
+      } }) : null;
+      result = { after, change, rosterUnconfirmed: !!change || await this.rosterUnconfirmed(id, tx), auditId: audit.id };
+      return { kind: 'AuditLog', id: String(audit.id), version: null };
+    });
+    return result!;
   }
 
   /**
@@ -435,16 +527,160 @@ export class AdminService {
       ...(existing ? { version: existing.version } : {}) }, c, facts, { institution, name: operator.name, reason });
   }
 
-  /** Under the institution lock: X still has no active administrator and the person is not isolated. */
+  /**
+   * Operator command only (api/prisma/replace-sole-admin.cjs; no controller calls it): the sole administrator of X left
+   * while their rights are live; after the hospital's request is confirmed, an operator names the successor.
+   * The rule: decided only on the rights rows read again under X's lock — at that moment X's approved, active
+   * administrators are exactly the predecessor, and the successor is a person of X (or a waiting member whose provider
+   * groups are none or X alone), neither suspended nor isolated, and not the predecessor. That decision and every write
+   * run in one transaction under that lock: the predecessor suspended as the screen's Suspend (institution and roles
+   * kept; every product session ended), the successor approved as the first-administrator command does (current X
+   * roles plus admin; every product session ended), two audit rows naming the operator, X, the reason and the pair, and
+   * one roster intent (the successor's). Reads outside the lock only refuse early: a refusal writes nothing — no rights,
+   * session, audit, roster intent or ledger identity. The predecessor's drafts and history are not touched.
+   * `work` is the records work of this run; the identities of the operator and both members are resolved inside the
+   * transaction, after the decision.
+   */
+  async replaceSoleAdmin(fromValue: unknown, toValue: unknown, institutionValue: unknown,
+    operator: { name: unknown; reason: unknown }, work: RequestWorkContext['work']) {
+    const institution = text(institutionValue, 'institution', 128);
+    const from = memberSubject(fromValue, 'from'), to = memberSubject(toValue, 'to');
+    if (typeof operator?.name !== 'string' || !OPERATOR_NAME.test(operator.name)) throw new BadRequestException('operator가 올바르지 않습니다');
+    // Control characters are refused before trimming would drop a leading or trailing line break.
+    if (typeof operator?.reason === 'string' && /[\x00-\x1f\x7f]/.test(operator.reason))
+      throw new BadRequestException('reason 길이가 올바르지 않습니다');
+    const reason = text(operator?.reason, 'reason', 500);
+    const name = operator.name;
+    if (from === to) throw new BadRequestException('전임과 후임이 같습니다');
+    const run: ReplacementRun = { institution, from, to, name, reason };
+    // The database first, the provider after: an earlier run of this same command is told from the database alone.
+    // Unreadable, the state is unknown — an earlier run may have replaced them. Saved by an earlier run (whatever
+    // happened since), it is never applied again: the rerun reports it.
+    let fromRow: any, admins: { sub: string }[], saved: boolean;
+    try {
+      fromRow = await this.prisma.memberRights.findUnique({ where: { sub: from } });
+      admins = await adminsOf(this.prisma, institution);
+      saved = !!await savedReplacement(this.prisma, run);
+    } catch { throw new OutcomeUndetermined(); }
+    if (saved) {
+      const again = await this.replacementAgain(run);
+      if (again) return again;
+    }
+    if (!(await this.keycloak.institutions()).includes(institution)) throw new BadRequestException('허용되지 않은 기관입니다');
+    // The predecessor is judged on the rights row alone: a departed person's provider account may already be gone.
+    try { replacementGate(fromRow, admins, from, institution); }
+    catch (error) { return this.againOr(run, error); }
+    // The successor's provider account, then — the last remote read, strict — their groups and effective roles. The
+    // identity registered for them is this one, with those groups.
+    const account = await this.managed(to);
+    const standing = await this.keycloak.memberStanding(to);
+    const identity: KeycloakUser = { ...account, groups: standing.groups };
+    const toRow = await this.prisma.memberRights.findUnique({ where: { sub: to } });
+    successorGate({ toRow, isolated: !!await this.prisma.memberIsolation.findUnique({ where: { sub: to } }),
+      identity, standing, institution });
+    const issuer = process.env.KC_ISSUER;
+    if (!issuer) throw new Error('Missing member identity issuer');
+    const conflict = () => new ConflictException({ code: 'MEMBER_VERSION_CONFLICT', message: '회원 상태가 바뀌었습니다. 다시 실행하세요' });
+    try {
+      const committed = await work.transactionWithRecords(async (tx: any, record: any) => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        await lockInstitution(tx, institution);
+        await lockMembersInOrder(tx, [from, to]);
+        // The decision, again, on what the locks protect.
+        const fromNow = await tx.memberRights.findUnique({ where: { sub: from } });
+        replacementGate(fromNow, await adminsOf(tx, institution), from, institution);
+        const toNow = await tx.memberRights.findUnique({ where: { sub: to } });
+        successorGate({ toRow: toNow, isolated: !!await tx.memberIsolation.findUnique({ where: { sub: to } }),
+          identity, standing, institution });
+        // What was observed before the locks (a missing row included) is the version this command writes over.
+        if (fromNow.version !== fromRow!.version || (toRow ? toNow?.version !== toRow.version : !!toNow)) throw conflict();
+        const actor = { issuer: OPERATOR_ISSUER, subject: name, id: await work.resolveIdentity(tx, OPERATOR_ISSUER, name) };
+        // The executor is the operator's service identity: no member roles (applyMember `operatorIdentity`); X is the
+        // managed institution.
+        const facts: AdminRequestFacts = { surface: REPLACEMENT_SURFACE, actor, roles: [], rightsVersion: 0, institution,
+          ip: null, sessionRef: null, requestId: randomUUID(), request: { work, requireCurrent: async () => {} } } as any;
+        const affected = async (sub: string) => ({ issuer, subject: sub, id: await work.resolveIdentity(tx, issuer, sub) });
+        // One re-login boundary for both, read after the locks: an authentication issued while this command waited is
+        // not one of the new rights (now() would be the transaction's start).
+        const [{ boundary }] = await tx.$queryRaw<{ boundary: Date }[]>`SELECT clock_timestamp() AS boundary`;
+        const operatorDetail = { by: name, institution, reason, replaced: { from, to } };
+        const label = 'operator:' + name;
+        await this.applyMember(tx, record, { id: from, register: null, version: fromNow.version, observed: fromNow, identity: null,
+          fields: { approved: fromNow.approved, suspended: true, institution: fromNow.institution, roles: fromNow.roles },
+          action: 'suspend', before: this.row(fromNow), verificationOverride: false, approvalMutation: false,
+          affected: await affected(from), actor: label, facts, service: true, operatorIdentity: true, operatorDetail, boundary });
+        const observed = toNow ?? this.pendingMember(identity);
+        const roles = [...new Set([...(toNow?.approved ? toNow.roles.filter((role: string) => APP_ROLES.has(role)) : []), 'admin'])];
+        return this.applyMember(tx, record, { id: to, register: toNow ? null : identity, version: toNow ? toNow.version : 1,
+          observed, identity, fields: { approved: true, suspended: false, institution, roles },
+          action: toNow?.approved ? 'update' : 'approve', before: this.row(observed),
+          verificationOverride: !identity.emailVerified, approvalMutation: true,
+          affected: await affected(to), actor: label, facts, service: true, operatorIdentity: true, operatorDetail, boundary });
+      }, { maxWait: 4000, timeout: 8000 });
+      return { ...committed.after, rosterUnconfirmed: committed.rosterUnconfirmed };
+    } catch (error) {
+      // No failure audit here: a refusal wrote nothing, and a lost commit answer may hide a replacement that was saved.
+      if (lockWaitExceeded(error))
+        throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 실행하세요' });
+      // Under the locks the predecessor is no longer X's sole administrator: perhaps this same command saved it already.
+      if (error instanceof ReplaceAdminRefusal) return this.againOr(run, error);
+      throw error;
+    }
+  }
+
+  /**
+   * The same command again (the operator reruns it after a lost answer, exit 3): its own audit rows exist, or the
+   * predecessor is no longer X's sole administrator. Decided under X's lock and both members' locks, writing nothing —
+   * no rights, session, audit or ledger record:
+   *  - this replacement's two audit rows exist (same institution, pair, operator and reason) and neither member changed
+   *    since (their versions are those rows' `after`): it stands — `standing`, the successor's latest roster is checked
+   *    and completed by the command;
+   *  - those rows exist but a member changed since: `changed`, the current state of both, and no roster is sent (an older
+   *    roster never overwrites a later change);
+   *  - no such rows: null — this replacement was never saved (the caller runs it, or refuses).
+   * Anything unreadable here: `OutcomeUndetermined`.
+   */
+  /** A refusal of the predecessor: this same command's saved replacement if there is one, else the refusal. */
+  private async againOr(run: ReplacementRun, refusal: unknown) {
+    if (!(refusal instanceof ReplaceAdminRefusal) || !['REPLACE_ADMIN_FROM_NOT_ADMIN', 'REPLACE_ADMIN_NOT_SOLE']
+      .includes((refusal.getResponse() as any)?.code)) throw refusal;
+    const again = await this.replacementAgain(run);
+    if (!again) throw refusal;
+    return again;
+  }
+
+  private async replacementAgain(run: ReplacementRun) {
+    let found: { standing: boolean; from: ReturnType<AdminService['row']>; to: ReturnType<AdminService['row']> } | null;
+    try {
+      found = await this.prisma.$transaction(async tx => {
+        await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
+        await lockInstitution(tx, run.institution);
+        await lockMembersInOrder(tx, [run.from, run.to]);
+        const saved = await savedReplacement(tx, run);
+        if (!saved) return null;
+        const fromNow = await tx.memberRights.findUnique({ where: { sub: run.from } });
+        const toNow = await tx.memberRights.findUnique({ where: { sub: run.to } });
+        if (!fromNow || !toNow) return null;
+        return { standing: fromNow.version === saved.from.after?.version && toNow.version === saved.to.after?.version,
+          from: this.row(fromNow), to: this.row(toNow) };
+      }, { maxWait: 4000, timeout: 8000 });
+    } catch { throw new OutcomeUndetermined(); }
+    if (!found) return null;
+    return found.standing ? { ...found.to, again: 'standing' as const }
+      : { ...found.to, again: 'changed' as const, current: { from: found.from, to: found.to } };
+  }
+
+  /** Under the institution lock (taken by the caller): X still has no active administrator and the person is not isolated. */
   private async firstAdminGate(tx: any, sub: string, institution: string) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${0x4b494e46}::int4, hashtext(${institution})::int4)`;
     if (await activeAdmins(tx, institution))
       throw new FirstAdminRefusal('FIRST_ADMIN_EXISTS', '이 기관에는 이미 활성 관리자가 있습니다');
     if (await tx.memberIsolation.findUnique({ where: { sub } }))
       throw new FirstAdminRefusal('FIRST_ADMIN_TARGET_ISOLATED', '격리된 계정은 지정할 수 없습니다');
   }
 
-  async resetPassword(id: string, body: any, c: Caller) {
+  /** `facts`: the request's (AdminController, through its member-change gate). Under the member lock the caller's own
+   * authorization is checked again, so a provider write never starts for an administrator replaced meanwhile. */
+  async resetPassword(id: string, body: any, c: Caller, facts?: AdminRequestFacts) {
     const admin = this.admin(c);
     if (!['temp', 'email'].includes(body?.mode))
       throw new BadRequestException('mode는 temp 또는 email이어야 합니다');
@@ -465,6 +701,7 @@ export class AdminService {
         const row = await tx.memberRights.findUnique({ where: { sub: id } });
         // Decided again on the locked row: a concurrent change may have moved the member.
         requireInScope(admin, memberInstitution(row, user.groups));
+        await facts?.request.requireCurrent(tx);
         return row ?? await this.register(tx, user);
       }, { maxWait: 4000, timeout: 8000 }));
     } catch (error) {
@@ -472,9 +709,12 @@ export class AdminService {
         throw new ConflictException({ code: 'MEMBER_BUSY', message: '다른 요청이 회원 상태를 변경하고 있습니다. 잠시 후 다시 시도하세요' });
       throw error;
     }
+    // Again just before the provider write: a replacement committed while the member row was read or registered.
+    await facts?.request.requireCurrent();
     if (mode === 'temp') {
       const temporaryPassword = randomBytes(18).toString('base64url') + 'aA1!';
-      await this.keycloak.resetPassword(id, mode, temporaryPassword);
+      // And once more after the provider client's token wait, just before its PUT (a replacement committed meanwhile).
+      await this.keycloak.resetPassword(id, mode, temporaryPassword, facts ? () => facts.request.requireCurrent() : undefined);
       const after = this.row(await this.member(id));
       await this.audit(c.actor, 'admin.user.reset-password', id, { before, after, mode });
       // The provider write runs outside the member lock. If another institution approved a waiting member meanwhile,

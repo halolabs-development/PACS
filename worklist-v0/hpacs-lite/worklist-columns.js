@@ -24,8 +24,9 @@
   const DEFAULT_SHOWN = { Radiology: ['no', 'assignedReader', 'rs', 'confirm', 'date', 'referredAt', 'id', 'name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass', 'age', 'desc', 'modality', 'institutionName'] };
   // A stored layout that lacks one of these columns gets it right after its anchor (request columns after Name, Confirm
   // after RS, Referred after StudyDate), in this sequence; other missing columns are still added at the end. Same list as
-  // the server (api/src/worklist-columns.ts PLACED_COLUMNS).
-  const PLACED = { Radiology: [['reqDate', 'name'], ['reqDept', 'reqDate'], ['reqDoc', 'reqDept'], ['ptClass', 'reqDoc'], ['confirm', 'rs'], ['referredAt', 'date']] };
+  // the server (api/src/worklist-columns.ts PLACED_COLUMNS). QC Flag (a Technician column) joins after Tech Note.
+  const PLACED = { Radiology: [['reqDate', 'name'], ['reqDept', 'reqDate'], ['reqDoc', 'reqDept'], ['ptClass', 'reqDoc'], ['confirm', 'rs'], ['referredAt', 'date']],
+    Technician: [['qc', 'techNote']] };
   function placeMissing(stored, keys, placed) {
     const late = new Set(placed.map(([k]) => k));
     const order = [...stored, ...keys.filter(k => !stored.includes(k) && !late.has(k))];

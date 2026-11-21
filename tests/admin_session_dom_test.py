@@ -189,8 +189,14 @@ class PageSessionDOMTest(unittest.TestCase):
             if time.monotonic()>end: self.fail('expected observation did not arrive')
             self.page.wait_for_timeout(15)
 
+    def all_studies(self):
+        # B14: Clinician Home opens on My Studies; these synthetic rows name no requesting physician.
+        self.page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+        self.page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
+
     def open(self):
         self.page.goto(ORIGIN+BASE+self.kind+'.html')
+        if self.kind != 'admin': self.all_studies()
         expect(self.page.locator('#users tr' if self.kind=='admin' else '#studies tr')).not_to_have_count(0)
 
     def hold(self, path, cut, body=None, status=200, code=None):
@@ -433,6 +439,7 @@ class PageSessionDOMTest(unittest.TestCase):
                     expect(self.page.locator(target + ' > *')).to_have_count(0)
                 self.assert_work_stays()
                 self.page.reload()
+                self.all_studies()
                 expect(self.page.locator('#studies tr')).not_to_have_count(0)
                 self.page.locator(f'#studies tr[data-uid="{uid}"] button').click()
                 expect(self.page.locator('#report-state')).to_have_attribute('data-state', 'final')

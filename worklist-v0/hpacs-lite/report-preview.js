@@ -56,6 +56,17 @@
     return paperStamp(report.approvedAt) ||
       (typeof report.confirm === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(report.confirm) ? report.confirm : '');
   }
+  /**
+   * The time a report version shows on every report screen (History, Related Report, the viewer's Previous Report, the
+   * clinician read): the time the study keeps for it when the server names one (`keptAt` - the current cycle's approval,
+   * last amendment or last addendum, the times the worklist Confirm cell and the editor show), else the stored approval date
+   * of an approval older than the kept times (`keptOn`, no time added), else the version's own time. By paperStamp; '' when
+   * none is readable.
+   */
+  function versionStamp(version) {
+    const keptOn = typeof version?.keptOn === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(version.keptOn) ? version.keptOn : '';
+    return paperStamp(version?.keptAt) || keptOn || paperStamp(version?.at);
+  }
   /** A DICOM date (YYYYMMDD) as YYYY-MM-DD; any other text as it came; nothing as ''. */
   function paperDate(value) {
     const text = typeof value === 'string' ? value.trim() : '';
@@ -301,7 +312,7 @@
       el('p', `검사: ${st.desc || st.modality || '(설명 없음)'} · ${studyDate || '날짜 미확인'} · Acc: ${st.acc || '-'}`, head);
       const editing = source.value === 'editor', report = editing ? s.editor : d.report;
       el('p', editing ? '현재 편집문 · 미확정 (출력으로 저장되거나 승인되지 않음)' : savedLabel(d.report, true), head).className = 'source';
-      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : actorName(d.report.repDoc) || '-'} · 승인일시: ${editing ? '-' : approvalText(d.report) || '-'}`, head);
+      el('p', `작성자: ${actorName(editing ? d.actor : d.report.author) || '-'} · 승인 판독의: ${editing ? '-' : d.report.repDoc || '-'} · 승인일시: ${editing ? '-' : approvalText(d.report) || '-'}`, head);
       const identity = `환자 ${st.name} (${st.id}) · 검사 ${studyDate || '-'} · Acc ${st.acc || '-'}\n${editing ? '현재 편집문 · 미확정' : savedLabel(d.report, false)}`;
       el('p', '모든 출력 페이지에 반복되는 식별정보\n' + identity, root).className = 'identity-example';
       for (const [index, name] of fields.entries()) {
@@ -638,7 +649,7 @@
   // how two papers start disagreeing about one citation - so the pure record is
   // published under its own global too. The object is the same one the node
   // tests already receive, so its contents do not change.
-  const paper = { savedLabel, citationSection, citationAnswerOk, paperStamp, approvalText, paperDate };
+  const paper = { savedLabel, citationSection, citationAnswerOk, paperStamp, approvalText, versionStamp, paperDate };
   globalThis.KinReportPaper = paper;
   if (typeof module === 'object' && module.exports) module.exports = paper;
 })();

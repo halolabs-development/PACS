@@ -109,7 +109,7 @@
         $("#prior-report-status").textContent = relatedNoReportText(s); shown({ state: "none", message: relatedNoReportText(s) }); return;
       }
       $("#prior-report-meta").textContent =
-        `${relatedReportMeta(s)} · 판독의 ${displayActor(report.author) || "-"}`;
+        `${relatedReportMeta(s)} · 판독의 ${signerName(report) || "-"} · ${KinReportPaper.versionStamp(report) || "-"}`;
       $("#prior-report-meta").title = $("#prior-report-meta").textContent;
       $("#prior-findings").textContent = report.findings ?? "";
       $("#prior-conclusion").textContent = report.conclusion ?? "";
@@ -118,7 +118,7 @@
       $("#prior-report-status").style.display = "none";
       $("#prior-report-content").style.display = "";
       shown({ state: "ready", version: Number.isSafeInteger(report.version) ? report.version : null, action: report.action ?? null,
-        author: displayActor(report.author) || null, at: typeof report.at === "string" ? report.at.replace("T", " ").slice(0, 16) : null,
+        author: signerName(report) || null, at: KinReportPaper.versionStamp(report) || null,
         texts: { findings: report.findings ?? "", conclusion: report.conclusion ?? "", recommendation: report.recommendation ?? "" } });
       // A5: only the version this Source shows is displayed (the read provided every version row). Its display report names
       // this read's provision; a re-read of the same Source and version (every list refresh) is the same display.

@@ -54,7 +54,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "critical-result-inbox.js",
                                                      "clinical-signature.js")}
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 INDEX_STAND_IN = ('<!doctype html><html><head><meta charset="utf-8"><title>SYN index stand-in</title></head>'
@@ -181,6 +181,13 @@ FRESH = "    return !leaving && mine === timelineSeq && selected === uid;\n"
 KEY_CHECK = ("      if ((key === null ? row.uid !== uid : patientKey(row) !== key)\n"
              "          || !mark || typeof mark !== 'object'")
 BANNER = "    if (head.conflict) {\n"
+
+
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
 
 
 class ClinicianTimelineDOMTest(unittest.TestCase):
@@ -388,6 +395,7 @@ class ClinicianTimelineDOMTest(unittest.TestCase):
         # Every load names its file: a control variant never carries over into the next load of the shipped page.
         self.files["clinician.js"] = SHIPPED["clinician.js"] if script is None else script
         self.page.goto(ORIGIN + BASE + "clinician.html")
+        all_studies(self.page)
         expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
         expect(self.page.locator("#studies tr[data-uid]")).to_have_count(len(self.rows))
 

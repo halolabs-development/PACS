@@ -174,9 +174,11 @@
           // 요청을 보낸 뒤 확정이 일어났다면 이 응답은 그 이전 사진이다. 버린다.
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
           assertStudyOwner(r);
+          // What this answer no longer lists (or reads another way) loses its QC mark and DICOM values now, before the wait below.
+          qcHearsList(r.studies);
           await Promise.all([favoriteList?.refresh(),studyTagList?.refresh()]);
           if (!live() || commitInFlight || epoch !== commitEpoch) return;
-          pollFails = 0;
+          pollFails = 0; listRefreshWarning(false);
           // The questions and image requests of the reading target are read again with the list: one that came after the
           // study opened is learned too.
           studyQuestions?.refresh();
@@ -198,8 +200,10 @@
           // A row whose exam became (or stopped being) unreadable as a whole is a changed exam too, though neither answer
           // carries a scope.
           const lostKey = s => s?.examUnavailable === true ? String(s.examUnavailableKind ?? '') : null;
+          // A row that became (or stopped being) one received for tele-reading is another row for this account: every
+          // field of it is rebuilt from this answer, like a changed exam.
           const scopeChanged = r.studies.some(s=>KinExamScope.screenStamp(s)!==KinExamScope.screenStamp(known.get(s.uid))
-            || lostKey(s)!==lostKey(known.get(s.uid)));
+            || lostKey(s)!==lostKey(known.get(s.uid)) || known.has(s.uid) && (s.tele===true)!==(known.get(s.uid).tele===true));
 
           // 목록이 달라졌으면(도착·삭제) 통째로 다시 그린다.
           if (scopeChanged || fresh.length || r.studies.length !== studies.length) {
@@ -213,6 +217,8 @@
             // applyObservation drew the receipt block from the rows before this rebuild; a study that became a merged or
             // split exam in this answer is drawn again from the rebuilt row (its missing-images line goes at once).
             renderObservation();
+            // Another study is viewed now than the Info panel names (a Related study left the list or came back): one study.
+            viewedInfoFollowsList();
             if (selectedUid) { loadReport(); updateReportButtons(); }
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
@@ -223,8 +229,11 @@
             return;
           }
 
+          // QC marks follow this answer too (report-draft-sync.js observeQcList): the rows it lists and how each is read now.
+          observeQcList(r.studies);
           for (const s of r.studies) {
             const uid = s.uid, st = s.state, existing = known.get(uid);
+            observeQcScope(s);
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
               draftEpoch:s.state?.draftEpoch??null, sourceMetadata:sourceMetadataView(s.sourceMetadata),
               // Referred is fixed once the study exists; written here by the same rule as fromApi all the same.
@@ -242,7 +251,7 @@
               //     되돌아간다. 확정본(findings 등)은 갱신해도 된다 — 초안이 있는 동안
               //     화면은 초안을 그리고, 확정본은 "그 사이 남이 v5를 확정했다" 안내에만 쓰인다.
               // 나머지(rs·ss·holder 등)도 갱신한다. 남이 승인한 게 화면에 보여야 하니까.
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
               /**
                * 판독문 값은 loadReport가 스스로 지키므로, 호출자는 항상 상태를 반영한다.
                * 예전엔 폴링이 `prelimHidden`만 반영하고 판독문 패널은 그대로 뒀다 —
@@ -256,7 +265,7 @@
                * 서버 어디에도 없다. 폴링 한 번이 그것을 서버 투영으로 갈아끼우면 돌아온
                * 화면은 옛 글을 그리고, 수렴 저장이 그 옛 글을 서버에 밀어 넣는다.
                */
-              appState[uid] = mergeObservedReportState(uid, st);
+              appState[uid] = mergeObservedReportState(uid, st, true);
             }
             // Modality changes when a series of another modality arrives (an attached document, too): written like Count and
             // Series, as the list read draws it (fromApi, then applyState's display overlay over the server's value).
@@ -268,6 +277,7 @@
             if (selectedUid === uid) { loadReport(); updateReportButtons(); }
           }
           render();
+          viewedInfoFollowsList();
           autoPreload?.afterList();
           if (arrivalNotice) announceArrivals(arrivalNotice);
           pollFails = 0;
@@ -293,9 +303,32 @@
            * 예전엔 폴링의 catch가 통째로 비어 있어서, API가 죽어도 화면은 아무 말도
            * 안 했다. 판독의는 계속 쓰고 Save를 누를 때가 되어서야 알게 됐다.
            * 두 번 연속 실패하면 고장으로 본다. 한 번은 blip일 수 있다.
+           *
+           * 목록 읽기는 영상 저장소의 목록이기도 하다 — 저장소만 멈춰도 실패한다. 그래서 두 번째 실패는 곧바로 끊김이 아니라
+           * 목록을 갱신하지 못했다는 안내이고, 끊김은 수동 읽기와 같은 연결 확인(page-boot.js confirmConnection)이 정한다:
+           * 서버가 답하면 연결·쓰기·판독문은 그대로다.
            */
-          if (++pollFails >= 2) goOffline(e);
+          if (++pollFails >= 2) {
+            listRefreshWarning(true);
+            await confirmConnection(e, at, live);
+          }
         }
       }, seconds * 1000);
     }
     let pollFails = 0;
+    // The notice a failed list read leaves on the banner (two failed polls, or a failed Refresh with its own `text`); a list
+    // read that succeeds takes it away again. Only the text written here is removed — another notice written since stays.
+    let listWarningText = null;
+    function listRefreshWarning(on, text) {
+      const banner = $("#err");
+      if (!banner) return;
+      // The words written, whatever language shows now (a sentence repaints when the language changes).
+      const written = () => window.KinLanguage ? window.KinLanguage.source(banner) : banner.textContent;
+      if (on) {
+        if (text === undefined) kinWrite(banner, kinSay("검사 목록을 갱신하지 못했습니다. 마지막 목록을 표시합니다"));
+        else kinWrite(banner, text);
+        listWarningText = written(); return;
+      }
+      if (listWarningText !== null && written() === listWarningText) banner.textContent = "";
+      listWarningText = null;
+    }

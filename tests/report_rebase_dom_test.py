@@ -29,6 +29,9 @@ CITATION_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-citation.js").read_
 # while loading and every case dies before its assertion (the U3 lesson). The product catalog is
 # empty, so nothing in this file's scenarios changes.
 STRUCTURE_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-structure.js").read_text(encoding="utf-8")
+# The page loads the report screens' one time rule (KinReportPaper) and names a version's signer with page-core's
+# signerName; the sliced region calls both.
+PREVIEW_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "report-preview.js").read_text(encoding="utf-8")
 
 UID = "1.2.3"
 OTHER = "1.2.4"
@@ -110,6 +113,7 @@ WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 # S3-U2b moved the shared "may a script write into the editor" check into one function that the
 # sliced region now calls; without it the harness defines nothing.
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
+SIGNER_FN = extract_function((ROOT / "worklist-v0" / "hpacs-lite" / "page-core.js").read_text(encoding="utf-8"), "signerName")
 
 HARNESS = """<!doctype html><html><head><style>MODALCSS</style></head><body>
 <div class="draftbar" id="draftbar" style="display:none"><span id="draftmsg"></span>
@@ -135,6 +139,9 @@ CITATIONJS
 STRUCTUREJS
 </script>
 <script>
+PREVIEWJS
+</script>
+<script>
 const $ = s => document.querySelector(s);
 const esc = v => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
   .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -152,6 +159,7 @@ const RELATED_BASE = Object.freeze({ base: true });
 const KinAuth = { has: () => true, logout: async () => {} };
 const reportPreview = { close() {} };
 const displayActor = value => String(value ?? "").split("@")[0];
+SIGNERFN
 function cur() { return studies.find(s => s.uid === selectedUid); }
 function shownStudyDesc(s) { return s?.desc ?? ""; }
 function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
@@ -240,6 +248,8 @@ def harness(state):
             .replace("STRUCTHTML", STRUCT_HTML)
             .replace("CITATIONJS", CITATION_JS)
             .replace("STRUCTUREJS", STRUCTURE_JS)
+            .replace("PREVIEWJS", PREVIEW_JS)
+            .replace("SIGNERFN", SIGNER_FN)
             .replace("APIFN", API_FN)
             .replace("WRITEBLOCKFN", WRITE_BLOCK_FN)
             .replace("EDITORBLOCKFN", EDITOR_BLOCK_FN)
@@ -347,6 +357,7 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertIn("v4", value["pane"]["action"])
         # Nothing was rewritten, reloaded or discarded.
         self.assertEqual(["MY ADDENDUM+", "", ""], value["text"])
+
         # The page keeps the typed text as this study's own copy (it is what the next save carries); the refusal moved
         # neither that text nor the version it stands on.
         self.assertEqual(2, value["state"]["draft"]["baseVersion"])
@@ -356,6 +367,16 @@ class ReportRebaseDOMTest(unittest.TestCase):
         self.assertEqual([], value["clipboard"])
         for entry in value["toasts"]:
             self.assertNotIn("저장했습니다", entry["message"])
+
+    def test_a_stale_addendum_names_the_approved_heads_signer_by_the_member_name(self):
+        """The refused head's writer is the member name the server sends beside the login (the name History shows for that
+        version), not the login."""
+        self.open(draft={"findings": "MY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2, "at": "2026-09-20T01:00"})
+        self.page.evaluate("type(['MY ADDENDUM+', '', ''])")
+        self.page.evaluate("reply(%s)" % json.dumps(stale_body(head={"updatedByName": "SYN Lee Second"}), ensure_ascii=False))
+        self.page.evaluate("commit('addendum')")
+        self.page.wait_for_function("()=>$('#stalemodal').classList.contains('show')")
+        self.assertEqual("승인본 v4 · SYN Lee Second", self.page.evaluate("snapshot()")["pane"]["title"])
 
     def test_the_rebase_writes_the_typed_text_onto_exactly_the_version_it_showed(self):
         self.open(draft={"findings": "MY ADDENDUM", "conclusion": "", "recommendation": "", "baseVersion": 2, "at": "2026-09-20T01:00"})

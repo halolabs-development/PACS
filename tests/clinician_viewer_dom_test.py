@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "report-preview.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -864,6 +864,13 @@ CT_SYNC_HIT = """() => { const n = document.querySelector('#kin-ct-sync-status')
   return { button: at(rb) === b, words_pass: !n.contains(at(n.querySelector('span').getBoundingClientRect())), height: rb.height,
     font: parseFloat(getComputedStyle(b).fontSize) }; }"""
 
+def all_studies(page):
+    """B14: Clinician Home opens on My Studies. These synthetic rows name no requesting physician, so the cases read All
+    Studies, chosen through the page without moving the keyboard focus."""
+    page.wait_for_function("() => ['ready', 'empty'].includes(document.querySelector('#list-state')?.dataset.state)")
+    page.evaluate("() => [...document.querySelectorAll('#folder-tree button')].find(b => b.textContent.startsWith('All Studies'))?.click()")
+
+
 class ClinicianViewerDOMTest(unittest.TestCase):
 
     @classmethod
@@ -982,7 +989,12 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             return
         if method == 'GET' and path == '/ohif/viewer':
             if self.viewer_page:
-                route.fulfill(body=VIEWER_HARNESS.replace('<script>', '<script>window.name='+json.dumps('kin-viewer-entry:'+json.dumps({'session':'SYN-SESSION-'+self.me['sub'],'name':VIEWER_WINDOW}))+';</script><script>',1), content_type='text/html; charset=utf-8')
+                # B14: the hand-off names the screen that opened the window (mode) when a case sets viewer_mode; with
+                # viewer_handoff False the page loads as a reload of the tab does (no hand-off at all).
+                entry = {'session': 'SYN-SESSION-' + self.me['sub'], 'name': VIEWER_WINDOW,
+                         **({'mode': self.viewer_mode} if getattr(self, 'viewer_mode', None) else {})}
+                handoff = '' if getattr(self, 'viewer_handoff', True) is False else '<script>window.name=' + json.dumps('kin-viewer-entry:' + json.dumps(entry)) + ';</script>'
+                route.fulfill(body=VIEWER_HARNESS.replace('<script>', handoff + '<script>', 1), content_type='text/html; charset=utf-8')
             else:
                 self.viewer_opens.append(parse_qs(url.query, keep_blank_values=True))
                 route.fulfill(body=STAND_IN.replace('</body>', '<script src="/harness/ohif.js"></script><script>kinCreateSessionBoundary().preRegistration().then(()=>window.verified=true)</script></body>'), content_type='text/html; charset=utf-8')
@@ -1087,6 +1099,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             if self.real_api and target == VP and (query == {'limit': ['100']}):
                 route.fulfill(json={'items': [], 'nextCursor': None})
                 return
+            if getattr(self, 'viewer_mode', None) == 'physician' and query == {'limit': ['100']}:
+                # B14: a writer account's viewer opened from the Physician mode asks the read-only list; the server answers
+                # every caller in its ordinary shape (viewer.service.ts). The read-only list reading it is a later item.
+                route.fulfill(json={'items': [], 'nextCursor': None})
+                return
             first = {'includeHidden': ['true'], 'limit': ['100']}
             following = {**first, 'cursor': [WRITER_CURSOR]}
             if query != first and (not (self.writer_paged and query == following)):
@@ -1158,6 +1175,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         if script is not None:
             self.files['clinician.js'] = script
         self.page.goto(ORIGIN + BASE + 'clinician.html')
+        all_studies(self.page)
         expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
         expect(self.page.locator('#studies tr[data-uid]')).to_have_count(len(self.rows))
 
@@ -1505,6 +1523,35 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual([], self.reads())
         self.assertTrue(all((disabled for _, disabled in self.layout()['buttons'])), self.layout())
         self.me, self.me_status = (CLINICIAN, None)
+
+    def test_05c_physician_mode_is_read_only_for_a_mixed_account_and_survives_a_reload(self):
+        """B14: Minhoon 11-01 "basically no different to the radiologist, except they can't annotate the images". A window
+        Clinician Home (the Physician mode) opens says so in its hand-off; a clinician + radiologist account then gets the
+        clinician's read-only viewer - no authoring tool, no write module - and a reload of that tab keeps it. The same
+        account's window opened without that mode (the Radiologist screen) keeps its writer tools (test_05b)."""
+        try:
+            self.me, self.viewer_mode = MIXED, 'physician'
+            self.item_requests, self.cursors = ([], {})
+            self.open_viewer()
+            self.modules_settled()
+            self.assertEqual('read-only', self.session())
+            self.assertEqual([], self.page.evaluate('synMounted'))
+            self.assertFalse({'Download SR', 'Store SR', 'Length', 'Angle', 'Ellipse ROI', 'Add Key Image', 'Edit', 'Save', 'Hide'}
+                             & set(self.panel()['buttons']), self.panel()['buttons'])
+            self.assertEqual('undefined', self.page.evaluate('synAddLength()'))
+            self.assertEqual(RO_TOOL, self.panel()['status'])
+            # A reload of the tab: no hand-off, the mode of the last one stays.
+            self.viewer_handoff = False
+            self.open_viewer()
+            self.modules_settled()
+            self.assertEqual(('read-only', []), (self.session(), self.page.evaluate('synMounted')))
+            # A new hand-off without the mode (another screen reusing the tab) is a writer again.
+            self.viewer_handoff, self.viewer_mode = True, None
+            self.open_viewer()
+            self.wait_until(lambda: set(self.page.evaluate('synMounted')) == MODULES, 'every module mounted')
+            self.assertEqual('writer', self.session())
+        finally:
+            self.viewer_mode, self.viewer_handoff = None, True
 
     def test_06_states_loading_empty_withheld_failed_and_denied(self):
         self.hold_items = {VA}

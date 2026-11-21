@@ -36,9 +36,19 @@
      * 있던 쓰기(확정이 나가 있는 동안 검사를 옮겼다)는 차례가 와도 보낼 글이 없다 — 방금 판독문이 된 글이 초안으로 다시
      * 서지 않는다. 그 확정이 싣지 않은 글이 남았는지를 돌려준다.
      */
-    function applyAcceptedCommit(uid, st, sentAt) {
+    function applyAcceptedCommit(uid, st, sentAt, kept = null) {
       const later = reportEditedSince(uid, sentAt)
         ? (uid === selectedUid ? Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value])) : appState[uid]?.draft) : null;
+      /**
+       * FC-040: `kept` is the text the editor held when Reset to Unread took another reader's in-progress reading back. That
+       * Reset is not mine to cancel my text: the server kept my draft (on its new version), and text it never had - its draft
+       * writes were refused while the other reader held the study - stays here the same way as text written after pressing:
+       * an unconfirmed draft on the new version, which the next draft write takes. An emptied editor is an edit too: over a
+       * kept draft that still has text it stays empty, and that write empties the draft. Text the kept draft already holds
+       * is shown from it; with no text on either side there is nothing to keep.
+       */
+      const same = text => RFIELDS.every(k => KinReportCitation.toLf(String(st.draft?.[k] ?? "")) === KinReportCitation.toLf(String(text[k] ?? "")));
+      const keep = later ?? (kept && !same(kept) ? kept : null);
       // 서버가 받아들인 확정이다: 확정이 나가 있는 동안 검사를 옮겨 그 검사의 쓰기가 뒤에 줄 서 있어도 실패로 알리지 않는다.
       appState[uid] = replaceReportState(uid, st, { confirmed: true });
       reportUnknownCommits.delete(uid);
@@ -56,14 +66,14 @@
       structureState.forget(uid);
       structureNotes.delete(uid);
       reportConverge.delete(uid);
-      if (later) {
-        appState[uid] = { ...appState[uid], draft: { ...Object.fromEntries(RFIELDS.map(k => [k, later[k] ?? ""])),
+      if (keep) {
+        appState[uid] = { ...appState[uid], draft: { ...Object.fromEntries(RFIELDS.map(k => [k, keep[k] ?? ""])),
           baseVersion: reportBaseVersion(uid, st.version ?? 0), at: null } };
         reportConverge.add(uid);
       }
       // 확정 응답은 내가 방금 선택한 서버 상태다. 여기서는 입력 보호보다 그 결과가 우선한다 — 그 확정이 싣지 않은,
-      // 나가 있는 동안 고친 글만 예외다(위).
-      loadReport({ force: !(later && uid === selectedUid) });
+      // 나가 있는 동안 고친 글과 남의 판독을 되돌린 Reset이 남긴 내 글만 예외다(위).
+      loadReport({ force: !(keep && uid === selectedUid) });
       return !!later;
     }
 
@@ -89,8 +99,10 @@
     }
 
     /** 받아들여진 확정의 완료 안내. `lateText`는 그 확정이 싣지 않은, 누른 뒤에 친 글이 남았다는 뜻이다. */
-    function announceCommit(uid, action, reason, lateText, released = null) {
-      const done = action === "reset" && released ? releasedText(released) : {
+    function announceCommit(uid, action, reason, lateText, released = null, ownKept = false) {
+      const told = action === "reset" && released ? releasedText(released) : null;
+      // FC-040: the reader who took it back had text of their own; it was not touched (applyAcceptedCommit, keepCallerDraft).
+      const done = told ? (ownKept ? kinSay("{0} {1}", told, kinSay("내가 쓰던 글은 지우지 않았습니다 — 편집기에 그대로 있습니다.")) : told) : {
         save: "임시 저장했습니다 (RS: T)",
         defer: `보류했습니다 (RS: H)${reason ? ' — ' + reason : ''}`,
         approve: "판독문을 승인했습니다 (RS: A)",
@@ -277,7 +289,7 @@
       // 받아들여진 확정이 싣지 않은, 그 뒤에 친 글이 남았는가(아래) — 완료 안내가 그 사실을 함께 말한다.
       let lateText = false;
       // 진행 중 판독 되돌리기의 답이 말하는 남의 점유·글의 자리(있을 때만). 완료 안내가 그대로 옮긴다.
-      let released = null;
+      let released = null, ownKept = false;
 
       if (serverMode) {
         commitInFlight = true;
@@ -288,7 +300,10 @@
         // 내 글을 확정하는 중이라면(초안이 있거나 편집기가 dirty) 기준은 **화면에 그려진 판**이다.
         // `appState.version`은 본문을 다시 그리지 않고도 올라가므로, 그대로 보내면
         // 못 본 승인본 위에 낙관적 락이 조용히 통과한다.
-        const mine = !!appState[uid]?.draft || reportDirty();
+        // FC-040: Reset of another reader's in-progress reading (the server judges it again under its lock) does not confirm
+        // my text - it releases the head the screen shows, so it is sent on that version; my draft stays mine (keepCallerDraft).
+        const takeover = action === "reset" && !!inProgressReset(cur());
+        const mine = !takeover && (!!appState[uid]?.draft || reportDirty());
         const baseVersion = mine ? reportBaseVersion(uid, appState[uid]?.version ?? 0)
                                  : (appState[uid]?.version ?? 0);
         // 응답이 돌아왔을 때 "그때 그 선택인가"를 판단할 기준. 요청이 떠나기 전에 잡는다.
@@ -344,7 +359,9 @@
           }
           heldUid = null; clearInterval(heartbeat); heartbeat = null;   // 확정하면 서버가 점유를 푼다
           released = action === "reset" ? result.answer?.body?.released ?? null : null;
-          lateText = applyAcceptedCommit(uid, result.state, sentAt);
+          lateText = applyAcceptedCommit(uid, result.state, sentAt, released ? content : null);
+          // Whether my own text is still there after it - the text the editor held, which stays (the notice says so).
+          ownKept = !!released && RFIELDS.some(k => content[k]);
         } catch (e) {
           // 낙관적 락에 걸린 경우 — 그 사이 남이 저장했다.
           // 내가 쓴 내용을 지우지 않는다. 서버 것을 보여주고 사용자가 판단하게 한다.
@@ -439,7 +456,7 @@
         saveApp();
       }
       render(); renderRelated(); updateReportButtons();
-      announceCommit(uid, action, reason, lateText, released);
+      announceCommit(uid, action, reason, lateText, released, ownKept);
       // 받아들여진 확정이다. 누른 그 검사·그 선택과, 그 확정이 싣지 않은 글이 남았는지를 부른 쪽(Approve & Next)에 알린다.
       return { accepted: true, uid, seq: pressedSeq, lateText };
     }
@@ -881,4 +898,5 @@
       if (typeof a.ward === "string") s.ward = a.ward;
       if (overlayValue("ward", a.ov?.ward)) s.ward = a.ov.ward;
       if (a.reqHosp && !s.institutionName) s.reqHosp = a.reqHosp;
+      applyQcRow(s);
     }

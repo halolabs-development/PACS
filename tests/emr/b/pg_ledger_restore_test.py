@@ -591,6 +591,11 @@ class PgLedgerRightsLive(PgLedgerFixture):
         self.node_case('rights')
 
 
+class PgLedgerReplaceLive(PgLedgerFixture):
+    def test_sole_admin_replacement_is_one_transaction(self):
+        self.node_case('rights-replace')
+
+
 class PgLedgerImportLive(PgLedgerFixture):
     def test_import_atomicity_and_restart(self):
         self.node_case('rights-import')

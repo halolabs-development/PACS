@@ -52,6 +52,12 @@ DIAGNOSIS = '''() => ({
   styles: cornerstoneTools.annotation.config.style.getDefaultToolStyles(),
   active: document.activeElement?.outerHTML?.slice(0, 200)})'''
 STYLES = '() => cornerstoneTools.annotation.config.style.getDefaultToolStyles()'
+# The Length just drawn, measured where it ended: the tool's calculation has caught up with the last drag (not invalidated)
+# and holds a finite, positive length for the image it refers to. Before that, the history row refuses Save ('측정을 마치고
+# 계산 완료 후 저장하세요') - the calculation trails the drag, by more on a slow runner.
+MEASURED = '''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => {
+  const s = a.metadata.toolName === 'Length' && !a.invalidated && a.data.cachedStats?.['imageId:' + a.metadata.referencedImageId];
+  return !!s && Number.isFinite(s.length) && s.length > 0; })'''
 LENGTH = '''() => { const a = cornerstoneTools.annotation.state.getAllAnnotations().find(a => a.metadata.toolName === 'Length');
   return a && {points: a.data.handles.points, stats: a.data.cachedStats}; }'''
 # The mark's own lines: all but the one linking the value text (its own '2,3' dashes). A cell whose measurements are not
@@ -125,8 +131,7 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 80, y + 50, steps=10); page.mouse.up()
         row = page.locator('#kin-viewer-history section[data-kind=length]')
         expect(row).to_have_count(1)
-        page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'Length' &&
-            Object.values(a.data.cachedStats || {}).some(s => s.length > 0))''')
+        page.wait_for_function(MEASURED)
         row.get_by_role('button', name='Save', exact=True).click()
         expect(row).to_contain_text('저장 완료')
         saved = self.saved(f)
@@ -232,8 +237,7 @@ class MarkerStyleE2E(ViewerHistoryE2E):
         page.mouse.move(x, y); page.mouse.down(); page.mouse.move(x + 80, y + 50, steps=10); page.mouse.up()
         row = page.locator('#kin-viewer-history section[data-kind=length]')
         expect(row).to_have_count(1)
-        page.wait_for_function('''() => cornerstoneTools.annotation.state.getAllAnnotations().some(a => a.metadata.toolName === 'Length' &&
-            Object.values(a.data.cachedStats || {}).some(s => s.length > 0))''')
+        page.wait_for_function(MEASURED)
         row.get_by_role('button', name='Save', exact=True).click()
         expect(row).to_contain_text('저장 완료')
         saved, measured = self.saved(f), page.evaluate(LENGTH)

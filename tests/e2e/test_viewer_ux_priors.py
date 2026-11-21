@@ -3,6 +3,7 @@
 No replacement page, controller, markup or display-set renderer. Faults delay
 or fail actual network reads only after the normally served baseline renders.
 """
+import datetime
 import hashlib
 import json
 import os
@@ -98,6 +99,8 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         other = self.ct('U3-OTHER-' + uuid.uuid4().hex[:8], 'other patient', '20250101')
         self.seed_report(y, 'approve', findings='Original Y findings\nSecond line')
         head = self.versions(y)[-1]
+        # The same row as the screen reads it, with the time the study keeps for its approval (versions() drops it).
+        shown = max(self.stack.request("GET", f"/studies/{y.uid}/report/versions", "doctor").body, key=lambda row: row["version"])
         self.seed_report(current)
         work, page = self.open_viewer(current)
         work.locator('#findings').fill('Retained private draft')
@@ -117,8 +120,14 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         report = self.report_panel(page)
         expect(report).to_contain_text(head['findings'])
         expect(report).to_contain_text('Version ' + str(head['version']))
-        expect(report).to_contain_text(head['author'])
-        expect(report).to_contain_text(head['at'])
+        # Who signed it: the member name the server sends beside the stored login. When: this browser's minute of the
+        # version's time (the current cycle's approval at the time the study keeps), never the server's UTC text.
+        expect(report).to_contain_text(shown.get('authorName') or shown['author'])
+        shown_at = shown.get('keptAt') or shown['at']
+        offset = page.evaluate("iso => new Date(iso).getTimezoneOffset()", shown_at)
+        local = datetime.datetime.fromisoformat(shown_at.replace('Z', '+00:00')).replace(tzinfo=None) - datetime.timedelta(minutes=offset)
+        expect(report).to_contain_text(shown['keptOn'] if shown.get('keptOn') else f"{local:%Y-%m-%d %H:%M}")
+        expect(report).not_to_contain_text(shown['at'])
         expect(report).to_contain_text(y.uid)
         self.assertEqual(report.locator('input,textarea,[contenteditable=true]').count(), 0)
         self.assertEqual(self.cells(page), before)
@@ -789,8 +798,9 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
     # study and says why; the same window opened again reads a new document; a study the account cannot see is refused.
     PRIOR_LIST = '/dicom-web/studies/{}/series'
 
-    def comparison_open(self, current, prior, handler):
+    def comparison_open(self, current, prior, handler, before_open=None):
         reader = self.login()
+        if before_open: before_open(reader)
         # Replacing a viewer document asks Frame Coverage's confirmation on the worklist page; accept it as a reader would.
         reader.on('dialog', lambda dialog: dialog.accept())
         lists = []
@@ -954,19 +964,50 @@ class ViewerUXPriorsE2E(ViewerLayoutE2E):
         current = self.ct(patient, 'current', '20260801')
         prior = self.ct(patient, 'prior', '20250701')
         held = []
-        reader, viewer, _, _ = self.comparison_open(current, prior, held.append)
+        # The window's resource entries are kept past the browser's default 250, so its Job panel's first list read is never
+        # dropped from them (the move below waits on that read having ended).
+        keep = lambda reader: reader.context.add_init_script('performance.setResourceTimingBufferSize(100000)')
+        reader, viewer, _, _ = self.comparison_open(current, prior, held.append, keep)
         viewer.wait_for_function('() => typeof kinViewerOpenPatient === "function"', timeout=30000)
         deadline = __import__('time').monotonic() + 30
         while not held and __import__('time').monotonic() < deadline: viewer.wait_for_timeout(200)
         self.assertTrue(held, 'the comparison waits on the prior list')
-        # Move this window to the prior alone while the comparison's layout is still waiting.
+        # Move this window to the prior alone while the comparison's layout is still waiting - as a reader does from the window's
+        # Prior Studies, once the window shows its patient (the patient tabs hold the opening), its Job panel's first list read
+        # has ended (a read that has not started yet is not "not busy"), and its patient tabs' guard takes a move (no History/Job
+        # work busy or unsaved, no open dialog, no unsaved MPR mark). That is waited for and the move called in the same task, so
+        # nothing starts in between; what was waited for is logged. The move itself must succeed.
         target = self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + prior.uid
-        viewer.evaluate('u => { window.__synMove = kinViewerOpenPatient(u); }', target)
+        moved = viewer.evaluate('''async ([u, shown]) => {
+          const listed = () => performance.getEntriesByType('resource').some(e => /\\/api\\/studies\\/[^/?]+\\/viewer-jobs\\?mine=/.test(e.name) && e.responseEnd > 0);
+          const blockers = () => ((window.KinViewerPatientTabs?.snapshot?.()?.studyUIDs || []).includes(shown) ? [] : ['patient']).concat(listed() ? [] : ['jobs.list'], [['history', window.kinViewerHistoryWorkspaceState?.()], ['jobs', window.kinViewerJobWorkspaceState?.()]]
+            .flatMap(([name, s]) => [s?.busy && name + '.busy', s?.dirty && name + '.dirty']).filter(Boolean)
+            .concat(document.querySelector('dialog[open]') ? ['dialog'] : [], window.kinMprMarks?.dirty?.() ? ['mpr-marks'] : []));
+          const waited = new Set(), until = Date.now() + 30000;
+          for (let now = blockers(); now.length; now = blockers()) {
+            now.forEach(b => waited.add(b));
+            if (Date.now() > until) return { waited: [...waited], result: 'not ready' };
+            await new Promise(r => setTimeout(r, 50));
+          }
+          // For a refused move: the line before it, any other open asked while it ran, and what blocked during it.
+          const status = () => document.querySelector('.kin-patient-tabs [role=status]')?.textContent || '';
+          const before = status(), open = window.kinViewerOpenPatient, others = [], during = new Set();
+          const wrap = (...args) => { others.push(String(args[0])); return open(...args); }; window.kinViewerOpenPatient = wrap;
+          const sample = setInterval(() => blockers().forEach(b => during.add(b)), 10);
+          let result;
+          try { result = await Promise.race([open(u), new Promise(r => setTimeout(() => r('no answer'), 30000))]); }
+          finally { clearInterval(sample); if (window.kinViewerOpenPatient === wrap) window.kinViewerOpenPatient = open; }
+          return { waited: [...waited], result, before, status: status(), others, during: [...during] };
+        }''', [target, current.uid])
+        print('PRIORS_14 MOVE', json.dumps(moved, ensure_ascii=False), flush=True)
+        self.assertIs(moved['result'], True, moved)
         viewer.wait_for_function('uid => new URLSearchParams(location.search).get("StudyInstanceUIDs") === uid', arg=prior.uid, timeout=30000)
         self.release(held)
         viewer.wait_for_function('uid => (' + self.SHOWN_STUDIES + ')().includes(uid)', arg=prior.uid, timeout=30000)
         viewer.wait_for_timeout(2500)
-        self.assertNotIn(current.uid, viewer.evaluate(self.SHOWN_STUDIES))
+        # After the late answer: only the prior is shown - not the study left, nor any other (one read of the final screen).
+        shown = viewer.evaluate(self.SHOWN_STUDIES)
+        self.assertEqual(set(shown), {prior.uid}, shown)
         self.assertEqual(prior.uid, viewer.evaluate('() => new URLSearchParams(location.search).get("StudyInstanceUIDs")'))
         self.evidence(viewer, 'left-comparison-late-layout')
 
