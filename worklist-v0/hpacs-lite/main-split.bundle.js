@@ -14022,7 +14022,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     // api()의 401, 확정한 Log out, 받아쓰기의 401, 목록의 계정 변경, 이 절의 401(expire) — 은 로그아웃 POST·초안 저장 같은
     // 네트워크 대기 전에 그 목록을 동기로 부른다. auth.js의 session-ended 방송은 그 POST가 끝난 뒤라 기다리지 않는다.
     // 한 영역이 알아챈 계정 변경(다른 계정의 봉투·OWNER_CHANGED)은 같은 목록에 사유 'account-changed'로 알려 두 영역을 함께 잠근다.
-    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true, listed = () => null }) {
+    function mountStudyQuestions({ apiBase, work, transport, current, study, openStudy, allowed, owner, online = () => true }) {
       // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
       const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
       const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
@@ -14249,6 +14249,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         for (const row of rows) {
           if (!row || typeof row !== 'object' || typeof row.id !== 'string' || !ID.test(row.id) || typeof row.studyUid !== 'string'
               || (target === null ? row.studyUid.length > 64 || !STUDY.test(row.studyUid) : !uids.has(row.studyUid))
+              // An Inbox row names the row it opens on (openUid: a study UID, or null when none answers for this reader).
+              || (target === null && !(row.openUid === null || typeof row.openUid === 'string' && row.openUid.length <= 64 && STUDY.test(row.openUid)))
               || !STATES.includes(row.state) || !Number.isSafeInteger(row.revision) || row.revision < 1
               || !Number.isSafeInteger(row.entryCount) || row.entryCount < 1 || !row.author || typeof row.author !== 'object')
             throw new Error(TEXT.malformed);
@@ -14382,7 +14384,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         if (!known || !known.available || uid === null || items === null) return;
         const listed = new Set(items.map(item => item.id));
         for (const [id, item] of known.items) {
-          if (!targetUids(uid).has(item.studyUid) || listed.has(id)) continue;
+          // The server names the row each unread question opens on (openUid); only that row's list shows it.
+          if (item.openUid !== uid || listed.has(id)) continue;
           const li = make('li');
           li.dataset.id = id;
           li.dataset.unreadOutside = '';
@@ -14991,9 +14994,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
        * Inbox의 질문을 연다: 그 검사를 판독 대상으로 고르고(select) 그 검사의 목록을 읽은 뒤 이 스레드를 단건 읽기(#2)로 연다.
        * 스레드는 그 검사의 목록(최신 50)에 있는지와 무관하게 연다(sync·loadList).
        */
-      /** The worklist row an Inbox question opens on: the listed exam that holds its original (a merged exam's report row), else its study. */
+      /** The worklist row an Inbox question opens on: the row the server answers its study on now (openUid), when it is listed. */
       function inboxRow(item) {
-        return listed(item.studyUid) || study(item.studyUid) || null;
+        return typeof item.openUid === 'string' ? study(item.openUid) || null : null;
       }
 
       function openFromInbox(item) {
@@ -15184,8 +15187,6 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     try {
       studyQuestions = mountStudyQuestions({ apiBase: API, work, transport, current: () => selectedUid,
         study: uid => studies.find(s => s.uid === uid),
-        // The listed exam holding an original (a merged exam's row), for an Inbox question on one of its originals.
-        listed: uid => window.KinExamScope && typeof KinExamScope.listedExam === 'function' ? KinExamScope.listedExam(studies, uid) : null,
         openStudy: uid => select(uid),
         // Who may read this row (a signed-in reader or admin); whether the server answers now is online(). A lost connection
         // is not a move: the open thread and what is being written stay, and the reads wait for it.

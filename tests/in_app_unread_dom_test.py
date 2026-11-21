@@ -18,15 +18,19 @@ request) above the revision the person's seen mark records. The screens are the 
   04  an unread thread outside the study's latest 50: a row that opens it (GET questions/:id), and its seen mark.
   05  an unread answer naming another account: the page stops and shows no mark.
   08  a count read that fails keeps the last marks (never a made-up 0); a refused one (403) clears them.
-  09  a merged exam (A holds B): an answer on B's thread is marked on A's row (where the server answers for the exam), not
-      on B's; A's Questions lists B's thread (the server's scope names B), it opens and its seen mark is sent.
+  09  a merged exam (A holds B): an answer on B's thread is marked on A's row (the server's openUid), not on B's; A's
+      Questions lists B's thread (the server's scope names B), it opens and its seen mark is sent.
+  13  merged, then undone: A's row keeps its old merged scope, the server answers B on B; B's new answer and processed
+      request are marked on B's row only.
   Reading screen (the S5-U4b block of main.html as shipped, with unread-badges.js before it)
   06  no study chosen: the band's New Questions 1 after the list poll; it opens the Inbox on Open questions, the row says
       New, Open Study draws the thread and sends its seen mark; the band's mark goes. An admin-only session (no inbox
       view) shows nothing; offline sends nothing.
   10  a thread drawn while its pane is laid out is seen; a follow-up read while the reading pane is not laid out (another
       work tab) sends no seen mark for the new revision.
-  11  the Inbox question of a merged exam's original opens on the listed exam row, its thread opens and is seen.
+  11  the Inbox question of a merged exam's original opens on the row the server names (openUid = the exam's row).
+  14  a split exam: a question on part one (A) opens on A's row even when part two's row, listed first, holds the same
+      original.
   12  the band's count stands after the two notices and steps aside while the move/insert notice stands.
 
 Synthetic data only (SYN-* names): no server, no network, no credentials.
@@ -113,7 +117,8 @@ class UnreadServer:
             return 200, {"owner": owner, "view": view, "available": False, "count": 0, "items": [], "nextCursor": None}
         rows = self.unread_items(caller, view)
         return 200, {"owner": owner, "view": view, "available": True, "count": len(rows),
-                     "items": [{"id": r["id"], "studyUid": r["studyUid"], "revision": r["revision"]} for r in rows[:100]],
+                     "items": [{"id": r["id"], "studyUid": r["studyUid"], "revision": r["revision"],
+                                "openUid": self.questions.open_uid(r["studyUid"])} for r in rows[:100]],
                      "nextCursor": None}
 
     def mark(self, caller, kind, rid, body):
@@ -343,6 +348,7 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
 
     def test_u09_a_merged_exam_is_marked_on_its_report_row(self):
         self.MERGED = True
+        self.server.open_uid = lambda u: q.A if u == q.B else u   # the server answers B's exam on A
         scope = self.merged_scope()
         for row in self.rows:
             if row["uid"] in (q.A, q.B):
@@ -359,6 +365,20 @@ class InAppUnreadDOMTest(q.ClinicianQuestionDOMTest):
         self.wait_until(lambda: len(self.seen_posts) == 1, "the seen write")
         self.assertEqual(f"/api/questions/{thread['id']}/seen", self.seen_posts[0]["path"])
         self.wait_until(lambda: self.summary() is None, "the marks gone")
+
+    def test_u13_after_unmerge_a_new_mark_is_on_the_original_row(self):
+        # Merged, then the merge undone: A's row still carries the scope its kept report was written on (A held B), and
+        # the server answers B on B again (openUid = B). B's new answer and processed request are B's row's alone.
+        for row in self.rows:
+            if row["uid"] == q.A:
+                row["exam"] = {"studies": [q.A, q.B], "scope": copy.deepcopy(self.merged_scope())}
+        self.answered(q.B, "SYN question after the merge was undone")
+        self.unread.add_request(q.B, q.CLINICIAN, "Closed")
+        self.open_home()
+        self.settled_counts(2)
+        self.assertEqual(["New Answers 1", "Processed 1"], self.row_tags(q.B))
+        self.assertEqual([], self.row_tags(q.A), "not the row of the old merged scope")
+        self.assertEqual("New Answers 1 · Processed 1", self.summary())
 
     # ── Reading screen ──
     def test_u06_reading_screen_band_count_opens_the_inbox(self):
@@ -427,6 +447,7 @@ class InAppUnreadReaderDOMTest(InAppUnreadDOMTest):
 
     def test_u11_an_inbox_question_of_a_merged_original_opens_on_the_exam_row(self):
         self.MERGED = True
+        self.server.open_uid = lambda u: q.A if u == q.B else u   # the server answers B's exam on A
         thread = self.server.seed(q.B, q.CLINICIAN, "SYN question on the merged original")
         studies = [{**q.READER_STUDIES[0], "examScope": self.merged_scope()}] + [s for s in q.READER_STUDIES if s["uid"] not in (q.A, q.B)]
         self.reader_with_scope(q.me(q.RADIOLOGIST, ["radiologist"]), studies=studies)
@@ -454,8 +475,31 @@ class InAppUnreadReaderDOMTest(InAppUnreadDOMTest):
         self.page.evaluate("() => { document.querySelector('#report-notice').style.display = 'none'; }")
         expect(button).to_be_visible()
 
+    def test_u14_an_inbox_question_of_a_split_part_opens_on_its_own_row(self):
+        # A split in two: A's row is part one (its UID), X's row the second part of the same original. A question left on
+        # A's row is answered on A (openUid = A) — X's row, listed first, holds the same original too but is not it.
+        x = q.PREFIX + ".59"
+        split = lambda report, part, mode: {"reportUid": report, "groupId": "SYN-GROUP-2", "kind": "split", "part": part,
+                                            "active": True, "generation": "SYN-GEN-2",
+                                            "sources": [{"studyUid": q.A, "series": {"mode": mode, "uids": [q.PREFIX + ".59.1"]}}]}
+        first = {**q.READER_STUDIES[0], "examScope": split(q.A, 0, "exclude")}
+        second = {**q.READER_STUDIES[0], "uid": x, "id": "SYN-P-59", "desc": "SYN CT A part 2", "examScope": split(x, 1, "include")}
+        studies = [second, first] + [s for s in q.READER_STUDIES if s["uid"] != q.A]
+        thread = self.server.seed(q.A, q.CLINICIAN, "SYN question on part one")
+        self.reader_with_scope(q.me(q.RADIOLOGIST, ["radiologist"]), studies=studies)
+        self.page.evaluate("() => studyQuestions.refresh()")
+        expect(self.page.locator("#question-unread")).to_have_text("New Questions 1")
+        self.page.locator("#question-unread").click()
+        row = self.page.locator(f'#question-inbox-list > li[data-id="{thread["id"]}"]')
+        expect(row.locator("button[data-open-study]")).to_be_enabled()
+        row.locator("button[data-open-study]").click()
+        expect(self.page.locator("#question-thread")).to_have_attribute("data-id", thread["id"])
+        self.assertEqual([q.A], self.page.evaluate("() => window.synSelects"), "opened on part one's row, not part two's")
+        self.wait_until(lambda: len(self.seen_posts) == 1, "the seen write")
+        expect(self.page.locator("#question-unread")).to_be_hidden()
+
     # Only this class's own cases; the inherited ones run in InAppUnreadDOMTest.
-    own = ("test_u10_", "test_u11_", "test_u12_")
+    own = ("test_u10_", "test_u11_", "test_u12_", "test_u14_")
 
 
 def load_tests(loader, tests, pattern):

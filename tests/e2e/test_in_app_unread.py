@@ -117,7 +117,9 @@ class InAppUnreadE2E(unittest.TestCase):
             self.assertEqual(body["owner"], self.owner(user))
             self.assertEqual(body["view"], view)
             for item in body["items"]:
-                self.assertEqual(sorted(item), ["id", "revision", "studyUid"], "no body, author or report")
+                self.assertEqual(sorted(item), ["id", "openUid", "revision", "studyUid"], "no body, author or report")
+                # The row the item opens on: a never-grouped study is itself (exam-merge.service.ts examOpenUids).
+                self.assertEqual(item["openUid"], item["studyUid"])
                 items[item["id"]] = (item["studyUid"], item["revision"])
             cursor = body["nextCursor"]
             if cursor is None:

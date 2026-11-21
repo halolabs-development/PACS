@@ -3,7 +3,7 @@ import { Injectable, BadRequestException, ConflictException, ForbiddenException,
 import { createHash } from 'node:crypto';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
-import { prepareExamRead, resolveExamScope, examScopeView, withGroupedExam, reportExamReference } from './exam-merge.service';
+import { prepareExamRead, resolveExamScope, examScopeView, withGroupedExam, reportExamReference, examOpenUids } from './exam-merge.service';
 import { CLINICIAN_ROLE } from './clinician-policy';
 import type { Caller } from './pacs.service';
 
@@ -279,7 +279,8 @@ export class ClinicianQuestionService {
         AND (q."createdAt",q.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
       ORDER BY q."createdAt" DESC,q.id DESC LIMIT 51`;
     const items = rows.slice(0, QUESTION_PAGE), last = items[items.length - 1];
-    return { owner: this.owner(c), items: items.map(row => this.summary(row, row.lastEntryAt)),
+    const open = await examOpenUids(db, this.prisma, this.studyAccess, c, items.map(row => row.studyUid));
+    return { owner: this.owner(c), items: items.map(row => ({ ...this.summary(row, row.lastEntryAt), openUid: open.get(row.studyUid) ?? null })),
       nextCursor: rows.length > QUESTION_PAGE
         ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
   }
@@ -315,8 +316,9 @@ export class ClinicianQuestionService {
       WHERE ${waiting} AND (q."createdAt",q.id)<((${before}::timestamptz AT TIME ZONE 'UTC'),${beforeId}::uuid)
       ORDER BY q."createdAt" DESC,q.id DESC LIMIT ${UNREAD_PAGE + 1}`;
     const items = rows.slice(0, UNREAD_PAGE), last = items[items.length - 1];
+    const open = await examOpenUids(db, this.prisma, this.studyAccess, c, items.map(row => row.studyUid));
     return { ...base, available: true, count: Number(counted[0]?.n ?? 0),
-      items: items.map(row => ({ id: row.id, studyUid: row.studyUid, revision: row.revision })),
+      items: items.map(row => ({ id: row.id, studyUid: row.studyUid, revision: row.revision, openUid: open.get(row.studyUid) ?? null })),
       nextCursor: rows.length > UNREAD_PAGE
         ? Buffer.from(JSON.stringify({ at: iso(last.createdAt), id: last.id, r: policy })).toString('base64url') : null };
   }

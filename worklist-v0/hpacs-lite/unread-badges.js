@@ -29,7 +29,7 @@
 
   function mount({ send, views, owner, allowed = () => true, onChange = () => {}, onAccount = () => {}, pollMs = 0 }) {
     const wanted = views.filter(view => Object.prototype.hasOwnProperty.call(VIEWS, view));
-    // Per view: null = not known yet; { available, count, items: Map(id -> { studyUid, revision }) } once read.
+    // Per view: null = not known yet; { available, count, items: Map(id -> { studyUid, revision, openUid }) } once read.
     const state = new Map(wanted.map(view => [view, null]));
     const failed = new Set();
     // What the screen has drawn now: view -> Map(id -> revision). sent: view -> Map(id -> revision already sent).
@@ -75,8 +75,11 @@
         count = data.count;
         for (const item of data.items) {
           if (!item || typeof item !== 'object' || typeof item.id !== 'string' || !ID.test(item.id) || typeof item.studyUid !== 'string'
-              || !item.studyUid || !Number.isSafeInteger(item.revision) || item.revision < 1) throw new Error('malformed');
-          items.set(item.id, { studyUid: item.studyUid, revision: item.revision });
+              || !item.studyUid || !Number.isSafeInteger(item.revision) || item.revision < 1
+              || !(item.openUid === null || (typeof item.openUid === 'string' && item.openUid))) throw new Error('malformed');
+          // openUid: the listed row the server answers this item's study on now (null: none for this person). A screen
+          // marks and opens that row only.
+          items.set(item.id, { studyUid: item.studyUid, revision: item.revision, openUid: item.openUid });
         }
         cursor = data.nextCursor;
         if (cursor === null) break;

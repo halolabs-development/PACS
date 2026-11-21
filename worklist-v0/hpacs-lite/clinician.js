@@ -716,23 +716,11 @@
     } catch (_) { unread = null; }
   }
 
-  /** The listed row an unread item belongs to: the exam that holds its original study, else the row of that study. */
-  function unreadRow(studyUid) {
-    // A merged or split exam is opened on its report row (the server answers for the exam there): that row holds it.
-    for (const row of studies) {
-      let scope = null;
-      try { scope = row.exam && row.exam.scope && root.KinExamScope ? root.KinExamScope.read(row.exam.scope) : null; } catch (_) { scope = null; }
-      if (scope && scope.reportUid === row.uid && scope.sources.some(source => source.studyUid === studyUid)) return row;
-    }
-    return byUid.get(studyUid) || null;
-  }
-
-  /** Unread items of a view on one listed row (its exam's originals). */
+  /** Unread items of a view on one listed row: those the server says open on that row now (openUid). */
   function unreadOn(view, uid) {
     const known = unread && unread.view(view);
     if (!known || !known.available) return [];
-    return [...known.items].filter(([, item]) => { const row = unreadRow(item.studyUid); return !!row && row.uid === uid; })
-      .map(([id, item]) => ({ id, ...item }));
+    return [...known.items].filter(([, item]) => item.openUid === uid).map(([id, item]) => ({ id, ...item }));
   }
 
   function unreadTag(text, kind) {

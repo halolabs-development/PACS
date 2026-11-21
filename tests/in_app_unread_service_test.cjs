@@ -121,3 +121,102 @@ test('a seen mark takes exactly the account and a positive revision, checked bef
   await assert.rejects(w.questions.seen(id, TECH, { expectedOwner: owner(TECH), revision: 1 }), code(403, 'QUESTION_ROLE_REQUIRED'));
   assert.deepEqual(w.statements, []);
 });
+
+/* ── openUid: the row each item opens on, decided by the server (exam-merge.service.ts examOpenUids) ──
+ * Over an in-memory exam store and the real resolveExamScope: a never-grouped study is itself, a split part its own
+ * logical UID, a merged original its exam's base, an original of an undone merge itself again; a study whose exam the
+ * caller may not read now (access, another institution, a retired split part) names no row. */
+const { NotFoundException } = require('/app/node_modules/@nestjs/common');
+const { examOpenUids } = require('/app/dist/exam-merge.service');
+const A = '2.25.801', B = '2.25.802', X = '2.25.803', P = '2.25.804', O = '2.25.805';
+const G_MERGE = '00000000-0000-4000-8000-00000000b001', G_SPLIT = '00000000-0000-4000-8000-00000000b002';
+function match(row, where) {
+  if (!where) return true;
+  return Object.entries(where).every(([k, v]) => {
+    if (k === 'OR') return v.some(x => match(row, x));
+    if (v && typeof v === 'object' && !Array.isArray(v) && 'in' in v) return v.in.includes(row[k]);
+    return (row[k] ?? null) === v;
+  });
+}
+const pick = (row, select) => select ? Object.fromEntries(Object.keys(select).map(k => [k, row[k]])) : { ...row };
+function exams({ groups = [], members = [], denied = [], states = {} } = {}) {
+  const state = uid => ({ uid, institutionId: INST, teleInstitutionId: null, rs: 'W', draftEpoch: null, ...(states[uid] || {}) });
+  const rows = new Map([A, B, X, P, O].map(uid => [uid, state(uid)]));
+  const db = {
+    studyState: { findUnique: async ({ where }) => rows.get(where.uid) ?? null,
+      findMany: async ({ where, select }) => [...rows.values()].filter(s => match(s, where)).map(s => pick(s, select)) },
+    studyGroup: { findMany: async ({ where, select }) => groups.filter(g => match(g, where)).map(g => pick(g, select)) },
+    studyGroupMember: { findMany: async ({ where, select }) => members.filter(m => match(m, where)).map(m => pick(m, select)) },
+  };
+  const prepared = [];
+  const access = { prepare: async (_c, uids = []) => { prepared.push(...uids); }, prepareSourceIdentity: async () => {},
+    require: async (_c, uids) => { if (uids.some(uid => denied.includes(uid))) throw new NotFoundException('SYN not found'); },
+    allowed: async (_c, uids) => new Set(uids.filter(uid => !denied.includes(uid))),
+    assertUnsplitSource: () => ({ sourcePatientId: 'SYN-P1', sourceInstitution: INST }),
+    assertIdentifiedSource: () => ({ sourcePatientId: 'SYN-P1', sourceInstitution: INST }) };
+  return { db, access, prepared, open: uids => examOpenUids(db, db, access, RAD, uids) };
+}
+const merge = (dissolvedAt = null) => ({
+  groups: [{ id: G_MERGE, institutionId: INST, kind: 'merge', baseUid: A, dissolvedAt }],
+  members: [A, B].map((uid, part) => ({ groupId: G_MERGE, logicalUid: uid, studyUid: uid, part, seriesUids: [] })) });
+const split = (dissolvedAt = null) => ({
+  groups: [{ id: G_SPLIT, institutionId: INST, kind: 'split', baseUid: A, dissolvedAt }],
+  members: [{ groupId: G_SPLIT, logicalUid: A, studyUid: A, part: 0, seriesUids: [] },
+    { groupId: G_SPLIT, logicalUid: X, studyUid: A, part: 1, seriesUids: ['2.25.803.1'] }] });
+const asObject = map => Object.fromEntries([...map].sort());
+
+test('openUid: a never-grouped study is itself, read without an exam lookup per study', async () => {
+  const e = exams();
+  assert.deepEqual(asObject(await e.open([P, O, P])), { [O]: O, [P]: P });
+  assert.deepEqual(e.prepared, [], 'no source observation for a study that was never grouped');
+});
+
+test('openUid: a split exam - a question on part one opens part one (A), one on part two its own row', async () => {
+  const e = exams(split());
+  assert.deepEqual(asObject(await e.open([A, X])), { [A]: A, [X]: X });
+});
+
+test('openUid: merged then undone - the original answers itself again, the base itself', async () => {
+  const e = exams(merge('2026-11-01T00:00:00.000Z'));
+  assert.deepEqual(asObject(await e.open([A, B])), { [A]: A, [B]: B });
+});
+
+test('openUid: merged - an original left on B opens the exam on its base A (the merged answer of B)', async () => {
+  const e = exams(merge());
+  assert.deepEqual(asObject(await e.open([B])), { [B]: A });
+  assert.deepEqual(asObject(await e.open([A, B])), { [A]: A, [B]: A });
+});
+
+test('openUid: no row the caller may not read - access to the exam, another institution, a retired split part', async () => {
+  assert.deepEqual(asObject(await exams({ ...merge(), denied: [A] }).open([B, P])), { [P]: P }, 'the merged exam is not readable whole');
+  assert.deepEqual(asObject(await exams({ ...merge(), states: { [A]: { institutionId: 'SYN-OTHER' } } }).open([B])), {}, 'base owned elsewhere');
+  assert.deepEqual(asObject(await exams({ ...split(), denied: [A] }).open([A, X])), {}, 'the split original is not readable');
+  assert.deepEqual(asObject(await exams(split('2026-11-01T00:00:00.000Z')).open([X])), {}, 'a retired split part answers no row');
+});
+
+test('openUid rides on GET unread (both records) and on the Inbox list, by the same rule', async () => {
+  const e = exams(merge());
+  const qid = '00000000-0000-4000-8000-000000000011', rid = '00000000-0000-4000-8000-000000000012';
+  const at = new Date('2026-11-01T00:00:00.000Z');
+  const thread = { id: qid, studyUid: B, state: 'Open', revision: 1, authorActor: 'syn', authorName: 'SYN', entryCount: 1,
+    createdAt: at, updatedAt: at, lastEntryAt: at };
+  e.db.$queryRaw = async strings => {
+    const text = strings.join('?');
+    if (text.includes('count(*)')) return [{ n: 1 }];
+    if (text.includes('FROM "StudyImageRequest" r')) return [{ id: rid, studyUid: B, revision: 3, createdAt: at }];
+    return [thread];
+  };
+  e.access.snapshot = async () => ({ policy: { restricted: false }, revision: 7 });
+  const questions = new ClinicianQuestionService(e.db, e.access), requests = new ImageRequestService(e.db, e.access);
+  const inbox = await questions.unread(RAD, { view: 'question-inbox' });
+  assert.deepEqual(inbox.items, [{ id: qid, studyUid: B, revision: 1, openUid: A }]);
+  const listed = await questions.list(RAD, { view: 'inbox' });
+  assert.deepEqual(listed.items.map(item => [item.id, item.studyUid, item.openUid]), [[qid, B, A]]);
+  const mine = await requests.unread(CLIN, { view: 'image-request-mine' });
+  assert.deepEqual(mine.items, [{ id: rid, studyUid: B, revision: 3, openUid: A }]);
+  const denied = exams({ ...merge(), denied: [A] });
+  denied.db.$queryRaw = e.db.$queryRaw;
+  denied.access.snapshot = e.access.snapshot;
+  const none = await new ClinicianQuestionService(denied.db, denied.access).unread(RAD, { view: 'question-inbox' });
+  assert.deepEqual(none.items, [{ id: qid, studyUid: B, revision: 1, openUid: null }], 'no row the reader may not open');
+});
