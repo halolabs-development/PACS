@@ -27,7 +27,8 @@
           <tr><td>SS / Mt</td><td><span>${esc(s.ss)}</span> / <span>${s.matched === "M" ? "Matched" : "Unmatched"}</span></td></tr>
           <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
           <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
-        </table>` : "No clinical information provided.";
+        </table>` : "";
+      if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
       renderObservation();

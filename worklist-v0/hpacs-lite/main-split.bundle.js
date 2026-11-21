@@ -1220,6 +1220,10 @@
           ["", ...c.f].map(o => `<option value="${esc(o)}"${(fval[c.k] ?? "") === o ? " selected" : ""}>${esc(o)}</option>`).join("") +
           `</select></th>`;
       }).join("");
+      for (const field of $("#filterrow").querySelectorAll("[data-f], [data-date-preset], [data-date-from], [data-date-to]")) {
+        const c = shownColumns().find(column => column.k === (field.dataset.f ?? "date"));
+        if (c) kinWrite(field, kinSay(field.hasAttribute("data-date-from") ? "{0} From" : field.hasAttribute("data-date-to") ? "{0} To" : "{0} Filter", c.t), "aria-label");
+      }
       if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" >Clear</button>');
       const clear = $("#filterrow .col-clear");
       if (clear) {
@@ -1431,7 +1435,9 @@
       kinWrite($('#related-parts-status'), relatedParts.note() || (s?kinSay("{t0}부위 확인 {1}/{n2} · 미조회·실패는 Unverified", relatedParts.busy()?kinSay('조회 중 · '):'', known, relatedCandidates().length) : ''));
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
-      const options = [new Option("All Modalities", ""), new Option("Unspecified", JSON.stringify("")),
+      // The two choices the page names follow the screen language; a Modality value is shown as it is.
+      const named = new Map([["", kinSay("All Modalities")], [JSON.stringify(""), kinSay("Unspecified")]]);
+      const options = [...[...named].map(([value, words]) => kinWrite(new Option("", value), words)),
         ...tokens.map(token => new Option(token, JSON.stringify(token)))];
       // 마지막 일치 항목이 사라져도 사용자가 고른 조건을 몰래 전체로 넓히지 않는다.
       if (relatedModality && !options.some(option => option.value === relatedModality))
@@ -1439,7 +1445,7 @@
       modality.replaceChildren(...options);
       modality.value = relatedModality;
       modality.disabled = !s;
-      modality.title = modality.selectedOptions[0]?.textContent || "";
+      kinWrite(modality, named.get(modality.value) ?? (modality.selectedOptions[0]?.textContent || ""), "title");
       if (relatedModality) {
         const token = JSON.parse(relatedModality);
         rel = rel.filter(x => token ? relatedModalities(x).includes(token) : !relatedModalities(x).length);
@@ -2107,7 +2113,9 @@
           const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
           return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
-        || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
+        || `<tr><td class="empty" colspan="${shown.length}"></td></tr>`;
+      const emptyCell = $("#rows td.empty");
+      if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
       syncFilterChoices();
       syncViewingRows();
@@ -2137,7 +2145,7 @@
       else if (compound?.rules.length) {
         active.push('복합 ' + KinCompoundFilter.describe(compound, cols));
       }
-      $("#filterlist").textContent = (appliedSearch?.pending ? "Draft Filter (not applied) : " : "Filter : ") + (active.join(", ") || "-");
+      kinWrite($("#filterlist"), kinSay("{t0} {1}", { t: kinSay(appliedSearch?.pending ? "Draft Filter (not applied) :" : "Filter :") }, active.join(", ") || "-"));
 
       const n = (k, v) => list.filter(s => s[k] === v).length;
       if (mode === "Radiology") {
@@ -2493,20 +2501,20 @@
       try {
         if (bytes !== null) {
           const at = new Date().toISOString();
-          view = { state: "observed", text: `Storage ${size(bytes)} (Server-wide)`,
+          view = { state: "observed", text: storageSay("Storage {0} (Server-wide)", size(bytes)),
             title: `Orthanc 서버 전체(모든 기관)의 디스크 사용량입니다. 이 기관 몫이 아닙니다. 원천: Orthanc GET /statistics TotalDiskSize(원천 값 ${bytes}바이트). `
               + `관측 시각: ${KinStudyArrivals.formatTime(at)}(이 화면이 답을 받은 시각). 전체 용량은 원천이 없어 사용률(%)을 보이지 않습니다.` };
           storageLast = { bytes, at };
         } else {
-          view = { state: "unobservable", text: "Storage Unobservable",
+          view = { state: "unobservable", text: storageSay("Storage Unobservable"),
           title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
             ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
-        view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
+        view = { state: "unobservable", text: storageSay("Storage Unobservable"), title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
       }
       box.dataset.state = view.state;
-      box.textContent = view.text;
+      kinWrite(box, view.text);
       kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {
@@ -3205,7 +3213,8 @@
           <tr><td>SS / Mt</td><td><span>${esc(s.ss)}</span> / <span>${s.matched === "M" ? "Matched" : "Unmatched"}</span></td></tr>
           <tr><td>Ward</td><td translate="no">${esc(s.ward) || "-"}</td></tr>
           <tr><td>Study UID</td><td translate="no">${esc(s.uid)}</td></tr>
-        </table>` : "No clinical information provided.";
+        </table>` : "";
+      if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
       renderStudyIdentity();
       renderObservation();
@@ -16009,8 +16018,9 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       templates = Array.isArray(b.templates) ? b.templates : [];
       try { localStorage.removeItem("kin-filters"); localStorage.removeItem("kin-templates"); } catch (e) {}
       renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> `;
+      $("#dbstat").append(kinWrite(document.createTextNode(""), kinSay("DB Connected")));
+      kinWrite($("#dbstat"), kinSay("상태·판독문이 서버({0})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다", API), "title");
       // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
       // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
       // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.

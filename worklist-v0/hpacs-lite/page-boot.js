@@ -101,8 +101,9 @@
       templates = Array.isArray(b.templates) ? b.templates : [];
       try { localStorage.removeItem("kin-filters"); localStorage.removeItem("kin-templates"); } catch (e) {}
       renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> `;
+      $("#dbstat").append(kinWrite(document.createTextNode(""), kinSay("DB Connected")));
+      kinWrite($("#dbstat"), kinSay("상태·판독문이 서버({0})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다", API), "title");
       // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
       // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
       // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.

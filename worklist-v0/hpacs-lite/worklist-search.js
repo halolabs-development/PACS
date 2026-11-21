@@ -26,6 +26,10 @@
     const state=create(snapshot(),saved),container=document.createElement('span');container.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap';
     container.innerHTML='<label>Search Mode <select class="chip" data-search-mode><option value="automatic">Automatic</option><option value="manual">Manual</option></select></label><button class="chip" type="button" data-search-apply>Search</button><label><input type="checkbox" data-search-clear> Clear Results on Clear</label><small data-search-status role="status"></small>';
     host.append(container);const mode=container.querySelector('select'),clear=container.querySelector('input'),status=container.querySelector('[role=status]');
+    // The line's own words follow the screen language (the page's translator, when it is loaded).
+    const language=root.KinLanguage;
+    if(language)for(const [node,words] of [[mode.parentElement.firstChild,'Search Mode '],[mode.options[0],'Automatic'],[mode.options[1],'Manual'],
+      [container.querySelector('button'),'Search'],[clear.nextSibling,' Clear Results on Clear']])language.write(node,language.say(words));
     mode.value=state.preferences().mode;clear.checked=state.preferences().clearResults;
     const lock=()=>container.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);if(!key)lock();
     const live=()=>!ended&&owner()===bound;

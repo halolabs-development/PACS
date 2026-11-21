@@ -765,6 +765,42 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertIsNone(page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
         self.assertEqual([], self.site.appearance_writes)
 
+    def test_words_the_worklist_writes_after_start_follow_both_languages(self):
+        """The words the page writes after its start (connection line, filter summary and filter row, folders, search
+        line, related exam filter, storage, empty list) follow the chosen language, also when written again later."""
+        self.boot()
+        page = self.page
+        name = page.locator('#filterrow input[data-f="name"]')
+        folders = page.locator("#worklist-folders nav")
+        texts = {"#dbstat": ("DB Connected", "DB 연결됨"), "#filterlist": ("Filter : -", "필터 : -"),
+                 "#storage": ("Storage Unobservable", "저장량 관측 불가"),
+                 "#worklist-folders [id$='-shortcut']": ("My Shortcuts", "내 바로가기"),
+                 "#worklist-folders [id$='-modality']": ("Modality", "장비"),
+                 "#worklist-folders [id$='-search']": ("Saved Searches", "저장 검색"),
+                 "#related-modality option[value='']": ("All Modalities", "모든 장비")}
+        line = {"en": ("Search Mode", "Search", "Clear Results on Clear"), "ko": ("검색 방식", "검색", "지우기 시 결과도 비우기")}
+        for lang in ("ko", "en", "ko"):
+            self.apply(lang)
+            # Written again after the choice: the list is drawn anew, the connection line comes back after a refresh.
+            page.locator("#m-refresh").click()
+            expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
+            for selector, pair in texts.items():
+                expect(page.locator(selector).first).to_contain_text(pair[lang == "ko"])
+            expect(folders).to_have_attribute("aria-label", "Folders" if lang == "en" else "폴더")
+            expect(page.locator("#worklist-folders li > button").first).to_contain_text("All Studies (" if lang == "en" else "전체 검사 (")
+            expect(name).to_have_attribute("aria-label", "Name Filter" if lang == "en" else "Name 필터")
+            expect(page.locator("#related-modality")).to_have_attribute("title", texts["#related-modality option[value='']"][lang == "ko"])
+            bar = page.locator("#toolbar-filters")
+            for word in line[lang]:
+                expect(bar).to_contain_text(word)
+            if lang == "ko":
+                self.assertEqual(0, page.locator("#filterrow [aria-label$=' Filter']").count())
+                expect(bar).not_to_contain_text("Search Mode")
+            name.fill("SYN-NO-SUCH-PATIENT")
+            expect(page.locator("#rows td.empty")).to_have_text("No records found" if lang == "en" else "검색 결과가 없습니다")
+            name.fill("")
+            expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
+
 
 if __name__ == "__main__":
     unittest.main()

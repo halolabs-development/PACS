@@ -621,7 +621,9 @@
           const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
           return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
-        || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
+        || `<tr><td class="empty" colspan="${shown.length}"></td></tr>`;
+      const emptyCell = $("#rows td.empty");
+      if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
       syncFilterChoices();
       syncViewingRows();
@@ -651,7 +653,7 @@
       else if (compound?.rules.length) {
         active.push('복합 ' + KinCompoundFilter.describe(compound, cols));
       }
-      $("#filterlist").textContent = (appliedSearch?.pending ? "Draft Filter (not applied) : " : "Filter : ") + (active.join(", ") || "-");
+      kinWrite($("#filterlist"), kinSay("{t0} {1}", { t: kinSay(appliedSearch?.pending ? "Draft Filter (not applied) :" : "Filter :") }, active.join(", ") || "-"));
 
       const n = (k, v) => list.filter(s => s[k] === v).length;
       if (mode === "Radiology") {
@@ -1007,20 +1009,20 @@
       try {
         if (bytes !== null) {
           const at = new Date().toISOString();
-          view = { state: "observed", text: `Storage ${size(bytes)} (Server-wide)`,
+          view = { state: "observed", text: storageSay("Storage {0} (Server-wide)", size(bytes)),
             title: `Orthanc 서버 전체(모든 기관)의 디스크 사용량입니다. 이 기관 몫이 아닙니다. 원천: Orthanc GET /statistics TotalDiskSize(원천 값 ${bytes}바이트). `
               + `관측 시각: ${KinStudyArrivals.formatTime(at)}(이 화면이 답을 받은 시각). 전체 용량은 원천이 없어 사용률(%)을 보이지 않습니다.` };
           storageLast = { bytes, at };
         } else {
-          view = { state: "unobservable", text: "Storage Unobservable",
+          view = { state: "unobservable", text: storageSay("Storage Unobservable"),
           title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
             ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
-        view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
+        view = { state: "unobservable", text: storageSay("Storage Unobservable"), title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
       }
       box.dataset.state = view.state;
-      box.textContent = view.text;
+      kinWrite(box, view.text);
       kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {

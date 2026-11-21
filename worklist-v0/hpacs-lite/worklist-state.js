@@ -57,7 +57,9 @@
       kinWrite($('#related-parts-status'), relatedParts.note() || (s?kinSay("{t0}부위 확인 {1}/{n2} · 미조회·실패는 Unverified", relatedParts.busy()?kinSay('조회 중 · '):'', known, relatedCandidates().length) : ''));
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
-      const options = [new Option("All Modalities", ""), new Option("Unspecified", JSON.stringify("")),
+      // The two choices the page names follow the screen language; a Modality value is shown as it is.
+      const named = new Map([["", kinSay("All Modalities")], [JSON.stringify(""), kinSay("Unspecified")]]);
+      const options = [...[...named].map(([value, words]) => kinWrite(new Option("", value), words)),
         ...tokens.map(token => new Option(token, JSON.stringify(token)))];
       // 마지막 일치 항목이 사라져도 사용자가 고른 조건을 몰래 전체로 넓히지 않는다.
       if (relatedModality && !options.some(option => option.value === relatedModality))
@@ -65,7 +67,7 @@
       modality.replaceChildren(...options);
       modality.value = relatedModality;
       modality.disabled = !s;
-      modality.title = modality.selectedOptions[0]?.textContent || "";
+      kinWrite(modality, named.get(modality.value) ?? (modality.selectedOptions[0]?.textContent || ""), "title");
       if (relatedModality) {
         const token = JSON.parse(relatedModality);
         rel = rel.filter(x => token ? relatedModalities(x).includes(token) : !relatedModalities(x).length);
