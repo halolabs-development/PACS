@@ -430,7 +430,7 @@ export class OrthancService {
 
   /** One Study resource's GET /studies/{id}/statistics answer as Orthanc gives it (the caller reads DiskSize). */
   studyStatistics(id: string, signal?: AbortSignal): Promise<unknown> {
-    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(id)) return Promise.reject(new ServiceUnavailableException('원본 검사 식별이 올바르지 않습니다'));
+    if (!/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(id)) return Promise.reject(new ServiceUnavailableException('원본 검사 식별이 없거나 올바르지 않습니다'));
     return this.get(`/studies/${id}/statistics`, undefined, signal);
   }
 
