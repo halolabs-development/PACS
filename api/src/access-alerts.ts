@@ -9,20 +9,23 @@
  *
  * The threshold is a site setting, KIN_ACCESS_ALERT_THRESHOLD = "<studies>/<minutes>". No requirement or
  * product measurement gives a number; the default 50/10 keeps a reader who opens a study with a few comparisons
- * from raising an alert. Unset or empty uses the default; any other malformed value refuses the alert read.
+ * from raising an alert.
  */
 export interface AlertThreshold { studies: number; minutes: number }
 export const ALERT_THRESHOLD_DEFAULT: AlertThreshold = Object.freeze({ studies: 50, minutes: 10 });
 /** Above this many counted rows the period is refused rather than judged on part of it. */
 export const ALERT_ROW_CAP = 200000;
 
+/**
+ * Unset is the default. docker-compose.yml passes an unset KIN_ACCESS_ALERT_THRESHOLD as the empty string
+ * (`${KIN_ACCESS_ALERT_THRESHOLD:-}`), so the empty string is unset too. Anything else must be exactly two positive
+ * whole numbers; otherwise null and the alert read is refused, never answered under a guessed threshold.
+ */
 export function alertThreshold(raw: string | undefined): AlertThreshold | null {
-  if (raw === undefined || raw.trim() === '') return ALERT_THRESHOLD_DEFAULT;
-  const match = /^([1-9]\d{0,5})\/([1-9]\d{0,4})$/.exec(raw.trim());
+  if (raw === undefined || raw === '') return ALERT_THRESHOLD_DEFAULT;
+  const match = /^([1-9]\d{0,5})\/([1-9]\d{0,5})$/.exec(raw);
   if (!match) return null;
-  const studies = Number(match[1]), minutes = Number(match[2]);
-  if (minutes > 7 * 24 * 60) return null;
-  return Object.freeze({ studies, minutes });
+  return Object.freeze({ studies: Number(match[1]), minutes: Number(match[2]) });
 }
 
 export interface AlertRow {

@@ -18,9 +18,17 @@ ROOT = Path(__file__).resolve().parents[1]
 FIRST, LAST = '2026-11-01T09:00:00.250Z', '2026-11-01T09:09:59.750Z'
 
 
-def alert(identity='SYN-DOCTOR'):
+def alert(identity='SYN-DOCTOR', first=FIRST, last=LAST):
     return dict(userId=dict(status='known', value=dict(id=identity, issuer='synthetic', subject='SYN-SUB')),
-                firstAt=FIRST, lastAt=LAST, studies=52, events=60, evidenceEntryId='SYN-ENTRY')
+                firstAt=first, lastAt=last, studies=52, events=60, evidenceEntryId='SYN-ENTRY')
+
+
+def review_row(event_id, at):
+    known = lambda value: dict(status='known', value=value)
+    return dict(eventId=event_id, occurredAt=at, recordedAt=at, statutoryAct='x', userId=known(dict(id='SYN-DOCTOR', issuer='s', subject='s')),
+                rolesAtTime=known(['radiologist']), executor='member', actingInstitution=known('SYN-A'), managingInstitution=known('SYN-A'),
+                trustedProxyIp=dict(status='unresolved', reason='not-observed'), targets=[], surface='GET image', action='provide-prepared',
+                result='prepared', cause='user-view', context=None)
 
 
 class AccessAlertsPage(unittest.TestCase):
@@ -42,6 +50,7 @@ class AccessAlertsPage(unittest.TestCase):
         self.context = self.browser.new_context(viewport={'width': 1440, 'height': 1000})
         self.page = self.context.new_page()
         self.alert_replies, self.alert_calls, self.review_calls, self.errors = [], [], [], []
+        self.review_replies, self.review_held = [], []
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.route('**/api/**', self.api)
         self.page.goto(f'http://127.0.0.1:{self.server.server_port}/worklist-v0/hpacs-lite/admin.html')
@@ -68,7 +77,13 @@ class AccessAlertsPage(unittest.TestCase):
             route.fulfill(status=status, json=body)
         elif url.path == '/api/admin/audit' and query.get('report') == ['access']:
             self.review_calls.append(query)
-            route.fulfill(json=dict(institutionId='SYN-A', **{'from': query['from'][0]}, until=query['until'][0], rows=[], next=None))
+            reply = self.review_replies.pop(0) if self.review_replies else (200, [])
+            if reply == 'hold':
+                self.review_held.append((route, query))
+                return
+            status, rows = reply
+            route.fulfill(status=status, json=dict(institutionId='SYN-A', **{'from': query['from'][0]}, until=query['until'][0],
+                                                    rows=rows, next=None) if status == 200 else dict(message='refused'))
         elif url.path == '/api/auth/logout': route.fulfill(status=204)
         else: route.fulfill(status=404, json={})
 
@@ -143,6 +158,43 @@ class AccessAlertsPage(unittest.TestCase):
         self.page.get_by_role('button', name='Check Alerts', exact=True).click()
         self.assertEqual(len(self.alert_calls), 1)
         self.assertIn('종료 시각', self.page.locator('#access-alerts-message').inner_text())
+
+    def test_a_second_review_while_the_first_is_loading_shows_only_the_second_span(self):
+        day2 = ('2026-11-02T10:00:00.000Z', '2026-11-02T10:05:00.000Z')
+        self.check(body=dict(alerts=[alert(), alert('SYN-OTHER', *day2)]))
+        buttons = self.page.locator('#access-alerts-rows').get_by_role('button', name='Review', exact=True)
+        self.review_replies.append('hold')
+        buttons.nth(0).click()
+        self.page.wait_for_function("document.getElementById('access-review-state').textContent === 'Loading'")
+        self.review_replies.append((200, [review_row('SYN-DAY-2', day2[0])]))
+        buttons.nth(1).click()
+        self.page.wait_for_function("document.getElementById('access-review-state').textContent === 'Loaded'")
+        route, query = self.review_held.pop()
+        route.fulfill(json=dict(institutionId='SYN-A', **{'from': query['from'][0]}, until=query['until'][0],
+                                rows=[review_row('SYN-DAY-1', FIRST)], next=None))
+        self.page.wait_for_timeout(300)
+        self.assertEqual([c['from'] for c in self.review_calls], [['2026-11-01T09:00:00.000Z'], ['2026-11-02T10:00:00.000Z']])
+        text = self.page.locator('#access-review-rows').inner_text()
+        self.assertIn('SYN-DAY-2', text)
+        self.assertNotIn('SYN-DAY-1', text)
+        self.assertEqual(self.page.locator('#access-review-from').input_value(), '2026-11-02T10:00')
+
+    def test_a_refused_ledger_read_on_either_panel_clears_both(self):
+        self.check(body=dict(alerts=[alert()]))
+        self.review_replies.append((403, []))
+        self.page.locator('#access-alerts-rows').get_by_role('button', name='Review', exact=True).click()
+        self.page.wait_for_function("document.getElementById('access-review-state').textContent === 'Query Failed'")
+        self.assertEqual(self.page.locator('#access-alerts-rows tr').count(), 0)
+        self.assertTrue(self.page.locator('#access-alerts-wrap').is_hidden())
+        self.assertEqual(self.state(), 'Not Loaded')
+        self.page.get_by_label('From (UTC)', exact=True).fill('2026-11-01T00:00')
+        self.page.get_by_label('Until (UTC, exclusive)', exact=True).fill('2026-11-02T00:00')
+        self.review_replies.append((200, [review_row('SYN-SHOWN', FIRST)]))
+        self.page.get_by_role('button', name='Load Review', exact=True).click()
+        self.page.wait_for_function("document.getElementById('access-review-state').textContent === 'Loaded'")
+        self.check(403, dict(message='forbidden'))
+        self.assertEqual(self.page.locator('#access-review-rows tr').count(), 0)
+        self.assertEqual(self.page.locator('#access-review-state').inner_text(), 'Not Loaded')
 
 
 if __name__ == '__main__':

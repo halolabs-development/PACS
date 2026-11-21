@@ -18,11 +18,12 @@ const studies = (account, count, step, from = 0, prefix = 'S') =>
   Array.from({ length: count }, (_, i) => row(account, `${prefix}${i}`, from + i * step));
 const small = { studies: 3, minutes: 10 };
 
-test('threshold: unset or empty is the default, a valid value is used, anything else refuses', () => {
+test('threshold: unset (the empty string under compose) is the default, two positive numbers are used, anything else refuses', () => {
   assert.deepEqual(A.alertThreshold(undefined), { studies: 50, minutes: 10 });
   assert.deepEqual(A.alertThreshold(''), { studies: 50, minutes: 10 });
-  assert.deepEqual(A.alertThreshold(' 20/5 '), { studies: 20, minutes: 5 });
-  for (const bad of ['50', '0/10', '50/0', '-1/10', '50/10m', 'a/b', '1.5/10', '50/20000', '50 / 10'])
+  assert.deepEqual(A.alertThreshold('20/5'), { studies: 20, minutes: 5 });
+  assert.deepEqual(A.alertThreshold('15/10081'), { studies: 15, minutes: 10081 });
+  for (const bad of [' ', ' 20/5 ', '50', '0/10', '50/0', '-1/10', '50/10m', 'a/b', '1.5/10', '50 / 10'])
     assert.equal(A.alertThreshold(bad), null, bad);
 });
 

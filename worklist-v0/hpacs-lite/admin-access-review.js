@@ -80,6 +80,7 @@
       if (current !== sequence || KinConsoleSession.ended()) return;
       if (error.status === 401 || error.status === 403) {
         el('rows').replaceChildren(); el('wrap').hidden = true; el('scope').textContent = ''; next = null; count = 0;
+        document.dispatchEvent(new CustomEvent('kin-access-ledger-refused', { detail: 'access-review' }));
       }
       el('state').textContent = 'Query Failed'; el('wrap').classList.add('stale');
       message(count ? '이어보기에 실패했습니다. 표시된 기록은 이전에 조회한 일부입니다. 다시 조회하세요.' : '접속기록 조회에 실패했습니다. 기간과 권한을 확인하고 다시 조회하세요.', true);
@@ -90,6 +91,8 @@
   el('form').addEventListener('submit', event => { event.preventDefault(); load(false); });
   el('more').addEventListener('click', () => load(true));
   for (const name of ['from', 'until', 'filter']) el(name).addEventListener('input', clear);
+  // Access Alerts was refused the same ledger: nothing read before stays on screen here either.
+  document.addEventListener('kin-access-ledger-refused', event => { if (event.detail !== 'access-review') clear(); });
   KinConsoleSession.onEnd(() => { ready = false; clear(); });
   KinAuth.init().then(session => {
     if (KinConsoleSession.ended()) return;
@@ -134,13 +137,14 @@
     if (title) td.title = title;
     return td;
   }
-  // Access Review's own inputs and Load Review: the alert's span, to the second, end exclusive.
+  // Access Review's own inputs and Load Review: the alert's span, to the second, end exclusive. The input event is\n  // the one a person's edit sends: Access Review clears and drops an answer still on its way for an earlier span.
   function review(alert) {
     const first = Math.floor(Date.parse(alert.firstAt) / 1000) * 1000;
     const after = Math.floor(Date.parse(alert.lastAt) / 1000) * 1000 + 1000;
     document.getElementById('access-review-from').value = local(first);
     document.getElementById('access-review-until').value = local(after);
     document.getElementById('access-review-filter').value = 'all';
+    document.getElementById('access-review-from').dispatchEvent(new Event('input'));
     document.getElementById('access-review-form').requestSubmit();
     document.getElementById('access-review').scrollIntoView({ block: 'start' });
   }
@@ -198,6 +202,8 @@
     } catch (error) {
       if (current !== sequence || KinConsoleSession.ended()) return;
       el('rows').replaceChildren(); el('wrap').hidden = true; el('scope').textContent = '';
+      if (error.status === 401 || error.status === 403)
+        document.dispatchEvent(new CustomEvent('kin-access-ledger-refused', { detail: 'access-alerts' }));
       state(kinSay('Check Failed'));
       message(error.detail ? kinSay('경보 확인에 실패했습니다: {e0}', error.detail)
         : kinSay('경보 확인에 실패했습니다. 기간과 권한을 확인하고 다시 확인하세요.'), true);
@@ -208,6 +214,8 @@
   lastDay();
   el('form').addEventListener('submit', event => { event.preventDefault(); load(); });
   for (const name of ['from', 'until']) el(name).addEventListener('input', () => { edited = true; clear(); });
+  // Access Review was refused the same ledger: the alerts shown before (accounts, times) do not stay.
+  document.addEventListener('kin-access-ledger-refused', event => { if (event.detail !== 'access-alerts') clear(); });
   KinConsoleSession.onEnd(() => { ready = false; clear(); });
   KinAuth.init().then(session => {
     if (KinConsoleSession.ended()) return;
