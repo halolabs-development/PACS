@@ -803,7 +803,8 @@
     try { if (popup && !popup.closed && popup.location.href === 'about:blank') popup.close(); } catch (_) {}
   }
 
-  function openViewer(otherUid, image = null, held = null, asked = null) {
+  // `part`: the stored report part of the comparison row an image belongs to (imageExam), opened beside as that version.
+  function openViewer(otherUid, image = null, held = null, asked = null, part = null) {
     if (leaving || selected === null) { dropWindow(held); return; }
     const row = byUid.get(selected);
     if (!row) { dropWindow(held); return; }
@@ -820,14 +821,15 @@
     // own stored scope (that read already answered for it).
     const lost=(selectedReportTarget&&scope?null:root.KinExamScope.unavailable(row))||(other?root.KinExamScope.unavailable(other):null);
     if(lost){refuse(lost.message);return;}
-    if(![target?.uid||row.uid,...(other?[other.uid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){refuse(TEXT.viewerUid);return;}
+    const priorUid=part&&other?part.uid:other?.uid,priorVersion=part&&other?part.version:other?.report?.final?other.report.version:null;
+    if(![target?.uid||row.uid,...(other?[other.uid,priorUid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){refuse(TEXT.viewerUid);return;}
     const expectedSession=KinAuth.sessionId();
     if(!expectedSession){refuse('세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.');return;}
     let input;
     try {
       if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
       input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
-        other&&(other.report?.scope||other.exam?.scope||other),target?.version??null,other?.report?.final?other.report.version:null);
+        other&&(part?part.scope:other.report?.scope||other.exam?.scope||other),target?.version??null,priorVersion);
     } catch(error) { refuse(describe(error));return; }
     // a cited line took the window at its click (its lookups came after); the address is then put in like a scoped one.
     let popup=held;if(!popup){try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}}
@@ -837,10 +839,9 @@
     const apiRead=(_method,path)=>request(path);
     (async()=>{
       try {
-        const priorVersion=other?.report?.final?other.report.version:null;
         if(input.scoped){
           const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
-          const prior=other?await root.KinExamScope.fetch(apiRead,other.uid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
+          const prior=other?await root.KinExamScope.fetch(apiRead,priorUid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
           if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
           input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
         }
@@ -1021,7 +1022,7 @@
       if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
       let place;
       try { place = imageExam(selected, target); } catch (error) { $('#viewer-note').textContent = describe(error); return; }
-      openViewer(place.other, target);
+      openViewer(place.other, target, null, null, place.part);
     });
     entry.append(open);
     return entry;
@@ -1138,16 +1139,24 @@
    * series, otherwise the listed exam of the same patient whose scope holds it (a split part by its series,
    * KinExamScope.listedExam), opened beside it. One rule for both; anything else is refused.
    */
+  // The list answers a split original as one row: its first part is the row's exam, the other part is only one of the
+  // row's `exam.reports` (a stored report version with its own scope). A peer row's own exam is asked first, as before;
+  // only when none holds the image is a part reported on a peer row asked, and that part opens beside this exam as its
+  // stored version (`part`: { uid, version }).
   function imageExam(rowUid, image) {
     const shown = displayedExam && Array.isArray(displayedExam.sources) ? displayedExam : null;
     if (shown ? shown.sources.some(source => source.studyUid === image.studyUid && root.KinExamScope.allows(source, image.seriesUid))
-      : image.studyUid === rowUid) return { other: null };
+      : image.studyUid === rowUid) return { other: null, part: null };
     const row = byUid.get(rowUid), key = row ? patientKey(row) : null;
-    const peers = key === null ? [] : studies.filter(other => other.uid !== rowUid && patientKey(other) === key)
-      .map(other => ({ ...other, examScope: other.exam?.scope || other.report?.scope || undefined }));
-    const peer = root.KinExamScope.listedExam(peers, image.studyUid, image.seriesUid);
+    const peerRows = key === null ? [] : studies.filter(other => other.uid !== rowUid && patientKey(other) === key);
+    const own = peerRows.map(other => ({ ...other, examScope: other.exam?.scope || other.report?.scope || undefined }));
+    const parts = peerRows.filter(other => !other.examUnavailable).flatMap(other => (Array.isArray(other.exam?.reports) ? other.exam.reports : [])
+      .filter(report => report && report.scope && typeof report.uid === 'string' && Number.isSafeInteger(report.version))
+      .map(report => ({ ...other, examScope: report.scope, part: { uid: report.uid, version: report.version, scope: report.scope } })));
+    const peer = root.KinExamScope.listedExam(own, image.studyUid, image.seriesUid)
+      || root.KinExamScope.listedExam(parts, image.studyUid, image.seriesUid);
     if (!peer) throw new Error(say(TEXT.citedElsewhere));
-    return { other: peer.uid };
+    return { other: peer.uid, part: peer.part || null };
   }
   /**
    * The image a cited line points at: the finding revision it was cited from names the saved item and that item's own study
@@ -1174,9 +1183,9 @@
     if (!item) throw new Error(say(TEXT.citedGone));
     const image = imageTarget(source.studyUid, item.item, item.id);
     if (!image) throw new Error(say(TEXT.citedSource));
-    const { other } = imageExam(rowUid, image);
+    const { other, part } = imageExam(rowUid, image);
     const then = entry.sourceRef.sourceRevision;
-    return { image, other, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
+    return { image, other, part, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
   }
   function openCited(entry, reportUid) {
     if (leaving || selected === null) return;
@@ -1190,7 +1199,7 @@
     const fresh = () => !leaving && selected === uid && mine === reportSeq && newest();
     citedImage(uid, reportUid, entry).then(found => {
       if (!fresh()) { if (newest()) dropWindow(held); return; }
-      openViewer(found.other, found.image, held, found.asked);
+      openViewer(found.other, found.image, held, found.asked, found.part);
     }, error => {
       if (!fresh()) { if (newest()) dropWindow(held); return; }
       note.textContent = describe(error); dropWindow(held);

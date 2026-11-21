@@ -926,6 +926,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.citations, self.finding_revisions, self.finding_reads = {}, {}, []
         self.hold_findings, self.held_findings = False, []
         self.scope_reads = []
+        self.exam_scopes, self.scope_queries = {}, []
         self.files = dict(SHIPPED)
         self.config = CONFIG
         self.viewer_page = False
@@ -1064,8 +1065,9 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         if method == 'GET' and scope_target:
             target = unquote(scope_target.group(1))
             self.scope_reads.append(target)
+            self.scope_queries.append((target, parse_qs(url.query)))
             row = next((row for row in self.rows if row['uid'] == target), None)
-            route.fulfill(json=self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
+            route.fulfill(json=self.exam_scopes[target] if target in self.exam_scopes else self.extra_reports[target]['scope'] if target in self.extra_reports else row.get('reportScope', exam_scope(target)) if row else exam_scope(target))
             return
         cited = re.fullmatch(r"/api/studies/([^/]+)/report/citations", path)
         if method == "GET" and cited:
@@ -1581,13 +1583,14 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
 
     def test_01d_cited_line_paths_split_part_late_answer_and_stored_head(self):
-        """A cited mark on a split comparison study opens the part whose series holds it (not merely the original's first
-        row); a lookup answered after the user opened the viewer otherwise (Compare) does not take that window back; the
+        """A cited mark on a split comparison study opens the part whose series holds it, in the list's own shape: the
+        second part, which only the original row's exam.reports carries, opens as its stored version, the first as the row's
+        exam; another patient's or institution's split study opens nothing; a lookup answered after the user opened the viewer otherwise (Compare) does not take that window back; the
         report opened by its version (an Exam Reports button) links its lines when that version is the head the citations
         were read from."""
         row = next(r for r in self.rows if r['uid'] == A)
         finding = 'b0000000-0000-4000-8000-000000000002'
-        original, other_series = uid(77), uid(901)
+        original, logical, other_series = P1, uid(78), uid(901)
         text = 'Liver lesion 12 mm.'
         cite = {'cid': 'c-9', 'field': 'findings', 'insertedText': text, 'sameTextCount': 1, 'findingId': finding, 'findingRevision': 1,
                 'sourceIndex': 0, 'sourceRef': {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
@@ -1597,35 +1600,82 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.finding_revisions[(A, finding)] = {'revisions': [{'revision': 1, 'item': {'schemaVersion': 3, 'title': 'SYN', 'text': '',
             'characteristics': '', 'lesionLocation': '', 'sources': [source], 'primary': 0}}], 'nextCursor': None}
         self.items[original] = {'pages': [[mark_item(2, 'length', 'SYN split length')]]}
-        part = lambda report, n, series: {'reportUid': report, 'groupId': 'syn-split', 'kind': 'split', 'part': n, 'active': True,
-                                          'generation': 'syn-1', 'sources': [{'studyUid': original, 'series': {'mode': 'include', 'uids': [series]}}]}
-        for peer, n, series in ((P1, 0, other_series), (P2, 1, SERIES)):
-            target = next(r for r in self.rows if r['uid'] == peer)
-            target['exam'] = {'scope': part(peer, n, series)}
-            target['reportScope'] = part(peer, n, series)
+
+        def split(owner, second):
+            # The clinician list answers a split original as ONE row (api/src/pacs/clinician.ts clinicianStudies/examOf):
+            # its exam is the first part (the part whose logical UID is the original), and each part's readable report head
+            # is in that row's exam.reports (relatedExamReports, the scope examScopeView gives). The second part, a logical
+            # UID, is no row of the list.
+            scope = lambda report, n: {'reportUid': report, 'groupId': 'syn-split', 'kind': 'split', 'part': n, 'active': True,
+                'sources': [{'studyUid': owner, 'series': {'mode': 'exclude' if n == 0 else 'include', 'uids': [second]}}],
+                'generation': f'syn-split-{n}', 'hasMembership': True}
+            target = next(r for r in self.rows if r['uid'] == owner)
+            target['report'] = {**FINAL, 'version': 2, 'scope': scope(owner, 0)}
+            target['exam'] = {'id': 'syn-split', 'active': True, 'baseUid': owner, 'readable': True, 'studies': [owner],
+                              'scope': scope(owner, 0), 'reports': [
+                                  {'uid': owner, 'version': 2, 'action': 'approve', 'scope': scope(owner, 0)},
+                                  {'uid': logical, 'version': 1, 'action': 'approve', 'scope': scope(logical, 1)}]}
+            self.exam_scopes = {owner: scope(owner, 0), logical: scope(logical, 1)}
+
+        split(original, SERIES)
         self.open_home()
         self.pick(A)
         link = self.page.locator('#report-body button.cited-line')
         expect(link).to_have_count(1)
+        # The mark on the second part (its series): that part opens beside this exam, as its stored version, once.
         with self.page.expect_popup() as info:
             link.click()
         popup = info.value
         opened = self.opened(1)
         self.assertEqual([A + ',' + original], opened['StudyInstanceUIDs'])
-        self.assertEqual(P2, json.loads(opened['kinExamScopes'][0])['prior']['reportUid'], 'the part whose series holds the mark')
+        scopes = json.loads(opened['kinExamScopes'][0])
+        self.assertEqual({'reportUid': logical, 'groupId': 'syn-split', 'part': 1}, scopes['prior'], 'the part whose series holds the mark')
+        self.assertEqual(1, scopes['priorVersion'])
+        self.assertIn((logical, {'purpose': ['stored'], 'version': ['1']}), self.scope_queries)
         popup.wait_for_function('window.verified===true')
         self.assertEqual(original, popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET.studyUid'))
+        self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+        # The mark on the first part: the row's own exam opens beside, as before.
+        split(original, other_series)
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        expect(link).to_have_count(1)
+        link.click()
+        scopes = json.loads(self.opened(2)['kinExamScopes'][0])
+        self.assertEqual({'reportUid': original, 'groupId': 'syn-split', 'part': 0}, scopes['prior'])
+        popup.wait_for_function(f"() => window.verified === true && KIN_VIEWER_ENTRY_TARGET?.studyUid === '{original}'")
+        # The same split shape on another patient's study, or another institution's: nothing opens.
+        for stranger in (N, T):
+            with self.subTest(stranger=stranger):
+                source['studyUid'] = stranger
+                self.items[stranger] = {'pages': [[mark_item(2, 'length', 'SYN stranger length')]]}
+                split(stranger, SERIES)
+                self.page.locator('#refresh').click()
+                expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+                self.pick(A)
+                expect(link).to_have_count(1)
+                link.click()
+                expect(self.page.locator('#viewer-note')).to_have_text('인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.')
+                self.settle()
+                self.assertEqual(2, len(self.viewer_opens))
+        source['studyUid'] = original
+        split(original, SERIES)
+        self.page.locator('#refresh').click()
+        expect(self.page.locator('#list-state')).to_have_attribute('data-state', 'ready')
+        self.pick(A)
+        expect(link).to_have_count(1)
         # A lookup still on its way when Compare is pressed: its late answer opens nothing.
         self.hold_findings = True
         link.click()
         self.wait_until(lambda: self.held_findings, 'the finding lookup held')
         self.page.locator(f'#compare-list li[data-uid="{P1}"] button').click()
-        self.wait_until(lambda: len(self.viewer_opens) == 2, 'the Compare opening')
+        self.wait_until(lambda: len(self.viewer_opens) == 3, 'the Compare opening')
         route, answer = self.held_findings.pop()
         self.hold_findings = False
         route.fulfill(json=answer)
         self.settle()
-        self.assertEqual(2, len(self.viewer_opens), 'the late lookup does not take the window back')
+        self.assertEqual(3, len(self.viewer_opens), 'the late lookup does not take the window back')
         self.assertNotEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
         # The report opened by its version from Exam Reports: it is the head the citations were read from, so its line links.
         row['exam'] = {'reports': [{'uid': A, 'version': FINAL['version'], 'action': 'approve', 'scope': exam_scope(A)}]}
