@@ -300,7 +300,8 @@
           : 'L ' + one(a) + ' mm · H ' + one(b) + ' mm · W ' + one(c) + ' mm · Volume ' + two(d) + ' mL · Ellipsoid') }[tool]();
       return text + (basis === true ? '' : ' · ' + basis);
     }
-    const planar = typeof calculator === 'string' && /^kin-planar-manual-v1:(pixel|detector|ermf|dbt)$/.test(calculator);
+    // An ultrasound region's calculator is a Length's only (config/ohif/planar-geometry.js kinManualGeometry).
+    const planar = typeof calculator === 'string' && (/^kin-planar-manual-v1:(pixel|detector|ermf|dbt)$/.test(calculator) || kind === 'length' && calculator === 'kin-planar-manual-v1:us');
     const arity = planar ? 1 : typeof kind === 'string' && Object.prototype.hasOwnProperty.call(ARITY, kind) ? ARITY[kind] : 0;
     if (!list.length && !arity) return '';
     const mgBasis = kind === 'length' && typeof calculator === 'string' && ({
@@ -313,7 +314,7 @@
       (kind !== 'ellipse' || planar || (Number.isSafeInteger(list[4]) && list[4] >= 0));
     if (!exact) return UNVERIFIED + list.map(decimal).join(' / ');
     const [a, b, c, d] = list.map(decimal);
-    if (planar) return (kind === 'ellipse' ? '면적 ' : '') + a + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm') + ' · ' + ({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing' })[calculator.split(':')[1]];
+    if (planar) return (kind === 'ellipse' ? '면적 ' : '') + a + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm') + ' · ' + ({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', us: 'US Region Calibration' })[calculator.split(':')[1]];
     if (kind === 'length') return a + ' mm' + (mgBasis ? ' · ' + mgBasis : '');
     if (kind === 'angle') return a + '°';
     return '면적 ' + a + ' mm² · 평균 ' + b + ' HU · 최소 ' + c + ' HU · 최대 ' + d + ' HU · 화소 수 ' + String(list[4]);
