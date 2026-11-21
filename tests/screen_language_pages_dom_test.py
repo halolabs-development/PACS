@@ -50,6 +50,10 @@ class ScreenLanguagePages(unittest.TestCase):
                 return route.fulfill(content_type="text/html", body='<script src="/config.js"></script>'
                     '<script>config.extensions.find(e=>e.id==="kin.session-boundary")'
                     '.preRegistration().then(()=>window.started=true)</script>')
+            if path == "/frame":
+                # The reading screen around the integrated viewer: its work context answers the sign-in.
+                return route.fulfill(content_type="text/html", body='<script>window.KinWorkContext={session:()=>"S1",'
+                                     'state:()=>"active"}</script><iframe id="viewer" src="/viewer"></iframe>')
             if path == "/config.js":
                 return route.fulfill(path=ROOT / "config/ohif.js", content_type="application/javascript")
             if path.startswith("/worklist/hpacs-lite/") and (ASSETS / file).is_file():
@@ -70,10 +74,10 @@ class ScreenLanguagePages(unittest.TestCase):
             # The opening page hands the viewer its sign-in in the window name (viewer-launch.js / clinician.js).
             page.add_init_script("if (location.pathname === '/viewer' && !window.name) window.name = 'kin-viewer-entry:'"
                                  " + JSON.stringify({session: 'S1', name: ''})")
-        page.goto(BASE + ("/viewer" if name == "viewer" else "/worklist/hpacs-lite/" + name))
+        page.goto(BASE + ("/" + name if name in ("viewer", "frame") else "/worklist/hpacs-lite/" + name))
         if name == "viewer":
             page.wait_for_function("window.started")
-        else:
+        elif name != "frame":
             self.assertIn("auth.js", reads)
             page.wait_for_timeout(800)
         return page, reads
@@ -87,9 +91,22 @@ class ScreenLanguagePages(unittest.TestCase):
         self.assertEqual("en", page.evaluate("window.KinLanguage.lang(document.body)"))
         self.assertFalse(page.evaluate("document.documentElement.hasAttribute('data-kin-lang-worklist') || document.documentElement.hasAttribute('data-kin-lang-reading')"))
         self.assertEqual('{"version":1,"worklist":"en","reading":"en","session":"S1"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
+        # Reloaded, the viewer takes the sign-in it recorded, as its session rule does: still English.
+        for _ in range(2):
+            page.reload()
+            page.wait_for_function("window.started")
+            self.assertEqual("en", page.evaluate("window.KinLanguage.lang(document.body)"))
         # English another sign-in left in this browser: the viewer keeps its words as written.
         page, _ = self.open("viewer", "radiologist", "en", session="S0")
         self.assertIsNone(page.evaluate("window.KinLanguage.lang(document.body)"))
+
+    def test_the_integrated_viewer_follows_the_sign_in_of_the_reading_screen_around_it(self):
+        # No hand-off and no recorded entry: the viewer frame inside the reading screen takes that page's sign-in.
+        for session, lang in (("S1", "en"), ("S0", None)):
+            with self.subTest(stored_for=session):
+                page, _ = self.open("frame", "radiologist", "en", session=session)
+                page.wait_for_function("document.getElementById('viewer').contentWindow.started")
+                self.assertEqual(lang, page.evaluate("document.getElementById('viewer').contentWindow.KinLanguage.lang(document.getElementById('viewer').contentDocument.body)"))
 
     def test_pages_follow_english_and_stay_as_they_are_otherwise(self):
         for name, role in PAGES:

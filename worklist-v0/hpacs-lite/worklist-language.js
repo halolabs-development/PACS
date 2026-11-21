@@ -292,6 +292,9 @@
   const remember = e => { const el = e.target?.closest?.('[data-kin-lang-region]'); if (el) lastRegion = el.getAttribute('data-kin-lang-region'); };
   document.addEventListener('pointerdown', remember, true);
   document.addEventListener('keydown', remember, true);
+  // Input inside a frame of this page (the integrated viewer) never reaches these listeners: focus moving into the frame says
+  // which screen is in use.
+  window.addEventListener('blur', () => { const el = document.activeElement; if (el?.tagName === 'IFRAME') remember({ target: el }); });
 
   // ── The choice ────────────────────────────────────────────────────────────────────────────────────────────────
   const valid = v => v === null || LANGS.includes(v);
@@ -552,11 +555,17 @@
   // never registered and nothing is stored. It is the image half of the reading screen: the words our viewer code writes
   // follow the reading-screen choice kept for the sign-in the viewer was handed (the window name the opening page set, or
   // on a reload the entry the viewer recorded), English only, as the viewer opens.
+  // The same order as the viewer's own session rule (viewer-session.js): a hand-off just given, then the entry this viewer
+  // recorded (its bound session, or the one it still expects), then the page this viewer belongs to (its opener, or the
+  // reading screen around the integrated viewer).
   function viewerSession() {
     const prefix = 'kin-viewer-entry:';
     try {
       if (window.name?.startsWith(prefix)) return JSON.parse(window.name.slice(prefix.length)).session || null;
-      return history.state?.kinViewerSession?.expected || null;
+      const record = history.state?.kinViewerSession;
+      if (record) return typeof record.session === 'string' && record.session ? record.session : record.unresolved === true ? record.expected || null : null;
+      const peer = window.opener || (window.parent !== window ? window.parent : null);
+      return peer?.KinWorkContext?.session?.() || null;
     } catch (_) { return null; }
   }
   function startViewer() {
