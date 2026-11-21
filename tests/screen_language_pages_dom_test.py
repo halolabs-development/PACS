@@ -72,8 +72,10 @@ class ScreenLanguagePages(unittest.TestCase):
                                  "{version:1, worklist:'%s', reading:'%s', session:'%s'}))" % (stored, stored, session))
         if name == "viewer":
             # The opening page hands the viewer its sign-in in the window name (viewer-launch.js / clinician.js).
-            page.add_init_script("if (location.pathname === '/viewer' && !window.name) window.name = 'kin-viewer-entry:'"
-                                 " + JSON.stringify({session: 'S1', name: ''})")
+            # Only on the first entry: a reload has no hand-off and takes the entry the viewer recorded.
+            page.add_init_script("if (location.pathname === '/viewer' && !sessionStorage.getItem('syn-handed')) {"
+                                 " sessionStorage.setItem('syn-handed', '1');"
+                                 " window.name = 'kin-viewer-entry:' + JSON.stringify({session: 'S1', name: ''}); }")
         page.goto(BASE + ("/" + name if name in ("viewer", "frame") else "/worklist/hpacs-lite/" + name))
         if name == "viewer":
             page.wait_for_function("window.started")
