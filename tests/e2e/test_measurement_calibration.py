@@ -617,7 +617,14 @@ class MeasurementCalibrationE2E(MeasurementPanelE2E):
         except Exception:
             self.fail('The SR cell is not on frame 2: ' + str(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
                 return [v?.getCurrentImageId?.(), (v?.getImageIds?.()||[]).slice(0,3), sourceDS.measurements.map(m=>m.imageId)];}''')))
-        expect(p.locator('svg.svg-layer')).to_contain_text(' mm')
+        try:
+            expect(p.locator('svg.svg-layer')).to_contain_text(' mm')
+        except AssertionError:
+            self.fail('The SR mark is not drawn: ' + json.dumps(p.evaluate('''()=>{const s=__d05c1.services, v=s.cornerstoneViewportService.getCornerstoneViewport(s.viewportGridService.getActiveViewportId());
+                const marks=cornerstoneTools.annotation.state.getAllAnnotations().filter(a=>a.metadata.toolName==='DICOMSRDisplay');
+                return {viewport:{id:v?.id, type:v?.type, frameOfReference:v?.getFrameOfReferenceUID?.(), current:v?.getCurrentImageId?.()},
+                  marks:marks.map(a=>({frameOfReference:a.metadata.FrameOfReferenceUID, image:a.metadata.referencedImageId, visible:a.isVisible, tracking:a.data?.TrackingUniqueIdentifier})),
+                  groups:Object.keys(cornerstoneTools.annotation.state.getAnnotationManager().getFramesOfReference?.()||{})};}''')))
         p.close()
         # A region without deltas: the rule it had.
         g = synthetic_us(self.stack, 'USNODELTA-' + uuid.uuid4().hex[:12], 'usnod' + uuid.uuid4().hex[:6], '20261121', [us_region(0, 319, None)])
