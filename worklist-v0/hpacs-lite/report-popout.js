@@ -339,8 +339,19 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       if (shown !== s || event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat) return;
       if (s.doc.querySelector('dialog[open]')) return;
       const commands = root.KinReportCommands;
+      // The Finalize & Next (Approve & Next) key there is this window's Approve, as its button is.
+      if (commands?.isFinalizeNext?.(event) === true) {
+        if (!commands.otherWriting?.(event.target) && approveNext()) { event.preventDefault(); event.stopPropagation(); }
+        return;
+      }
       if (commands?.isFinalize?.(event) !== true) return;
       if (commands.finalize() === true) { event.preventDefault(); event.stopPropagation(); }
+    }
+    // The window's Approve (Approve & Next with this window's Pin) started by a key; false when there is no window or one is running.
+    function approveNext() {
+      if (!shown || approving) return false;
+      approveInWindow();
+      return true;
     }
 
     async function approveInWindow() {
@@ -396,7 +407,9 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
     renderPlace();
 
     current = Object.freeze({
-      state: () => state, pinned: () => pinned, popOut, dock, bringToFront, end, asks, confirm: ask,
+      state: () => state, pinned: () => pinned, popOut, dock, bringToFront, end, asks, confirm: ask, approveNext,
+      // Whether a node of the page is inside the in-page box (a key pressed there is the box's, as its Approve is).
+      holds: node => shown?.kind === 'box' && !!node && shown.shell.contains(node),
       // The parts while they are in a separate window's document (the page's own lookup finds them everywhere else).
       movedElements: () => (shown?.kind === 'window' ? [...parts, ...(save ? [save] : [])] : []),
       // A study switch ends any question the window is asking about the study it was asked for.

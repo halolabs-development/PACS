@@ -1039,6 +1039,68 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         page.keyboard.press('Shift+K')
         settle(turned(270), 'Shift+K')
 
+    def test_shell_16_one_shortcut_tab_and_the_viewer_hotkey_table(self):
+        # FA-154 "단축기들을 모두 모아서 세팅할 수 있는 tab": the work page's Edit Shortcuts › Viewer sets the image tool keys;
+        # the viewer opened again runs the key given there. F56: the viewer's own hotkey table says which rows do nothing here.
+        fixture = self.multiple('U2TAB-' + uuid.uuid4().hex[:12], 'one tab', '20260801')
+        work = self.login()
+        record = document_request(work, 'GET', '/api/workspace-shortcuts').json()
+        start = {'version': 2, 'bar': ['Zoom', 'Length'], 'shortcuts': {'Zoom': 'z', 'Length': 'l', 'RectangleROI': 'r'}}
+        response = document_request(work, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
+                                    data=dict(expectedOwner=record['owner'], revision=record['revision'], viewerSettings=start))
+        self.assertEqual(response.status, 200)
+        # The button stands in the reading workspace bar; its dialog is the same outside it.
+        work.locator('#workspace-shortcuts-edit').dispatch_event('click')
+        work.locator('#workspace-shortcuts-tab-viewer').click()
+        length = work.locator('#workspace-viewer-key-Length')
+        expect(length).to_have_value('L')
+        expect(length).to_be_enabled()
+        length.focus(); work.keyboard.press('Shift+Q')
+        expect(length).to_have_value('Shift+Q')
+        tab_tools = set(work.locator('#workspace-viewer-keys input').evaluate_all('fields => fields.map(f => f.dataset.tool)'))
+        work.locator('#workspace-shortcuts-apply').click()
+        expect(work.locator('#workspace-shortcuts-dialog')).to_be_hidden()
+        saved = document_request(work, 'GET', '/api/workspace-shortcuts').json()['viewerSettings']
+        self.assertEqual((saved['shortcuts']['Length'], saved['bar']), ('shift+q', start['bar']))
+        page = self.launch(work, [fixture])
+        page.wait_for_function('() => window.kinViewerHistoryWorkspaceState?.()?.busy === false && window.kinViewerJobWorkspaceState?.()?.busy === false')
+        tools = page.get_by_role('region', name='Image Tools', exact=True)
+        expect(tools.get_by_role('toolbar', name='Frequent Tools').get_by_role('button', name='Length', exact=True)).to_have_attribute('aria-keyshortcuts', 'Shift+Q')
+        # Every tool this viewer offers a key for is a row of the one tab.
+        catalog = set(tools.locator('[data-tool]').evaluate_all('nodes => nodes.map(n => n.dataset.tool)'))
+        self.assertEqual(set(), catalog - tab_tools)
+        active_tool = '''() => services.toolGroupService.getToolGroupForViewport(
+          services.viewportGridService.getActiveViewportId()).getActivePrimaryMouseButtonTool()'''
+        page.locator('[data-cy="viewport-pane"] canvas').first.click(position=dict(x=100, y=100))
+        page.keyboard.press('z'); self.assertEqual(page.evaluate(active_tool), 'Zoom')
+        page.keyboard.press('l'); self.assertEqual(page.evaluate(active_tool), 'Zoom', 'L no longer runs Length')
+        page.keyboard.press('Shift+Q'); self.assertEqual(page.evaluate(active_tool), 'Length')
+        # The viewer's own User Preferences: the rows this window's key layer takes say so; the others stay.
+        page.locator('.bg-secondary-dark.z-20:has(#kin-viewer-brand) button[aria-haspopup="menu"]').click()
+        page.get_by_role('menu').get_by_text('Preferences', exact=True).click()
+        expect(page.get_by_text('User Preferences', exact=True)).to_be_visible()
+        # A row of the pinned HotkeysPreferences: its first column holds the Function header and the name, the second the field.
+        field_of = '''label => [...document.querySelectorAll('.ReactModal__Content .w-32 input[readonly]')]
+          .find(f => f.closest('.mb-2')?.firstElementChild?.lastElementChild?.textContent.trim() === label)'''
+        note_of = '''label => { const row = (''' + field_of + ''')(label);
+          const note = row && row.dataset.kinHotkeyNote && document.getElementById(row.dataset.kinHotkeyNote);
+          return row ? [row.value, note && !note.hidden ? note.textContent : null] : null; }'''
+        page.wait_for_function('label => (' + note_of + ')(label)?.[1]', arg='Rotate Right')
+        for label in ['Rotate Right', 'Rotate Left', 'Flip Horizontally', 'Flip Vertically', 'Zoom', 'Invert']:
+            self.assertIn('이 창에서 사용 불가', page.evaluate('label => (' + note_of + ')(label)', label)[1] or '', label)
+        for label in ['Next Image', 'Previous Image', 'First Image', 'Last Image', 'Zoom In', 'Zoom Out']:
+            self.assertIsNone(page.evaluate('label => (' + note_of + ')(label)', label)[1], label)
+        before = page.evaluate('label => (' + note_of + ')(label)[0]', 'Next Image')
+        page.evaluate('label => (' + field_of + ')(label).focus()', 'Next Image'); page.keyboard.press('q')
+        page.wait_for_timeout(400)
+        self.assertEqual(before, page.evaluate('label => (' + note_of + ')(label)[0]', 'Next Image'), 'a tool letter is not recorded')
+        folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-ux-u2/screens')); folder.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(folder / 'hotkey-table-in-viewer-window.png'))
+        page.get_by_role('button', name='Cancel', exact=True).click()
+        record = document_request(page, 'GET', '/api/workspace-shortcuts').json()
+        document_request(page, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
+                         data=dict(expectedOwner=record['owner'], revision=record['revision'], viewerSettings=start))
+
 
 def load_tests(loader, tests, pattern):
     return unittest.TestSuite(ViewerUXShellE2E(name) for name in loader.getTestCaseNames(ViewerUXShellE2E)

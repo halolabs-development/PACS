@@ -47,7 +47,9 @@ test('v2 exact shape, nullable actions and reserved browser/editing keys',()=>{
   for(const key of ['Control+KeyR','Control+KeyC','Control+Alt+KeyC','Control+Alt+Digit8','Enter','KeyQ','Control+Alt+Enter',undefined,42])
     assert.equal(s.valid({...s.defaultsV2,list:key}),false,String(key));
   for(const value of [{...s.defaultsV2,version:3},{...s.defaultsV2,extra:null},{...s.defaultsV2,list:'Control+KeyS'}])assert.equal(s.valid(value),false);
-  for(const id of Object.keys(s.defaultsV2)){const value={...s.defaultsV2};delete value[id];assert.equal(s.valid(value),false,id);}
+  for(const id of Object.keys(s.defaultsV2))if(id!=='finalizeNext'){const value={...s.defaultsV2};delete value[id];assert.equal(s.valid(value),false,id);}
+  // A v2 map saved before Finalize & Next existed is still valid and reads it as unassigned, silently.
+  {const value={...s.defaultsV2};delete value.finalizeNext;assert.equal(s.valid(value),true);assert.deepEqual(s.migrate(value),{map:s.defaultsV2,notices:[]});}
 });
 test('missing v2 Finalize never steals an existing user command',()=>{
   const source={...s.defaultsV2,list:'Control+KeyS'};delete source.finalize;
@@ -62,10 +64,10 @@ test('missing Finalize is unassigned in v2; only v1 introduces the default silen
   const legacy={...s.defaults,image:'KeyI',report:'KeyR'};
   const expected={version:2,...Object.fromEntries(Object.entries(legacy).map(([id,key])=>[id,'Control+Alt+'+key]))};
   const migrated=s.migrate(expected);
-  assert.deepEqual(migrated.map,{...expected,finalize:null});
+  assert.deepEqual(migrated.map,{...expected,finalize:null,finalizeNext:null});
   assert.equal(migrated.notices.length,1);
   assert.match(migrated.notices[0],/Finalize \(Approve\).*미배정.*Shortcuts/);
-  assert.deepEqual(s.migrate(legacy),{map:{...expected,finalize:'Control+KeyS'},notices:[]});
+  assert.deepEqual(s.migrate(legacy),{map:{...expected,finalize:'Control+KeyS',finalizeNext:null},notices:[]});
 });
 test('Finalize resolves without Alt; resolution alone never prevents browser Save Page',()=>{
   let cancelled=0;const event={ctrlKey:true,altKey:false,code:'KeyS',preventDefault(){cancelled++}};
@@ -91,23 +93,26 @@ test('v2 takes precedence over legacy storage; existing window snapshots keep th
 
 // Minimal DOM adapter exercises the shipped dialog callbacks. Browser layout and
 // keyboard focus rendering are covered by the isolated-browser consumer checks.
-function dialogFixture(saved=null,storageDenied=false){
+function dialogFixture(saved=null,storageDenied=false,{viewer=false,respond=null}={}){
   const vm=require('node:vm'),fs=require('node:fs');
   const nodes=[];let focused=null;
   const document={createElement(tag){const n={tag,children:[],dataset:{},style:{},attrs:{},textContent:'',value:'',hidden:false,open:false,
-    append(child){this.children.push(child);},setAttribute(k,v){this.attrs[k]=String(v);},removeAttribute(k){delete this.attrs[k];},
+    append(...child){this.children.push(...child);},replaceChildren(...child){this.children=[...child];},setAttribute(k,v){this.attrs[k]=String(v);},removeAttribute(k){delete this.attrs[k];},
     addEventListener(k,f){this['on'+k]=f;},focus(){focused=this;},showModal(){this.open=true;},close(){this.open=false;},remove(){this.removed=true;},ownerDocument:document};nodes.push(n);return n;}};
   document.body=document.createElement('body');const host=document.createElement('div');
   let owner=JSON.stringify(['hospital','reader']),state='active',changed=null,response={owner:['hospital','reader'],revision:0,bindings:null,invalid:false};
   const requests=[],data=new Map();if(saved!==null)data.set('kin-workspace-shortcuts:v1:'+owner,JSON.stringify(saved));
   const root={document,localStorage:{getItem:k=>{if(storageDenied)throw Error('denied');return data.get(k)??null;},setItem:(k,v)=>data.set(k,v)},
     KinWorkContext:{state:()=>state,capture:()=>({}),commit:(_,run)=>run(),onInvalidate(){}},
-    KinSessionTransport:{page:()=>({async request(url,options){requests.push({url,options});return {ok:true,body:structuredClone(response)};}})}};
+    KinSessionTransport:{page:()=>({async request(url,options){requests.push({url,options});return respond?respond(options):{ok:true,body:structuredClone(response)};}})},
+    BroadcastChannel:class{constructor(name){this.name=name;}postMessage(m){posts.push({name:this.name,...m});}close(){}}};
+  const posts=[];
+  if(viewer)vm.runInNewContext(fs.readFileSync(require.resolve('../worklist-v0/hpacs-lite/viewer-ux-shortcuts.js'),'utf8'),{window:root});
   vm.runInNewContext(fs.readFileSync(require.resolve('../worklist-v0/hpacs-lite/workspace-shortcuts.js'),'utf8'),{window:root,AbortController,setTimeout,clearTimeout,setInterval:()=>1,clearInterval(){}});
   const instance=root.KinWorkspaceShortcuts.create({host,owner:()=>owner,allowed:()=>true,changed:map=>{changed=map;}});
-  const node=id=>{const result=nodes.find(n=>n.id===id);assert.ok(result,id);return result;};
+  const node=id=>{const result=nodes.findLast(n=>n.id===id);assert.ok(result,id);return result;};
   const press=(id,event)=>node('workspace-shortcut-'+id).onkeydown({key:'s',code:'KeyS',ctrlKey:true,altKey:false,shiftKey:false,metaKey:false,preventDefault(){},stopPropagation(){},getModifierState:()=>false,...event});
-  return {node,press,data,requests,instance,changed:()=>changed,focus:()=>focused,owner:()=>owner,setOwner:v=>{owner=v;},response:v=>{response=v;},flush:()=>new Promise(resolve=>setImmediate(resolve))};
+  return {node,press,data,requests,posts,root,instance,changed:()=>changed,focus:()=>focused,owner:()=>owner,setOwner:v=>{owner=v;},response:v=>{response=v;},flush:()=>new Promise(resolve=>setImmediate(resolve))};
 }
 test('dialog has keyboard-operable Worklist/Viewer tabs, preserves draft across tabs, applies v2',async()=>{
   const f=dialogFixture({...s.defaults,report:'KeyR'});
@@ -211,7 +216,7 @@ test('account save names hidden-tab conflicts, preserves every input and sends n
 });
 test('observed v1 null unassigns only that action with a notice; explicit v2 null is silent',()=>{
   const legacy={...s.defaults,image:'KeyI',report:null,note:'KeyN'};
-  const expected={version:2,...Object.fromEntries(Object.entries(legacy).map(([id,key])=>[id,key===null?null:'Control+Alt+'+key])),finalize:'Control+KeyS'};
+  const expected={version:2,...Object.fromEntries(Object.entries(legacy).map(([id,key])=>[id,key===null?null:'Control+Alt+'+key])),finalize:'Control+KeyS',finalizeNext:null};
   const owner='reader',data=new Map([['kin-workspace-shortcuts:v1:'+owner,JSON.stringify(legacy)]]);
   const storage={getItem:key=>data.get(key)??null};
   assert.equal(s.valid(legacy),false);
@@ -227,7 +232,7 @@ test('dialog reading v1 null shows its notice and preserves other keys; v2 unass
   const legacy={...s.defaults,image:'KeyI',report:null,note:'KeyN'};
   for(const version of [1,2]){
     const f=dialogFixture(version===1?legacy:null);
-    const expected={version:2,...Object.fromEntries(Object.entries(legacy).map(([id,key])=>[id,key===null?null:'Control+Alt+'+key])),finalize:'Control+KeyS'};
+    const expected={version:2,...Object.fromEntries(Object.entries(legacy).map(([id,key])=>[id,key===null?null:'Control+Alt+'+key])),finalize:'Control+KeyS',finalizeNext:null};
     if(version===2)f.data.set('kin-workspace-shortcuts:v2:'+f.owner(),JSON.stringify(expected));
     else assert.match(f.node('workspace-shortcuts-status').textContent,/Report Editor.*미배정/);
     const stored=[...f.data];
@@ -244,4 +249,133 @@ test('dialog reading v1 null shows its notice and preserves other keys; v2 unass
     assert.equal(f.node('workspace-shortcuts-dialog').open,true);
     f.instance.end();
   }
+});
+
+// The one shortcut tab: the Viewer tab also sets the Viewer windows' image tool keys (account viewerSettings.shortcuts),
+// Finalize & Next has a key slot, and an account that saved only viewer settings can save its work-page keys (C05).
+const viewerSettings=()=>({version:2,bar:['Zoom','Length'],shortcuts:{WindowLevel:'w',Zoom:'z',Length:'l',RectangleROI:'r',UnavailableModeTool:'u'},
+  mammography:{layout:'current',kind:null},secondDisplayTools:false,features:{fleaderSpace:true}});
+const answer=(over={})=>({owner:['hospital','reader'],revision:3,bindings:null,invalid:false,viewerSettings:viewerSettings(),...over});
+const keyEvent=(key,extra={})=>({key,code:/^[a-z]$/i.test(key)?'Key'+key.toUpperCase():key,ctrlKey:false,altKey:false,shiftKey:false,metaKey:false,repeat:false,isComposing:false,
+  preventDefault(){},stopPropagation(){},getModifierState:()=>false,...extra});
+function accountServer(first){
+  let record=structuredClone(first);const puts=[];
+  return {puts,record:()=>record,respond(options){
+    if(options.method!=='PUT')return {ok:true,status:200,body:structuredClone(record)};
+    const body=JSON.parse(options.body);puts.push(body);
+    if(body.revision!==record.revision)return {ok:false,status:409,body:{message:'conflict'}};
+    record={...record,revision:record.revision+1,...(body.bindings?{bindings:body.bindings}:{}),...(body.viewerSettings?{viewerSettings:body.viewerSettings}:{})};
+    return {ok:true,status:200,body:structuredClone(record)};
+  }};
+}
+test('an account that saved only viewer settings opens, saves and loads its work-page keys (C05)',async()=>{
+  const server=accountServer(answer());
+  const f=dialogFixture(null,false,{respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  assert.doesNotMatch(f.node('workspace-shortcuts-account-status').textContent,/확인할 수 없습니다/);
+  assert.equal(f.node('workspace-shortcuts-account-save').disabled,false);
+  f.press('report',{altKey:true,code:'KeyR'});
+  f.node('workspace-shortcuts-account-save').onclick();await f.flush();
+  assert.equal(server.puts.length,1);assert.equal(server.puts[0].revision,3);assert.equal(server.puts[0].bindings.report,'Control+Alt+KeyR');
+  assert.equal('viewerSettings' in server.puts[0],false);
+  assert.match(f.node('workspace-shortcuts-account-status').textContent,/계정에 저장했습니다/);
+  f.node('workspace-shortcuts-account-load').onclick();await f.flush();
+  assert.equal(f.node('workspace-shortcut-report').value,'Control+Alt+R');
+  f.instance.end();
+});
+test('the Viewer tab lists every viewer tool with the account keys, and Apply & Save puts changed tool keys to the account first',async()=>{
+  const server=accountServer(answer());
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  const keys=f.root.KinViewerUXShortcuts;
+  for(const id of [...Object.keys(keys.names),'UnavailableModeTool'])assert.ok(f.node('workspace-viewer-key-'+id),id);
+  assert.equal(f.node('workspace-viewer-key-Length').value,'L');assert.equal(f.node('workspace-viewer-key-Pan').value,'Unassigned');
+  assert.equal(f.node('workspace-viewer-key-compareMatchRatioNow').value,'Unassigned');
+  f.node('workspace-viewer-key-Length').onkeydown(keyEvent('k'));
+  f.node('workspace-viewer-key-compareMatchRatioNow').onkeydown(keyEvent('M',{shiftKey:true,code:'KeyM'}));
+  f.node('workspace-viewer-key-RectangleROI').onkeydown(keyEvent('Delete'));
+  assert.equal(f.node('workspace-viewer-key-compareMatchRatioNow').value,'Shift+M');
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.equal(server.puts.length,1);const put=server.puts[0];
+  assert.deepEqual(Object.keys(put).sort(),['expectedOwner','revision','viewerSettings']);
+  assert.deepEqual(put.viewerSettings,{...viewerSettings(),shortcuts:{...viewerSettings().shortcuts,Length:'k',RectangleROI:null,compareMatchRatioNow:'shift+m',
+    ...Object.fromEntries(Object.keys(keys.names).filter(id=>!(id in viewerSettings().shortcuts)&&id!=='compareMatchRatioNow').map(id=>[id,null]))}});
+  assert.ok(f.data.get('kin-workspace-shortcuts:v2:'+f.owner()));
+  assert.equal(f.node('workspace-shortcuts-dialog').open,false);
+  assert.match(f.node('workspace-shortcuts-status').textContent,/열린 Viewer 창에도/);
+  assert.deepEqual(f.posts,[{name:'kin-viewer-settings',owner:f.owner(),revision:4}]);
+  f.instance.end();
+});
+test('Save to Account sends changed tool keys and work-page keys at one revision; unchanged tool keys are not sent',async()=>{
+  const server=accountServer(answer({bindings:{...s.defaultsV2}}));
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  f.node('workspace-shortcuts-account-save').onclick();await f.flush();
+  assert.equal('viewerSettings' in server.puts[0],false);
+  f.node('workspace-viewer-key-Zoom').onkeydown(keyEvent('j'));
+  f.press('report',{altKey:true,code:'KeyR'});
+  f.node('workspace-shortcuts-account-save').onclick();await f.flush();
+  const put=server.puts[1];
+  assert.deepEqual(Object.keys(put).sort(),['bindings','expectedOwner','revision','viewerSettings']);
+  assert.equal(put.revision,4);assert.equal(put.bindings.report,'Control+Alt+KeyR');assert.equal(put.viewerSettings.shortcuts.Zoom,'j');
+  assert.deepEqual(put.viewerSettings.mammography,viewerSettings().mammography);assert.deepEqual(put.viewerSettings.bar,viewerSettings().bar);
+  assert.equal(f.data.size,0,'Save to Account does not apply work-page keys to this browser');
+  assert.equal(f.node('workspace-viewer-key-Zoom').value,'J');
+  f.instance.end();
+});
+test('duplicate tool keys, a failed save and an unread account change nothing',async()=>{
+  const server=accountServer(answer());
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  f.node('workspace-viewer-key-Pan').onkeydown(keyEvent('l'));
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.equal(server.puts.length,0);assert.match(f.node('workspace-shortcuts-message').textContent,/중복 영상 도구 키: Pan, Length|중복 영상 도구 키: Length, Pan/);
+  f.node('workspace-viewer-key-Pan').onkeydown(keyEvent('q'));
+  f.node('workspace-viewer-key-Pan').onkeydown(keyEvent('1',{ctrlKey:true,code:'Digit1'}));
+  assert.equal(f.node('workspace-viewer-key-Pan').value,'Q','a chord is not a tool key');
+  server.record().revision=9;
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.equal(server.puts.length,1);assert.equal(f.data.size,0);assert.equal(f.node('workspace-shortcuts-dialog').open,true);
+  assert.match(f.node('workspace-shortcuts-message').textContent,/아무것도 적용하지 않았습니다/);
+  f.instance.end();
+  const offline=dialogFixture(null,false,{viewer:true,respond:()=>{throw new TypeError('offline');}});
+  offline.node('workspace-shortcuts-edit').onclick();await offline.flush();
+  assert.equal(offline.node('workspace-viewer-keys').children.length,0);
+  assert.match(offline.node('workspace-viewer-keys-status').textContent,/불러오지 못했습니다/);
+  offline.press('report',{altKey:true,code:'KeyR'});offline.node('workspace-shortcuts-apply').onclick();
+  assert.equal(JSON.parse(offline.data.get('kin-workspace-shortcuts:v2:'+offline.owner())).report,'Control+Alt+KeyR','work-page keys still apply locally');
+  offline.instance.end();
+});
+test('an account without viewer settings gets the viewer defaults with the changed key',async()=>{
+  const server=accountServer({owner:['hospital','reader'],revision:0,bindings:null,invalid:false,viewerSettings:null});
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  const keys=f.root.KinViewerUXShortcuts;
+  assert.equal(f.node('workspace-viewer-key-flipHorizontal').value,'Shift+H');
+  f.node('workspace-viewer-key-Length').onkeydown(keyEvent('k'));
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.deepEqual(server.puts[0].viewerSettings,{version:2,bar:[...keys.defaultBar],shortcuts:{...keys.defaults,Length:'k',
+    ...Object.fromEntries(Object.keys(keys.names).filter(id=>!(id in keys.defaults)).map(id=>[id,null]))}});
+  f.instance.end();
+});
+test('Finalize & Next has its own unassigned key slot on the Worklist tab',async()=>{
+  const f=dialogFixture();f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  assert.equal(f.node('workspace-shortcut-finalizeNext').value,'Unassigned');
+  assert.equal(f.instance.action({ctrlKey:true,altKey:true,code:'KeyN'}),null);
+  f.press('finalizeNext',{altKey:true,code:'KeyN'});f.node('workspace-shortcuts-apply').onclick();
+  assert.equal(f.instance.action({ctrlKey:true,altKey:true,code:'KeyN'}),'finalizeNext');
+  assert.equal(JSON.parse(f.data.get('kin-workspace-shortcuts:v2:'+f.owner())).finalizeNext,'Control+Alt+KeyN');
+  f.instance.end();
+});
+test('Defaults resets the viewer tools only; a key the account keeps for another tool stays',async()=>{
+  const server=accountServer(answer());
+  const f=dialogFixture(null,false,{viewer:true,respond:o=>server.respond(o)});
+  f.node('workspace-shortcuts-edit').onclick();await f.flush();
+  f.node('workspace-viewer-key-Length').onkeydown(keyEvent('k'));
+  f.node('workspace-shortcuts-default').onclick();
+  assert.equal(f.node('workspace-viewer-key-Length').value,'L');assert.equal(f.node('workspace-viewer-key-UnavailableModeTool').value,'U');
+  f.node('workspace-viewer-key-Zoom').onkeydown(keyEvent('j'));
+  f.node('workspace-shortcuts-apply').onclick();await f.flush();
+  assert.equal(server.puts[0].viewerSettings.shortcuts.UnavailableModeTool,'u');
+  f.instance.end();
 });
