@@ -111,8 +111,11 @@ class TechNoteChipDOM(Base):
 NEED_TECH = '방사선사(technician) 권한이 필요합니다'
 EPOCH = '00000000-0000-4000-8000-0000000000e1'
 OTHER = 'SYN-INST-B'
-# Another technician of the same institution marked: an account this page has no display name for, so it is shown as is.
+# Another technician of the same institution marked. The server names who marked for the reader (qc.byName -
+# api/src/account-identity.ts markerShown); the page shows that as is, never the login (WHO), which no list of this page names.
 WHO = 'syn-tech2@synthetic.test'
+WHO_NAME = 'SYN Tech Park'
+QC_NAMES = {WHO: WHO_NAME, 'syn-tech3@synthetic.test': 'SYN Tech Choi', TECH['actor']: TECH['displayName']}
 
 
 class QcSite(auth.Site):
@@ -138,7 +141,8 @@ class QcSite(auth.Site):
     def mark(self, uid, account):
         mark = self.qc.get(uid) or {'reason': None, 'by': None, 'at': None, 'revision': 0}
         owner = account['institution'] == auth.INSTITUTION and uid not in self.tele
-        return dict(mark, by=mark['by'] if owner else None)
+        by = mark['by'] if owner else None
+        return dict(mark, by=by, byName=QC_NAMES.get(by, by) if by else None)
 
     def study_row(self, account, uid=auth.UID, name=auth.PATIENT, patient='SYN-P-001'):
         row = super().study_row(account, uid, name, patient)
@@ -297,6 +301,9 @@ class QcFlagDOM(QcBase):
         self.assertEqual('no', reason.get_attribute('translate'))
         expect(page.locator('#study-qc')).to_contain_text('QC Flag: Flagged — SYN <b>motion</b> on series 2')
         self.assertEqual('no', page.locator('#study-qc .qc-info-reason').get_attribute('translate'))
+        # Who marked is the name the server sent, not the login.
+        expect(page.locator('#study-qc')).to_contain_text(TECH['displayName'])
+        self.assertNotIn(TECH['actor'], page.locator('#study-qc').inner_text())
         # SS, RS and the match are their own columns and keep their values.
         row = page.locator('#rows tr[data-uid]').first
         expect(row).to_contain_text('Verified')
@@ -330,6 +337,9 @@ class QcFlagDOM(QcBase):
         page = self.open_qc(auth.RAD, flagged='SYN blur on the lateral view')
         page.locator('#rows tr[data-uid]').first.click()
         expect(page.locator('#study-qc')).to_contain_text('QC Flag: Flagged — SYN blur on the lateral view')
+        # The technician who marked is named as the server names them for this reader, never by the login.
+        expect(page.locator('#study-qc')).to_contain_text(WHO_NAME)
+        self.assertNotIn(WHO, self.shown_everywhere())
         self.technician_tab()
         expect(page.locator('#t-qc-flag')).to_be_disabled()
         expect(page.locator('#t-qc-flag')).to_have_attribute('title', NEED_TECH)
@@ -411,7 +421,8 @@ class QcFlagDOM(QcBase):
         # The QC answer was made before the approval: its RS is W. Only its mark is taken.
         route, uid, body, account = self.site.held_patches[0]
         late = dict(self.site.study_row(account)['state'], rs='W', version=0,
-                    qc={'reason': 'SYN late answer', 'by': account['actor'], 'at': '2026-10-03T01:02:00.000Z', 'revision': 1})
+                    qc={'reason': 'SYN late answer', 'by': account['actor'], 'byName': QC_NAMES.get(account['actor'], account['actor']),
+                        'at': '2026-10-03T01:02:00.000Z', 'revision': 1})
         route.fulfill(json=late)
         expect(self.qc_cell()).to_contain_text('SYN late answer')
         expect(row).to_contain_text('Approved')
@@ -429,18 +440,20 @@ class QcFollowsTheListDOM(QcBase):
         self.technician_tab()
         page.locator('#rows tr[data-uid="%s"]' % auth.UID).click()
         expect(page.locator('#study-qc')).to_contain_text(self.REASON)
-        expect(page.locator('#study-qc')).to_contain_text(WHO)
+        expect(page.locator('#study-qc')).to_contain_text(WHO_NAME)
+        self.assertNotIn(WHO, self.shown_everywhere())
         return page
 
     def open_window(self):
         self.page.locator('#t-qc-flag').click()
         expect(self.window().locator('#qc-flag-now')).to_contain_text(self.REASON)
-        expect(self.window().locator('#qc-flag-now')).to_contain_text(WHO)
+        expect(self.window().locator('#qc-flag-now')).to_contain_text(WHO_NAME)
+        self.assertNotIn(WHO, self.shown_everywhere())
         self.window().get_by_label('Reason').fill('SYN typed and not sent')
 
     def assert_nothing_of_the_mark(self):
         text = self.shown_everywhere()
-        for word in (self.REASON, WHO, 'SYN typed and not sent'):
+        for word in (self.REASON, WHO, WHO_NAME, 'SYN typed and not sent'):
             self.assertNotIn(word, text)
 
     def test_a_row_that_left_the_list_closes_the_open_window_and_empties_it(self):
@@ -580,14 +593,16 @@ class QcFollowsTheListDOM(QcBase):
         expect(self.window()).to_be_hidden()
         expect(page.locator('#study-qc')).to_contain_text('QC Flag: Flagged — ' + self.REASON)
         self.assertNotIn(WHO, self.shown_everywhere())
+        self.assertNotIn(WHO_NAME, self.shown_everywhere())
         # The command's own answer, made for the owning institution (same revision, with the author), arrives late.
         route, uid, body, account = site.held_patches[0]
         late = dict(auth.Site.study_row(site, account)['state'], draftEpoch=EPOCH,
-                    qc={'reason': self.REASON, 'by': WHO, 'at': '2026-10-03T01:02:00.000Z', 'revision': 1})
+                    qc={'reason': self.REASON, 'by': WHO, 'byName': WHO_NAME, 'at': '2026-10-03T01:02:00.000Z', 'revision': 1})
         route.fulfill(json=late)
         page.wait_for_timeout(500)
         expect(page.locator('#study-qc')).to_contain_text('QC Flag: Flagged — ' + self.REASON)
         self.assertNotIn(WHO, self.shown_everywhere())
+        self.assertNotIn(WHO_NAME, self.shown_everywhere())
         # The bar refuses to write on a received row.
         page.locator('#t-qc-flag').click()
         page.wait_for_timeout(300)

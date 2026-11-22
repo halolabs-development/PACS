@@ -2047,7 +2047,7 @@ test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusal
   const changed = await w.studyState.patchState(s.uid, cmd({ reason: 'SYN repeat requested' }), ADMIN_A);
   assert.deepEqual([changed.qc.reason, changed.qc.by, changed.qc.revision], ['SYN repeat requested', ADMIN_A.actor, 2]);
   const cleared = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
-  assert.deepEqual(cleared.qc, { reason: null, by: null, at: null, revision: 3 });
+  assert.deepEqual(cleared.qc, { reason: null, by: null, byName: null, at: null, revision: 3 });
   assert.deepEqual([row().qcReason, row().qcBy, row().qcAt, row().qcRevision], [null, null, null, 3]);
   // every change is one state.patch row holding the revision it stored; the other study fields stay as they were
   assert.deepEqual(w.audits('state.patch').map(a => JSON.parse(a.detail)), [
@@ -2105,11 +2105,11 @@ test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusal
   // the tele receiver sees the mark and its reason, not who made it
   await w.studyState.patchState(tele.uid, teleCmd, TECH_A);
   const view = values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_B, null);
-  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.revision], ['SYN', null, 1]);
+  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.byName, view.qc.revision], ['SYN', null, null, 1]);
   assert.equal(values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_A, null).qc.by, TECH_A.actor);
   // a row the server has never marked answers the one shape, revision 0
   assert.deepEqual(values.toClient(w.db.rows('studyState').find(r => r.uid === other.uid), null, RAD_A, null).qc,
-    { reason: null, by: null, at: null, revision: 0 });
+    { reason: null, by: null, byName: null, at: null, revision: 0 });
 
   // a study whose mark was ever set keeps its row (and its revision): deletion is refused, cleared or not
   await refused(() => w.studyState.removeState(s.uid, TECH_A), 409, 'STUDY_HAS_QC_HISTORY');
@@ -2280,6 +2280,48 @@ test('OWNER-05 another reader is shown who saved, holds or is designated by the 
   assert.equal(sourceWriterShown({ action: 'approve', author: X.actor, authorSub: X.sub, authorName: null }, reader), X.actor);
   assert.equal(sourceWriterShown({ action: 'addendum', author: X.actor, authorSub: X.sub, authorName: 'SYN Kim Then' }, reader), 'SYN Kim Then');
   assert.equal(sourceWriterShown({ action: 'save', author: X.actor, authorSub: X.sub }, reader), 'SYN Kim Writer');
+});
+
+test('OWNER-06 who put a QC Flag is named to every member of the study institution by the member whose login it is, never as the login; the tele receiver is told nobody', async () => {
+  const w = world();
+  await w.boot();
+  const T2 = member('tech-a2', INST_A, ['technician']), U = member('tech-unnamed', INST_A, ['technician']);
+  const rights = (c, name) => w.db.seed('memberRights', { sub: c.sub, username: c.actor.split('@')[0], email: c.actor, name,
+    emailVerified: true, approved: true, suspended: false, institution: c.institution, roles: c.roles, version: 1 });
+  rights(TECH_A, 'SYN Tech Shown'); rights(T2, 'SYN Tech Second'); rights(RAD_A, 'SYN Kim Reader'); rights(ADMIN_A, 'SYN Admin Shown');
+  rights(U, U.actor.split('@')[0]);
+  const s = w.study(), byAdmin = w.study(), unnamed = w.study(), legacy = w.study(), tele = w.study({ teleInstitutionId: INST_B, ts: 'sent' });
+  w.orthanc.rows = [s, byAdmin, unnamed, legacy].map(x => qido(x.uid, 'SYN A HOSPITAL'));
+  const rowOf = x => w.db.rows('studyState').find(r => r.uid === x.uid);
+  const mark = (x, c, reason) => w.studyState.patchState(x.uid, { qc: { reason }, qcRevision: rowOf(x).qcRevision ?? 0, epoch: rowOf(x).draftEpoch }, c);
+  const qcOf = async (c, x) => (await w.worklist.bootstrap(c)).states[x.uid].qc;
+
+  // the technician's own answer names itself; the stored mark keeps the login, as before
+  const own = await mark(s, TECH_A, 'SYN motion on series 2');
+  assert.deepEqual([own.qc.by, own.qc.byName], [TECH_A.actor, 'SYN Tech Shown']);
+  assert.equal(rowOf(s).qcBy, TECH_A.actor);
+  // the institution's radiologist, another technician and the administrator see the technician's name, never the login
+  for (const reader of [RAD_A, T2, ADMIN_A, TECH_A]) {
+    const qc = await qcOf(reader, s);
+    assert.deepEqual([qc.reason, qc.by, qc.byName], ['SYN motion on series 2', TECH_A.actor, 'SYN Tech Shown'], reader.sub);
+  }
+  // an administrator's mark is named by the administrator's name
+  await mark(byAdmin, ADMIN_A, 'SYN repeat requested');
+  assert.equal((await qcOf(RAD_A, byAdmin)).byName, 'SYN Admin Shown');
+  // a member with no registered name (the import fills it with the username) is shown by its login now, as a saver is
+  await mark(unnamed, U, 'SYN blur');
+  assert.equal((await qcOf(RAD_A, unnamed)).byName, U.actor);
+  // an older mark whose login no member has now is shown as it was stored
+  Object.assign(rowOf(legacy), { qcReason: 'SYN older mark', qcBy: 'syn-gone@synthetic.test', qcAt: new Date(), qcRevision: 1 });
+  assert.equal((await qcOf(RAD_A, legacy)).byName, 'syn-gone@synthetic.test');
+  // the tele-reading receiver sees the mark and reason, not who
+  await mark(tele, TECH_A, 'SYN tele mark');
+  const { withWriters } = require('/app/dist/member-rights');
+  const theirs = values.toClient(rowOf(tele), null, await withWriters(w.db.root, { ...RAD_B }), null).qc;
+  assert.deepEqual([theirs.reason, theirs.by, theirs.byName], ['SYN tele mark', null, null]);
+  // a cleared mark names nobody
+  const cleared = await w.studyState.patchState(s.uid, { qc: null, qcRevision: rowOf(s).qcRevision, epoch: rowOf(s).draftEpoch }, TECH_A);
+  assert.deepEqual([cleared.qc.by, cleared.qc.byName], [null, null]);
 });
 
 test('OWNER-04 a draft record id is never issued to another account: a study deleted and arriving again under its UID keeps the emptied row', async () => {
