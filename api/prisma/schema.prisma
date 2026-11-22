@@ -288,6 +288,15 @@ model StudyState {
   qcBy      String?
   qcAt      DateTime?
   qcRevision Int     @default(0)
+  /// Reading request: a clinician of the owning institution asked for this study to be read (pacs/reading-request.ts). The
+  /// study's latest request is open while readingRequestAt is set and readingRequestClosedAt is NULL; the approval of the
+  /// report row it opens on writes readingRequestClosedAt in the same transaction. A new request after that writes the four
+  /// request fields again and clears the closing time; each request is one `study.reading-request` audit row.
+  readingRequestAt       DateTime?
+  readingRequestBySub    String?   @db.VarChar(256)
+  readingRequestBy       String?   @db.VarChar(256)
+  readingRequestByName   String?   @db.VarChar(256)
+  readingRequestClosedAt DateTime?
   em        String   @default("N")            // Emergency: E / N
   ts        String   @default("none")         // Tele Status: none→wait→sending→sent→inReading→completed
   matched   String   @default("U")            // RIS 오더 매칭: M / U

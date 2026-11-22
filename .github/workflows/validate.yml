@@ -1719,6 +1719,9 @@ jobs:
     - name: In-app unread views and seen marks, input and role checks and the list's own filter, over a recording store
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/unread-marks-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/in_app_unread_service_test.cjs -- node --test tests/in_app_unread_service_test.cjs
+    - name: Reading request create, refusals, the approval's close and the worklist and clinician views, over a recording store
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/reading-request-service --cwd . --tree api/src --file api/prisma/schema.prisma --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/reading_request_service_test.cjs -- node --test tests/reading_request_service_test.cjs
     - name: Gateway operational status heartbeat rules, late beats, bounds and the admin read against the API memory table
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/gateway-status-service --cwd . --tree api/src --file api/package-lock.json --file tests/service_test_loader.cjs --file tests/gateway_status_server_test.cjs -- node --test tests/gateway_status_server_test.cjs
@@ -1877,6 +1880,9 @@ jobs:
     - name: Only the work page loads the screen language translator
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/pages-language-dom --cwd . --tree worklist-v0/hpacs-lite --file config/ohif.js --tree tests -- $RUNNER_TEMP/measurement-python/bin/python -B tests/screen_language_pages_dom_test.py
+    - name: Admin, Clinician Home and Audit show the work page's HALO icon in the header and the browser tab
+      if: ${{ !cancelled() && !github.event.pull_request.draft }}
+      run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/halo-icon-pages-dom --cwd . --tree worklist-v0/hpacs-lite --tree proxy/branding --file tests/halo_icon_pages_dom_test.py -- $RUNNER_TEMP/measurement-python/bin/python -B tests/halo_icon_pages_dom_test.py
     - name: Viewer exam scope admission and series boundaries
       if: ${{ !cancelled() && !github.event.pull_request.draft }}
       run: python3 scripts/record-run.py --run-dir tmp/workspace-ui-ci/viewer-exam-scope --cwd . --file tests/viewer_exam_scope_test.cjs --file tests/gateway_exam_receipt_test.cjs --file worklist-v0/hpacs-lite/page-core.js --file worklist-v0/hpacs-lite/study-info-panel.js --file worklist-v0/hpacs-lite/study-arrivals.js --file worklist-v0/hpacs-lite/clinician.js --file worklist-v0/hpacs-lite/exam-scope.js --file worklist-v0/hpacs-lite/viewer-exam-scope.js -- node --test tests/viewer_exam_scope_test.cjs tests/gateway_exam_receipt_test.cjs

@@ -1612,7 +1612,7 @@ class StudioWorklistDOM(unittest.TestCase):
         self.open()
         names = self.page.locator("#heads th").evaluate_all("els => els.map(e => e.dataset.key)")
         # Referred (when the referring hospital's Gateway sent the study) follows StudyDate now that the list rows carry it.
-        self.assertEqual(["no", "assignedReader", "rs", "confirm", "date", "referredAt", "id", "name", "reqDate", "reqDept", "reqDoc",
+        self.assertEqual(["no", "assignedReader", "rs", "confirm", "readReq", "date", "referredAt", "id", "name", "reqDate", "reqDept", "reqDoc",
                           "ptClass", "age", "desc", "modality", "institutionName"], names)
         self.assertEqual("11px", self.page.locator("#rows td").first.evaluate("e => getComputedStyle(e).fontSize"))
         if os.environ.get("KIN_EVIDENCE_DIR"):

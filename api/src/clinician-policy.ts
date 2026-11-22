@@ -76,6 +76,8 @@ export const CLINICIAN_BUSINESS_ROUTES: readonly string[] = Object.freeze([
   'GET unread',
   'POST questions/:id/seen',
   'POST image-requests/:id/seen',
+  // Reading request: a clinician asks for an existing study of their institution to be read (pacs/reading-request.ts).
+  'POST studies/:uid/reading-request',
   'GET critical-results',
   'GET critical-results/:id',
   'POST critical-results/:id/ack',

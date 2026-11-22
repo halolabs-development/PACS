@@ -2,7 +2,9 @@
 """Worklist request and approval columns on the shipped page: ReqDate, ReqDept, ReqDoc, Pt Class (after Name) and Confirm
 (after RS), their filters, a stored layout from before these columns, and the column chooser. Referred (after StudyDate):
 when the referring hospital's Gateway sent the study, its filter, a sort by the server time itself, a poll that refreshes
-rows in place, and both screen languages.
+rows in place, and both screen languages. Read Req (after Confirm): the open reading request a clinician made on the
+study (the server's readingRequest), who asked as the cell's title, its Requested / None filter on the header, in a saved
+compound search and after a poll, and both screen languages.
 
 The page boots through its own boot() against the in-test server of multi_institution_worklist_dom_test.py; nothing of the
 page is cut out or replaced. Cells are read by the position of their visible header. Expected values are written here from
@@ -39,7 +41,7 @@ ROWS = [
     request_row("2.25.906", "SYN-RC-06", rs="T"),
 ]
 IDS = ["SYN-RC-01", "SYN-RC-02", "SYN-RC-03", "SYN-RC-04", "SYN-RC-05", "SYN-RC-06"]
-DEFAULT_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class",
+DEFAULT_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "Read Req", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class",
                  "Age", "StudyDesc", "Modality", "Hospital"]
 
 
@@ -157,8 +159,8 @@ class WorklistRequestColumnsDOM(unittest.TestCase):
             "Technician": {"order": [], "hidden": []}}}
         screen = self.boot(Server(rows=ROWS), storage={layout_key(SESSION_A): json.dumps(stored)})
         screen.wait_rows(IDS)
-        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "RS", "Confirm", "StudyDate", "Referred", "Modality"],
-                         screen.heads()[:11])
+        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "RS", "Confirm", "Read Req", "StudyDate", "Referred", "Modality"],
+                         screen.heads()[:12])
         self.assertNotIn("Age", screen.heads())
         # The column chooser lists them in the same order; one can be turned off and on again.
         screen.page.get_by_role("button", name="Choose columns", exact=True).click()
@@ -191,7 +193,7 @@ REFERRED_ROWS = [
     referred_row("2.25.954", "SYN-RF-04", None),
 ]
 REFERRED_IDS = ["SYN-RF-01", "SYN-RF-02", "SYN-RF-03", "SYN-RF-04"]
-REFERRED_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc",
+REFERRED_HEADS = ["No", "Assigned Reader", "RS", "Confirm", "Read Req", "StudyDate", "Referred", "ID", "Name", "ReqDate", "ReqDept", "ReqDoc",
                  "Pt Class", "Age", "StudyDesc", "Modality", "Hospital"]
 
 
@@ -244,8 +246,8 @@ class WorklistReferredColumnDOM(unittest.TestCase):
             "Technician": {"order": [], "hidden": []}}}
         screen = self.boot(Server(rows=REFERRED_ROWS), storage={layout_key(SESSION_A): json.dumps(stored)})
         screen.wait_rows(REFERRED_IDS)
-        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "StudyDate", "Referred", "RS", "Confirm", "Modality"],
-                         screen.heads()[:11])
+        self.assertEqual(["Name", "ReqDate", "ReqDept", "ReqDoc", "Pt Class", "ID", "StudyDate", "Referred", "RS", "Confirm", "Read Req", "Modality"],
+                         screen.heads()[:12])
         screen.page.get_by_role("button", name="Choose columns", exact=True).click()
         picker = screen.page.locator("#column-picker")
         labels = [t.strip() for t in picker.locator("label").all_inner_texts()]
@@ -315,6 +317,110 @@ class WorklistReferredColumnDOM(unittest.TestCase):
         self.assertEqual({"SYN-RF-01": "2026-11-20 08:10", "SYN-RF-02": "2026-11-20 08:10", "SYN-RF-03": "2026-11-20 11:45",
                           "SYN-RF-04": ""}, {pid: referred for referred, pid in (line.split(",") for line in lines[1:5])})
         self.assertEqual([""], lines[5:])
+        screen.finish()
+
+
+def read_row(uid, pid, request=None):
+    body = row(uid, pid)
+    body["readingRequest"] = request
+    return body
+
+
+READ_ROWS = [
+    read_row("2.25.971", "SYN-RQ-01", {"at": "2026-11-21T05:03:40.000Z", "by": "SYN Dr. KIM <b>x</b>"}),
+    read_row("2.25.972", "SYN-RQ-02"),
+    read_row("2.25.973", "SYN-RQ-03", {"at": "2026-11-20T23:30:00.000Z", "by": "SYN Dr. LEE"}),
+]
+READ_IDS = ["SYN-RQ-01", "SYN-RQ-02", "SYN-RQ-03"]
+
+
+class WorklistReadRequestColumnDOM(unittest.TestCase):
+    # The harness's browser and boot only; that file's own cases are not run again here.
+    setUpClass = classmethod(harness.MultiInstitutionWorklist.setUpClass.__func__)
+    tearDownClass = classmethod(harness.MultiInstitutionWorklist.tearDownClass.__func__)
+    boot = harness.MultiInstitutionWorklist.boot
+
+    def cell(self, screen, pid, title="Read Req"):
+        return screen.data_row(pid).locator("td").nth(screen.heads().index(title))
+
+    def test_rq01_the_column_its_help_and_the_request_as_data(self):
+        screen = self.boot(Server(rows=READ_ROWS))
+        screen.wait_rows(READ_IDS)
+        self.assertEqual(REFERRED_HEADS, screen.heads())
+        self.assertEqual(["RS", "Confirm", "Read Req"], screen.heads()[2:5])
+        # The request time in the browser's zone (Asia/Seoul); blank where the server sent no open request.
+        self.assertEqual({"SYN-RQ-01": "2026-11-21 14:03", "SYN-RQ-02": "", "SYN-RQ-03": "2026-11-21 08:30"},
+                         screen.cells_by_id("Read Req"))
+        head = screen.table().locator('th[data-key="readReq"]')
+        self.assertIn("진료과 의사가 이 검사의 판독을 의뢰한 시각", head.get_attribute("title"))
+        self.assertIn("비어 있음: 의뢰가 없거나 판독문이 승인되어 의뢰가 닫힌 검사", head.get_attribute("title"))
+        # Who asked is the title, as text (never markup); the time and the name are never handed to translation.
+        mark = self.cell(screen, "SYN-RQ-01").locator(".read-req")
+        self.assertEqual("SYN Dr. KIM <b>x</b>", mark.get_attribute("title"))
+        self.assertEqual("title", mark.get_attribute("data-kin-keep"))
+        self.assertEqual(0, self.cell(screen, "SYN-RQ-01").locator("b").count())
+        self.assertEqual("no", mark.locator("span").get_attribute("translate"))
+        self.assertEqual(["", "Requested", "None"], screen.filter_box("Read Req").locator("option").all_inner_texts())
+        screen.finish()
+
+    def test_rq02_requested_and_none_on_the_header_and_in_a_saved_compound_search(self):
+        filters = [WorklistRequestColumnsDOM.compound("SYN REQUESTED", "and", [{"field": "readReq", "op": "eq", "value": "Requested"}]),
+                   WorklistRequestColumnsDOM.compound("SYN NOT REQUESTED", "and", [{"field": "readReq", "op": "eq", "value": "None"}])]
+        screen = self.boot(Server(rows=READ_ROWS, filters=filters))
+        screen.wait_rows(READ_IDS)
+        screen.filter_box("Read Req").select_option("Requested")
+        screen.wait_rows(["SYN-RQ-01", "SYN-RQ-03"])
+        screen.filter_box("Read Req").select_option("None")
+        screen.wait_rows(["SYN-RQ-02"])
+        screen.filter_box("Read Req").select_option("")
+        screen.wait_rows(READ_IDS)
+        # A saved search compares the same two words, not the time the cell shows.
+        screen.menu("Filters").get_by_role("button", name=re.compile("^SYN REQUESTED, ")).click()
+        screen.wait_rows(["SYN-RQ-01", "SYN-RQ-03"])
+        screen.menu("Filters").get_by_role("button", name=re.compile("^SYN NOT REQUESTED, ")).click()
+        screen.wait_rows(["SYN-RQ-02"])
+        self.assertNotIn("복합 조건 오류", screen.filter_line())
+        screen.finish()
+
+    def test_rq03_a_request_closed_elsewhere_leaves_the_requested_filter_on_the_next_poll(self):
+        # The page's own clock drives the 30-second poll; the list is never reloaded by hand here.
+        server = Server(rows=READ_ROWS)
+        screen = self.boot(server, clock_at=datetime.now(timezone.utc))
+        screen.wait_rows(READ_IDS)
+        screen.filter_box("Read Req").select_option("Requested")
+        screen.wait_rows(["SYN-RQ-01", "SYN-RQ-03"])
+        reads = sum(1 for e in server.ledger if e["path"] == "/api/studies")
+        # The same studies: SYN-RQ-01's report was approved by another reader (no open request any more), and SYN-RQ-02
+        # was asked for meanwhile. The poll refreshes both rows in place.
+        server.rows = [read_row("2.25.971", "SYN-RQ-01"),
+                       read_row("2.25.972", "SYN-RQ-02", {"at": "2026-11-21T06:00:00.000Z", "by": "SYN Dr. PARK"}),
+                       read_row("2.25.973", "SYN-RQ-03", {"at": "2026-11-20T23:30:00.000Z", "by": "SYN Dr. LEE"})]
+        screen.page.clock.run_for(31000)
+        until(lambda: sum(1 for e in server.ledger if e["path"] == "/api/studies") > reads, 10, "a poll read the list")
+        screen.wait_rows(["SYN-RQ-02", "SYN-RQ-03"])
+        screen.filter_box("Read Req").select_option("")
+        screen.wait_rows(READ_IDS)
+        self.assertEqual({"SYN-RQ-01": "", "SYN-RQ-02": "2026-11-21 15:00", "SYN-RQ-03": "2026-11-21 08:30"},
+                         screen.cells_by_id("Read Req"))
+        screen.finish()
+
+    def test_rq04_korean_screen_names_the_column_and_keeps_the_time_and_the_name(self):
+        screen = self.boot(Server(rows=READ_ROWS))
+        screen.wait_rows(READ_IDS)
+        self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko"))
+        until(lambda: "판독 의뢰" in screen.heads(), 5, "Korean header")
+        self.assertNotIn("Read Req", screen.heads())
+        cell = self.cell(screen, "SYN-RQ-01", "판독 의뢰")
+        self.assertEqual("2026-11-21 14:03", cell.inner_text().strip())
+        self.assertEqual("SYN Dr. KIM <b>x</b>", cell.locator(".read-req").get_attribute("title"))
+        self.assertIn("판독 의뢰: 진료과 의사가", screen.table().locator('th[data-key="readReq"]').get_attribute("title"))
+        screen.filter_box("판독 의뢰").select_option("Requested")
+        screen.wait_rows(["SYN-RQ-01", "SYN-RQ-03"])
+        self.assertTrue(screen.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en"))
+        until(lambda: "Read Req" in screen.heads(), 5, "English header")
+        until(lambda: "Blank: no request, or the report was approved and the request closed"
+              in screen.table().locator('th[data-key="readReq"]').get_attribute("title"), 5, "English header help")
+        screen.wait_rows(["SYN-RQ-01", "SYN-RQ-03"])
         screen.finish()
 
 

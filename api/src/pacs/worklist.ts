@@ -3,6 +3,7 @@
  * 보낸 병원을 모르는 검사의 보류·운영자 알림·장비/표기 등록 뒤 자동 연결(D1882)도 같은 등록 자리에서 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { worklistReadingRequests } from './reading-request';
 import { headVersionsUnchanged, withStoredExtras } from '../report-visibility';
 import type { StudyAccessService } from '../study-access.service';
 import type { AccessSnapshot } from '../study-access.service';
@@ -472,6 +473,11 @@ export class PacsWorklist {
           relatedExamReports: [] });
       }
     }
+    // Reading request (pacs/reading-request.ts): the open request each own exam row shows - a request kept on an original
+    // shows on the row examOpenUids opens it on, the rule the in-app unread marks use. Exam rows only; a source list has none.
+    const readingRequests = exams ? await worklistReadingRequests(this.prisma, this.studyAccess, c, pageUids
+      .filter(uid => shown.get(uid)?.institutionId === me).map(uid => ({ uid, studies: examByUid.get(uid)?.studies ?? [uid] })),
+      uid => sourceStates.get(uid)) : new Map();
     const out: any[] = [];
     for (const st of sourceRows) {
       const uid = uidOf(st);
@@ -514,6 +520,8 @@ export class PacsWorklist {
         // the original study the row's images are (a split exam's second row is a logical row of the same original), as its
         // other study columns are; the row's own state is the original for every other row.
         referredAt: referredAt(sourceStates.get(OrthancService.tag(st, '0020000D')) ?? s),
+        // The open reading request on this row ({at, by}), the owner institution's rows only; null otherwise.
+        readingRequest: s.institutionId === me ? readingRequests.get(uid) ?? null : null,
         sex: OrthancService.tag(st, '00100040'),
         modality: st['00080061']?.Value?.join(',') ?? '',
         desc: OrthancService.tag(st, '00081030'),
