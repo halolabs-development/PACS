@@ -305,7 +305,8 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         delete cell.sourceDigest;
       }
       if (!equal(display, item.snapshot)) throw kinError("현재 표시 확인 응답이 요청과 다릅니다.");
-      return { snapshot: checked.snapshot, transient: true, title: mipOutput(display.version)?(mipBatchPage(display.version)?kinText("현재 MIP Batch 표시"):kinText("현재 MIP Viewer 표시")):[4,6].includes(display.version)?kinText("현재 MPR 표시"):kinText("현재 비교 화면"), description: kinText("현재 배치·표시 설정으로 원본 재조회 · 화면 캡처 아님") };
+      // The title and description of a current-display output are printed on its paper: as written (the dialog's words are said apart).
+      return { snapshot: checked.snapshot, transient: true, title: mipOutput(display.version)?(mipBatchPage(display.version)?'현재 MIP Batch 표시':'현재 MIP Viewer 표시'):[4,6].includes(display.version)?'현재 MPR 표시':'현재 비교 화면', description: '현재 배치·표시 설정으로 원본 재조회 · 화면 캡처 아님' };
     };
     const job = await readJob(), identities = [], reports = [];
     const studies = job.snapshot.studies;
