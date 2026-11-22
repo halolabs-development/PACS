@@ -13,7 +13,7 @@ size, line height and colour itself.
   02  keyboard: Tab follows the screen (password -> Login -> forgot-password -> registration); Enter on the link
       opens the reset page.
   03  the link stays where it was drawn: under the Login button, left of the TLS note, above the registration line.
-  04  the administrator's OTP code page (keycloak/README.md 관리자 OTP 필수) shows its button's own "로그인"; only the
+  04  the OTP code page of an account that has OTP (keycloak/README.md, OTP는 스스로 등록한 계정만) shows its button's own "로그인"; only the
       password form draws the label beside a transparent button.
   05  a phone-sized window (375x667) keeps the card, its button and the notice links inside the window, on the login,
       OTP code and OTP set-up pages.
@@ -108,7 +108,7 @@ for _key in sorted(("loginTitle", "loginAccountTitle", "usernameOrEmail", "passw
                     "noAccount", "doRegister"), key=lambda k: -len(MSG[k])):
     LOGIN_EN = LOGIN_EN.replace(MSG[_key], MSG_EN[_key])
 HANGUL = re.compile(r"[가-힣]")
-# keycloak/README.md 관리자 OTP 필수: the administrator's one-time code page (26.7.3 login-otp.ftl as served with this theme).
+# keycloak/README.md, OTP는 스스로 등록한 계정만: the one-time code page of an account that has OTP (26.7.3 login-otp.ftl as served with this theme).
 OTP_PATH = "/auth/realms/kin/login-actions/authenticate"
 OTP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
 <title>{MSG["loginTitle"]}</title>{HEAD}</head>
@@ -128,7 +128,7 @@ OTP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta 
    </form></div></div>
  </div>
 </div></body></html>"""
-# The administrator's first OTP set-up page (26.7.3 login-config-totp.ftl's shape as served with this theme): the widest card.
+# The OTP set-up page of an account setting up its own OTP (26.7.3 login-config-totp.ftl's shape as served with this theme): the widest card.
 TOTP_SETUP_PATH = "/auth/realms/kin/login-actions/required-action"
 TOTP_SETUP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
 <title>{MSG["loginTitle"]}</title>{HEAD}</head>
@@ -343,7 +343,7 @@ class LoginThemeDomTest(unittest.TestCase):
                         self.assertLessEqual(seen["error"]["bottom"], seen["button"]["top"], "the error line above the button")
                     for link in self.page.locator("#kin-legal-links a").all():
                         expect(link).to_be_in_viewport(ratio=1)
-            # The administrator's one-time code page fits too; the first OTP set-up is a long form that scrolls from its
+            # The one-time code page fits too; the first OTP set-up is a long form that scrolls from its
             # top (login.css "Long forms"), and its picture, its button and the notices are reached by scrolling.
             with self.subTest(window=f"{width}x{height}", page="otp code"):
                 self.page.goto(ORIGIN + OTP_PATH)

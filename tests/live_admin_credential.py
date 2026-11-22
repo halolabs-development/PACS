@@ -12,17 +12,9 @@ import threading
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-import admin_otp
-
 
 _credentials = {}
 _lock = threading.Lock()
-
-
-def _admin_call(request, method, url, body, token):
-    """admin_otp.seed's (status, body) over this module's no-redirect request: GET answers 200, the writes 204."""
-    expected = 200 if method == "GET" else 204
-    return expected, request(method, url, body, token=token, expected=expected)
 
 
 class _NoRedirects(HTTPRedirectHandler):
@@ -87,11 +79,7 @@ def ensure_imported_admin_credential(kc_admin_url: str, kc_admin_password: str) 
                 or not isinstance(users[0].get("id"), str) or not users[0]["id"]):
             raise RuntimeError("Synthetic imported administrator must resolve exactly once")
         password = secrets.token_urlsafe(32)
-        user = base + "/users/" + quote(users[0]["id"], safe="")
-        request("PUT", user + "/reset-password",
+        request("PUT", base + "/users/" + quote(users[0]["id"], safe="") + "/reset-password",
                 {"type": "password", "value": password, "temporary": False}, token=token, expected=204)
-        # jmryu holds admin, and administrators sign in with OTP (keycloak/README.md): the synthetic one, answered by
-        # admin_otp wherever the harness signs in.
-        admin_otp.seed(lambda method, path, body: _admin_call(request, method, base + path, body, token), users[0]["id"])
         _credentials[key] = password
         return password

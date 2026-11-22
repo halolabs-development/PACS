@@ -56,11 +56,7 @@ type Who = { actor: string; target: string; institution: string | null };
 export type LoginFailureCause =
   'provider_error' | 'state_mismatch' | 'no_code' | 'exchange_failed' | 'token_invalid' | 'session_failed'
   // 격리된 회원(우리 쪽 격리 사실이 있는 회원)의 로그인: 세션을 만들지 않는다.
-  | 'member_isolated' | 'rights_pending' | 'storage_failure'
-  // DB 권한은 admin인데 그 로그인의 검증된 access token에 admin 역할 또는 OTP 수행(amr otp)이 없다(adminProved).
-  | 'admin_otp_required';
-/** 관리자 OTP 관문의 거절 문구(adminProved). 원인(막 등록함·역할 반영 전·역할 빠짐)을 가르지 않는다 — 답은 모두 다시 로그인이다. */
-const ADMIN_OTP_REQUIRED = '관리자 계정은 OTP 확인이 필요합니다. 다시 로그인해 주십시오';
+  | 'member_isolated' | 'rights_pending' | 'storage_failure';
 /** The landing answers this server gives itself (index.html ARRIVAL_NOTICES); a provider error never borrows one. */
 /**
  * Why a verified sign-in of a suspended member is refused (index.html ARRIVAL_NOTICES says it and whom to ask): suspended
@@ -68,7 +64,7 @@ const ADMIN_OTP_REQUIRED = '관리자 계정은 OTP 확인이 필요합니다. �
  * same rights row). Read from the row that refused the sign-in (`entryRights`), never looked up again.
  */
 type BlockedAnswer = 'member_suspended' | 'member_suspended_unapproved';
-const OWN_LANDING_ERRORS: ReadonlySet<string> = new Set(['stale', 'session_active', 'login_failed', 'admin_otp_required',
+const OWN_LANDING_ERRORS: ReadonlySet<string> = new Set(['stale', 'session_active', 'login_failed',
   'member_suspended', 'member_suspended_unapproved']);
 /** The refusal `entryRights` throws for a suspended member carries the answer its row gives. */
 const BLOCKED = Symbol('kin.blockedAnswer');
@@ -570,29 +566,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     return result.ended;
   }
 
-  /**
-   * 공통 권한 관문 — 관리자 OTP. 권한은 DB(memberRights)만 준다. 그 권한이 admin을 줄 때만, 그 권한을 받아들이는 검증된
-   * access token에 `admin` realm 역할과 실제 OTP 수행(`amr`의 `otp`: kin-realm.json의 관리자 OTP 실행 reference)이 둘 다
-   * 있어야 한다. 토큰은 권한을 주지 않는다 — 들어올 조건을 하나 더할 뿐이다. admin을 주지 않는 권한은 언제나 통과한다.
-   * 권한을 받아들이는 길은 모두 이 함수를 지난다: 콜백(회원 잠금 안의 최종 확인 포함), 세션의 저장 토큰(sessionRights:
-   * 매 요청·갱신 전·업무 재검증), 갱신으로 받은 새 토큰(doRefresh), hasSession, Bearer(bearerRights: 검증된 issuer·audience의
-   * 회원 토큰 전부). `token`이 문자열이면 저장 전에 검증한 세션의 저장 토큰이다 — 만료는 세션의 끝이 아니므로(S7-U5 ④)
-   * 서명·만료를 다시 보지 않고 그 claim만 읽는다.
-   */
-  private adminProved(rights: any, token: Record<string, any> | string): boolean {
-    if (!rightsAllow(rights) || !rights.roles.includes('admin')) return true;
-    let claims: Record<string, any>;
-    try { claims = typeof token === 'string' ? decodeJwt(token) : token; }
-    catch { return false; }
-    const roles = claims?.realm_access?.roles, amr = claims?.amr;
-    return Array.isArray(roles) && roles.includes('admin') && Array.isArray(amr) && amr.includes('otp');
-  }
-
   /** Current rights and the session's admitted version must both survive. No JWT fallback. */
   async sessionRights(session: Session, db: any = this.prisma) {
     const rights = await this.entryRights(session.sub, db);
     if (rights.version !== session.rightsVersion) throw this.ended('회원 자격이 바뀌었습니다. 다시 로그인해 주십시오');
-    if (!this.adminProved(rights, session.accessToken)) throw this.ended(ADMIN_OTP_REQUIRED);
     return rights;
   }
 
@@ -600,7 +577,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const rights = await this.entryRights(String(claims.sub), db);
     if (rights.newAuthAfter && !this.authenticationAfter(claims.auth_time, rights.newAuthAfter))
       throw this.ended('회원 자격이 바뀌었습니다. 다시 로그인해 주십시오');
-    if (!this.adminProved(rights, claims)) throw this.ended(ADMIN_OTP_REQUIRED);
     return rights;
   }
 
@@ -609,11 +585,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
    */
   bindCurrentAuthorization(payload: Record<string, any>, raw: string, session: Session | null,
       rights: { version: number; institution: string; roles: readonly string[] }): CurrentRequestAuthorization {
-    // The Bearer recheck passes the same admin OTP gate (adminProved): the token's realm roles and amr travel with it.
-    const listed = (value: unknown) => Object.freeze(Array.isArray(value) ? value.filter(item => typeof item === 'string') : []);
     const claims = Object.freeze({ iss: payload.iss, sub: payload.sub, exp: payload.exp,
-      sid: payload.sid, session_state: payload.session_state, auth_time: payload.auth_time, iat: payload.iat,
-      realm_access: Object.freeze({ roles: listed(payload.realm_access?.roles) }), amr: listed(payload.amr) });
+      sid: payload.sid, session_state: payload.session_state, auth_time: payload.auth_time, iat: payload.iat });
     const admitted = session ? { sid: session.sid, createdAt: session.createdAt.getTime(),
       idpSid: session.idpSid, rightsVersion: session.rightsVersion, institution: session.institution } : null;
     const expected = { version: rights.version, institution: rights.institution, roles: [...rights.roles].sort() };
@@ -811,13 +784,12 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const sid = this.sessionId(req);
     if (!sid) return false;
     const session = await this.storage('session_read', () => this.prisma.authSession.findUnique({
-      where: { sid }, select: { lastSeenAt: true, sub: true, rightsVersion: true, accessToken: true },
+      where: { sid }, select: { lastSeenAt: true, sub: true, rightsVersion: true },
     }));
     if (!session || session.lastSeenAt.getTime() < Date.now() - SESSION_IDLE_MS) return false;
     if (await this.memberRightsState() !== 'ready') return false;
     const rights = await this.storage('session_read', () => this.prisma.memberRights.findUnique({ where: { sub: session.sub } }));
-    // The same admin OTP gate as every request: a session the requests refuse must not hold the login start back.
-    return !rights?.suspended && (rights?.version ?? 0) === session.rightsVersion && this.adminProved(rights, session.accessToken);
+    return !rights?.suspended && (rights?.version ?? 0) === session.rightsVersion;
   }
 
   /**
@@ -893,8 +865,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const flow = own.pending;
     if (error !== undefined) {
       await this.loginFailureRow(req, 'provider_error', null);
-      // The provider's own error is shown as it came, but never as one of this server's answers: those (the administrator
-      // OTP answer above all) come only from this server's checks of a verified login. An empty error says nothing to show.
+      // The provider's own error is shown as it came, but never as one of this server's answers: those (a suspended
+      // member's answer above all) come only from this server's checks of a verified login. An empty error says nothing to show.
       return { kind: 'landing', error: error && !OWN_LANDING_ERRORS.has(error) ? error : 'login_failed' };
     }
     if (!code) {
@@ -947,11 +919,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     }
 
     const who = { ...this.identity(payload, String(payload.sub)), institution: observed.institution };
-    // Only a verified callback of this server's own login reaches here: the dedicated answer tells that member alone.
-    if (!this.adminProved(observed, payload)) {
-      await this.loginFailureRow(req, 'admin_otp_required', who);
-      return { kind: 'landing', error: 'admin_otp_required' };
-    }
     const roles = rightsAllow(observed) ? observed.roles : [];
     // A single institution and a clinician role meet member approval; gateway identities are not members.
     const document = who.institution !== null && clinicianOnly(roles) && !roles.includes('gateway')
@@ -959,7 +926,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const sid = randomBytes(32).toString('base64url');
     const auditRef = 'authref:' + randomUUID();
     const detail = JSON.stringify({ institution: who.institution, ip, dataSubject: null, outcome: 'success' });
-    let outcome: 'created' | 'expired' | 'isolated' | 'admin_otp';
+    let outcome: 'created' | 'expired' | 'isolated';
     try {
       // MemberRights and session creation share the member lock; the session and auth.login row commit together.
       outcome = await this.withAccessRecords({ issuer: String(payload.iss), subject: String(payload.sub), actor: who.actor }, async (tx, record, user) => {
@@ -969,7 +936,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         await this.lockMember(tx, String(payload.sub));
         const rights = await this.entryRights(String(payload.sub), tx);
         if (rights.version !== observed.version) return 'isolated';
-        if (!this.adminProved(rights, payload)) return 'admin_otp';
         const event = sessionAccessEvent(user, {
           action: AUTH_LOGIN,
           roles: rightsAllow(rights) ? rights.roles : [], rightsVersion: rights.version,
@@ -1002,10 +968,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     if (outcome === 'isolated') {
       await this.loginFailureRow(req, 'member_isolated', who);
       return { kind: 'landing', error: 'login_failed' };
-    }
-    if (outcome === 'admin_otp') {
-      await this.loginFailureRow(req, 'admin_otp_required', who);
-      return { kind: 'landing', error: 'admin_otp_required' };
     }
     if (outcome === 'expired') {
       await this.loginFailureRow(req, 'token_invalid', who);
@@ -1067,8 +1029,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
 
   /** 응답은 그 요청을 시작한 관찰 S에만 적용한다: 성공은 S 조건부 저장이 count 1일 때만, 거절은 S 조건부 종료. */
   private async doRefresh(session: Session, ip: string | null, surface: string | null): Promise<RefreshOutcome> {
-    // A stored token without the administrator's proof is refused here, before Keycloak is asked (adminProved).
-    const rights = await this.sessionRights(session);
+    await this.sessionRights(session);
     const answer = await this.exchangeRefresh(session.refreshToken);
     if (answer.kind === 'unavailable') return { kind: 'unavailable' };
     if (answer.kind === 'refused')
@@ -1078,10 +1039,6 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     const idpSid = this.idpSidOfClaims(answer.payload), known = this.idpSidOf(session);
     if (String(answer.payload.sub) !== session.sub || !idpSid || (known !== null && idpSid !== known))
       return { kind: 'unavailable' };
-    // The new token passes the same gate. One without the proof does not carry the session on: Keycloak's answer for this
-    // session is that it no longer authenticates an administrator, so the session ends as on a refused refresh.
-    if (!this.adminProved(rights, answer.payload))
-      return await this.endAndTell(session, 'refresh_failed', ip, undefined, surface) ? { kind: 'ended' } : { kind: 'conflict' };
     const data = {
       accessToken: answer.tokens.access_token as string,
       refreshToken: (answer.tokens.refresh_token ?? session.refreshToken) as string,

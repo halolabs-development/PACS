@@ -288,13 +288,12 @@ class AuthEntryDOMTest(unittest.TestCase):
         "member_suspended": "이 계정은 사용이 정지되어 로그인할 수 없습니다. 소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.",
         "member_suspended_unapproved": "이 계정은 현재 승인이 없고 사용이 정지되어 로그인할 수 없습니다. 다시 쓰려면 승인이 필요합니다 — "
                                        "소속 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.",
-        "admin_otp_required": "관리자 계정은 OTP 확인이 필요합니다. OTP를 방금 등록하셨다면 정상입니다 — 등록한 OTP로 한 번 더 로그인해 주십시오.",
     }
 
     ENDED = "이 브라우저의 HALO PACS 로그인 세션을 끝냈습니다. 다시 사용하려면 로그인해 주세요."
 
     def test_a_refused_sign_in_says_why_and_whom_to_ask(self):
-        # Suspended (approval kept or not) and the administrator's OTP answer each say why on their own line (#why), in
+        # Suspended (approval kept or not) each say why on their own line (#why), in
         # the error colour; the general failure keeps its sentence in #msg and no #why. Nothing enters or starts.
         self.me_absent = True
         for code, said in self.REFUSED.items():
@@ -308,6 +307,11 @@ class AuthEntryDOMTest(unittest.TestCase):
         self.landing(query="?auth_error=login_failed")
         expect(self.page.locator("#msg")).to_have_text("로그인을 마치지 못했습니다. 잠시 뒤 로그인 버튼을 다시 눌러 주세요.")
         expect(self.page.locator("#why")).to_be_hidden()
+        # No account is required to have OTP, so the server has no OTP refusal: the old answer's name is shown as any
+        # value the page does not know, never as a refusal.
+        self.landing(query="?auth_error=admin_otp_required")
+        expect(self.page.locator("#why")).to_be_hidden()
+        expect(self.page.locator("#msg")).to_have_text("로그인 실패: admin_otp_required")
 
     def test_a_refusal_and_the_log_out_state_each_keep_their_line(self):
         # A browser that logged out cleanly (a confirmed end record) and then signs in as a suspended member: #why says

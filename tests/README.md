@@ -1583,9 +1583,9 @@ URL·SMTP·IdP enabled 필드만 바꾸고 양 DB의 나머지 값을 다시 비
 소유 복원 서버의 생성·준비·정리, 실제 held manifest를 받는 RB-02와 clone 변환 본문을 확인한다.
 감독 명령의 오류는 browser 자체의 확정 timeout과 구분하며, UNKNOWN이면 profile·비밀 입력과 hold를 유지한다.
 capture가 변경 전에 거절되면 이전 운영 entry와 daily backup lock을 복구한다. realm의 기본 required action,
-조건부 OTP와 비밀번호 정책은 fence 전에 읽기 전용으로 검사한다. 관리자 OTP 필수(browser·reset 흐름이 `keycloak/kin-realm.json`의
-흐름과 같은 모양, `Configure OTP` 켜짐, client browser override 없음)도 fence 전에 attended·unattended 모두 검사한다
-(`ops_deploy_preflight.check_admin_mfa`; 기존 설치 적용 절차는 `keycloak/README.md`).
+조건부 OTP와 비밀번호 정책은 fence 전에 읽기 전용으로 검사한다. 로그인 흐름이 Keycloak 기본 흐름(`browser`·`reset credentials`)에 묶였는지도
+fence 전에 attended·unattended 모두 검사한다(`ops_deploy_preflight.check_login_flows` — OTP는 스스로 등록한 계정만; 기존 설치
+절차는 `keycloak/README.md`).
 
 PG16 시험에는 비밀번호가 있는 bootstrap kin의 verifier 재현, 누락·추가 verifier 거절, 과거 이름을 가진
 Keycloak index 컬럼과 중첩 CHECK의 dump/restore 동등성이 포함된다. 지원하지 않는 trigger·policy·rule comment,

@@ -39,100 +39,30 @@ Authentication → Required actions(또는 `GET /admin/realms/kin/authentication
 > import 자체를 거부하고 서버가 뜨지 않는다 (`Unrecognized field ... not marked as ignorable`).
 > 설명은 전부 이 README에 쓴다.
 
-## 관리자 OTP 필수 (`admin` 역할)
+## OTP는 스스로 등록한 계정만
 
-realm 역할 `admin`(회원·기관·역할 관리, 감사·접속기록 점검)을 가진 계정은 OTP(TOTP) 없이 브라우저 로그인을 끝내지 못한다.
-OTP가 없는 관리자는 다음 로그인에서 비밀번호 뒤에 OTP 등록 화면(`CONFIGURE_TOTP`)을 먼저 지난다. 그 밖의 계정(판독의·
-방사선사·임상의)은 기본 흐름 그대로다 — 스스로 OTP를 등록한 계정만 지금처럼 OTP를 묻는다. 역할은 그룹·복합 역할로 받은
-것도 센다(26.7.3 `ConditionalRoleAuthenticator`의 `hasRole`).
+어느 역할(관리자 포함)에도 OTP 등록을 강제하지 않는다. 로그인할 때는 **이미 OTP가 등록된 계정**에만 비밀번호 다음에 코드를
+묻는다 — Keycloak 기본 흐름(`browser`, `reset credentials`)의 조건부 OTP가 하는 일이다. 렐름 파일은 자기 흐름을 묶지 않으므로
+(`browserFlow`·`resetCredentialsFlow`를 적지 않는다) 새 렐름은 그 기본 흐름에 묶인다. 이메일 비밀번호 재설정도 기본 흐름대로다:
+OTP가 없는 계정은 등록 없이 끝나고, OTP가 있는 계정은 기본 `Reset OTP` 단계를 따른다. OTP를 등록해 둔 계정은 그 OTP를
+그대로 쓴다. OTP 기기를 잃은 사람은 Keycloak 관리 콘솔 → `kin` → Users → 그 사용자 → Credentials에서 OTP를 Delete 하면 다음
+로그인부터 비밀번호만으로 들어간다(관리 이력에 남는다).
 
-렐름 파일의 `browserFlow`=`kin browser`, `resetCredentialsFlow`=`kin reset credentials`가 그것이다. 둘 다 Keycloak 기본 흐름
-(`browser`, `reset credentials`)을 복사한 것에 두 가지만 덧붙인다:
+PACS의 권한은 Keycloak 역할이 아니라 DB 회원 권한이 정한다. 로그인 토큰의 `admin` 역할이나 인증 방법(`amr`)은 들어오는
+조건이 아니다 — DB가 관리자라고 하면 Keycloak에 역할 반영이 늦어도 관리자로 들어오고, 토큰에만 `admin`이 있으면 관리자
+권한을 얻지 못한다.
 
-- 끝에 CONDITIONAL 하위 흐름 `kin browser administrator otp`(`kin browser forms` 안) / `kin reset administrator otp`
-  (`kin reset credentials` 안): `Condition - user role`(`admin`) + `OTP Form` REQUIRED. OTP가 없는 사용자에게 REQUIRED
-  OTP Form은 `CONFIGURE_TOTP` 동작을 건다.
-- 기본 조건부 OTP 하위 흐름(`kin browser Browser - Conditional 2FA`, `kin reset credentials Reset - Conditional OTP`)
-  끝에 `Condition - user role`(`admin`, **Negate output**). 이것이 없으면 OTP가 있는 관리자에게 OTP를 두 번 묻는다.
-
-비밀번호 재설정(이메일)도 끝에 세션을 만들기 때문에 재설정 흐름에도 둔다: 관리자는 재설정 뒤에도 기존 OTP를 입력하고
-(기본 `Reset OTP`의 재등록을 하지 않는다), OTP가 없는 관리자는 등록한다. `CONFIGURE_TOTP` 필수 동작은 켜 둔다(등록 화면).
-
-SSO 쿠키(`Cookie` 단계)로 돌아오는 로그인은 폼을 다시 지나지 않는다. 제품 로그인은 언제나 `prompt=login`이라
-(`api/src/auth.service.ts` `startFlow`) 비밀번호와 OTP를 다시 지난다 — 세션 중에 `admin`을 받은 사람도 다음 제품 로그인에서
-OTP를 등록한다. Change Password(`UPDATE_PASSWORD` 동작)는 SSO 위에서 그 동작만 열고 제품 세션을 만들지 않는다.
-
-OTP 기기를 잃은 관리자는 이메일 재설정으로 풀리지 않는다(재설정도 기존 OTP를 묻는다). Keycloak 관리 콘솔 → `kin` →
-Users → 그 사용자 → Credentials에서 OTP를 Delete 하면 다음 로그인에 다시 등록한다(관리 이력에 남는다).
-
-**PACS도 OTP를 확인한다.** PACS의 권한은 Keycloak 역할이 아니라 DB 회원 권한이 정한다. 그 권한이 `admin`을 주면 PACS는
-로그인 토큰(검증된 access token)에 `admin` 역할과 **실제로 OTP를 입력했다는 표시**(`amr`의 `otp`)가 둘 다 있을 때만 받아들인다
-(`api/src/auth.service.ts` `adminProved` — 콜백·세션·토큰 갱신·Bearer가 모두 지난다). 그 표시는 렐름 파일이 두 관리자 OTP
-단계(`kin browser administrator otp`·`kin reset administrator otp`의 `OTP Form`)에 붙인 인증 참조 `otp`(`default.reference.value`,
-유효 `default.reference.maxAge` 43200초 = `ssoSessionMaxLifespan`; Keycloak 기본값 0이면 그 초가 지나면 사라진다)와 kin-bff의 AMR
-매퍼(`kin-authentication-methods`, access token)가 만든다. 그래서:
-
-- **관리자는 OTP를 처음 등록한 뒤 한 번 더 로그인한다.** 등록하는 로그인의 토큰에는 `otp`가 없다(Keycloak 26.7.3은 등록을
-  OTP 입력으로 세지 않는다). PACS는 그 로그인을 세션 없이 거절하고 첫 화면에 "관리자 계정은 OTP 확인이 필요합니다. 다시
-  로그인해 주십시오."를 보인다(접속기록 원인 `admin_otp_required`). 로그인 버튼으로 다시 들어가 비밀번호와 방금 등록한 코드를
-  넣으면 들어간다.
-- 같은 안내는 DB는 관리자인데 Keycloak에 `admin` 역할이 없을 때도 나온다(승격 뒤 역할 반영이 늦거나 실패함, 콘솔에서 역할이
-  빠짐). 이때는 다시 로그인해도 거절된다 — Keycloak이 `admin`이 아니면 OTP를 묻지 않는다. 마지막 관리자에게도 로그인 예외는
-  없다. 복구: 반영 기록이 확인되지 않은(`unknown`·`void`) 명부 변경은 운영자 CLI `node prisma/import-member-rights.cjs --retry-roster`
-  (api 컨테이너 안)가 다시 보낸다. 반영이 확인된(`done`) 뒤 콘솔에서 생긴 어긋남은 그 CLI가 고치지 않는다 — 콘솔 → `kin` →
-  Users → 그 사용자 → Role mapping에서 `admin`을 다시 주고, OTP가 없으면 위의 OTP 복구 절차를 따른다. 그 뒤 OTP로 로그인한다.
-- 이 규칙이 배포되기 전에 만든 관리자 세션(토큰에 `otp` 표시가 없음)은 배포 뒤 첫 요청에서 끝난 세션으로 답하고, 다시
-  로그인하면 들어간다. 판독의·방사선사·임상의는 바뀌지 않는다.
-
-**기존 설치(import가 적용되지 않는다):** 관리 콘솔 → `kin` 렐름 → Authentication에서:
-
-1. `browser` 흐름을 Duplicate 하여 이름을 `kin browser`로 한다.
-2. `kin browser Browser - Conditional 2FA`에 condition `Condition - user role`을 더해 Required로 두고, 설정(alias
-   `kin browser not administrator`)에서 User role `admin`, Negate output On.
-3. `kin browser forms`에 sub-flow `kin browser administrator otp`(basic)를 더해 Conditional로 두고, 그 안에 condition
-   `Condition - user role`(Required, alias `kin browser administrator`, User role `admin`, Negate output Off)과
-   step `OTP Form`(Required)을 차례로 더한다.
-4. `reset credentials` 흐름을 Duplicate 하여 `kin reset credentials`로 하고, `kin reset credentials Reset - Conditional OTP`에
-   2와 같은 condition(alias `kin reset not administrator`)을, `kin reset credentials`에 3과 같은 sub-flow
-   `kin reset administrator otp`(condition alias `kin reset administrator`)를 더한다.
-5. `kin browser`를 Browser flow로, `kin reset credentials`를 Reset credentials flow로 Bind 한다.
-6. Required actions에서 `Configure OTP`가 Enabled인지 본다(기본 On). 어느 client에도 Authentication flow overrides의
-   Browser Flow를 두지 않는다.
-7. 3·4에서 더한 두 `OTP Form`(⚙ 설정)에 인증 참조를 단다: alias `kin browser administrator otp reference` /
-   `kin reset administrator otp reference`, Authentication Reference `otp`, Authentication Max Age `43200`.
-8. Clients → `kin-bff` → Client scopes → `kin-bff-dedicated` → Add mapper → By configuration → `Authentication Method Reference
-   (AMR)`: 이름 `kin-authentication-methods`, Add to access token On, Add to ID token Off, Add to token introspection On.
-
-이미 1~6을 적용한 설치(이 절의 앞 판)는 7·8만 더한다. 적용 전에는 관리자가 아무도 PACS에 들어가지 못하므로(토큰에 `otp`
-표시가 없다) 배포 전에 한다 — 배포 전 읽기가 적용 전에는 멈춘다.
-
-Admin REST(`kin` 렐름 관리자 토큰, 경로의 공백은 `%20`, `P=/admin/realms/kin/authentication`)는 같은 순서다:
-
-- 복사: `POST $P/flows/browser/copy` `{"newName":"kin browser"}`, `POST $P/flows/reset%20credentials/copy`
-  `{"newName":"kin reset credentials"}`.
-- 조건·단계 더하기(위 2·3·4의 각 조건과 `OTP Form`): `POST $P/flows/{흐름}/executions/execution` `{"provider":"conditional-user-role"}`
-  (또는 `"auth-otp-form"`) → `GET $P/flows/{흐름}/executions`의 마지막 행을 `"requirement":"REQUIRED"`로 바꿔
-  `PUT $P/flows/{흐름}/executions` → 조건이면 `POST $P/executions/{그 행 id}/config`
-  `{"alias":"…","config":{"condUserRole":"admin","negate":"true"|"false"}}`.
-- 하위 흐름 더하기(위 3·4): `POST $P/flows/{부모}/executions/flow` `{"alias":"kin browser administrator otp","type":"basic-flow","description":""}`
-  → 부모의 마지막 행을 `"requirement":"CONDITIONAL"`로 `PUT` → 그 안에 조건(`negate` `"false"`)과 `OTP Form`을 차례로 더한다.
-- 묶기: `PUT /admin/realms/kin` `{"browserFlow":"kin browser","resetCredentialsFlow":"kin reset credentials"}`.
-- 인증 참조(위 7): 각 하위 흐름의 `OTP Form` 행 id를 `GET $P/flows/{하위 흐름}/executions`에서 읽어
-  `POST $P/executions/{그 id}/config` `{"alias":"kin browser administrator otp reference","config":{"default.reference.value":"otp","default.reference.maxAge":"43200"}}`
-  (재설정 쪽은 alias `kin reset administrator otp reference`).
-- AMR 매퍼(위 8): `GET /admin/realms/kin/clients?clientId=kin-bff`의 id로 `POST /admin/realms/kin/clients/{id}/protocol-mappers/models`
-  `{"name":"kin-authentication-methods","protocol":"openid-connect","protocolMapper":"oidc-amr-mapper","consentRequired":false,
-  "config":{"id.token.claim":"false","access.token.claim":"true","introspection.token.claim":"true"}}`.
-
-렐름 재import·사용자 변경은 필요 없다. 업그레이드의 B 전 확인(`docs/ops/release-tools-runbook.md` "Precondition: the
-upgrade itself" 1 — N의 `scripts/ops_deploy_preflight.py` `check_admin_mfa`; 전환 runner의 fence 전 읽기
-`scripts/ops_emr_introduction.py`도 같은 검사)이 live browser·reset 흐름을 이 파일의 흐름과 모양(단계·요구·조건 설정·순서, 이름과 id는 보지 않는다)으로
-대조하고 `Configure OTP`·client override·kin-bff의 AMR 매퍼(access token)를 확인해, 적용 전에는 첫 변경 전에 멈춘다. **그 읽기가
-못 보는 것:** Admin REST는 인증 참조의 두 값을 `**********`로 가려 돌려주므로 검사는 두 칸이 있다는 것만 본다(가리지 않고
-읽히는 값은 이 파일의 값과 비교한다). 실제 로그인 토큰에 `otp`가 실리는지는 보지 않는다 — 적용 뒤 관리자 계정으로 한 번
-로그인해 들어가는지로 확인한다. 적용 뒤 관리자 계정으로 로그인하면 비밀번호 다음에 OTP(없으면 등록) 화면이 나오고, 판독의
-계정은 바로 들어간다. 이미 있는 관리자 계정은 적용 뒤 첫 로그인에서 OTP를 등록하고(그 로그인은 위와 같이 한 번 거절된다)
-한 번 더 로그인하므로 OTP 앱(Google Authenticator·Microsoft Authenticator·FreeOTP)을 미리 알린다.
+**기존 설치(import가 적용되지 않는다):** 앞 판이 관리자에게 OTP를 강제하려고 묶은 흐름(`kin browser`·`kin reset credentials`,
+또는 그 관리자 OTP 단계를 끈 임시 판)을 기본 흐름으로 되돌려 묶는다. 관리 콘솔 → `kin` → Authentication에서 `browser`를
+Browser flow로, `reset credentials`를 Reset credentials flow로 Bind 한다. Admin REST(`kin` 렐름 관리자 토큰)로는
+`PUT /admin/realms/kin` `{"browserFlow":"browser","resetCredentialsFlow":"reset credentials"}` 한 번이고, `GET /admin/realms/kin`으로
+두 값을 다시 읽어 확인한다. 묶이지 않은 `kin …` 흐름과 kin-bff의 `kin-authentication-methods`(AMR) 매퍼는 지워도 되고 두어도
+쓰이지 않는다. 렐름 재import·사용자 변경은 필요 없다. 바꾸는 때: 관리자에게 OTP를 요구하던 앞 판의 API가 도는 동안 기본
+흐름으로 묶으면 OTP 없는 관리자 로그인을 그 API가 거절하므로, API를 이 판으로 올리는 점검 시간 안에 묶는다(그 판으로
+되돌릴 때는 그 판의 묶음으로 되돌린다). 업그레이드의 B 전 확인(`docs/ops/release-tools-runbook.md` "Inputs and read-only
+preparation"의 `scripts/ops_deploy_preflight.py` `check_login_flows`; 전환 runner의 fence 전 읽기 `scripts/ops_emr_introduction.py`도
+같은 검사)이 live 렐름의 두 묶음 이름이 `browser`·`reset credentials`인지 보고, 아니면 첫 변경 전에 멈춘다. **그 읽기가 못 보는
+것:** 기본 흐름 자체를 손으로 고친 것(이 제품은 고치지 않는다).
 
 ## 관리 접근 변경 이력 — 3년 보존
 
@@ -209,7 +139,7 @@ Keycloak 자체 DB migration이 있는 minor 업그레이드다. 업그레이드
 | 클라이언트 | `kin-web` (public, Authorization Code + PKCE S256), `gw-kin-center` (비활성 Gateway 템플릿) |
 | 롤 | `radiologist`, `technician`, `admin`, `clinician`, `gateway` |
 | 토큰 수명 | access 30분 / 세션 유휴 4시간 / 최대 12시간 |
-| 보호 | 비밀번호 최소 8자리(조합 강제 없음), 로그인 5회 실패 시 잠금(brute force), `admin` 역할 OTP 필수 |
+| 보호 | 비밀번호 최소 8자리(조합 강제 없음), 로그인 5회 실패 시 잠금(brute force) |
 
 운영 주소는 `https://pacs.halolabs.co.kr`이다. 옛 주소 `pacs.koreaimagingnetwork.com`은 프록시가 새 주소로 301하며, 이전이
 끝날 때까지 `kin-web`·`kin-bff`의 redirect URI·web origin에 새 주소와 함께 남긴다. 운영 렐름은 `--import-realm`으로 바뀌지
@@ -241,7 +171,7 @@ Keycloak 자체 DB migration이 있는 minor 업그레이드다. 업그레이드
      같은 명령을 다시 실행한다.
 
    끝의 정리(원장 런타임 정지·DB 연결 닫기)가 실패하면 그 사실을 따로 한 줄로 알리고, 끝 코드는 바꾸지 않는다.
-4. 지정된 사람은 다음 로그인에서 OTP를 등록하고(위 "관리자 OTP 필수"), 한 번 더 로그인한다.
+4. 지정된 사람은 다음 로그인에서 비밀번호로 들어와 관리자로 일한다(OTP 등록을 요구하지 않는다).
 
 명령이 하는 일은 화면의 승인과 같다(회원 권한·버전·재로그인 기준·세션 종료·감사 행 `admin.user.approve`·명부 반영
 기록). 감사 행의 `actor`는 `operator:<실행한 사람>`, `detail.operator`에 기관·사유가 남는다. 역할은 그 사람의 지금 그
@@ -278,7 +208,7 @@ Keycloak 반영 확인 · 2 = 교체는 저장됐고 반영이 확인되지 않�
 화면에서 한다), 후임이 없는 계정·서비스 계정·다른 기관 회원·그룹이 둘 이상이거나 이 기관이 아닌 그룹·정지·격리·Keycloak 비활성·
 게이트웨이 역할(복합 역할로 받은 것 포함)인 계정, Keycloak 명부를 읽지 못함, 그 사이 두 사람 중 누구의 권한이 바뀜(다시 실행).
 후임이 전임의 옛 이메일이나 사용자 이름을 지금 쓰고 있어도 거절하지 않는다 — 개인 초안·이력의 주인은 계정 ID라 전임의 것은
-후임에게 보이지 않는다. 후임은 다음 로그인에서 관리자 OTP를 등록하고 한 번 더 로그인한다. 나중에 후임이 정지된 전임을
+후임에게 보이지 않는다. 후임은 다음 로그인에서 비밀번호로 들어와 관리자로 일한다. 나중에 후임이 정지된 전임을
 다시 활성화하면 남아 있던 `admin`도 다시 유효해진다 — 필요 없으면 후임이 화면에서 승인 철회를 한다. 다른 앱의 Keycloak SSO
 세션과 이미 전달된 응답은 이 명령 밖이다.
 

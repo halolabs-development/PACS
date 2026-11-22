@@ -813,112 +813,35 @@ class NetworkAccessTests(unittest.TestCase):
         self.assertFalse((ops.ROOT / ".kin-ops.lock").exists())
 
 
-def rows(*spec):
-    """Admin REST executions rows from (level, requirement, provider or None for a subflow[, config])."""
-    out = []
-    for level, requirement, provider, *config in spec:
-        row = {"level": level, "requirement": requirement, "id": "generated-%d" % len(out), "displayName": "any name", "priority": 999}
-        row.update({"authenticationFlow": True} if provider is None else {"providerId": provider})
-        if config:
-            row.update(authenticationConfig="generated-config", config=config[0])
-        out.append(row)
-    return out
+class LoginFlowsTests(unittest.TestCase):
+    """keycloak/README.md: no account is required to have OTP. The deploy passes a realm bound to Keycloak's built-in
+    browser and reset-credentials flows - what the realm file makes - and refuses, before any change (L-01), one still
+    bound to the earlier flows that required OTP of administrators (or the interim one that switched that step off)."""
+    BUILT_IN = {"browserFlow": "browser", "resetFlow": "reset credentials", "passwordPolicy": "", "requiredActions": [],
+                "executions": []}
 
+    def test_the_realm_file_binds_no_flow_of_its_own(self):
+        realm = json.loads((Path(deploy.__file__).resolve().parent.parent / "keycloak" / "kin-realm.json").read_text(encoding="utf-8"))
+        for key in ("browserFlow", "resetCredentialsFlow", "authenticationFlows", "authenticatorConfig"):
+            self.assertNotIn(key, realm)
+        bff = next(client for client in realm["clients"] if client["clientId"] == "kin-bff")
+        self.assertNotIn("oidc-amr-mapper", [mapper["protocolMapper"] for mapper in bff["protocolMappers"]])
 
-class AdminMfaTests(unittest.TestCase):
-    """keycloak/README.md 관리자 OTP 필수: the deploy refuses a realm whose browser or reset flow does not make OTP
-    required for the admin role, before any change (L-01)."""
-    ADMIN = {"condUserRole": "admin", "negate": "false"}
-    NOT_ADMIN = {"condUserRole": "admin", "negate": "true"}
-    # The administrator OTP step's authentication reference as Admin REST shows it: both values masked.
-    REFERENCE = {"default.reference.value": "**********", "default.reference.maxAge": "**********"}
-    AMR = {"protocolMapper": "oidc-amr-mapper", "config": {"id.token.claim": "false", "access.token.claim": "true",
-                                                           "introspection.token.claim": "true"}}
+    def test_the_built_in_flows_pass(self):
+        deploy.check_login_flows(dict(self.BUILT_IN))
 
-    def setUp(self):
-        self.realm = json.loads(deploy.REALM_FILE.read_text(encoding="utf-8"))
-
-    def shipped(self):
-        """A live read of a realm built from kin-realm.json, or by the README procedure (names, ids and priorities differ)."""
-        configured = lambda requirement: (2, requirement, "conditional-user-configured")
-        browser = rows((0, "ALTERNATIVE", "auth-cookie"), (0, "DISABLED", "auth-spnego"),
-                       (0, "ALTERNATIVE", "identity-provider-redirector"), (0, "ALTERNATIVE", None),
-                       (1, "CONDITIONAL", None), configured("REQUIRED"), (2, "ALTERNATIVE", "organization"),
-                       (0, "ALTERNATIVE", None), (1, "REQUIRED", "auth-username-password-form"), (1, "CONDITIONAL", None),
-                       configured("REQUIRED"), (2, "REQUIRED", "conditional-credential", {"credentials": "webauthn-passwordless"}),
-                       (2, "ALTERNATIVE", "auth-otp-form"), (2, "DISABLED", "webauthn-authenticator"),
-                       (2, "DISABLED", "auth-recovery-authn-code-form"), (2, "REQUIRED", "conditional-user-role", self.NOT_ADMIN),
-                       (1, "CONDITIONAL", None), (2, "REQUIRED", "conditional-user-role", self.ADMIN),
-                       (2, "REQUIRED", "auth-otp-form", dict(self.REFERENCE)))
-        reset = rows((0, "REQUIRED", "reset-credentials-choose-user"), (0, "REQUIRED", "reset-credential-email"),
-                     (0, "REQUIRED", "reset-password"), (0, "CONDITIONAL", None), (1, "REQUIRED", "conditional-user-configured"),
-                     (1, "REQUIRED", "reset-otp"), (1, "REQUIRED", "conditional-user-role", self.NOT_ADMIN), (0, "CONDITIONAL", None),
-                     (1, "REQUIRED", "conditional-user-role", self.ADMIN), (1, "REQUIRED", "auth-otp-form", dict(self.REFERENCE)))
-        return {"browserFlow": "kin browser", "resetFlow": "kin reset credentials", "browserOverrides": [],
-                "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True}], "executions": browser, "resetExecutions": reset,
-                "bffMappers": [{"protocolMapper": "oidc-group-membership-mapper", "config": {}}, copy.deepcopy(self.AMR)]}
-
-    def test_the_shipped_flows_pass_and_are_the_realm_files(self):
-        deploy.check_admin_mfa(self.shipped(), self.realm)
-        self.assertEqual(deploy.flow_shape(self.shipped()["executions"]),
-                         deploy.flow_shape(deploy.realm_flow_rows(self.realm, self.realm["browserFlow"])))
-        # A reference value Admin REST shows unmasked passes when it is the file's.
-        policy = self.shipped()
-        policy["executions"][-1]["config"] = {"default.reference.value": "otp", "default.reference.maxAge": "43200"}
-        deploy.check_admin_mfa(policy, self.realm)
-
-    def test_the_file_marks_the_administrator_otp_for_the_whole_session(self):
-        """The reference lives exactly on the two administrator OTP steps, for the SSO session's lifespan (Keycloak's default
-        0 drops it after the second it was performed), and kin-bff's access token carries it."""
-        configs = {item["alias"]: item["config"] for item in self.realm["authenticatorConfig"]}
-        marked = [(flow["alias"], step["authenticator"]) for flow in self.realm["authenticationFlows"]
-                  for step in flow["authenticationExecutions"]
-                  if "default.reference.value" in configs.get(step.get("authenticatorConfig"), {})]
-        self.assertEqual(marked, [("kin browser administrator otp", "auth-otp-form"), ("kin reset administrator otp", "auth-otp-form")])
-        for flow in self.realm["authenticationFlows"]:
-            for step in flow["authenticationExecutions"]:
-                config = configs.get(step.get("authenticatorConfig"), {})
-                if "default.reference.value" in config:
-                    self.assertEqual(config, {"default.reference.value": "otp",
-                                              "default.reference.maxAge": str(self.realm["ssoSessionMaxLifespan"])})
-        bff = next(client for client in self.realm["clients"] if client["clientId"] == "kin-bff")
-        self.assertIn(self.AMR, [{"protocolMapper": m["protocolMapper"], "config": m["config"]} for m in bff["protocolMappers"]])
-
-    def test_an_existing_install_without_the_procedure_is_refused(self):
-        policy = self.shipped()
-        policy["executions"] = [row for row in policy["executions"] if row.get("providerId") != "conditional-user-role"][:-2]
-        with self.assertRaisesRegex(RuntimeError, "browser flow does not require OTP for administrators"):
-            deploy.check_admin_mfa(policy, self.realm)
-
-    def test_each_weakening_is_refused(self):
-        def browser(index, **change):
-            return lambda p: p["executions"][index].update(change)
-        changes = {
-            "admin OTP optional": browser(18, requirement="ALTERNATIVE"),
-            "admin gate negated": browser(17, config={**self.ADMIN, "negate": "true"}),
-            "gate names another role": browser(17, config={**self.ADMIN, "condUserRole": "radiologist"}),
-            "admin subflow disabled": browser(16, requirement="DISABLED"),
-            "admin OTP removed": lambda p: p["executions"].pop(18),
-            "reset admin OTP removed": lambda p: p["resetExecutions"].pop(),
-            "reset OTP optional": lambda p: p["resetExecutions"][9].update(requirement="ALTERNATIVE"),
-            "Configure OTP off": lambda p: p["requiredActions"][0].update(enabled=False),
-            "Configure OTP missing": lambda p: p.update(requiredActions=[]),
-            "a client binds its own browser flow": lambda p: p.update(browserOverrides=["kin-bff"]),
-            "overrides not read": lambda p: p.pop("browserOverrides"),
-            "reset flow not read": lambda p: p.pop("resetExecutions"),
-            "admin OTP reference missing": lambda p: p["executions"][18].pop("config"),
-            "reset OTP reference missing": lambda p: p["resetExecutions"][9].pop("config"),
-            "reference max age left at 0": browser(18, config={**self.REFERENCE, "default.reference.maxAge": "0"}),
-            "reference names another method": browser(18, config={**self.REFERENCE, "default.reference.value": "pwd"}),
-            "kin-bff without the AMR mapper": lambda p: p["bffMappers"].pop(),
-            "AMR only in the id token": lambda p: p["bffMappers"][-1]["config"].update({"access.token.claim": "false"}),
-            "kin-bff mappers not read": lambda p: p.pop("bffMappers"),
-        }
-        for name, change in changes.items():
-            policy = copy.deepcopy(self.shipped())
-            change(policy)
-            with self.subTest(name), self.assertRaises(RuntimeError):
-                deploy.check_admin_mfa(policy, self.realm)
+    def test_a_realm_bound_to_another_flow_is_refused(self):
+        for name, change in {
+            "the earlier administrator OTP flows": {"browserFlow": "kin browser", "resetFlow": "kin reset credentials"},
+            "the interim browser flow, built-in reset": {"browserFlow": "kin browser"},
+            "built-in browser, the earlier reset flow": {"resetFlow": "kin reset credentials"},
+            "reset flow not read": {"resetFlow": None},
+            "browser flow not read": {"browserFlow": None},
+        }.items():
+            with self.subTest(name), self.assertRaisesRegex(RuntimeError, "not Keycloak's built-in ones"):
+                deploy.check_login_flows({**self.BUILT_IN, **change})
+        with self.assertRaisesRegex(RuntimeError, "could not be read"):
+            deploy.check_login_flows(None)
 
 
 if __name__ == "__main__":

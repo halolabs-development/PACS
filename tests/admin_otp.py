@@ -1,9 +1,9 @@
-"""Synthetic OTP for administrator test identities (keycloak/README.md "관리자 OTP 필수").
+"""Synthetic OTP for test identities that have one (keycloak/README.md, OTP는 스스로 등록한 계정만).
 
-The realm requires OTP of every holder of the admin role. Live suites and e2e sign in as administrators through the real
-browser flow, so the harness gives each administrator test identity this synthetic credential (Admin REST, `seed`) and
-answers Keycloak's OTP form with its code (`answer_http` for urllib openers, `answer_page` for Playwright pages).
-Non-administrators never see the form and these helpers return at once for them.
+No account is required to have OTP: Keycloak's built-in flows ask it only of an account that has one. A case about such an
+account gives its test identity this synthetic credential (Admin REST, `seed`), and the harness answers Keycloak's OTP form
+with its code wherever it signs in (`answer_http` for urllib openers, `answer_page` for Playwright pages). An account without
+OTP never sees the form and these helpers return at once; an OTP set-up page that appears unasked fails the sign-in.
 
 SECRET is a synthetic test value. Never seed it for a real account.
 """
@@ -123,9 +123,10 @@ _PAGE_STATE = """() => ({parsed: document.readyState !== 'loading',
 
 
 def answer_page(page, username: str, *, timeout: float = 30) -> None:
-    """Call right after the password form is submitted. Waits until the browser is on the OTP form (administrators) or
-    anywhere else (everyone else: the product, or a Keycloak page the caller expects), answering the OTP form. While the
-    submitted password form itself is still the parsed document, it keeps waiting."""
+    """Call right after the password form is submitted. Waits until the browser is on the OTP form (an account that has
+    OTP) or anywhere else (the product, or a Keycloak page the caller expects), answering the OTP form. While the
+    submitted password form itself is still the parsed document, it keeps waiting. The OTP set-up page fails: no sign-in
+    is made to enrol OTP."""
     deadline = time.monotonic() + timeout
     tries = 0
     while True:
@@ -145,7 +146,7 @@ def answer_page(page, username: str, *, timeout: float = 30) -> None:
                     page.locator("#kc-login").click()
                 continue
             if state["enrol"]:
-                raise RuntimeError(f"{username} holds admin but has no synthetic OTP (admin_otp.seed)")
+                raise RuntimeError(f"Keycloak made {username} set up OTP: no account is required to have OTP")
             if not state["password"] or state["refused"]:
                 return  # another Keycloak page the caller expects, or a refused password
         if time.monotonic() > deadline:

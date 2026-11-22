@@ -1511,14 +1511,9 @@ class FakeDocker:
         self.config = {}           # "pinned" / "plain" -> the compose config model (dict)
         self.psql = {}             # SQL fragment -> stdout text
         self.attached = {}         # volume -> container names using it
-        # The realm as kin-realm.json makes it: L-01 refuses a realm without the administrator OTP (check_admin_mfa).
-        realm = json.loads(pre.REALM_FILE.read_text(encoding="utf-8"))
-        policy = {"browserFlow": realm["browserFlow"], "passwordPolicy": "", "organizationsEnabled": False, "browserOverrides": [],
-                  "requiredActions": [{"alias": "CONFIGURE_TOTP", "enabled": True, "defaultAction": False}],
-                  "executions": pre.realm_flow_rows(realm, realm["browserFlow"]),
-                  "resetFlow": realm["resetCredentialsFlow"], "resetExecutions": pre.realm_flow_rows(realm, realm["resetCredentialsFlow"]),
-                  "bffMappers": [{"protocolMapper": m["protocolMapper"], "config": m.get("config", {})} for client in realm["clients"]
-                                 if client["clientId"] == "kin-bff" for m in client.get("protocolMappers", [])]}
+        # The realm as kin-realm.json makes it: Keycloak's built-in login flows (L-01 refuses another binding, check_login_flows).
+        policy = {"browserFlow": "browser", "resetFlow": "reset credentials", "passwordPolicy": "", "requiredActions": [],
+                  "executions": [{"providerId": "auth-username-password-form", "requirement": "REQUIRED", "level": 1}]}
         self.run_output = ("KIN_RESULT " + json.dumps({"useCaches": "false", "persistentUserSessions": True, "smokePolicy": policy}) + "\n").encode()
         self.failing = None        # a predicate over argv: those calls exit 1
         self.crontab = ""
@@ -3303,22 +3298,12 @@ class RoundThreeHostTests(HostHarness, unittest.TestCase):
         token = [(200, {"access_token": "t"})]
         info = {"providers": {"userSessions": {"providers": {"infinispan": {"operationalInfo": {"useCaches": "false"}}}}},
                 "features": [{"name": "PERSISTENT_USER_SESSIONS", "enabled": True}]}
-        # The administrator OTP read (check_admin_mfa): the reset flow, a step's config beside it, and the clients that
-        # bind their own browser flow.
-        role = {"providerId": "conditional-user-role", "requirement": "REQUIRED", "level": 1, "authenticationConfig": "c1"}
+        # The login flows the realm is bound to (check_login_flows): the reset flow's name beside the browser flow's.
         smoke_policy = {"browserFlow": "browser", "passwordPolicy": "", "requiredActions": [], "executions": [],
-                        "resetFlow": "kin reset", "resetExecutions": [{**role, "config": {"condUserRole": "admin", "negate": "false"}}],
-                        "browserOverrides": ["other"],
-                        "bffMappers": [{"protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true"}}]}
+                        "resetFlow": "kin reset"}
         answers.update({("GET", "/admin/realms/kin"): [(200, {"browserFlow": "browser", "passwordPolicy": "", "resetCredentialsFlow": "kin reset"})],
                         ("GET", "/admin/realms/kin/authentication/required-actions"): [(200, [])],
-                        ("GET", "/admin/realms/kin/authentication/flows/browser/executions"): [(200, [])],
-                        ("GET", "/admin/realms/kin/authentication/flows/kin%20reset/executions"): [(200, [role])],
-                        ("GET", "/admin/realms/kin/authentication/config/c1"): [(200, {"config": {"condUserRole": "admin", "negate": "false"}})],
-                        ("GET", "/admin/realms/kin/clients"): [(200, [{"clientId": "kin-bff", "id": "bff-1"},
-                                                                      {"clientId": "other", "authenticationFlowBindingOverrides": {"browser": "f"}}])],
-                        ("GET", "/admin/realms/kin/clients/bff-1/protocol-mappers/models"): [
-                            (200, [{"name": "methods", "protocolMapper": "oidc-amr-mapper", "config": {"access.token.claim": "true"}}])]})
+                        ("GET", "/admin/realms/kin/authentication/flows/browser/executions"): [(200, [])]})
         answers.update({("GET", "/realms/master"): [(404, {}), (200, {})], ("POST", "/realms/master/protocol/openid-connect/token"): token,
                         ("GET", "/admin/serverinfo"): [(404, {}), (200, info)]})
         out = subprocess.run(["node", "-e", intro.SERVERINFO_SCRIPT], env=env, capture_output=True, timeout=120)
