@@ -350,7 +350,7 @@
       }).join("");
       for (const field of $("#filterrow").querySelectorAll("[data-f], [data-date-preset], [data-date-from], [data-date-to]")) {
         const c = shownColumns().find(column => column.k === (field.dataset.f ?? "date"));
-        if (c) kinWrite(field, kinSay(field.hasAttribute("data-date-from") ? "{0} From" : field.hasAttribute("data-date-to") ? "{0} To" : "{0} Filter", c.t), "aria-label");
+        if (c) kinWrite(field, kinSayEn(field.hasAttribute("data-date-from") ? "{0} From" : field.hasAttribute("data-date-to") ? "{0} To" : "{0} Filter", c.t), "aria-label");
       }
       if (!$("#filterrow .col-clear")) $("#filterrow th")?.insertAdjacentHTML("afterbegin", '<button type="button" class="col-clear" >Clear</button>');
       const clear = $("#filterrow .col-clear");
