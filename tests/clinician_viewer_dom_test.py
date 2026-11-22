@@ -39,6 +39,30 @@ SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
+# The finding record format the reading side writes today: the public SCHEMA of finding-link-model.js, read by running that
+# module (setUpClass). A cited line is read from such records, so the stand-in server answers them in that format and by
+# the server's rule.
+FINDING_SCHEMA = None
+
+
+def finding_record(*sources, title='SYN finding', version=None):
+    """A finding revision's item as the API stores it (api/src/finding-input.ts): version 4 adds the free-text size."""
+    version = FINDING_SCHEMA if version is None else version
+    if FINDING_SCHEMA != 4:
+        raise AssertionError(f"the finding record format moved to version {FINDING_SCHEMA}: check what Clinician Home reads of a "
+                             "finding (item.sources: itemId, studyUid) in that version, then name it in clinician.js and here")
+    item = {'schemaVersion': version, 'title': title, 'text': '', 'characteristics': 'solid', 'lesionLocation': 'RLL',
+            'size': '8mm', 'sources': list(sources), 'primary': 0}
+    if version < 4: del item['size']
+    return item
+
+
+def finding_page_refused(named, revisions):
+    """api/src/finding.service.ts readable(): a reader reads only the record versions it names with X-KIN-Finding-Schema
+    (none or an unknown value: version 1), and a page holding a newer row is refused whole."""
+    newest = {'4': 4, '3': 3, '2': 2}.get(named, 1)
+    return any(not (1 <= r['item']['schemaVersion'] <= newest) for r in revisions)
+
 EMBLEM = (HPACS / "kin-emblem-j1.svg").read_bytes()
 
 INST_A, INST_B = "SYN-INST-A", "SYN-INST-B"
@@ -904,8 +928,14 @@ class ClinicianViewerDOMTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        global FINDING_SCHEMA
         cls.pw = sync_playwright().start()
         cls.browser = cls.pw.chromium.launch()
+        # The reading side's finding record format, as its module exports it.
+        page = cls.browser.new_page()
+        page.add_script_tag(content=lf_text(HPACS / "finding-link-model.js"))
+        FINDING_SCHEMA = page.evaluate("() => globalThis.kinFindingLinkModel.SCHEMA")
+        page.close()
 
     @classmethod
     def tearDownClass(cls):
@@ -923,7 +953,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.writer_paged = False
         self.rows = copy.deepcopy(ROWS)
         self.extra_reports = {}
-        self.citations, self.finding_revisions, self.finding_reads = {}, {}, []
+        self.citations, self.finding_revisions, self.finding_reads, self.finding_schemas = {}, {}, [], []
         self.hold_findings, self.held_findings = False, []
         self.scope_reads = []
         self.exam_scopes, self.scope_queries = {}, []
@@ -1109,9 +1139,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             key = (unquote(found.group(1)), unquote(found.group(2)))
             self.finding_reads.append((key, parse_qs(url.query, keep_blank_values=True)))
             answer = getattr(self, 'finding_revisions', {}).get(key)
-            if request.headers.get('x-kin-finding-schema') != '3':
-                # api/src/finding.service.ts: a reader naming no record version reads version 1 only; these rows are 3.
-                route.fulfill(status=409, json={'statusCode': 409, 'code': 'FINDING_SCHEMA_OUTDATED', 'message': 'SYN client outdated'})
+            self.finding_schemas.append(request.headers.get('x-kin-finding-schema'))
+            if answer is not None and finding_page_refused(request.headers.get('x-kin-finding-schema'), answer['revisions']):
+                # api/src/finding.service.ts clientOutdated(): the page holds a row newer than the version this reader names.
+                route.fulfill(status=409, json={'statusCode': 409, 'code': 'FINDING_CLIENT_OUTDATED',
+                                                'message': '이 화면 판은 새 소견 형식을 표시하지 못합니다. 새로고침하세요'})
             elif getattr(self, 'hold_findings', False):
                 self.held_findings.append((route, answer))
             elif answer is None:
@@ -1524,11 +1556,11 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             'findingId': finding, 'findingRevision': 2, 'sourceIndex': 0, 'sourceRef': ref or {'kind': 'item', 'itemId': item_id(2), 'sourceRevision': 1}}
         self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.'),
             cite('conclusion', 'SYN conclusion', n=2, cid='c-2'), cite('conclusion', 'SYN conclusion', n=2, cid='c-3')], 'draft': []}
-        v3 = lambda *sources: {'schemaVersion': 3, 'title': 'SYN finding', 'text': '', 'characteristics': '', 'lesionLocation': '',
-                               'sources': list(sources), 'primary': 0}
+        # The finding as the viewer saves it today (the current record format, size included); its first revision was written
+        # in the format before (a history of both is one page).
         self.finding_revisions[(A, finding)] = {'revisions': [
-            {'revision': 1, 'item': v3({'itemId': item_id(1), 'revision': 1, 'studyUid': A})},
-            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': A})}], 'nextCursor': None}
+            {'revision': 1, 'item': finding_record({'itemId': item_id(1), 'revision': 1, 'studyUid': A}, version=3)},
+            {'revision': 2, 'item': finding_record({'itemId': item_id(2), 'revision': 1, 'studyUid': A})}], 'nextCursor': None}
         self.items[A] = {'pages': [[]]}
         self.open_home()
         self.pick(A)
@@ -1582,7 +1614,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         # the mark's own frame of its own study.
         self.citations[A] = {'version': FINAL['version'], 'head': [cite('findings', 'Liver lesion 12 mm.')], 'draft': []}
         self.finding_revisions[(A, finding)] = {'revisions': [
-            {'revision': 2, 'item': v3({'itemId': item_id(2), 'revision': 1, 'studyUid': P1})}], 'nextCursor': None}
+            {'revision': 2, 'item': finding_record({'itemId': item_id(2), 'revision': 1, 'studyUid': P1})}], 'nextCursor': None}
         self.items[P1] = {'pages': [[mark_item(2, 'length', 'SYN-P1 length')]]}
         self.pick(B)
         self.pick(A)
@@ -1593,6 +1625,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.assertEqual({'studyUid': P1, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)},
                          popup.evaluate('() => KIN_VIEWER_ENTRY_TARGET'))
         self.assertEqual('뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 영상 표시는 그 창에서 확인하세요.', self.page.locator('#viewer-note').text_content())
+        self.assertEqual({str(FINDING_SCHEMA)}, set(self.finding_schemas), 'every finding read names the format the reading side writes')
 
     def test_01d_cited_line_paths_split_part_late_answer_and_stored_head(self):
         """A cited mark on a split comparison study opens the part whose series holds it, in the list's own shape: the
@@ -1609,8 +1642,7 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         self.extra_reports[A] = {**report_of(row), 'report': {**report_of(row)['report'], 'findings': text}}
         self.citations[A] = {'version': FINAL['version'], 'head': [cite], 'draft': []}
         source = {'itemId': item_id(2), 'revision': 1, 'studyUid': original}
-        self.finding_revisions[(A, finding)] = {'revisions': [{'revision': 1, 'item': {'schemaVersion': 3, 'title': 'SYN', 'text': '',
-            'characteristics': '', 'lesionLocation': '', 'sources': [source], 'primary': 0}}], 'nextCursor': None}
+        self.finding_revisions[(A, finding)] = {'revisions': [{'revision': 1, 'item': finding_record(source, title='SYN')}], 'nextCursor': None}
         self.items[original] = {'pages': [[mark_item(2, 'length', 'SYN split length')]]}
 
         def split(owner, second):
@@ -2420,9 +2452,16 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             self.release(self.held_items.pop()[1], self.clinician_page(VA, None)['json'])
             seen = self.wait_panel('ready', VA)
             self.assertEqual(('unmatched', a_labels, []), (seen['frame'], [row[2] for row in seen['rows']], self.page.evaluate('synDrawn()')))
+            before = self.probes()
             self.frameless(False)
             self.wait_until(lambda: self.page.evaluate('synDrawn()') == a_drawn, 'the final mark drawn with the frame back')
             self.assertIsNone(self.panel()['frame'])
+            # The frame's return checks the list again (test_12). That check is this clinician-only document's own: it is
+            # answered before the next step makes the account a writer, so the harness judges its read by the account it was
+            # sent for.
+            self.wait_until(lambda: self.probes() > before, "the check on the frame's return")
+            self.settle()
+            self.assertEqual((a_labels, a_drawn), (self.labels(), self.page.evaluate('synDrawn()')))
         with self.subTest(step='d: a-b-a'):
             self.writer_open(hold={(VA, 'first')})
             self.wait_until(lambda: len(self.held_writer) == 1, "A's first author page held")
