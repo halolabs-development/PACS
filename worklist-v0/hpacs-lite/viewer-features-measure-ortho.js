@@ -334,8 +334,9 @@ window.KinViewerFeatures?.module('measure-ortho', ({ services, ui }) => {
   window.KinMeasureOrtho = {
     kinds: () => Object.keys(TOOLS),
     values: (imageId, item, tags) => model && frame() ? remeasure(item.kind, imageId, item.points, item.baseline?.calculator, tags) : { reason: kinText("측정 계산을 불러오지 못했습니다") },
-    lines: (item, tags) => { const parsed = model?.parseCalculator(item.baseline?.calculator);
-      return model ? model.lines(item.kind, item.baseline?.values, { basis: parsed?.basis, sides: model.sideNames(tags), backSide: parsed?.backSide }) : []; },
+    // options.asWritten: the output paper's words (as written in every screen language).
+    lines: (item, tags, options = {}) => { const parsed = model?.parseCalculator(item.baseline?.calculator);
+      return model ? model.lines(item.kind, item.baseline?.values, { basis: parsed?.basis, sides: model.sideNames(tags), backSide: parsed?.backSide, asWritten: options.asWritten === true }) : []; },
   };
   void loaded;
   return () => {

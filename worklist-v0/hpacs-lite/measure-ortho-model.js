@@ -23,8 +23,11 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   const BASES = Object.freeze(['pixel', 'detector', 'ermf', 'dbt', 'px']);
   const SIDES = Object.freeze(['right', 'left']);
   // The words for a spacing basis, shown with the values (as the Findings value text names them).
-  const BASIS_LABELS = Object.freeze({ pixel: 'PixelSpacing', detector: kinText("ImagerPixelSpacing · 검출기 기준"), ermf: kinText("ImagerPixelSpacing / ERMF · 추정 보정"),
-    dbt: 'DBT PixelSpacing', px: kinText("픽셀 기준(간격 미확인)") });
+  // BASIS_WORDS as written (the output paper prints them so in every screen language), BASIS_LABELS as the screen says them.
+  const BASIS_WORDS = Object.freeze({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정',
+    dbt: 'DBT PixelSpacing', px: '픽셀 기준(간격 미확인)' });
+  const BASIS_LABELS = Object.freeze(Object.fromEntries(Object.entries(BASIS_WORDS).map(([key, words]) => [key, kinText(words)])));
+  const screenText = kinText, asWrittenText = (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   // Pixels are only for an original that holds no spacing at all: one whose spacing tags are there but cannot be used
   // (an orientation that does not hold, a calibration) is refused, not measured in pixels.
   const SPACING_TAGS = Object.freeze(['PixelSpacing', 'ImagerPixelSpacing', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence']);
@@ -183,10 +186,12 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   const one = n => (Math.round(n * 10) / 10).toFixed(1);
   const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + one(Math.abs(n));
   // The lines shown in the panel, beside the mark and in the Job print. basis: the calculator's spacing basis, which sets
-  // the unit (px: pixels) and adds its words; without it, unit says 'mm' or 'px'. sides: sideNames().
-  function lines(kind, values, { basis, unit = basis === 'px' ? 'px' : 'mm', sides = sideNames(null), backSide } = {}) {
+  // the unit (px: pixels) and adds its words; without it, unit says 'mm' or 'px'. sides: sideNames(). asWritten: the words as
+  // written whatever the screen language (the output paper).
+  function lines(kind, values, { basis, unit = basis === 'px' ? 'px' : 'mm', sides = sideNames(null), backSide, asWritten = false } = {}) {
+    const kinText = asWritten ? asWrittenText : screenText, BASIS_LABELS_ = asWritten ? BASIS_WORDS : BASIS_LABELS;
     if (!KINDS.includes(kind) || !Array.isArray(values) || values.length !== VALUES[kind] || !values.every((n, i) => finite(n) || nullable(kind, i) && n === null)) return [kinText("재확인 필요: 값을 확인할 수 없습니다")];
-    const u = ' ' + unit, grid = unit === 'px' ? [BASIS_LABELS.px] : basis && BASIS_LABELS[basis] ? [BASIS_LABELS[basis]] : [];
+    const u = ' ' + unit, grid = unit === 'px' ? [BASIS_LABELS_.px] : basis && BASIS_LABELS_[basis] ? [BASIS_LABELS_[basis]] : [];
     if (kind === 'limbLength') {
       const [left, right, diff] = values, longer = Math.abs(left - right) < 0.05 ? '' : ' (' + (left > right ? sides.left : sides.right) + ' longer)';
       return [sides.right + ' ' + one(right) + u + ' · ' + sides.left + ' ' + one(left) + u, 'Difference ' + one(diff) + u + longer, ...grid];
