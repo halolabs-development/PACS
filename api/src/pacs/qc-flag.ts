@@ -9,6 +9,7 @@
  */
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import type { Caller } from './access';
+import { markerShown } from '../account-identity';
 
 export const QC_REASON_MAX = 500;
 // One line of text: no control character at all (tab and line breaks included), judged before trimming.
@@ -66,15 +67,18 @@ export function qcChange(state: any, command: QcCommand, c: Caller, at: Date) {
 }
 
 /**
- * The row's mark as every answer carries it: `{reason, by, at, revision}`, the first three null when not flagged. `by` is
- * the marking account, sent only to the owning institution (a tele-reading receiver sees the mark and reason, not who).
+ * The row's mark as every answer carries it: `{reason, by, byName, at, revision}`, all but the revision null when not
+ * flagged. `by` is the marking login and `byName` the person a screen shows for it (account-identity.ts markerShown - the
+ * screen never looks it up again), both sent only to the owning institution (a tele-reading receiver sees the mark and
+ * reason, not who).
  */
 export function qcView(state: any, caller: Caller) {
   const flagged = qcFlagged(state);
   const at = flagged && state.qcAt instanceof Date && Number.isFinite(state.qcAt.getTime()) ? state.qcAt.toISOString() : null;
+  const by = flagged && state.institutionId != null && state.institutionId === caller?.institution ? state.qcBy ?? null : null;
   return {
     reason: flagged ? state.qcReason : null,
-    by: flagged && state.institutionId != null && state.institutionId === caller?.institution ? state.qcBy ?? null : null,
+    by, byName: by ? markerShown(by, caller) : null,
     at, revision: Number.isSafeInteger(state?.qcRevision) ? state.qcRevision : 0,
   };
 }

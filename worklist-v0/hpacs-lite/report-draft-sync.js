@@ -83,13 +83,16 @@
     }
     /**
      * QC Flag (the server's rule: api/src/pacs/qc-flag.ts), kept beside the state merge that keeps it. The mark a state answer carries, read here only: `{reason, by,
-     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * byName, at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * `byName` is who marked as the server names that person for this reader (account-identity.ts markerShown): a screen
+     * shows it as is and never looks the login up again.
      */
     function qcMark(value) {
       const qc = value?.qc;
       if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
         || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
-      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null,
+        byName: typeof qc.byName === "string" && qc.byName ? qc.byName : null, at: typeof qc.at === "string" ? qc.at : null,
         revision: qc.revision };
     }
     /**

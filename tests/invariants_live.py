@@ -3433,12 +3433,12 @@ class LiveInvariantTests(unittest.TestCase):
                                                                 "qcRevision": seen["qc"]["revision"], "epoch": seen["draftEpoch"]})
             self.assert_status(marked, 200)
             self.assertEqual((marked.body["qc"]["reason"], marked.body["qc"]["revision"]), ("SYN motion artefact", 1))
-            self.assertEqual(self.state(fixture, "kdoctor")["qc"], {**marked.body["qc"], "by": None})
+            self.assertEqual(self.state(fixture, "kdoctor")["qc"], {**marked.body["qc"], "by": None, "byName": None})
             refused = self.stack.request("PATCH", path, "ktech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
             self.assert_status(refused, 403)
             cleared = self.stack.request("PATCH", path, "tech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
             self.assert_status(cleared, 200)
-            self.assertEqual(cleared.body["qc"], {"reason": None, "by": None, "at": None, "revision": 2})
+            self.assertEqual(cleared.body["qc"], {"reason": None, "by": None, "byName": None, "at": None, "revision": 2})
             for user, qc_rows in [("doctor", 2), ("kdoctor", 0)]:
                 for audit_path in [f"/audit?uid={quote(fixture.uid)}&take=500", "/audit?take=500"]:
                     audited = self.stack.request("GET", audit_path, user)

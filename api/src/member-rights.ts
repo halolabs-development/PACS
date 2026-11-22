@@ -92,7 +92,7 @@ export async function withWriters<C extends { roles?: readonly string[] | null; 
   // A store without the member table (a test's partial store) has no members to name; the product store always has it.
   const rows: any[] = c.institution && typeof db?.memberRights?.findMany === 'function' ? await db.memberRights.findMany({ where: { institution: c.institution },
     select: { sub: true, username: true, email: true, name: true, approved: true, suspended: true, institution: true, roles: true } }) : [];
-  const bySub = new Map<string, WriterMember>(), taken = new Set<string>();
+  const bySub = new Map<string, WriterMember>(), taken = new Set<string>(), byLogin = new Map<string, string>(), shared = new Set<string>();
   for (const row of rows) {
     const login = typeof row.email === 'string' && row.email ? row.email : typeof row.username === 'string' ? row.username : '';
     if (!row.sub || !login) continue;
@@ -101,9 +101,12 @@ export async function withWriters<C extends { roles?: readonly string[] | null; 
     bySub.set(row.sub, { login, named: name && name !== username && name !== login ? name : null, own: name || username || login,
       colleague: rightsAllow(row) && row.roles.includes('radiologist') });
     for (const alias of [...loginAliases(row.email), ...loginAliases(row.username)]) taken.add(alias);
+    for (const exact of new Set([row.email, row.username].filter(v => typeof v === 'string' && v)))
+      if (byLogin.has(exact) && byLogin.get(exact) !== row.sub) shared.add(exact); else byLogin.set(exact, row.sub);
   }
+  for (const exact of shared) byLogin.delete(exact);
   const roles = Array.isArray(c.roles) ? c.roles : [];
-  c.writers = { names: roles.includes('radiologist') || roles.includes('admin'), bySub, taken };
+  c.writers = { names: roles.includes('radiologist') || roles.includes('admin'), bySub, taken, byLogin };
   return c;
 }
 

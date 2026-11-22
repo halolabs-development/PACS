@@ -70,7 +70,7 @@
         const data = text => Object.assign(document.createElement("span"), { translate: false, textContent: text });
         const reason = data(mark.reason); reason.className = "qc-info-reason";
         parts.push(" — ", reason);
-        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        const who = [mark.byName ?? "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
         if (who) parts.push(" (", data(who), ")");
       }
       box.dataset.qc = !mark ? "Unknown" : mark.reason === null ? "None" : "Flagged";

@@ -3386,7 +3386,7 @@
         const data = text => Object.assign(document.createElement("span"), { translate: false, textContent: text });
         const reason = data(mark.reason); reason.className = "qc-info-reason";
         parts.push(" — ", reason);
-        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        const who = [mark.byName ?? "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
         if (who) parts.push(" (", data(who), ")");
       }
       box.dataset.qc = !mark ? "Unknown" : mark.reason === null ? "None" : "Flagged";
@@ -5789,7 +5789,7 @@
       else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));
       else {
         const why = document.createElement("span"); why.translate = false; why.textContent = mark.reason;
-        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        const who = [mark.byName ?? "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
         now.replaceChildren(kinWrite(document.createElement("span"), kinSay("Flagged")), ": ", why,
           ...(who ? [" · ", Object.assign(document.createElement("span"), { translate: false, textContent: who })] : []));
       }
@@ -7612,13 +7612,16 @@
     }
     /**
      * QC Flag (the server's rule: api/src/pacs/qc-flag.ts), kept beside the state merge that keeps it. The mark a state answer carries, read here only: `{reason, by,
-     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * byName, at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * `byName` is who marked as the server names that person for this reader (account-identity.ts markerShown): a screen
+     * shows it as is and never looks the login up again.
      */
     function qcMark(value) {
       const qc = value?.qc;
       if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
         || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
-      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null,
+        byName: typeof qc.byName === "string" && qc.byName ? qc.byName : null, at: typeof qc.at === "string" ? qc.at : null,
         revision: qc.revision };
     }
     /**

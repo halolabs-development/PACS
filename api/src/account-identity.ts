@@ -9,8 +9,11 @@ export type WriterMember = { login: string; named: string | null; own: string; c
 /**
  * The caller's institution's members by account, read once per request, and every login, username and login before the @
  * they have now. `names`: this caller is shown colleagues' names (a radiologist or an administrator, as GET colleagues).
+ * `byLogin`: each login (email, username) a member has now, exactly as written, to that member's account - a login two
+ * members share is left out.
  */
-export type WriterDirectory = { names: boolean; bySub: ReadonlyMap<string, WriterMember>; taken: ReadonlySet<string> };
+export type WriterDirectory = { names: boolean; bySub: ReadonlyMap<string, WriterMember>; taken: ReadonlySet<string>;
+  byLogin: ReadonlyMap<string, string> };
 export type Account = { sub?: string | null; actor?: string | null; writers?: WriterDirectory };
 
 /** The one judgement: the stored account id is the caller's. A row without one is nobody's. */
@@ -53,4 +56,18 @@ export function writerShown(stored: string | null | undefined, storedSub: string
   if (typeof stored !== 'string' || !stored) return null;
   const mine = loginAliases(caller.actor);
   return loginAliases(stored).some(alias => mine.includes(alias) || !!dir?.taken.has(alias)) ? PRIVATE_WRITER : stored;
+}
+
+/**
+ * Who put a QC Flag on a study, as a member of the study's own institution is shown it. The mark keeps the marking login
+ * only (no account), so the person is the member of the caller's institution whose login it is now: the caller's own as
+ * the caller is shown to itself, another member by its registered name - to every member of the institution, technicians
+ * included, as the mark is the institution's own record - else by its login now. A login no member has now (or two do) is
+ * shown as a record without an account is (writerShown). The tele-reading receiver is not told who marked (qc-flag.ts qcView).
+ */
+export function markerShown(stored: string | null | undefined, caller: Account): string | null {
+  if (typeof stored !== 'string' || !stored) return null;
+  const sub = caller.writers?.byLogin.get(stored), who = sub ? caller.writers!.bySub.get(sub) : undefined;
+  if (who) return sameAccount(sub, caller) ? who.own : who.named ?? who.login;
+  return writerShown(stored, null, caller);
 }
