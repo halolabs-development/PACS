@@ -640,6 +640,28 @@ class WorklistLanguageDOM(unittest.TestCase):
         for text in english:
             self.assertIsNone(re.search("[가-힣]", text), text)
 
+    def test_the_report_paper_is_the_same_in_every_language_and_its_dialog_follows_the_screen(self):
+        """The report output: the paper (the preview frame and the print window) prints as written in every screen language;
+        the dialog around it reads in the reading screen's language."""
+        self.boot()
+        self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
+            "study": {"uid": auth.UID}, "report": {"version": 0}, "canPreviewEditor": False, "keys": []}))
+        papers, titles = {}, {}
+        for lang in (None, "ko", "en"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            self.page.locator("#b-print").dispatch_event("click")
+            self.page.wait_for_function("() => (document.querySelector('#report-preview iframe')?.srcdoc || '').includes('</html>')")
+            papers[lang] = self.page.evaluate("() => document.querySelector('#report-preview iframe').srcdoc")
+            titles[lang] = self.page.locator("#report-preview-title").inner_text()
+            self.page.locator("#report-preview").press("Escape")
+            expect(self.page.locator("#report-preview")).to_be_hidden()
+        self.assertIn("HALO PACS 판독문", papers[None])
+        self.assertEqual(papers[None], papers["ko"])
+        self.assertEqual(papers[None], papers["en"])
+        self.assertEqual(titles[None], titles["ko"])
+        self.assertNotEqual(titles[None], titles["en"])
+        self.assertIsNone(re.search("[가-힣]", titles["en"]), titles["en"])
+
     def test_key_image_title_and_tech_note_keep_the_authors_words(self):
         self.boot()
         self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={

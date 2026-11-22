@@ -211,7 +211,10 @@
     const footer = el('div', undefined, dialog); footer.style.cssText = 'display:flex;gap:12px;align-items:center;padding:12px';
     const status = el('span', '', footer); status.setAttribute('role', 'status'); status.style.cssText = 'flex:1;white-space:pre-wrap';
     // An error the page shows as it came: marked as an error, so one with no text in the screen language still says it failed.
-    const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', ''); shown.textContent = text; status.replaceChildren(shown); };
+    // An error place (worklist-language.js error): a known sentence reads in English on an English screen; any other message
+    // stays as written, after the general English sentence. Korean or no choice: as written.
+    const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', '');
+      if (globalThis.KinLanguage?.error) kinWrite(shown, globalThis.KinLanguage.error(text)); else shown.textContent = text; status.replaceChildren(shown); };
     const printButton = control('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
@@ -219,8 +222,8 @@
     const originalGeometry = () => ({ zoom: 100, x: 0, y: 0 });
     function syncGeometry() {
       const previous = targetKey.value, keys = session?.data ? selectedKeys() : [];
-      targetKey.replaceChildren(); const all = el('option', '체크한 키 이미지 전체', targetKey); all.value = 'all';
-      for (const key of keys) { const option = el('option', key.item.title || '(제목 없음)', targetKey); option.value = key.id; if (key.item.title) option.translate = false; }
+      targetKey.replaceChildren(); const all = kinWrite(el('option', undefined, targetKey), kinSayEn("체크한 키 이미지 전체")); all.value = 'all';
+      for (const key of keys) { const option = key.item.title ? el('option', key.item.title, targetKey) : kinWrite(el('option', undefined, targetKey), kinSayEn("(제목 없음)")); option.value = key.id; if (key.item.title) option.translate = false; }
       targetKey.value = keys.some(key => key.id === previous) ? previous : 'all';
       const values = keys.filter(key => targetKey.value === 'all' || targetKey.value === key.id).map(key => edits.get(key.id) || originalGeometry());
       const mixed = values.some(value => !same(value, values[0])); const value = mixed ? originalGeometry() : values[0] || originalGeometry();
@@ -547,10 +550,12 @@
         if (!s.data.canPreviewEditor) source.value = 'saved'; source.disabled = false; layout.disabled = false; windowControls.disabled = false;
         for (const key of s.data.keys) {
           const label = el('label', undefined, choices); label.style.cssText = 'display:block;padding:8px 0;border-bottom:1px solid #465362;overflow-wrap:anywhere';
-          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; input.setAttribute('aria-label', key.item.title || '제목 없는 키 이미지'); if (key.item.title) input.setAttribute('data-kin-keep', 'aria-label');
-          el('span', ` ${key.item.title || '(제목 없음)'} · 프레임 ${key.item.frame}`, label); input.onchange = prepare;
+          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; if (key.item.title) { input.setAttribute('aria-label', key.item.title); input.setAttribute('data-kin-keep', 'aria-label'); }
+          else kinWrite(input, kinSayEn("제목 없는 키 이미지"), 'aria-label');
+          // The key image's title is the author's words (as written); the words around it are the dialog's.
+          kinWrite(el('span', undefined, label), kinSayEn(" {0} · 프레임 {1}", key.item.title || kinSayEn("(제목 없음)"), key.item.frame)); input.onchange = prepare;
         }
-        if (!s.data.keys.length) el('p', '저장한 키 이미지가 없습니다.', choices);
+        if (!s.data.keys.length) kinWrite(el('p', undefined, choices), kinSayEn("저장한 키 이미지가 없습니다."));
         void prepare();
         });
       } catch (error) { work.commit(at, () => { if (session === s) { releaseImages(); if (error.name === 'AbortError') kinWrite(status, kinSayEn("조회가 지연됐습니다. 다시 확인을 누르세요.")); else showError(error.message); } }); }
@@ -561,7 +566,7 @@
       if (!supportsPageIdentity()) return;
       if (printWindow && !printWindow.closed) printWindow.close();
       printWindow = window.open('', '_blank');
-      if (!printWindow) { toast('인쇄 창을 열 수 없습니다. 팝업 허용 여부를 확인하세요.', 'err'); return; }
+      if (!printWindow) { toast(kinSayEn("인쇄 창을 열 수 없습니다. 팝업 허용 여부를 확인하세요."), 'err'); return; }
       const target = printWindow; printButton.disabled = true; kinWrite(status, kinSayEn("출력 직전 상태를 다시 확인하고 있습니다…"));
       try {
         await bounded(async signal => {
@@ -636,7 +641,7 @@
     return { close, open() {
       if (work.state() !== 'active') return;
       close(); const current = context();
-      if (!current.uid || !current.online) { toast('검사를 선택하고 서버 연결을 확인하세요.', 'err'); return; }
+      if (!current.uid || !current.online) { toast(kinSayEn("검사를 선택하고 서버 연결을 확인하세요."), 'err'); return; }
       focusBefore = document.activeElement; source.value = 'saved'; layout.value = 'single'; session = { uid: current.uid, epoch, selectionEpoch: 0 };
       brightness.value = 'auto'; windowFields.style.display = 'none'; windowWidth.value = '400'; windowCenter.value = '40';
       dialog.showModal(); void reload();
