@@ -15,10 +15,14 @@
   const owner = () => { const s = KinAuth.session(); return [s?.institution, s?.sub]; };
   const utc = value => typeof value === 'string' ? value.slice(0, 19).replace('T', ' ') : '';
 
-  function message(text) {
+  // One place decides how a sentence reads: a failure (or an unknown result) is an alert in the error box; a done write
+  // is a polite status line in the page's hint style, as Access Review shows its non-failure lines.
+  function message(text, done = false) {
     const el = $('#patient-consent-message');
+    const success = done && !!text;
+    el.className = success ? 'audit-hint' : text ? 'message show' : 'message';
+    el.setAttribute('role', success ? 'status' : 'alert');
     el.textContent = text || '';
-    el.classList.toggle('show', !!text);
   }
 
   function controls() {
@@ -174,7 +178,7 @@
     $('#patient-consent-form').reset();
     const refused = await reread(patientId);
     if (refused) throw new Error(refused);
-    if (current?.patientId === patientId) message('동의 기록을 저장했습니다.');
+    if (current?.patientId === patientId) message('동의 기록을 저장했습니다.', true);
   }
 
   function openWithdraw(record) {
@@ -240,7 +244,7 @@
       $('#patient-consent-withdraw').hidden = true;
       const refused = await reread(target.patientId);
       if (refused) throw new Error(refused);
-      if (current?.patientId === target.patientId) message('동의 기록을 철회했습니다.');
+      if (current?.patientId === target.patientId) message('동의 기록을 철회했습니다.', true);
     });
   });
   // Enabled only for the administrator session the Members console accepts.
