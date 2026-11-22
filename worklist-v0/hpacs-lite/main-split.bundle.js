@@ -3980,7 +3980,7 @@
       }
       kinWrite($("#receipt-assignment"), labels.assignment.text); kinWrite($("#receipt-assignment"), labels.assignment.title, "title");
       const observed = [labels.observation.text, labels.change?.text].filter(Boolean);
-      kinWrite($("#receipt-observation"), observed.length > 1 ? kinSayEn("{t0} · {t1}", { t: observed[0] }, { t: observed[1] }) : observed[0] ?? "");
+      kinWrite($("#receipt-observation"), observed.length > 1 ? kinSay("{t0} · {t1}", { t: observed[0] }, { t: observed[1] }) : observed[0] ?? "");
       kinWrite($("#receipt-observation"), labels.observation.title, "title");
       drawRetry(s, labels.retry, $("#receipt-retry"), $("#receipt-retry-note"));
       kinWrite($("#receipt-gateway"), labels.gateway.text); kinWrite($("#receipt-gateway"), labels.gateway.title, "title");

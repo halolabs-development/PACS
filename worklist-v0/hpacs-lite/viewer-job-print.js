@@ -161,7 +161,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
   // The MIP Viewer's Print Current MIP: the same recomputation from the conditions of the confirmed display; no Job is saved.
   const MIP_CURRENT_NOTE = '현재 MIP Viewer 표시 조건과 전체 CT 원본으로 다시 계산한 출력입니다 · 화면 미리보기가 아닙니다 · Job 저장 안 함 · 실제 크기 아님 · 조작성 평가 가능·진단 품질 미검증';
   const OUTPUT_NOTE = '인쇄/PDF에는 환자·검사 식별정보가 포함됩니다. Image Text/Images Only는 화면 표시 설정이며 익명화가 아닙니다. 영상 픽셀에도 식별정보가 포함될 수 있습니다. DICOM 원본 다운로드가 아니며 검사·판독문·작업을 저장하지 않습니다.';
-  const mipModel = () => { const model = window.KinVolumeMipOutput; if (typeof model?.timer !== 'function' || typeof model?.saved !== 'function') throw new Error('MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.'); return model; };
+  const mipModel = () => { const model = window.KinVolumeMipOutput; if (typeof model?.timer !== 'function' || typeof model?.saved !== 'function') throw kinError("MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요."); return model; };
   // S3-U5. Refusing is the only honest answer when the citation wording itself
   // is missing: every other outcome is phrased inside that library, so printing
   // "unknown" without it would need a second copy of the wording here, and
