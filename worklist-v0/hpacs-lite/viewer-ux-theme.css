@@ -53,6 +53,7 @@ body.kin-viewer-ux {
   --kin-panel: #2D2D2D;
   --kin-ux-text: #E3E3E3;
   --kin-ux-secondary: #B4B4B4;
+  --kin-ux-line: #B4B4B440;
   --kin-accent: #8AB4C8;
   --kin-link: #8AB4C8;
   --kin-accent-soft: #8AB4C833;
@@ -88,7 +89,62 @@ body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) :is(.
   background-color: var(--kin-panel) !important;
 }
 body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) .text-white { color: var(--kin-ux-text) !important; }
-#kin-viewer-report textarea { background: var(--kin-panel, #2D2D2D); color: var(--kin-ux-text, #E3E3E3); border: 1px solid var(--kin-ux-secondary, #B4B4B4); }
+/* The stock parts drawn from the viewer's colour variables (the Studies band above the images, its study rows and
+   thumbnails, menus and dialogs) take the five colours from the variables themselves (hue saturation lightness, as the
+   stock writes them): background, panel, text, secondary text; the stock blue (shown series, hover) is the accent. The
+   fixed stock navies are the background and the panel. */
+body.kin-viewer-ux {
+  --background: 0 0% 12.94%; --foreground: 0 0% 89.02%;
+  --card: 0 0% 17.65%; --card-foreground: 0 0% 89.02%;
+  --popover: 0 0% 17.65%; --popover-foreground: 0 0% 89.02%;
+  --secondary: 0 0% 17.65%; --secondary-foreground: 0 0% 89.02%;
+  --muted: 0 0% 17.65%; --muted-foreground: 0 0% 70.59%;
+  --accent: 0 0% 17.65%; --accent-foreground: 0 0% 89.02%;
+  --primary: 199.4 36.05% 66.27%; --primary-foreground: 0 0% 12.94%;
+  --input: 0 0% 70.59%;
+}
+body.kin-viewer-ux :is(.bg-bkg-low, .bg-bkg-full) { background-color: var(--kin-ux-background) !important; }
+body.kin-viewer-ux .bg-bkg-med { background-color: var(--kin-panel) !important; }
+body.kin-viewer-ux .border-primary-dark { border-color: var(--kin-panel) !important; }
+body.kin-viewer-ux [data-kin-studies-panel] h3 > button { background-color: var(--kin-panel) !important; color: var(--kin-ux-text) !important; }
+body.kin-viewer-ux [data-cy="Layout"] { color: var(--kin-ux-text); }
+/* Tool windows the viewer's scripts open (Cine, History, Recent Layout, the CT sync notice, the mammography hanging panel,
+   Edit Toolbar, the source PDF, job print, jobs, MIP, volume rendering): the frame is a panel with primary text and a
+   secondary edge, and so are their fields and buttons; a pressed, checked, selected or current control is marked in the
+   accent. The scripts write their colours on the elements themselves, hence important. Lines that carry a meaning (an
+   error, a warning) keep their own colour: only the frames and the controls are set here. */
+body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-ct-sync-status, #kin-mammography-hanging,
+  #kin-native-toolbar-dialog, #kin-source-pdf, #kin-job-print, #kin-viewer-jobs, #kin-volume-mip, #kin-volume-rendering) {
+  background: var(--kin-panel) !important; color: var(--kin-ux-text) !important; border-color: var(--kin-ux-secondary) !important; }
+body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-ct-sync-status, #kin-mammography-hanging,
+  #kin-native-toolbar-dialog, #kin-source-pdf, #kin-job-print, #kin-viewer-jobs, #kin-volume-mip, #kin-volume-rendering)
+  :is(button, select, textarea, input:not([type=checkbox], [type=radio], [type=range])) {
+  background: var(--kin-panel) !important; color: var(--kin-ux-text) !important; border-color: var(--kin-ux-secondary) !important; }
+body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-ct-sync-status, #kin-mammography-hanging,
+  #kin-native-toolbar-dialog, #kin-source-pdf, #kin-job-print, #kin-viewer-jobs, #kin-volume-mip, #kin-volume-rendering)
+  :is([aria-pressed="true"], [aria-checked="true"], [aria-selected="true"], [aria-current="true"]) {
+  background: var(--kin-panel) !important; border-color: var(--kin-accent) !important; outline-color: var(--kin-accent) !important;
+  box-shadow: inset 0 0 0 1px var(--kin-accent); }
+body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-ct-sync-status, #kin-mammography-hanging,
+  #kin-native-toolbar-dialog, #kin-source-pdf, #kin-job-print, #kin-viewer-jobs, #kin-volume-mip, #kin-volume-rendering)
+  :is(button, select, input):disabled { color: var(--kin-ux-secondary) !important; }/* Product text on the images: the orientation letters and the zoom figure are the primary text, as the stock image text
+   above. The reader's own image-text colour (the study label, set on the element) and the marks are theirs. */
+body.kin-viewer-ux .orientation-marker-value, body.kin-viewer-ux .kin-display-text { color: var(--kin-ux-text); }
+/* Frames: an inactive cell's frame and the dock's top edge are the line colour; the active cell keeps the accent and a
+   border the reader chose (Display, set on the element) keeps theirs. */
+body.kin-viewer-ux [data-cy="viewport-grid"] > * > .overflow-hidden:not(.border-primary-light) { border-color: var(--kin-ux-line); }
+body.kin-viewer-ux #kin-workspace-dock { border-top-color: var(--kin-ux-line); }
+/* The dock's open tab is marked in the accent on the panel (its script paints it navy). */
+body.kin-viewer-ux #kin-workspace-dock nav button[aria-expanded="true"] { background: var(--kin-panel); color: var(--kin-ux-text); border-color: var(--kin-accent); }
+/* The stock black behind the panels is the background; the black of the image area (the grid, its cells and their
+   surround) and of a thumbnail's picture stays the image's own. */
+body.kin-viewer-ux #root .bg-black:not([data-cy="viewport-grid"], [data-cy="viewport-grid"] *, [data-cy^="study-browser-thumbnail"] *) {
+  background-color: var(--kin-ux-background) !important; }
+/* Fields in the dock are panels (inputs #2D2D2D) with a secondary edge; the dock's script writes its own field colours
+   as important, so these are too. The Report Editor's three fields are always read-only (its head says Read Only). */
+body.kin-viewer-ux #kin-workspace-dock :is(input:not([type=checkbox], [type=radio], [type=range]), textarea, select),
+#kin-viewer-report textarea {
+  background: var(--kin-panel, #2D2D2D) !important; color: var(--kin-ux-text, #E3E3E3) !important; border: 1px solid var(--kin-ux-secondary, #B4B4B4); }
 body.kin-viewer-ux #kin-workspace-dock [role="status"],
 .kin-viewer-info-mode, .kin-series-count { color: var(--kin-ux-secondary); }
 body.kin-viewer-ux #kin-workspace-dock button[aria-expanded="true"],

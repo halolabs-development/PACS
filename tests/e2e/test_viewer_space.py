@@ -19,6 +19,7 @@ import uuid
 from playwright.sync_api import expect
 
 from test_prior_selection import canvas_ready
+from viewer_tools import select_image_tool
 from test_viewer_layout import ViewerLayoutE2E
 from test_viewer_windows import ViewerWindowsE2E
 from test_workspace_persistence import WorkspacePersistenceE2E
@@ -69,18 +70,20 @@ VIEWER_THEME = r'''() => {
   for (const e of document.body.querySelectorAll('*')) {
     if (e.closest('svg, canvas, img, video, iframe, option, script, style') || !shown(e)) continue;
     const cs = getComputedStyle(e), own = e.getAttribute('style') || '';
+    // The black around and under the images (the image area, its holders, a thumbnail's picture) is the image's own.
+    const imageWell = !!e.closest('[data-cy="viewport-grid"], .kin-series-preview, [data-cy^="study-browser-thumbnail"] img');
     if (e.closest(IMAGE_TEXT)) { if (ownText(e)) out.overlay.push([e.textContent.trim().slice(0, 30), cs.color, where(e)]); continue; }
     if (/(^|;)\s*(color|border(-\w+)*-color|border|outline|background(-color)?)\s*:/.test(own) && onImage(e)) { out.chosen.push(where(e) + ' ' + own.slice(0, 80)); continue; }
-    const check = (prop, value, neutralBlack) => { if (off(value, neutralBlack).length) out.off.push(where(e) + ' ' + prop + ' ' + value); };
-    check('background', cs.backgroundColor);
-    const control = e.matches('input, select, textarea, button');
+    const check = (prop, value, neutralBlack) => { if (off(value, neutralBlack).length) out.off.push(where(e) + ' ' + prop + ' ' + value + ' {' + String(e.className).slice(0, 160) + '}'); };
+    if (!(imageWell && /^rgba?\(0, 0, 0[,)]/.test(cs.backgroundColor))) check('background', cs.backgroundColor);
+    const control = e.matches('input:not([type=range], [type=checkbox], [type=radio]), select, textarea, button');
     if (control || ownText(e)) check('color', cs.color);
     for (const side of ['Top', 'Right', 'Bottom', 'Left'])
       if (parseFloat(cs['border' + side + 'Width']) > 0 && cs['border' + side + 'Style'] !== 'none') check('border' + side, cs['border' + side + 'Color']);
     if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) check('outline', cs.outlineColor);
     if (cs.boxShadow !== 'none') check('boxShadow', cs.boxShadow, true);
     if ((control || ownText(e)) && !onImage(e) && !e.closest(':disabled, [aria-disabled="true"]')) {
-      const fg = parse(cs.color)[0], bg = bgOf(e);
+      const fg = parse(cs.color)[0], bg = bgOf(e); let o = 1; for (let n = e; n && n.nodeType === 1; n = n.parentElement) o *= parseFloat(getComputedStyle(n).opacity); if (fg) fg[3] *= o;
       if (fg) { const r = ratio(fg[3] < 1 ? mix(fg, bg) : fg, bg);
         if (r < 4.5) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
     }
@@ -90,6 +93,9 @@ VIEWER_THEME = r'''() => {
     out.report.push({id: t.id, background: cs.backgroundColor, border: cs.borderTopColor + ' ' + cs.borderTopStyle, around: 'rgb(' + around.slice(0, 3).map(Math.round) + ')',
       edge: edge ? Math.round(ratio(edge[3] < 1 ? mix(edge, around) : edge, around) * 100) / 100 : 0, readOnly: t.readOnly});
   }
+  const grid = document.querySelector('[data-cy="viewport-grid"]');
+  out.frames = grid ? [...grid.querySelectorAll(':scope > * > *')].map(f => name(f) + ' ' + getComputedStyle(f).borderTopColor + ' active=' + !!f.querySelector('.kin-viewer-info-bar')) : [];
+  out.vars = ['--background', '--muted', '--muted-foreground', '--primary', '--input', '--border'].map(v => v + ':' + getComputedStyle(document.body).getPropertyValue(v));
   return out; }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
@@ -275,10 +281,13 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         self.record(page, 'space-03-cell-tools')
 
     def test_space_06_one_theme_and_readable_text(self):
-        """FA-153: the viewer's panels, header, tools and lists (the Studies band included) use the five colours; the
-        stock image text is not the light sky blue; text around the images reads at 4.5:1 or more on its own background
-        (a hovered and a selected row included); the Report Editor fields are panels (#2D2D2D) marked apart by their edge.
-        The reader's own colours (image text, marks, the selected cell's border) are theirs and are left as they are."""
+        """FA-153: the viewer's panels, header, tools, lists (the Studies band included), the dock and the tool windows a
+        reader opens (Cine, Edit Toolbar) use the five colours; the image text (the stock date/series/W-L text, the
+        orientation letters, the zoom figure, the study label at its default) is the primary text #E3E3E3, not the light
+        sky blue; text around the images reads at 4.5:1 or more on its own background - idle, a hovered, a selected and a
+        keyboard-focused thumbnail, the Report Editor tab open; the Report Editor's three read-only fields are panels
+        (#2D2D2D) marked apart by their edge. The reader's own colours (a saved study-label colour, marks, a chosen cell
+        border) are checked by their own cases and are not judged here."""
         fixture = self.multiple('VTHEME-' + uuid.uuid4().hex[:12], 'current', '20260801')
         page = self.viewer(self.login(), fixture)
         self.grid(page, 2)
@@ -286,17 +295,38 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
           .every(c => services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCurrentImageId?.())''')
         self.panels_are(page, True, False)
         page.wait_for_timeout(500)
-        report = page.locator('#kin-viewer-report')
-        if report.count():
-            # The mirror's fields as they are drawn, also where the window shows no patient tab yet.
-            report.evaluate('e => { e.hidden = false; e.open = true; }')
-        cards = page.get_by_role('region', name='Series', exact=True).locator('.kin-series-card')
-        cards.nth(1).hover()
         seen = {'idle': page.evaluate(VIEWER_THEME)}
-        study = page.locator('[data-kin-studies-panel] [data-cy^="study-browser"], [data-kin-studies-panel] button').first
-        if study.count():
-            study.hover()
-            seen['studies hovered'] = page.evaluate(VIEWER_THEME)
+        thumbnail = page.locator('[data-kin-studies-panel] [data-cy^="study-browser-thumbnail"]').first
+        expect(thumbnail).to_be_visible()
+        thumbnail.hover()
+        seen['thumbnail hovered'] = page.evaluate(VIEWER_THEME)
+        thumbnail.click()
+        page.wait_for_timeout(300)
+        seen['thumbnail selected'] = page.evaluate(VIEWER_THEME)
+        thumbnail.focus()
+        page.keyboard.press('Tab')
+        page.keyboard.press('Shift+Tab')
+        seen['thumbnail keyboard focus'] = page.evaluate(VIEWER_THEME)
+        page.mouse.move(5, 5)
+        # The dock's Report Editor tab shows the read-only mirror's three fields.
+        page.locator('#kin-workspace-dock').get_by_role('button', name='Report Editor', exact=True).click()
+        expect(page.locator('#kin-viewer-report')).to_be_visible()
+        for field in ('findings', 'conclusion', 'recommendation'):
+            expect(page.locator('#kin-viewer-report-' + field)).to_be_visible()
+        seen['Report Editor tab'] = page.evaluate(VIEWER_THEME)
+        select_image_tool(page, 'Cine')
+        expect(page.locator('#kin-cine')).to_be_visible()
+        seen['Cine'] = page.evaluate(VIEWER_THEME)
+        page.locator('[data-cy="cine-player-close"]').click()
+        expect(page.locator('#kin-cine')).not_to_be_visible()
+        toolbar = page.locator('#kin-native-toolbar-dialog')
+        if page.locator('#kin-native-toolbar-edit').is_visible() and page.locator('#kin-native-toolbar-edit').is_enabled():
+            page.locator('#kin-native-toolbar-edit').click()
+        else:
+            # Edit Toolbar's window as the button opens it (its button sits in Viewer Settings).
+            toolbar.evaluate('d => d.show ? d.show() : (d.hidden = false)')
+        expect(toolbar).to_be_visible()
+        seen['Edit Toolbar'] = page.evaluate(VIEWER_THEME)
         self.record(page, 'space-06-theme')
         print('VIEWER THEME ' + json.dumps(seen), flush=True)
         for state, found in seen.items():
@@ -304,14 +334,16 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
                 self.assertEqual([], found['off'])
             with self.subTest(contract='text reads at 4.5:1 or more around the images', state=state):
                 self.assertEqual([], found['low'])
-            with self.subTest(contract='the stock image text is not the light sky blue', state=state):
+            with self.subTest(contract='the image text is the primary text', state=state):
                 self.assertTrue(found['overlay'])
-                self.assertEqual([], [t for t in found['overlay'] if t[1] == 'rgb(90, 204, 230)'])
-        if seen['idle']['report']:
-            with self.subTest(contract='Report Editor fields are panels, apart by their edge'):
-                for field in seen['idle']['report']:
-                    self.assertEqual(field['background'], 'rgb(45, 45, 45)', field)
-                    self.assertGreaterEqual(field['edge'], 3, field)
+                self.assertEqual([], [t for t in found['overlay'] if t[1] != 'rgb(227, 227, 227)'])
+        with self.subTest(contract='Report Editor fields are panels, apart by their edge'):
+            fields = seen['Report Editor tab']['report']
+            self.assertEqual(3, len(fields), fields)
+            for field in fields:
+                self.assertEqual(field['background'], 'rgb(45, 45, 45)', field)
+                self.assertGreaterEqual(field['edge'], 3, field)
+                self.assertTrue(field['readOnly'], field)
 
     def test_space_04_tools_that_do_not_fit_keep_a_visible_control(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')
