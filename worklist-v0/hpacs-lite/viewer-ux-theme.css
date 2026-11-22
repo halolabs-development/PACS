@@ -106,9 +106,7 @@ body.kin-viewer-ux .bg-primary-dark { background-color: var(--kin-panel) !import
 body.kin-viewer-ux [class*="border-secondary-light"] { border-color: var(--kin-ux-secondary) !important; }
 body.kin-viewer-ux :is(.text-white, .text-common-bright) { color: var(--kin-ux-text) !important; }
 body.kin-viewer-ux .text-aqua-pale { color: var(--kin-ux-secondary) !important; }
-/* A control on the accent tint (the Studies view switch) is primary text, which reads on it; keyboard focus is the accent. */
-/* (The stock marks that control's colour important inside its own layer, which an unlayered rule cannot outrank: the control's own accent variable is the primary text instead.) */
-body.kin-viewer-ux .bg-primary\/10 > button { --primary: 0 0% 89.02%; color: var(--kin-ux-text) !important; }
+/* Keyboard focus is the accent. */
 body.kin-viewer-ux :focus-visible { outline-color: var(--kin-accent); }
 body.kin-viewer-ux [data-kin-studies-panel] h3 > button { background-color: var(--kin-panel) !important; color: var(--kin-ux-text) !important; }
 /* Tool windows the viewer's scripts open (Cine, History, Recent Layout, the CT sync notice, the mammography hanging panel,

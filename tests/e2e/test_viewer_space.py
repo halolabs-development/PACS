@@ -43,7 +43,7 @@ BAND_OUTLINE = '''() => { const band = document.querySelector('[data-kin-studies
     for (const child of [...node.children].slice(0, node.matches('svg, svg *') ? 0 : 5)) walk(child, depth + 1); };
   walk(band, 0); return out; }'''
 # The viewer chrome as drawn: colours outside the five (any alpha; near-black shadows are neutral), text under 4.5:1 on
-# its composited background (disabled controls aside), the image text's colours, and the Report Editor fields. A colour
+# its composited background (disabled controls aside; an icon-only control under 3:1), the image text's colours, and the Report Editor fields. A colour
 # the page sets on the element itself (the reader's image-text colour, a cell border) is listed apart, not judged.
 VIEWER_THEME = r'''() => {
   const palette = ['33,33,33', '45,45,45', '227,227,227', '180,180,180', '138,180,200'];
@@ -84,8 +84,10 @@ VIEWER_THEME = r'''() => {
     if (cs.boxShadow !== 'none') check('boxShadow', cs.boxShadow, true);
     if ((control || ownText(e)) && !onImage(e) && !e.closest(':disabled, [aria-disabled="true"]')) {
       const fg = parse(cs.color)[0], bg = bgOf(e); let o = 1; for (let n = e; n && n.nodeType === 1; n = n.parentElement) o *= parseFloat(getComputedStyle(n).opacity); if (fg) fg[3] *= o;
+      // A control that shows only an icon (no text drawn) is judged as a control: 3:1 (its name lives in the label).
+      const icon = control && !(e.value || e.innerText || '').trim() && !!e.querySelector('svg');
       if (fg) { const r = ratio(fg[3] < 1 ? mix(fg, bg) : fg, bg);
-        if (r < 4.5) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
+        if (r < (icon ? 3 : 4.5)) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
     }
   }
   for (const t of document.querySelectorAll('#kin-viewer-report textarea')) {
