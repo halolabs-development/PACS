@@ -672,7 +672,7 @@
         if (typeof message === "string") return message;
         if (Array.isArray(message)) return message.filter(item => typeof item === "string").join("\n");
         if (message && typeof message.message === "string") return message.message;
-        return window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(kinSayEn("요청을 처리하지 못했습니다 (HTTP {0})"), status) : `요청을 처리하지 못했습니다 (HTTP ${status})`;
+        return window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text("요청을 처리하지 못했습니다 (HTTP {0})", status) : `요청을 처리하지 못했습니다 (HTTP ${status})`;
       }
 
       async function request(method, path, body) {
