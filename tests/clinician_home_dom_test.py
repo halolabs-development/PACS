@@ -1055,6 +1055,59 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                 self.assertEqual(self.page.evaluate("() => document.documentElement.scrollWidth"), width, "no sideways scroll")
         self.page.set_viewport_size({"width": 1366, "height": 768})
 
+    def test_b14_a_picked_study_shows_its_report_without_scrolling(self):
+        """B14 ("판독창이랑 거의 똑같아야돼"): picking a row of the list shows that study's Report — its head and the first line
+        of its text — inside the window at 1366x768 and 1920x1080, with no scrolling by the user, while the Critical Results
+        area keeps its text and its controls. A window tall enough to show it already does not move."""
+        geometry = """() => {
+          const head = document.getElementById('report-title').getBoundingClientRect();
+          const text = document.querySelector('#report-body .body-text');
+          const range = document.createRange(); range.selectNodeContents(text);
+          const line = range.getClientRects()[0];
+          return {head: [head.top, head.bottom], line: [line.top, line.bottom], height: innerHeight, scrolled: scrollY,
+                  help: document.getElementById('critical-results-help').textContent.length,
+                  controls: [...document.querySelectorAll('#critical-results button:not([hidden])')].map(b => b.textContent)};
+        }"""
+        # As seen: the page opens on My Studies (the account's name is the study's Requesting Physician).
+        self.me = {**me(["clinician", *KEYCLOAK_DEFAULTS]), "familyName": "Clinician", "givenName": "SYN", "fullName": None}
+        for row in self.rows:
+            if row["uid"] in (uid(1), uid(6)):
+                row["requestingPhysician"] = "CLINICIAN^SYN"
+        for width, height, keyboard in ((1366, 768, False), (1920, 1080, False), (1366, 768, True), (1920, 2400, False)):
+            with self.subTest(size=f"{width}x{height}", keyboard=keyboard):
+                self.page.set_viewport_size({"width": width, "height": height})
+                self.page.goto(ORIGIN + BASE + "clinician.html")
+                expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+                expect(self.folder("My Studies")).to_have_attribute("aria-current", "true")
+                expect(self.page.locator("#critical-results")).to_be_visible()
+                help_text = self.page.locator("#critical-results-help").text_content()
+                self.assertTrue(help_text.strip(), "the Critical Results area says what it is")
+                before = self.page.evaluate("() => scrollY")
+                if keyboard:
+                    # A row reached by Tab and picked with Enter on its View button (the list's one tab stop).
+                    self.row(1).locator("button[data-view]").focus()
+                    self.page.keyboard.press("Enter")
+                else:
+                    self.row(1).click()
+                expect(self.page.locator("#report-state")).to_have_attribute("data-state", "final")
+                expect(self.page.locator("#report-body .body-text").first).to_be_visible()
+                seen = self.page.evaluate(geometry)
+                for part in ("head", "line"):
+                    top, bottom = seen[part]
+                    self.assertGreaterEqual(top, 0, f"{part} of the picked study's Report is in the window: {seen}")
+                    self.assertLessEqual(bottom, seen["height"], f"{part} of the picked study's Report is in the window: {seen}")
+                self.assertEqual(len(help_text), seen["help"], "the Critical Results text stays")
+                self.assertEqual(["Show All", "Refresh"], seen["controls"], "the Critical Results controls stay")
+                if height > 2000:
+                    self.assertEqual(before, seen["scrolled"], "a window that already shows the Report does not move")
+                # A pick from inside the Study panel (Retry) does not move the page again.
+                self.page.evaluate("() => scrollTo(0, 0)")
+                self.page.locator("#report-retry").evaluate("button => button.click()")
+                expect(self.page.locator("#report-state")).to_have_attribute("data-state", "final")
+                self.settle()
+                self.assertEqual(0, self.page.evaluate("() => scrollY"), "only a pick from the list moves the page")
+        self.page.set_viewport_size({"width": 1366, "height": 768})
+
     def test_b14_my_studies_is_the_requesting_physician_and_opens_first(self):
         """B14 (Minhoon 11-01 #32 "do "my studies" folder as the ordering/requesting physician"; all patients stay open): the
         page opens on My Studies, the studies whose Requesting Physician is the account's own family and given name - not a

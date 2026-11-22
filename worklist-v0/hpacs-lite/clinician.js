@@ -1338,7 +1338,11 @@
    * (GET findings/:id/revisions, read as the record versions this page knows), and the study's current list says whether
    * the item is still there and where it is (GET viewer-items?recheck=).
    */
-  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '3' };
+  // The newest finding record version whose sources this page has checked it reads (versions 2-4 name a saved item the same
+  // way; 4 adds only the free-text size, which this page does not show). The server refuses a whole page holding a newer row,
+  // so this follows the version the viewer writes (finding-link-model.js SCHEMA); tests/clinician_viewer_dom_test.py fails
+  // when that moves on.
+  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '4' };
   async function citedImage(rowUid, reportUid, entry) {
     let revision = null, cursor = null;
     for (let n = 0; n < 100 && !revision; n++) {
@@ -1428,7 +1432,24 @@
     }
   }
 
-  function select(uid, reportTarget = null) {
+  /**
+   * A study picked from the list shows its Report in the window, as the reading window does: once that pick's answer is
+   * painted, when the Report head or the first line under it (the report text, else the state line) is outside the window,
+   * the page scrolls the Study panel's head to the top of the window (the Report head, when the line would still be out).
+   * Judged by where they are drawn; a window that already shows them does not move.
+   */
+  function revealReport() {
+    const head = $('#report-title').getBoundingClientRect();
+    const body = $('#report-body'), text = body.hidden ? null : body.querySelector('.body-text');
+    const first = text && text.textContent ? text : $('#report-state .state-text');
+    let line = first.getBoundingClientRect();
+    try { const range = document.createRange(); range.selectNodeContents(first); line = range.getClientRects()[0] || line; } catch (_) {}
+    if (head.top >= 0 && line.bottom <= root.innerHeight) return;
+    const top = $('#detail').getBoundingClientRect().top;
+    root.scrollBy(0, line.bottom - top <= root.innerHeight ? top : head.top);
+  }
+
+  function select(uid, reportTarget = null, fromList = false) {
     if (leaving) return;
     const row = byUid.get(uid);
     if (!row) return;
@@ -1459,6 +1480,7 @@
       } catch (error) {
         setReport('failed', TEXT.reportFailed, describe(error));
         setKeys(TEXT.keysFailed, null);
+        if (fromList) revealReport();
         return;
       }
       paintReport(view);
@@ -1476,6 +1498,7 @@
         line.id = 'report-target';
         $('#report-body').before(line);
       } else syncRowStatus(uid, view);
+      if (fromList) revealReport();
     }, error => {
       if (!reportFresh(mine, uid)) return;
       if (error.status === 403) {
@@ -1484,6 +1507,7 @@
       }
       setReport('failed', TEXT.reportFailed, describe(error));
       setKeys(TEXT.keysFailed, null);
+      if (fromList) revealReport();
     });
   }
 
@@ -3635,7 +3659,7 @@
       // 목록에서 직접 고른 검사는 타임라인 이동이 아니다: Close는 그 검사를 내린다.
       returnTo = null;
       rove(tr.dataset.uid, false);
-      select(tr.dataset.uid);
+      select(tr.dataset.uid, null, true);
     });
     tbody.addEventListener('keydown', rowKey);
   }
