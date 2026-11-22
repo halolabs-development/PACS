@@ -54,6 +54,15 @@
 .left > .statusbar > #countlist { flex-wrap: wrap; gap: 4px 10px; }
 .left > .statusbar > #countlist .count { white-space: nowrap; }
 .left > .statusbar .toolbar-status-texts > * { overflow-wrap: anywhere; }
+/* The status group unfolds its texts out of the flow on pointer or keyboard focus; in the bar it keeps a line's height
+   meanwhile, so the pointer that unfolded it stays on it. Below 1366 px its texts already wrap whole in place, so in the bar
+   they stay there (nothing to unfold). */
+.left > .statusbar > #toolbar-status { min-height: 1lh; }
+@media (max-width: 1365px) {
+  .left > .statusbar > #toolbar-status:is(:hover, :focus-within) > .toolbar-status-texts {
+    position: static !important; flex-direction: row; flex-wrap: wrap; align-items: center; width: auto; max-width: none; padding: 0;
+    background: none; border: 0; box-shadow: none; pointer-events: auto; }
+}
 /* The page buttons and Per page wrap inside their row rather than run past the bar (with more than one page they are wider\n   than a narrow bar). */
 .left > .statusbar > #worklist-pages { flex: 0 1 auto; min-width: 0; }
 @supports (anchor-name: --kin-count-row) {

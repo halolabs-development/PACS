@@ -413,6 +413,18 @@ class CountRowAndContrastDOM(unittest.TestCase):
         self.assertLessEqual(row['overflow'], 0, (what, row))
         return row
 
+    def hover_status(self, page, what):
+        # The pointer on the status group shows its texts whole and stays on it, frame after frame (no unfold/fold loop).
+        box = page.locator('#toolbar-status').bounding_box()
+        page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+        frames = page.evaluate('''() => new Promise(done => { const out = [], g = document.querySelector('#toolbar-status');
+          const step = () => { const texts = [...g.querySelectorAll('.toolbar-status-texts > *')].filter(e => e.textContent.trim() && e.getClientRects().length);
+            out.push({hover: g.matches(':hover'), height: Math.round(g.getBoundingClientRect().height), cut: texts.filter(e => e.scrollWidth > e.clientWidth + 1).map(e => e.id)});
+            out.length < 12 ? requestAnimationFrame(step) : done(out); }; requestAnimationFrame(step); })''')
+        self.assertEqual([], [f for f in frames[2:] if not (f['hover'] and f['height'] > 0 and not f['cut'])], (what, frames))
+        self.assertEqual(1, len({f['height'] for f in frames[2:]}), (what, frames))
+        page.mouse.move(2, 2)
+
     def page_through(self, page, what):
         # Next shows other studies, Previous brings the first page back.
         first = page.evaluate(FIRST_ROW)
@@ -459,6 +471,7 @@ class CountRowAndContrastDOM(unittest.TestCase):
                 settle(page)
                 if width == 1920:
                     self.assert_one_line(page, 'three pages')
+                self.hover_status(page, 'three pages')
                 self.page_through(page, 'three pages')
                 self.doCleanups()
 

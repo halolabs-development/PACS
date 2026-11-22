@@ -138,7 +138,14 @@ body.kin-viewer-ux #kin-workspace-dock { border-top-color: var(--kin-ux-line); }
 /* Section titles in the dock are primary text; a section's dividing line is the line colour. */
 body.kin-viewer-ux #kin-workspace-dock details > summary { color: var(--kin-ux-text); }
 body.kin-viewer-ux #kin-workspace-dock #kin-display-scope { border-top-color: var(--kin-ux-line) !important; }
-/* The dock's open tab is marked in the accent on the panel (its script paints it navy). */
+/* The rest of the dock's own colours (its script): a hovered button is the faint accent; labels and notes are secondary
+   text; dividing lines and the edge of a dock moved to the top are the line colour; focus is the accent. */
+body.kin-viewer-ux #kin-workspace-dock button:hover:not(:disabled) { background: var(--kin-accent-faint); }
+body.kin-viewer-ux #kin-workspace-dock :is(#kin-dock-settings-panel > label, #kin-dock-settings-note) { color: var(--kin-ux-secondary); }
+body.kin-viewer-ux #kin-workspace-dock :is(#kin-viewer-layout > #kin-viewer-jobs, #kin-viewer-tech-note) { border-color: var(--kin-ux-line); }
+body.kin-viewer-ux.kin-dock-top #kin-workspace-dock { border-bottom-color: var(--kin-ux-line); }
+body.kin-viewer-ux #kin-workspace-dock select:focus-visible { outline-color: var(--kin-accent); }
+body.kin-viewer-ux #kin-workspace-dock button[aria-expanded="true"] { background: var(--kin-panel); }/* The dock's open tab is marked in the accent on the panel (its script paints it navy). */
 body.kin-viewer-ux #kin-workspace-dock nav button[aria-expanded="true"] { background: var(--kin-panel); color: var(--kin-ux-text); border-color: var(--kin-accent); }
 /* The stock black behind the panels is the background; the black of the image area (the grid, its cells and their
    surround) and of a thumbnail's picture stays the image's own. */
