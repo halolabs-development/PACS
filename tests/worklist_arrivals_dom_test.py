@@ -72,7 +72,7 @@ RETRY = "async " + extract_function(MAIN, "requestGatewayRetry")
 SPLIT = "\n".join(extract_function(MAIN, name) for name in ("applyIdentityIssues", "renderIdentityIssues"))
 # The poll refreshes a row in place through the shipped row views (an exam's originals, the Referred time); sliced, with
 # the harness's fmtD/localStamp stand-ins below.
-ROW_VIEWS = "\n".join(extract_function(MAIN, name) for name in ("serverInstant", "referredFields", "sourceMetadataView"))
+ROW_VIEWS = "\n".join(extract_function(MAIN, name) for name in ("serverInstant", "referredFields", "readingRequestFields", "sourceMetadataView"))
 # S7-U5: the sliced functions pass their writes through the page's work-context gate. The shipped module is loaded as it
 # is and follows a session that is at work for the whole case (the gate's own transitions are tests/session_work_gate_test.cjs's
 # and tests/auth_logout_dom_test.py's); accountReplaced() is main.html's bound identity check, which has no server here.

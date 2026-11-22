@@ -1044,6 +1044,7 @@
     $('#open-viewer').disabled = true;
     $('#viewer-note').textContent = TEXT.viewer;
     paintClose();
+    clearReadingRequest();
     clearRequests();
     const compare = $('#compare');
     if (compare) compare.remove();
@@ -1415,6 +1416,7 @@
     setReport('loading', TEXT.reportLoading);
     setKeys(TEXT.keysLoading, null);
     paintRequestsShell(row);
+    paintReadingRequest(row);
     const reportUid=reportTarget?.uid||uid,version=reportTarget?.version;
     request(`/clinician/studies/${encodeURIComponent(reportUid)}/report`+(version?`?version=${version}`:'')).then(body => {
       if (!reportFresh(mine, uid)) return;
@@ -1454,6 +1456,123 @@
       setReport('failed', TEXT.reportFailed, describe(error));
       setKeys(TEXT.keysFailed, null);
     });
+  }
+
+  // ── 판독 의뢰(Reading Request) ──
+  // The row's latest reading request and whether this account may ask now come with the list row from the server
+  // (api/src/pacs/reading-request.ts: readingRequest, readingRequestable); the page never decides either. Request Reading
+  // sends POST studies/:uid/reading-request with the account it was shown for; the answer is taken only for the same row
+  // object it was sent from (a list read since replaces the rows and says the truth) and that study's latest press, and it
+  // is painted only while that study is shown: a late answer never paints over a newer list or another study. A press
+  // whose result is unknown leaves the button: a second press answers the open request as it is (the server keeps one per
+  // study). Fixed words and data (the time, the requester) are separate nodes; data is never translated.
+  const READING = {
+    none: '이 검사에는 판독 의뢰가 없습니다. Request Reading을 누르면 소속 기관 판독의의 워크리스트(Read Req 열)에 표시됩니다.',
+    open: '판독문이 승인되면 의뢰가 닫힙니다.',
+    closed: '판독문이 승인되어 의뢰가 닫혔습니다.',
+    again: '판독문이 다시 승인 전 상태라 새로 의뢰할 수 있습니다.',
+    unavailable: '이 검사는 지금 판독을 의뢰할 수 없습니다(원격판독으로 받은 검사이거나 지금 열 수 없는 검사).',
+    // Why not, as the server said it (readingRequestRefusal); an unknown reason reads as `unavailable`.
+    refusals: {
+      reported: '승인된 판독문이 있어 판독을 의뢰할 수 없습니다. 판독문을 보거나 Questions로 물어보세요.',
+      destroyed: '보존 기간이 끝나 판독문을 파기한 검사라 판독을 의뢰할 수 없습니다.',
+      role: '판독 의뢰는 진료과 의사(clinician) 계정만 할 수 있습니다.',
+    },
+    sending: '보내는 중입니다…',
+    created: '판독을 의뢰했습니다.',
+    existing: '이미 열린 판독 의뢰가 있어 그 의뢰를 그대로 보여 줍니다.',
+    unknown: '저장되었는지 알 수 없습니다. 다시 눌러도 의뢰는 하나만 남고, 목록을 새로고침하면 실제 결과가 보입니다.',
+    malformed: '응답 형식을 확인할 수 없습니다. 목록을 새로고침하면 실제 결과가 보입니다.',
+  };
+  // The press number of each study's latest Request Reading: only that press's answer is taken.
+  const readingPresses = new Map();
+
+  function readingView(value) {
+    if (value === null) return null;
+    if (!value || typeof value !== 'object' || typeof value.at !== 'string' || typeof value.by !== 'string'
+        || typeof value.open !== 'boolean' || !(value.closedAt === null || typeof value.closedAt === 'string')
+        || value.open !== (value.closedAt === null)) return undefined;
+    return value;
+  }
+
+  function readingData(text) {
+    const span = node('span', null, text);
+    span.setAttribute('translate', 'no');
+    return span;
+  }
+
+  function paintReadingRequest(row, note = '') {
+    const section = $('#reading-request');
+    const view = readingView(row.readingRequest ?? null);
+    const allowed = row.readingRequestable === true;
+    section.hidden = false;
+    section.dataset.uid = row.uid;
+    const state = $('#reading-request-state');
+    if (view === undefined) {
+      state.replaceChildren(node('span', null, READING.malformed));
+      section.dataset.state = 'malformed';
+    } else if (view === null) {
+      state.replaceChildren(node('span', null, allowed ? READING.none : READING.refusals[row.readingRequestRefusal] || READING.unavailable));
+      section.dataset.state = allowed ? 'none' : 'unavailable';
+    } else if (view.open) {
+      state.replaceChildren(node('b', null, 'Requested'), ' ', readingData(requestTime(view.at)), ' · ', readingData(view.by || '—'),
+        ' — ', node('span', null, READING.open));
+      section.dataset.state = 'open';
+    } else {
+      state.replaceChildren(node('b', null, 'Closed'), ' ', node('span', null, 'Report Approved'), ' ', readingData(requestTime(view.closedAt)),
+        ' · ', node('span', null, 'Requested'), ' ', readingData(requestTime(view.at)), ' · ', readingData(view.by || '—'),
+        ' — ', node('span', null, allowed ? READING.again : READING.closed));
+      section.dataset.state = 'closed';
+    }
+    const send = $('#reading-request-send');
+    send.hidden = !allowed || view === undefined;
+    send.disabled = false;
+    $('#reading-request-note').textContent = note;
+  }
+
+  // A press out stays out when the panel is closed: its answer still lands on its row (fresh() below).
+  function clearReadingRequest() {
+    const section = $('#reading-request');
+    section.hidden = true;
+    delete section.dataset.uid;
+    delete section.dataset.state;
+    $('#reading-request-state').replaceChildren();
+    $('#reading-request-note').textContent = '';
+    $('#reading-request-send').hidden = true;
+  }
+
+  async function sendReadingRequest() {
+    const uid = selected, row = uid === null ? null : byUid.get(uid);
+    if (leaving || !row || row.readingRequestable !== true) return;
+    const mine = (readingPresses.get(uid) ?? 0) + 1;
+    readingPresses.set(uid, mine);
+    // The same press of the same row object (a list read since replaced the rows); painted only while that study is shown.
+    const fresh = () => !leaving && readingPresses.get(uid) === mine && byUid.get(uid) === row;
+    const paint = note => { if (selected === uid) paintReadingRequest(row, note); };
+    $('#reading-request-send').disabled = true;
+    $('#reading-request-note').textContent = READING.sending;
+    let answer;
+    try {
+      answer = await requestSend(`/studies/${encodeURIComponent(uid)}/reading-request`, { expectedOwner: owner });
+    } catch (error) {
+      if (!fresh()) return;
+      if (error.code === 'OWNER_CHANGED') { accountChanged(describe(error)); return; }
+      // A refusal said by the server: the study is approved or destroyed now, or out of reach - no button for it here.
+      if (error.status === 409 || error.status === 404 || error.status === 403) Object.assign(row, { readingRequestable: false,
+        readingRequestRefusal: { READING_REQUEST_REPORTED: 'reported', READING_REQUEST_DESTROYED: 'destroyed',
+          READING_REQUEST_ROLE_REQUIRED: 'role' }[error.code] || 'unavailable' });
+      paint(error.status ? describe(error) : `${describe(error)} ${READING.unknown}`);
+      return;
+    }
+    if (!fresh()) return;
+    const body = answer.body, view = readingView(body && body.readingRequest);
+    if (requestOwnerOf(body) !== true || !view || !view.open || typeof body.created !== 'boolean'
+        || answer.status !== (body.created ? 201 : 200)) {
+      paint(READING.malformed);
+      return;
+    }
+    Object.assign(row, { readingRequest: view, readingRequestable: false, readingRequestRefusal: null });
+    paint(body.created ? READING.created : READING.existing);
   }
 
   // ── 영상 요청(S5-U4c) ──
@@ -3477,6 +3596,7 @@
     $('#report-retry').addEventListener('click', () => { if (selected !== null) select(selected,selectedReportTarget); });
     $('#open-viewer').addEventListener('click', () => openViewer(null));
     $('#detail-close').addEventListener('click', () => closeDetail());
+    $('#reading-request-send').addEventListener('click', () => sendReadingRequest());
     // Open Viewer와 Compare의 결과(창 차단·다시 확인 실패)를 읽어 준다.
     $('#viewer-note').setAttribute('aria-live', 'polite');
     const tbody = $('#studies');

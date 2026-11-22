@@ -166,6 +166,11 @@ export class StudyAccessService {
     if(observed.count>1)throw new ConflictException({code:STUDY_IDENTITY_UNRESOLVED,message:STUDY_IDENTITY_UNRESOLVED_MESSAGE});
     return {sourcePatientId:observed.sourcePatientId,sourceInstitution:observed.sourceInstitution};
   }
+  /** How many patient resources this request observed for the UID (prepareSourceIdentity), or null when the read was not made or failed. */
+  observedSourceCount(c:Caller,uid:string):number|null {
+    const observed=this.sources.get(c)?.get(uid);
+    return observed?observed.count:null;
+  }
   /** Logical reports require a real, identified original, unlike import and UID-only policy decisions. */
   assertIdentifiedSource(c:Caller,uid:string):SourceIdentity {
     const identity=this.assertUnsplitSource(c,uid);

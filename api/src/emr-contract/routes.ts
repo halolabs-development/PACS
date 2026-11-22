@@ -177,6 +177,11 @@ const groups: readonly (RouteContract & { routes: readonly string[] })[] = [
     routes: ['GET studies/:uid/report/citations', 'GET studies/:uid/report/structure', 'GET studies/:uid/report/drawings', 'GET studies/:uid/report/drawings/:id'] },
   { kinds: ['assignment'], operation: 'write', causes: ['user-view'],
     routes: ['POST studies/:uid/hold', 'POST studies/:uid/release', 'POST studies/:uid/release/force', 'POST studies/:uid/reader-assignment'] },
+  // Reading request: a clinician asks for an existing study to be read - a work-flow mark on the study (no text, no signer),
+  // a non-record target like a hold. The study rows that carry it (GET studies, GET clinician/studies) and the approval that
+  // closes it (POST report/commit) keep their record kinds: adding this non-record kind there would make those routes mixed.
+  { kinds: ['assignment'], operation: 'write', causes: ['user-view'],
+    routes: ['POST studies/:uid/reading-request'] },
   { kinds: ['assignment'], operation: 'read', causes: ['user-view', 'background-fetch'],
     routes: ['GET studies/:uid/reader-assignment'] },
   { kinds: ['access-audit'], operation: 'read', causes: ['user-view', 'background-fetch'],

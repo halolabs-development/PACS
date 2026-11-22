@@ -100,10 +100,10 @@ COLUMNS_KEY = "kin-worklist-columns:v1:"
 DEFAULT_ORDER = V["V01"]["expect"]["modes"]["Radiology"]["order"]
 # Studio default: partial legacy orders keep their specified prefix; missing keys
 # follow the new default order. Full stored orders are still checked against the shared vectors.
-DEFAULT_TITLES = ['No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'Referred', 'ID', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
+DEFAULT_TITLES = ['No', 'Assigned Reader', 'RS', 'Confirm', 'Read Req', 'StudyDate', 'Referred', 'ID', 'Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class',
                   'Age', 'StudyDesc', 'Modality', 'Hospital']
 RESTORED_TITLES = {
-    "V03": ['Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class', 'ID', 'No', 'Assigned Reader', 'RS', 'Confirm', 'StudyDate', 'Referred', 'StudyDesc', 'Modality',
+    "V03": ['Name', 'ReqDate', 'ReqDept', 'ReqDoc', 'Pt Class', 'ID', 'No', 'Assigned Reader', 'RS', 'Confirm', 'Read Req', 'StudyDate', 'Referred', 'StudyDesc', 'Modality',
             'Hospital', 'PF', 'Tech Note', 'Viewing', 'Count', 'Series', 'EM', 'SS', 'Accession No', 'TS', 'BirthDate', 'Sex', 'PreDoc', 'PreReviewer', 'StudyTime'],
     "V05": DEFAULT_TITLES + ['PF', 'Tech Note', 'Viewing', 'Count', 'Series', 'EM', 'SS', 'Accession No', 'TS', 'BirthDate', 'Sex', 'PreDoc', 'PreReviewer', 'StudyTime'],
 }
@@ -1085,7 +1085,7 @@ class MultiInstitutionWorklist(unittest.TestCase):
         permuted = copy.deepcopy(V["V02"]["document"])
         permuted["modes"]["Radiology"]["order"].reverse()
         screen = self.boot(Server(rows=self.column_rows()), storage={key: json.dumps(permuted)})
-        placed = {"name": ["ReqDate", "ReqDept", "ReqDoc", "Pt Class"], "rs": ["Confirm"], "date": ["Referred"]}
+        placed = {"name": ["ReqDate", "ReqDept", "ReqDoc", "Pt Class"], "rs": ["Confirm", "Read Req"], "date": ["Referred"]}
         expected = [title for k in permuted["modes"]["Radiology"]["order"] if k not in permuted["modes"]["Radiology"]["hidden"]
                     for title in [TITLES[k]] + placed.get(k, [])] + [HOSPITAL, TITLES["time"]]
         self.assertEqual(expected, screen.heads())

@@ -11573,5 +11573,47 @@
         ]
       }
     }
+  },
+  "di_additions_reading_request": {
+    "unit": "reading-request",
+    "decision": "Reading request",
+    "note": "A clinician's reading request on an existing study (POST studies/:uid/reading-request), on a feature controller of its own over the existing PrismaService and StudyAccessService; the rule lives in pacs/reading-request.ts. No new provider. U0B-DI compares the snapshot minus exactly these.",
+    "middleware_routes": [],
+    "controllers": [
+      "ReadingRequestController"
+    ],
+    "providers": [],
+    "routes": [
+      {
+        "controller": "ReadingRequestController",
+        "handler": "create",
+        "method": "POST",
+        "paths": [
+          "/|studies/:uid/reading-request"
+        ],
+        "public": null,
+        "status": null,
+        "headers": [],
+        "guards": [],
+        "interceptors": [],
+        "args": [
+          "0:1@1:null:0",
+          "1:3@3:null:0",
+          "3:2@2:null:0",
+          "5:0@0:\"uid\":0"
+        ]
+      }
+    ],
+    "injectables": {
+      "ReadingRequestController": {
+        "params": [
+          "PrismaService",
+          "StudyAccessService"
+        ],
+        "scope": null,
+        "declared": [],
+        "optional": []
+      }
+    }
   }
 }
