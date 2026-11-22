@@ -6,9 +6,11 @@ For that locale it takes the theme's messages_<locale>.properties over Keycloak'
 to the English files (the theme's, then Keycloak's). So each language is whole only when the theme's Korean and
 English files carry the same keys, the English words have no Hangul, and the Korean words have no English beyond names.
 
-Keycloak's own Korean messages lack keys that reach these screens and mails, written out here (Keycloak 26.7.3
-theme/base): the language menu button's name (`languages`) on every login page, the title over the page that ends a
-change sent by mail (`accountUpdatedTitle`), and the units of a link's lifetime in the mails (Keycloak has no Korean
+Keycloak's own Korean messages lack keys that reach these screens and mails, or give them in English, written out
+here (Keycloak 26.7.3 theme/base): the language menu button's name (`languages`) on every login page, the title over
+the page that ends a change sent by mail (`accountUpdatedTitle`), the title over the page an email confirmation link
+opens (`confirmEmailAddressVerificationHeader`, English in Keycloak's Korean file - the only such value a page of this
+realm reaches; the others are product names such as FreeOTP), and the units of a link's lifetime in the mails (Keycloak has no Korean
 email messages at all; the Korean reset mail said "5 minutes").
 
 The sign-in page's style sheet draws four lines of its own (login.css `content`); each has its English line for an
@@ -26,7 +28,7 @@ HANGUL = re.compile(r"[가-힣]")
 # Names a Korean sentence keeps in Latin letters: the product's name and two words Korean screens write as they are.
 NAMES = {"HALO", "PACS", "OTP", "QR"}
 # Keycloak's own Korean messages lack these, and the screens or mails reach them (see the module text).
-KOREAN_GAPS = {LOGIN: ("languages", "accountUpdatedTitle"), EMAIL: tuple(f"linkExpirationFormatter.timePeriodUnit.{unit}"
+KOREAN_GAPS = {LOGIN: ("languages", "accountUpdatedTitle", "confirmEmailAddressVerificationHeader"), EMAIL: tuple(f"linkExpirationFormatter.timePeriodUnit.{unit}"
                                                     for unit in ("seconds", "minutes", "hours", "days"))}
 
 
