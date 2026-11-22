@@ -375,9 +375,15 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         if tab.get_attribute('aria-expanded') != 'true':
             tab.click()
         expect(page.locator('#kin-viewer-layout')).to_be_visible()
-        # Cell Merge joins the tools tab once its script has loaded (asynchronously): the tab is measured with it there.
-        expect(page.locator('#kin-cell-merge')).to_be_visible(timeout=15000)
+        # Cell Merge joins the tools tab once its script has loaded (asynchronously): the tab is measured with it there,
+        # then once more with the panel scrolled into the window (the check leaves out what is below the window).
+        cell_merge = page.locator('#kin-cell-merge')
+        expect(cell_merge).to_be_visible(timeout=15000)
         measure('tools tab')
+        cell_merge.scroll_into_view_if_needed()
+        page.wait_for_function('() => { const r = document.querySelector("#kin-cell-merge").getBoundingClientRect(); '
+                               'return r.top >= 0 && r.top < innerHeight; }')
+        measure('Cell Merge panel')
         # Edit Toolbar's button is there only while the viewer's toolbar is the stock one (its own cases open it).
         try:
             expect(page.locator('#kin-native-toolbar-edit')).to_be_visible(timeout=10000)
