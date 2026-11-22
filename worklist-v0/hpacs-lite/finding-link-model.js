@@ -284,37 +284,45 @@
    * calculator, a wrong count (an empty list of a measurement kind included), a non-finite number, one that
    * toFixed would write in exponent form (>= 1e21) or a pixel count that is not a non-negative safe integer
    * shows every value, one decimal each, without names or units. Other kinds without values show nothing.
-   * Values may come from another document: each is read once as a primitive. */
+   * Values may come from another document: each is read once as a primitive.
+   * One rule, two forms: valueText gives the words as written in every screen language — the report's measurement line,
+   * the output paper and every value that is kept or sent; valueSay gives the same words as a sentence of the page, which
+   * a screen draws in its own language (the Findings panel, the source line, the History value). */
   const CALCULATOR = 'kin-native-manual-v1', ARITY = { length: 1, angle: 1, ellipse: 5 };
-  const UNVERIFIED = '수치(단위 미확인): ';
+  // The template filled with its parts as written (kinSay's own form without the translator).
+  const asWritten = (t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
   const LINE_KINDS = { ctr: ['ctr4', 'ctr2'], parallel: ['parallel'], ratio: ['ratio'], centreAngle: ['centreangle'], volume: ['volume'] };
   const LINE_ARITY = { ctr4: 4, ctr2: 3, parallel: 2, ratio: 3, centreangle: 2 };
   // A line tool's spacing basis (the Volume's formula takes its place: each of its lengths names its own basis).
-  const LINE_BASES = { pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing',
-    us: 'US Region Calibration', px: '픽셀 기준(간격 미확인)', ellipsoid: true, prolate: true };
+  // (true: the Volume's formula; otherwise the basis named by valueWords' BASIS)
+  const LINE_BASES = { pixel: 'pixel', detector: 'detector', ermf: 'ermf', dbt: 'dbt', us: 'us', px: 'px', ellipsoid: true, prolate: true };
   const finite = n => typeof n === 'number' && Number.isFinite(n);
   // -0 and -0.04 round to -0, which toFixed writes as '0.0'; from 1e21 on toFixed would write String(n) anyway.
   const decimal = n => !finite(n) ? '?' : Math.abs(n) < 1e21 ? (Math.round(n * 10) / 10).toFixed(1) : String(n);
-  function valueText(kind, calculator, values, provenance) {
+  function valueText(kind, calculator, values, provenance) { return String(valueWords(asWritten, kind, calculator, values, provenance)); }
+  function valueSay(kind, calculator, values, provenance) { return valueWords(kinSay, kind, calculator, values, provenance); }
+  function valueWords(kinSay, kind, calculator, values, provenance) {
+    const BASIS = { pixel: 'PixelSpacing', detector: kinSay('ImagerPixelSpacing · 검출기 기준'), ermf: kinSay('ImagerPixelSpacing / ERMF · 추정 보정'),
+      dbt: 'DBT PixelSpacing', us: 'US Region Calibration', px: kinSay('픽셀 기준(간격 미확인)') };
     let list; const nulls = [];
     try {
       if (!Array.isArray(values)) return '';
       // A null stays null (the one undetermined value an orthopaedic or line mark may hold, nulls[i]); anything else that is
       // not a number is NaN.
       list = Array.from({ length: values.length }, (_, i) => { const n = values[i]; nulls[i] = n === null; return typeof n === 'number' ? n : n === null ? null : NaN; });
-    } catch (_) { return UNVERIFIED + '?'; }
+    } catch (_) { return kinSay('수치(단위 미확인): {0}', '?'); }
     // A Circle by Diameter (viewer-features-measure.js): [diameter, area] and, with statistics, [mean, SD, min, max, count].
     // Its spacing basis and unit are in the calculator name ('hu': CT values in HU; 'value': pixel values without a unit).
     const circle = kind === 'circle' && typeof calculator === 'string' && calculator.match(/^kin-circle-v1:(pixel|detector|ermf|dbt|us):(hu|value)$/);
     if (kind === 'circle') {
       const exact = circle && ['server-copy', 'live-head'].includes(provenance) && (list.length === 2 && circle[2] === 'value' || list.length === 7 && Number.isSafeInteger(list[6]) && list[6] >= 1) &&
         list.every(n => finite(n) && Math.abs(n) < 1e21);
-      if (!exact) return list.length ? UNVERIFIED + list.map(decimal).join(' / ') : '';
+      if (!exact) return list.length ? kinSay('수치(단위 미확인): {0}', list.map(decimal).join(' / ')) : '';
       const unit = circle[2] === 'hu' ? ' HU' : '', [d, area, mean, sd, min, max] = list.map(decimal);
-      const basis = { pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', us: 'US Region Calibration' }[circle[1]];
+      const basis = BASIS[circle[1]];
       // The values are the measurement (as they are); the words around them and the spacing basis are words of the page.
       return kinSay('지름 {0} mm · 면적 {1} mm²{t2} · {t3}', d, area, { t: list.length === 7
-        ? kinSay(' · 평균 {0}{1} · SD {2}{3} · 최소 {4}{5} · 최대 {6}{7} · 화소 수 {8}', mean, unit, sd, unit, min, unit, max, unit, String(list[6])) : ' · 통계 없음' }, { t: basis });
+        ? kinSay(' · 평균 {0}{1} · SD {2}{3} · 최소 {4}{5} · 최대 {6}{7} · 화소 수 {8}', mean, unit, sd, unit, min, unit, max, unit, String(list[6])) : kinSay(' · 통계 없음') }, { t: basis });
     }
     // The orthopaedic and spine measurements (viewer-features-measure-ortho.js): the calculator names the tool, the back's
     // side on the image for the Cobb angle, and the spacing basis ('px': pixels, the original has no spacing). Image sides,
@@ -324,25 +332,25 @@
       const m = typeof calculator === 'string' && calculator.match(/^kin-(limblength|acetabular|spinebalance|spinecobb|pelvicincidence)-v1:(?:(right|left):)?(pixel|detector|ermf|dbt|px)$/);
       const exact = m && m[1] === kind.toLowerCase() && !!m[2] === (kind === 'spineCobb') && ['server-copy', 'live-head'].includes(provenance) &&
         list.length === ORTHO[kind] && list.every((n, i) => finite(n) && Math.abs(n) < 1e21 || kind === 'spineCobb' && i === 0 && n === null);
-      if (!exact) return list.length ? UNVERIFIED + list.map(decimal).join(' / ') : '';
+      if (!exact) return list.length ? kinSay('수치(단위 미확인): {0}', list.map(decimal).join(' / ')) : '';
       const unit = m[3] === 'px' ? ' px' : ' mm', [a, b, c] = list.map(decimal);
-      const basis = { pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', px: '픽셀 기준(간격 미확인)' }[m[3]];
-      const side = n => n > 0 ? '영상 오른쪽' : '영상 왼쪽';
+      const basis = BASIS[m[3]];
+      const side = n => n > 0 ? kinSay('영상 오른쪽') : kinSay('영상 왼쪽');
       const text = kind === 'limbLength' ? kinSay('영상 왼쪽 {0}{1} · 영상 오른쪽 {2}{3} · 차 {4}{5}', a, unit, b, unit, c, unit) :
         kind === 'acetabular' ? kinSay('영상 왼쪽 {0}° · 영상 오른쪽 {1}°', a, b) :
         kind === 'spineBalance' ? kinSay('가로 거리 {0}{1}{t2}', decimal(Math.abs(list[0])), unit, { t: list[0] ? kinSay(' (위 척추체 중심이 {t0})', { t: side(list[0]) }) : '' }) :
-        kind === 'spineCobb' ? kinSay('{t0} (등: 영상 {t1})', { t: list[0] === null ? 'Cobb —' : kinSay('{t0}{1}°', { t: list[0] < 0 ? 'Lordosis ' : list[0] > 0 ? 'Kyphosis ' : 'Cobb ' }, a) }, { t: m[2] === 'right' ? '오른쪽' : '왼쪽' }) :
+        kind === 'spineCobb' ? kinSay('{t0} (등: 영상 {t1})', { t: list[0] === null ? 'Cobb —' : kinSay('{t0}{1}°', { t: list[0] < 0 ? 'Lordosis ' : list[0] > 0 ? 'Kyphosis ' : 'Cobb ' }, a) }, { t: m[2] === 'right' ? kinSay('오른쪽') : kinSay('왼쪽') }) :
         kinSay('PI {0}° · PT {1}° · SS {2}°', a, b, c);
       return kinSay('{t0} · {t1}', { t: text }, { t: basis });
     }
     // The Measure menu's line tools (measure-lines-model.js); a value that cannot be defined is saved as null and shown as '—'.
     if (Object.prototype.hasOwnProperty.call(LINE_KINDS, kind)) {
       const line = typeof calculator === 'string' && calculator.match(/^kin-([a-z0-9]+)-v1:([a-z]+)$/);
-      const tool = line && LINE_KINDS[kind].includes(line[1]) ? line[1] : null, basis = line && LINE_BASES[line[2]];
+      const tool = line && LINE_KINDS[kind].includes(line[1]) ? line[1] : null, basis = line && (LINE_BASES[line[2]] === true || BASIS[line[2]]);
       const volume = tool === 'volume', arity = volume ? (line[2] === 'prolate' ? 3 : 4) : LINE_ARITY[tool];
       const exact = tool && basis && volume === (basis === true) && ['server-copy', 'live-head'].includes(provenance) && list.length === arity &&
         Array.from({ length: list.length }, (_, i) => list[i] === null ? !volume && nulls[i] : finite(list[i]) && Math.abs(list[i]) < 1e21).every(Boolean);
-      if (!exact) return list.length ? UNVERIFIED + list.map(n => n === null ? '—' : decimal(n)).join(' / ') : '';
+      if (!exact) return list.length ? kinSay('수치(단위 미확인): {0}', list.map(n => n === null ? '—' : decimal(n)).join(' / ')) : '';
       const one = n => n === null ? '—' : decimal(n), two = n => n === null ? '—' : (Math.round(n * 100) / 100).toFixed(2);
       const u = line[2] === 'px' ? ' px' : ' mm', [a, b, c, d] = list;
       const text = { ctr4: () => 'CTR ' + two(d) + ' · MRD ' + one(a) + u + ' · MLD ' + one(b) + u + ' · ID ' + one(c) + u,
@@ -351,26 +359,27 @@
         centreangle: () => 'Angle ' + one(a) + '°' + (b === null ? '' : ' (' + one(b) + '°)'),
         volume: () => (line[2] === 'prolate' ? 'L ' + one(a) + ' mm · W ' + one(b) + ' mm · Volume ' + two(c) + ' mL · Prolate spheroid'
           : 'L ' + one(a) + ' mm · H ' + one(b) + ' mm · W ' + one(c) + ' mm · Volume ' + two(d) + ' mL · Ellipsoid') }[tool]();
-      return text + (basis === true ? '' : ' · ' + basis);
+      return basis === true ? text : kinSay('{t0} · {t1}', { t: text }, { t: basis });
     }
     // An ultrasound region's calculator is a Length's only (config/ohif/planar-geometry.js kinManualGeometry).
     const planar = typeof calculator === 'string' && (/^kin-planar-manual-v1:(pixel|detector|ermf|dbt)$/.test(calculator) || kind === 'length' && calculator === 'kin-planar-manual-v1:us');
     const arity = planar ? 1 : typeof kind === 'string' && Object.prototype.hasOwnProperty.call(ARITY, kind) ? ARITY[kind] : 0;
     if (!list.length && !arity) return '';
     const mgBasis = kind === 'length' && typeof calculator === 'string' && ({
-      'kin-mg-length-v1:dbt': 'DBT PixelSpacing', 'kin-mg-length-v1:pixel': 'PixelSpacing · 원본 기준면',
-      'kin-mg-length-v1:ermf': 'ImagerPixelSpacing / ERMF · 추정 보정', 'kin-mg-length-v1:detector': 'ImagerPixelSpacing · 검출기 기준',
+      'kin-mg-length-v1:dbt': BASIS.dbt, 'kin-mg-length-v1:pixel': kinSay('PixelSpacing · 원본 기준면'),
+      'kin-mg-length-v1:ermf': BASIS.ermf, 'kin-mg-length-v1:detector': BASIS.detector,
     })[calculator];
     const known = planar && ['server-copy', 'live-head'].includes(provenance) || mgBasis && ['server-copy', 'live-head'].includes(provenance) || (provenance === 'server-copy' ? calculator === CALCULATOR
       : provenance === 'live-head' ? calculator === undefined || calculator === CALCULATOR : false);
     const exact = known && list.length === arity && list.every(n => finite(n) && Math.abs(n) < 1e21) &&
       (kind !== 'ellipse' || planar || (Number.isSafeInteger(list[4]) && list[4] >= 0));
-    if (!exact) return UNVERIFIED + list.map(decimal).join(' / ');
+    if (!exact) return kinSay('수치(단위 미확인): {0}', list.map(decimal).join(' / '));
     const [a, b, c, d] = list.map(decimal);
-    if (planar) return (kind === 'ellipse' ? '면적 ' : '') + a + (kind === 'angle' ? '°' : kind === 'ellipse' ? ' mm²' : ' mm') + ' · ' + ({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', dbt: 'DBT PixelSpacing', us: 'US Region Calibration' })[calculator.split(':')[1]];
-    if (kind === 'length') return a + ' mm' + (mgBasis ? ' · ' + mgBasis : '');
+    if (planar) return kinSay('{t0} · {t1}', { t: kind === 'ellipse' ? kinSay('면적 {0} mm²', a) : a + (kind === 'angle' ? '°' : ' mm') },
+      { t: BASIS[calculator.split(':')[1]] });
+    if (kind === 'length') return mgBasis ? kinSay('{t0} · {t1}', { t: a + ' mm' }, { t: mgBasis }) : a + ' mm';
     if (kind === 'angle') return a + '°';
-    return '면적 ' + a + ' mm² · 평균 ' + b + ' HU · 최소 ' + c + ' HU · 최대 ' + d + ' HU · 화소 수 ' + String(list[4]);
+    return kinSay('면적 {0} mm² · 평균 {1} HU · 최소 {2} HU · 최대 {3} HU · 화소 수 {4}', a, b, c, d, String(list[4]));
   }
   const refusal = reason => ({ ok: false, reason });
   // Navigation reply from another window (S2-B): only the exact answer to this request counts.
@@ -1245,7 +1254,7 @@
       dispose: () => { offEnd(); listeners.clear(); controller?.abort(); } };
   }
 
-  const api = { LINK_STATES, LINK_LABELS, NAVIGATION_REASONS, ACTIVATION_REASONS, CROSS_REASONS, LIMITS, linkState, sourceStatus, valueText, reasonText, annotationText,
+  const api = { LINK_STATES, LINK_LABELS, NAVIGATION_REASONS, ACTIVATION_REASONS, CROSS_REASONS, LIMITS, linkState, sourceStatus, valueText, valueSay, reasonText, annotationText,
     phaseText, validReply, validTarget, plainState, viewerResult, activationResult, crossNavigate, comparisonHead,
     commandBody, draftProblem, itemOnly, errorMessage, createStore,
     SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, LESION_LOCATION, SIZE, LOCATION_TERMS, CHARACTERISTIC_TERMS, appendTerm, quickEntry, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,

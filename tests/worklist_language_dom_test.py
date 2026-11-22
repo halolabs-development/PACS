@@ -607,6 +607,39 @@ class WorklistLanguageDOM(unittest.TestCase):
                 self.assertTrue(lines[0].startswith("삽입 대상: " + auth.PATIENT))
                 self.assertIn("SYN CT CHEST", lines[1])
 
+    def test_a_measurement_goes_into_the_report_as_written_and_reads_in_english_on_the_screen(self):
+        """Include Measurements: the value text and the report's measurement line are the same bytes in every screen
+        language; the screen that draws the value (valueSay) says it in its own language."""
+        self.boot()
+        script = r"""() => {
+          const L = kinFindingLinkModel, C = kinFindingCommand, R = KinReportCitation;
+          const sources = [{kind:'circle', calculator:'kin-circle-v1:detector:hu', values:[10.04, 79.2, 40, 2.5, 1, 80, 64]},
+            {kind:'spineCobb', calculator:'kin-spinecobb-v1:right:ermf', values:[-12.3]},
+            {kind:'length', calculator:'kin-mg-length-v1:pixel', values:[3.21]},
+            {kind:'ellipse', calculator:'bogus', values:[1, 2]}];
+          return sources.map(s => { const m = C.measurementOf(s);
+            return {type: typeof m.value, value: m.value, line: R.measurementLine([{...m, series: 1, image: 2}]),
+              screen: String(L.valueSay(s.kind, s.calculator, s.values, 'server-copy'))}; });
+        }"""
+        seen = {}
+        for lang in ("en", "ko", None):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            seen[lang] = self.page.evaluate(script)
+        written = [{k: row[k] for k in ("type", "value", "line")} for row in seen[None]]
+        for lang in ("en", "ko"):
+            self.assertEqual(written, [{k: row[k] for k in ("type", "value", "line")} for row in seen[lang]])
+        self.assertEqual({"string"}, {row["type"] for row in written})
+        self.assertIn("지름 10.0 mm · 면적 79.2 mm²", written[0]["value"])
+        self.assertIn("검출기 기준", written[0]["value"])
+        self.assertTrue(written[0]["line"].startswith("측정: Circle by Diameter 지름 10.0 mm"))
+        for lang in ("ko", None):
+            self.assertEqual([row["value"] for row in written], [row["screen"] for row in seen[lang]])
+        english = [row["screen"] for row in seen["en"]]
+        self.assertTrue(english[0].startswith("Diameter 10.0 mm · Area 79.2 mm² · Mean 40.0 HU"), english[0])
+        self.assertIn("detector-based", english[0])
+        for text in english:
+            self.assertIsNone(re.search("[가-힣]", text), text)
+
     def test_key_image_title_and_tech_note_keep_the_authors_words(self):
         self.boot()
         self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={

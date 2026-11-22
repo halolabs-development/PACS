@@ -54,7 +54,8 @@ function kinCreateViewerHistory() {
     const valueModule = () => typeof window.kinFindingLinkModel?.valueText === 'function';
     const savedValue = item => {
       if (!valueModule()) return '';
-      try { return window.kinFindingLinkModel.valueText(item.kind, item.baseline?.calculator, item.baseline?.values, 'server-copy'); } catch (_) { return ''; }
+      // Drawn on the panel: its words in the reader's screen language (valueSay); the CSV keeps its own words as written.
+      try { const m = window.kinFindingLinkModel; return String((m.valueSay || m.valueText)(item.kind, item.baseline?.calculator, item.baseline?.values, 'server-copy')); } catch (_) { return ''; }
     };
     // Until then an empty text node holds the value's place (no element is added), and scan() puts the value element there.
     const pendingValues = new Set();

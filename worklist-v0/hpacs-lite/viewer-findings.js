@@ -97,7 +97,7 @@ window.kinViewerFindings = function (services, model) {
     ctr: 'CTR', parallel: 'Parallel Lines', ratio: 'Length Ratio', centreAngle: 'Centre-line Angle', volume: 'Volume Measure' };
     const describe = h => kinText("{0} · {1} · 프레임 {2} · r{n3}", (names[h.kind] || h.kind), (h.label || ''), h.frame, h.revision);
     // Copied numbers with names and units only for a known provenance (S2-V); a source's are its frozen revision's.
-    const values = (h, provenance) => { const t = model.valueText(h.kind, h.calculator, h.values, provenance); return t ? ' · ' + t : ''; };
+    const values = (h, provenance) => { const t = String((model.valueSay || model.valueText)(h.kind, h.calculator, h.values, provenance)); return t ? ' · ' + t : ''; };
     // Display copies of unsaved pairs, one per study · item · revision (a saved revision never changes): read while the head is that
     // revision, kept once it has moved on. Without a copy the line names the pair's own revision from the head and shows no number.
     const pairCopies = new Map();
