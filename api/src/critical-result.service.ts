@@ -2,7 +2,6 @@ import { criticalRead } from './emr-viewing/consumer-read';
 import { rightsUser, lockMemberRights, withWriters } from './member-rights';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
 import { KeycloakService, KeycloakUser } from './keycloak.service';
@@ -288,8 +287,9 @@ export class CriticalResultService {
   private async pinnedWriters(c: any, rows: any[]): Promise<Map<string, string | null>> {
     if (!rows.length) return new Map();
     const shown = await withWriters(this.prisma, c);
-    const pins: any[] = await this.prisma.$queryRaw`SELECT uid, version, action, author, "authorSub", "authorName" FROM "ReportVersion"
-      WHERE (uid, version) IN (${Prisma.join(rows.map(row => Prisma.sql`(${String(row.studyUid)}, ${Number(row.sourceVersion)}::int)`))})`;
+    const uids = rows.map(row => String(row.studyUid)), versions = rows.map(row => Number(row.sourceVersion));
+    const pins: any[] = await this.prisma.$queryRaw`SELECT v.uid, v.version, v.action, v.author, v."authorSub", v."authorName"
+      FROM "ReportVersion" v JOIN unnest(${uids}::text[], ${versions}::int[]) AS p(uid, version) ON v.uid = p.uid AND v.version = p.version`;
     const byPin = new Map(pins.map(v => [`${v.uid}\u0000${v.version}`, v]));
     return new Map(rows.map(row => [row.id, sourceWriterShown(byPin.get(`${row.studyUid}\u0000${row.sourceVersion}`)
       ?? { action: row.sourceAction, author: row.sourceAuthor, authorSub: null }, shown)]));
