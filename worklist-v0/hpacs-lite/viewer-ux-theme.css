@@ -128,7 +128,25 @@ body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-
   box-shadow: inset 0 0 0 1px var(--kin-accent); }
 body.kin-viewer-ux :is(#kin-cine, #kin-viewer-history, #kin-viewer-layout, #kin-ct-sync-status, #kin-mammography-hanging,
   #kin-native-toolbar-dialog, #kin-source-pdf, #kin-job-print, #kin-viewer-jobs, #kin-volume-mip, #kin-volume-rendering)
-  :is(button, select, input):disabled { color: var(--kin-ux-secondary) !important; }/* Product text on the images: the orientation letters and the zoom figure are the primary text, as the stock image text
+  :is(button, select, input):disabled { color: var(--kin-ux-secondary) !important; }
+/* Inside the MIP and volume rendering windows: the source identifiers are secondary text, the control groups' edges are
+   the line colour, and the cover shown while the source is checked is the panel. */
+body.kin-viewer-ux :is(#kin-volume-mip, #kin-volume-rendering) details { color: var(--kin-ux-secondary); }
+body.kin-viewer-ux :is(#kin-volume-mip, #kin-volume-rendering) fieldset { border-color: var(--kin-ux-line); }
+body.kin-viewer-ux #kin-volume-rendering .kin-vr-cover { background: var(--kin-panel); }
+/* The product's own labels on the images (the MPR cells' Zoom, scale, Sample, projection and preview labels, the Curved
+   MPR and 3D Path plane notes, the MIP label, the orientation cube) are the image text on the background colour, at the
+   alpha each backing had; their scripts write the colours on the elements, hence important. Paths, points and marks keep
+   their meaning colours, and the reader's own colours are not these labels. */
+body.kin-viewer-ux :is(.kin-mpr-zoom, .kin-mpr-scale, .kin-mpr-sample, .kin-volume-projection-label, .kin-mpr-refining,
+  [data-kin-curved-plane], [data-kin-path-plane], #kin-volume-mip .kin-mip-label) { color: var(--kin-ux-text) !important; }
+body.kin-viewer-ux .kin-mpr-scale { border-bottom-color: var(--kin-ux-text) !important; }
+body.kin-viewer-ux :is(.kin-mpr-zoom, .kin-volume-projection-label, #kin-volume-mip .kin-mip-label, .kin-mpr-cube) { background: #212121CC !important; }
+body.kin-viewer-ux .kin-mpr-refining { background: var(--kin-ux-background) !important; }
+body.kin-viewer-ux :is([data-kin-curved-plane], [data-kin-path-plane]) { background: #212121EE !important; }
+body.kin-viewer-ux .kin-mpr-cube line { stroke: var(--kin-ux-text); }
+body.kin-viewer-ux .kin-mpr-cube text { fill: var(--kin-ux-text); }
+/* Product text on the images: the orientation letters and the zoom figure are the primary text, as the stock image text
    above. The reader's own image-text colour (the study label, set on the element) and the marks are theirs. */
 body.kin-viewer-ux .orientation-marker-value, body.kin-viewer-ux .kin-display-text { color: var(--kin-ux-text); }
 /* Frames: an inactive cell's frame and the dock's top edge are the line colour; the active cell keeps the accent and a
@@ -137,7 +155,9 @@ body.kin-viewer-ux [data-cy="viewport-grid"] > * > .overflow-hidden:not(.border-
 body.kin-viewer-ux #kin-workspace-dock { border-top-color: var(--kin-ux-line); }
 /* Section titles in the dock are primary text; a section's dividing line is the line colour. */
 body.kin-viewer-ux #kin-workspace-dock details > summary { color: var(--kin-ux-text); }
-body.kin-viewer-ux #kin-workspace-dock #kin-display-scope { border-top-color: var(--kin-ux-line) !important; }
+body.kin-viewer-ux #kin-workspace-dock :is(#kin-display-scope, #kin-cell-merge, #kin-volume-projection, #kin-volume-orientation,
+  #kin-volume-crosshair, #kin-volume-display, #kin-volume-sync, #kin-volume-batch, #kin-mpr-preferences, #kin-mpr-marks,
+  #kin-mpr-curved, #kin-mpr-path) { border-top-color: var(--kin-ux-line) !important; }
 /* The rest of the dock's own colours (its script): a hovered button is the faint accent; labels and notes are secondary
    text; dividing lines and the edge of a dock moved to the top are the line colour; focus is the accent. */
 body.kin-viewer-ux #kin-workspace-dock button:hover:not(:disabled) { background: var(--kin-accent-faint); }
