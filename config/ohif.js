@@ -10026,9 +10026,9 @@ function KinViewerBrand({ React }) {
         if (!text || ABOUT_TITLES.has(text)) return;
         if (/OHIF|Open Health Imaging Foundation/i.test(text)) {
           element.textContent = text
-            .replace(/Open Health Imaging Foundation/gi, '업스트림 오픈소스 프로젝트')
+            .replace(/Open Health Imaging Foundation/gi, kinText('업스트림 오픈소스 프로젝트'))
             .replace(/OHIF Viewer/gi, KIN_VIEWER_PRODUCT)
-            .replace(/OHIF/gi, '업스트림');
+            .replace(/OHIF/gi, kinText('업스트림'));
         }
       });
     };
@@ -10046,9 +10046,35 @@ function KinViewerBrand({ React }) {
       kinViewerToolbarLabels.apply(scope);
       for (const menu of menus) { hideAboutRows(menu); replaceBrandText(menu, true); }
     };
+    // The viewer's own User Preferences keeps its Hotkeys; its General › Language list is taken out the way About is (the nodes
+    // stay in place for React; hidden, inert and out of the accessibility tree). That list changes only the upstream viewer's
+    // built-in words, never this product's: the product's screen language is chosen on the work page (Language). The modal is
+    // known by its own sections, a Language label and a Hotkeys title in one React modal; without both nothing is hidden.
+    const leafNamed = (root, name) => [...root.querySelectorAll('*')].find(node => !node.childElementCount && node.textContent.trim() === name) || null;
+    const widest = (node, stop) => { let at = node; while (at.parentElement && !stop(at.parentElement)) at = at.parentElement; return at; };
+    const takeOut = node => {
+      node.style.setProperty('display', 'none', 'important');
+      node.setAttribute('inert', '');
+      node.setAttribute('aria-hidden', 'true');
+      node.dataset.kinRemoved = 'language';
+    };
+    const hidePreferencesLanguage = () => {
+      for (const modal of document.querySelectorAll('.ReactModal__Content')) {
+        if (modal.querySelector('[data-kin-removed="language"]')) continue;
+        const hotkeys = leafNamed(modal, 'Hotkeys'), language = leafNamed(modal, 'Language');
+        if (!hotkeys || !language) continue;
+        // The widest part around the label that holds no Hotkeys: the Language row (with its General title when they share one).
+        const shared = node => node === modal || node.contains(hotkeys);
+        takeOut(widest(language, shared));
+        const general = leafNamed(modal, 'General');
+        if (general && !general.closest('[data-kin-removed="language"]')) takeOut(widest(general, node => shared(node) || node.contains(language)));
+      }
+    };
+    hidePreferencesLanguage();
     const initialScope = menuScope();
     if (initialScope) refresh(initialScope, gearMenus(initialScope));
     const observer = new MutationObserver(records => {
+      hidePreferencesLanguage();
       const scope = menuScope(), menus = gearMenus(scope);
       if (scope && records.some(record => [scope, ...menus].some(root => touchesScope(root, record)))) refresh(scope, menus);
       scheduleHeader();

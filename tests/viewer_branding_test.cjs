@@ -43,8 +43,9 @@ function world(){
   const events=new EventTarget();
   const doc={title:'',addEventListener:events.addEventListener.bind(events),removeEventListener:events.removeEventListener.bind(events),connected:e=>{for(let n=e;n;n=n.parentElement)if(n===body)return true;return false;},
     getElementById:id=>body.querySelectorAll('*').find(e=>e.getAttribute('id')===id)||null,
-    // Only the selector the branding block uses to find menus drawn in a portal.
-    querySelectorAll:sel=>{assert.equal(sel,'[role="menu"][aria-labelledby]');return body.querySelectorAll('*').filter(e=>e.getAttribute('role')==='menu'&&e.hasAttribute('aria-labelledby'));},
+    // Only the selectors the branding block uses: menus drawn in a portal, and the React modal of User Preferences (none here —
+    // tests/viewer_header_focus_dom_test.py has one).
+    querySelectorAll:sel=>{if(sel==='.ReactModal__Content')return[];assert.equal(sel,'[role="menu"][aria-labelledby]');return body.querySelectorAll('*').filter(e=>e.getAttribute('role')==='menu'&&e.hasAttribute('aria-labelledby'));},
     notify(record){observers.forEach(o=>{if(o.on){pending.push([o,record]);queueMicrotask(()=>{const job=pending.shift();if(job&&job[0].on)job[0].cb([job[1]]);});}});}};
   body=new El(doc,'body');doc.body=body;
   // A record reaches the callback only as a real observer with these options would send it: its kind asked for (an attribute
