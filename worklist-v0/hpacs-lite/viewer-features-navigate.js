@@ -7,6 +7,9 @@
 //   Multi-frame Default…  (Viewer Settings) how a multi-frame image opens for each modality, saved in the account
 //                      (features.multiframeDefault) and applied when such an image is put in a cell.
 // The pure calculations are window.KinViewerNavigateModel.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerNavigateModel = (() => {
   const MIN_TILE = 96;
   const MODALITIES = ['XA', 'US', 'MR', 'NM', 'OT'];
@@ -390,7 +393,7 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
     const panel = ui.panel({ id: 'multiframeDefault', title: 'Multi-frame Default' });
     if (!panel || panel.body.childElementCount) return panel;
     panel.element.classList.add('kin-nav-defaults');
-    element('p', { text: '멀티프레임 영상을 모달리티마다 Folded (Cine: 한 프레임씩, 재생)나 Unfolded(프레임을 바둑판으로)로 엽니다. 바꾸면 계정에 저장되고, 그다음 여는 영상부터 적용됩니다.' }, panel.body);
+    element('p', { text: kinText("멀티프레임 영상을 모달리티마다 Folded (Cine: 한 프레임씩, 재생)나 Unfolded(프레임을 바둑판으로)로 엽니다. 바꾸면 계정에 저장되고, 그다음 여는 영상부터 적용됩니다.") }, panel.body);
     const table = element('table', {}, panel.body), head = element('tr', {}, element('thead', {}, table));
     element('th', { text: 'Modality', scope: 'col' }, head); element('th', { text: 'Open as', scope: 'col' }, head);
     const body = element('tbody', {}, table), selects = new Map();
@@ -406,7 +409,7 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
         if (saving) return;
         saving = true; for (const node of selects.values()) node.disabled = true;
         const table = Object.fromEntries([...selects].map(([key, node]) => [key, node.value]));
-        status.textContent = '저장 중입니다…';
+        status.textContent = kinText("저장 중입니다…");
         // One save at a time: the five boxes wait while it saves. A refused save (another window saved, or the save
         // failed) reads the account again, shows what is stored and continues from that revision.
         const saved = await store.set('multiframeDefault', table, { revision });
@@ -415,8 +418,8 @@ window.KinViewerFeatures?.module('navigate', ({ services, store, ui }) => {
         if (!panelOpen) return;
         saving = false; for (const node of selects.values()) node.disabled = false;
         show();
-        status.textContent = saved ? (store.writable() ? '계정에 저장했습니다.' : '이 창에만 적용했습니다.')
-          : read ? '저장하지 못해 계정에 저장된 값을 다시 읽었습니다. 다시 고르세요.' : '저장하지 못해 저장된 값으로 되돌렸습니다.';
+        status.textContent = saved ? (store.writable() ? kinText("계정에 저장했습니다.") : kinText("이 창에만 적용했습니다."))
+          : read ? kinText("저장하지 못해 계정에 저장된 값을 다시 읽었습니다. 다시 고르세요.") : kinText("저장하지 못해 저장된 값으로 되돌렸습니다.");
       });
       selects.set(name, select);
     }

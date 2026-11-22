@@ -1,6 +1,8 @@
 /* Viewer metadata belongs to the session that read it. A list answer replaces the entire
    examination (including all its originals and split parts) under one request number. */
 const kinViewerStudyDisplay = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const exams = new Map(), latest = new Map(), held = new Map(), retries = new Map();
   const watchers = new Set(), visibleSources = new Set(), queue = new Set();
   const session = typeof kinViewerSession === 'object' ? kinViewerSession : null;
@@ -14,8 +16,8 @@ const kinViewerStudyDisplay = (() => {
   const distinct = values => [...new Set(values.filter(v => typeof v === 'string' && v))];
   const ids = exam => [exam.uid, ...exam.displaySources.map(s => s.studyUid)];
   const visible = () => distinct(visibleSources.size ? [...visibleSources].flatMap(get => [...get()]) : [...latest.keys()]);
-  const failure = cause => new Error('환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요.', { cause });
-  const stale = () => new Error('검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.');
+  const failure = cause => new Error(kinText("환자 정보를 불러오지 못했습니다. 영상은 계속 볼 수 있습니다. 다시 시도하세요."), { cause });
+  const stale = () => kinError("검사 또는 로그인 상태가 바뀌었습니다. 다시 시도하세요.");
 
   function validExam(exam) {
     const key = exam?.sourcePatientKey;

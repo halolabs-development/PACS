@@ -2,6 +2,9 @@
 window.KinReadingAppearance = function (options) {
   const work=window.KinWorkContext;
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const {owner}=options;
   const opener=document.querySelector('#reading-appearance-open');
   const prefix='kin-reading-text:v1:',initialOwner=owner();
@@ -37,8 +40,8 @@ window.KinReadingAppearance = function (options) {
     const clean=mprModel?.normalize(next);if(!live()||!clean)return false;
     const controller=options.getMpr?.();if(controller&&!controller.requestApply(clean))return false;
     mprValue=clean;generation++;
-    try{storage.setItem(mprKey,JSON.stringify(clean));mprStatus.textContent='MPR 표시·마우스·동기화 설정을 불러왔습니다. 영상 창의 모달/작업이 끝나면 적용합니다.';}
-    catch(_){mprStatus.textContent='MPR 설정은 현재 창에만 적용하며 브라우저에 저장하지 못했습니다.';}
+    try{storage.setItem(mprKey,JSON.stringify(clean));kinWrite(mprStatus, kinSayEn("MPR 표시·마우스·동기화 설정을 불러왔습니다. 영상 창의 모달/작업이 끝나면 적용합니다."));}
+    catch(_){kinWrite(mprStatus, kinSayEn("MPR 설정은 현재 창에만 적용하며 브라우저에 저장하지 못했습니다."));}
     return true;
   }
   function mprChanged(e){if(!live()||e.detail?.owner!==initialOwner)return;const clean=mprModel?.normalize(e.detail.value);if(clean){mprValue=clean;generation++;}}
@@ -110,10 +113,10 @@ window.KinReadingAppearance = function (options) {
   function showToolbar(){toolbarSummary.textContent=toolbarValue.order.filter(id=>!toolbarValue.hidden.includes(id)).map(id=>toolbarLabels[toolbarIds.indexOf(id)]).join(' → ');}
   function setToolbar(next){
     const clean=normalizeToolbar(next);if(!live()||!clean)return false;
-    const controller=options.getToolbar?.();if(controller&&!controller.applyPreference(clean)){toolbarStatus.textContent='영상의 도구 편집을 마친 뒤 다시 불러오세요.';return false;}
+    const controller=options.getToolbar?.();if(controller&&!controller.applyPreference(clean)){kinWrite(toolbarStatus, kinSayEn("영상의 도구 편집을 마친 뒤 다시 불러오세요."));return false;}
     toolbarValue=clean;generation++;showToolbar();
-    try{storage.setItem(toolbarKey,JSON.stringify(clean));toolbarStatus.textContent=controller?'현재 영상 도구 모음에 적용했습니다.':'다음 영상 창에 적용합니다 · 이 브라우저';}
-    catch(_){toolbarStatus.textContent='저장소를 사용할 수 없어 이 화면에만 유지합니다.';}
+    try{storage.setItem(toolbarKey,JSON.stringify(clean));kinWrite(toolbarStatus, controller ? kinSayEn("현재 영상 도구 모음에 적용했습니다.") : kinSayEn("다음 영상 창에 적용합니다 · 이 브라우저"));}
+    catch(_){kinWrite(toolbarStatus, kinSayEn("저장소를 사용할 수 없어 이 화면에만 유지합니다."));}
     return true;
   }
   function toolbarChanged(e){if(!live()||e.detail?.owner!==initialOwner)return;const clean=normalizeToolbar(e.detail.value);if(!clean)return;if(e.type==='kin-toolbar-preference-changed'||JSON.stringify(clean)!==JSON.stringify(toolbarValue))generation++;toolbarValue=clean;showToolbar();}
@@ -143,16 +146,16 @@ window.KinReadingAppearance = function (options) {
   const copyRoleRow=element('label','Profile Owner',modalityCopy),copyRole=element('select','',copyRoleRow),copySourceRow=element('label','Copy From Modality',modalityCopy),copySource=element('select','',copySourceRow),copyTargetRow=element('label','Copy To Modality',modalityCopy),copyTarget=element('select','',copyTargetRow),copyModality=element('button','Copy Modality Profile',modalityCopy);
   copyRole.id='viewer-identity-copy-modality-role';for(const [id,label] of [['current','Current Image'],['prior','Prior Image']]){const option=element('option',label,copyRole);option.value=id;}
   for(const id of viewerModalities){for(const select of [copySource,copyTarget]){const option=element('option',id,select);option.value=id;}}copySource.id='viewer-identity-copy-modality-source';copyTarget.id='viewer-identity-copy-modality-target';copyTarget.value=viewerModalities[1];copyModality.type='button';copyModality.id='viewer-identity-copy-modality';
-  copyModality.onclick=()=>{if(!live()){end();return;}const role=copyRole.value,source=copySource.value,target=copyTarget.value,from=viewerValue[role].overrides[source];if(!from){viewerStatus.textContent='선택한 원본 modality에 명시적 표시 설정이 없습니다.';return;}if(source===target){viewerStatus.textContent='서로 다른 대상 modality를 선택하세요.';return;}setViewer({...viewerValue,[role]:{...viewerValue[role],overrides:{...viewerValue[role].overrides,[target]:clone(from)}}});};
+  copyModality.onclick=()=>{if(!live()){end();return;}const role=copyRole.value,source=copySource.value,target=copyTarget.value,from=viewerValue[role].overrides[source];if(!from){kinWrite(viewerStatus, kinSayEn("선택한 원본 modality에 명시적 표시 설정이 없습니다."));return;}if(source===target){kinWrite(viewerStatus, kinSayEn("서로 다른 대상 modality를 선택하세요."));return;}setViewer({...viewerValue,[role]:{...viewerValue[role],overrides:{...viewerValue[role].overrides,[target]:clone(from)}}});};
   const viewerStatus=element('p','',viewerSection);viewerStatus.id='viewer-identity-status';viewerStatus.setAttribute('role','status');
   function displayProfile(p){const copy=clone(p),overrides=copy.overrides;delete copy.overrides;return {copy,overrides};}
   function viewerProfile(role){const selected=viewerProfiles[role];return selected==='general'?viewerValue[role]:viewerValue[role].overrides[selected]||viewerValue[role];}
   function showViewerRole(role){const p=viewerProfile(role),items=viewerFields[role];items.profile.value=viewerProfiles[role];for(const field of ['position','size','font','color'])items[field].value=String(p[field]);for(const field of ['name','date','description']){items[field].checked=p[field];items[field+'Position'].value=p.fieldPositions[field];}}
   function showViewer(){for(const role of ['current','prior'])showViewerRole(role);}
-  function setViewer(next){const clean=viewer.normalize(next);if(!live()||!clean)return false;viewerValue=clean;generation++;showViewer();const saved=viewer.publish(initialOwner,clean);viewerStatus.textContent=saved?'영상 표시를 기억했습니다 · 이 브라우저':'저장소를 사용할 수 없어 현재 화면에만 적용합니다.';return true;}
+  function setViewer(next){const clean=viewer.normalize(next);if(!live()||!clean)return false;viewerValue=clean;generation++;showViewer();const saved=viewer.publish(initialOwner,clean);kinWrite(viewerStatus, saved ? kinSayEn("영상 표시를 기억했습니다 · 이 브라우저") : kinSayEn("저장소를 사용할 수 없어 현재 화면에만 적용합니다."));return true;}
   function changeViewer(role,field,value){if(!live()){end();return;}const selected=viewerProfiles[role],base=viewerValue[role];if(selected==='general')setViewer({...viewerValue,[role]:{...base,[field]:value}});else{const source=base.overrides[selected]||displayProfile(base).copy;setViewer({...viewerValue,[role]:{...base,overrides:{...base.overrides,[selected]:{...clone(source),[field]:value}}}});}}
   function resetViewerProfile(role){if(!live()){end();return;}const selected=viewerProfiles[role],fresh=viewer.defaults()[role];if(selected==='general')setViewer({...viewerValue,[role]:{...fresh,overrides:viewerValue[role].overrides}});else{const overrides={...viewerValue[role].overrides};delete overrides[selected];setViewer({...viewerValue,[role]:{...viewerValue[role],overrides}});}}
-  const stopViewer=viewer.subscribe(initialOwner,next=>{if(!live())return;if(JSON.stringify(viewerValue)!==JSON.stringify(next)){viewerValue=next;generation++;showViewer();viewerStatus.textContent='같은 계정의 영상 표시 변경을 적용했습니다.';}});showViewer();
+  const stopViewer=viewer.subscribe(initialOwner,next=>{if(!live())return;if(JSON.stringify(viewerValue)!==JSON.stringify(next)){viewerValue=next;generation++;showViewer();kinWrite(viewerStatus, kinSayEn("같은 계정의 영상 표시 변경을 적용했습니다."));}});showViewer();
   const markers=window.KinMarkerStyle,markerFields={},markerSection=element('fieldset','',dialog);let markerValue=markers.read(initialOwner);element('legend','Measurement Markers',markerSection);
   element('p','측정·화살표 표식의 색, 선 굵기, 선 모양, 화살촉과 글꼴을 이 계정으로 연 모든 영상 창의 표식에 바로 적용합니다. 측정값·좌표, 저장된 SR과 인쇄 출력은 바뀌지 않습니다.',markerSection);
   for(const [name,label,choices] of [['color','Marker Color',markers.colors],['width','Marker Line Thickness',markers.widths],['line','Marker Line Style',markers.lines],['arrowheads','Arrowheads',markers.arrowheads],['font','Marker Text Font',markers.fonts]]){
@@ -163,16 +166,16 @@ window.KinReadingAppearance = function (options) {
   const markerStatus=element('p','',markerSection);markerStatus.id='reading-marker-status';markerStatus.setAttribute('role','status');
   const markerReset=element('button','Reset Markers',markerSection);markerReset.type='button';markerReset.id='reading-marker-reset';markerReset.onclick=()=>{if(!live()){end();return;}setMarkers(markers.defaults());};
   function showMarkers(){for(const name of ['color','width','line','arrowheads','font'])markerFields[name].value=markerValue[name];}
-  function setMarkers(next){const clean=markers.normalize(next);if(!live()||!clean)return false;markerValue=clean;generation++;showMarkers();markerStatus.textContent=markers.publish(initialOwner,clean)?'열린 영상 창의 표식에 적용했습니다 · 이 브라우저':'저장소를 사용할 수 없어 이 화면의 통합 영상에만 적용합니다.';return true;}
-  const stopMarkers=markers.subscribe(initialOwner,next=>{if(!live()||JSON.stringify(next)===JSON.stringify(markerValue))return;markerValue=next;generation++;showMarkers();markerStatus.textContent='같은 계정의 표식 모양 변경을 적용했습니다.';});showMarkers();
+  function setMarkers(next){const clean=markers.normalize(next);if(!live()||!clean)return false;markerValue=clean;generation++;showMarkers();kinWrite(markerStatus, markers.publish(initialOwner,clean) ? kinSayEn("열린 영상 창의 표식에 적용했습니다 · 이 브라우저") : kinSayEn("저장소를 사용할 수 없어 이 화면의 통합 영상에만 적용합니다."));return true;}
+  const stopMarkers=markers.subscribe(initialOwner,next=>{if(!live()||JSON.stringify(next)===JSON.stringify(markerValue))return;markerValue=next;generation++;showMarkers();kinWrite(markerStatus, kinSayEn("같은 계정의 표식 모양 변경을 적용했습니다."));});showMarkers();
   function showDock(){dockFields.placement.value=dockValue.placement;dockFields.panel.value=String(dockValue.panel);dockFields.autoHide.checked=!!dockValue.autoHide;}
   function setDock(next){
     let clean=normalizeDock(next);if(!live()||!clean)return false;clean={...clean,version:2,autoHide:clean.autoHide??dockValue.autoHide};
     const dock=options.getDock?.();
     if(dock){if(!dock.applyPreference(clean))return false;generation++;const applied=normalizeDock(dock.preference?.());dockValue=applied?{...applied,version:2,autoHide:applied.autoHide??clean.autoHide}:clean;showDock();dockStatus.textContent=dock.querySelector('#kin-dock-preference-status').textContent;return true;}
     dockValue=clean;generation++;showDock();
-    try{storage.setItem(dockKey,JSON.stringify(clean));dockStatus.textContent='다음 영상 창에 적용합니다 · 이 브라우저';}
-    catch(_){dockStatus.textContent='저장소를 사용할 수 없어 설정을 이 창에만 유지합니다.';}
+    try{storage.setItem(dockKey,JSON.stringify(clean));kinWrite(dockStatus, kinSayEn("다음 영상 창에 적용합니다 · 이 브라우저"));}
+    catch(_){kinWrite(dockStatus, kinSayEn("저장소를 사용할 수 없어 설정을 이 창에만 유지합니다."));}
     return true;
   }
   function dockChanged(e){if(!live()||e.detail?.owner!==initialOwner)return;let clean=normalizeDock(e.detail.value);if(!clean)return;clean={...clean,version:2,autoHide:clean.autoHide??dockValue.autoHide};if(e.type==='kin-dock-preference-changed'||JSON.stringify(clean)!==JSON.stringify(dockValue))generation++;dockValue=clean;showDock();}
@@ -183,7 +186,7 @@ window.KinReadingAppearance = function (options) {
   if(!mprModel)element('p','MPR 설정 구성 요소를 불러오지 못해 계정 표시 설정을 저장하거나 불러올 수 없습니다. 영상 정보 위치는 이 브라우저에만 적용합니다.',dialog).id='reading-appearance-local-only';
   const footer=element('footer','',dialog),reset=element('button','Reset Sizes',footer),close=element('button','Close',footer);
   reset.type=close.type='button';reset.id='reading-appearance-reset';close.id='reading-appearance-close';
-  document.body.append(dialog);
+  document.body.append(dialog);window.KinLanguage?.markup?.(dialog);
   // An absent global preference must not silently replace saved column typography.
   // Explicit edits/account loads (including defaults) retain global precedence.
   function apply(explicit=true){for(const name of ['list','current','prior']){const property='--kin-'+name+'-text';if(name==='list'&&!explicit)document.documentElement.style.removeProperty(property);else document.documentElement.style.setProperty(property,value[name]+'px');fields[name].value=String(value[name]);}}
@@ -191,21 +194,21 @@ window.KinReadingAppearance = function (options) {
   function saveFonts(){
     if(!live())return;
     generation++;
-    try{storage.setItem(fontKey,JSON.stringify(fontValue));fontStatus.textContent='글꼴을 기억했습니다 · 이 브라우저';}
-    catch(_){fontStatus.textContent='저장소를 사용할 수 없어 글꼴을 이 창에만 적용합니다.';}
+    try{storage.setItem(fontKey,JSON.stringify(fontValue));kinWrite(fontStatus, kinSayEn("글꼴을 기억했습니다 · 이 브라우저"));}
+    catch(_){kinWrite(fontStatus, kinSayEn("저장소를 사용할 수 없어 글꼴을 이 창에만 적용합니다."));}
   }
   function applyColors(explicit=true){for(const name of ['list','current','prior']){const property='--kin-'+name+'-color';if(name==='list'&&!explicit)document.documentElement.style.removeProperty(property);else document.documentElement.style.setProperty(property,colors[colorValue[name]]);colorFields[name].value=colorValue[name];}}
   function saveColors(){
     if(!live())return;
     generation++;
-    try{storage.setItem(colorKey,JSON.stringify(colorValue));colorStatus.textContent='글자색을 기억했습니다 · 이 브라우저';}
-    catch(_){colorStatus.textContent='저장소를 사용할 수 없어 글자색을 이 창에만 적용합니다.';}
+    try{storage.setItem(colorKey,JSON.stringify(colorValue));kinWrite(colorStatus, kinSayEn("글자색을 기억했습니다 · 이 브라우저"));}
+    catch(_){kinWrite(colorStatus, kinSayEn("저장소를 사용할 수 없어 글자색을 이 창에만 적용합니다."));}
   }
   function save(){
     const clean=normalize(value);if(!live()||!clean){end();return;}
     generation++;
-    try{storage.setItem(key,JSON.stringify(clean));status.textContent='글자 크기를 기억했습니다 · 이 브라우저';}
-    catch(_){status.textContent='저장소를 사용할 수 없어 이 창에만 적용합니다.';}
+    try{storage.setItem(key,JSON.stringify(clean));kinWrite(status, kinSayEn("글자 크기를 기억했습니다 · 이 브라우저"));}
+    catch(_){kinWrite(status, kinSayEn("저장소를 사용할 수 없어 이 창에만 적용합니다."));}
   }
   reset.onclick=()=>{if(!live()){end();return;}value=defaults();apply();save();};
   close.onclick=()=>dialog.close();
@@ -223,37 +226,37 @@ window.KinReadingAppearance = function (options) {
 
     stopPreferences();window.removeEventListener('storage',storageListener);window.removeEventListener('pagehide',end);
   }
-  function onStorage(e){if(mprKey&&e.key===mprKey){try{const clean=e.newValue?.length<=1024&&mprModel?.normalize(JSON.parse(e.newValue));if(clean){mprValue=clean;generation++;mprStatus.textContent='다른 영상 창에서 MPR 설정을 저장했습니다.';}}catch(_){} }else if(toolbarKey&&e.key===toolbarKey){
+  function onStorage(e){if(mprKey&&e.key===mprKey){try{const clean=e.newValue?.length<=1024&&mprModel?.normalize(JSON.parse(e.newValue));if(clean){mprValue=clean;generation++;kinWrite(mprStatus, kinSayEn("다른 영상 창에서 MPR 설정을 저장했습니다."));}}catch(_){} }else if(toolbarKey&&e.key===toolbarKey){
     let matches=false;try{const clean=e.newValue?.length<=2048?normalizeToolbar(JSON.parse(e.newValue)):null;matches=clean&&JSON.stringify(clean)===JSON.stringify(toolbarValue);}catch(_){}
-    if(!matches){generation++;toolbarStatus.textContent='다른 창의 도구 모음 변경 · 현재 창 유지';}
+    if(!matches){generation++;kinWrite(toolbarStatus, kinSayEn("다른 창의 도구 모음 변경 · 현재 창 유지"));}
   }else if(dockKey&&e.key===dockKey){
     // A child iframe's own write also emits storage in this parent. Its custom
     // change event already updated the live value and generation synchronously.
     let matches=false;try{const clean=e.newValue?.length<=128?normalizeDock(JSON.parse(e.newValue)):null;matches=clean&&JSON.stringify(clean)===JSON.stringify(dockValue);}catch(_){}
-    if(!matches){generation++;dockStatus.textContent='다른 창의 도구 설정 변경 · 현재 창 유지';}
-  }else if(e.key===key)status.textContent='다른 창에서 글자 크기가 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다.';else if(e.key===fontKey)fontStatus.textContent='다른 창에서 글꼴이 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다.';else if(e.key===colorKey)colorStatus.textContent='다른 창에서 글자색이 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다.';}
+    if(!matches){generation++;kinWrite(dockStatus, kinSayEn("다른 창의 도구 설정 변경 · 현재 창 유지"));}
+  }else if(e.key===key)kinWrite(status, kinSayEn("다른 창에서 글자 크기가 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다."));else if(e.key===fontKey)kinWrite(fontStatus, kinSayEn("다른 창에서 글꼴이 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다."));else if(e.key===colorKey)kinWrite(colorStatus, kinSayEn("다른 창에서 글자색이 바뀌었습니다. 현재 창은 유지하며 페이지를 다시 열 때 불러옵니다."));}
   let hasText=true,hasFont=true,hasColor=true;
   try{
     storage=localStorage;const raw=key?storage.getItem(key):null;
     hasText=raw!==null;
-    if(raw!==null){const clean=raw.length<=256?normalize(JSON.parse(raw)):null;if(clean){value=clean;status.textContent='기억한 글자 크기를 불러왔습니다.';}else status.textContent='저장된 글자 크기 오류 · 기본 크기를 적용했습니다.';}
-    else status.textContent='기본 글자 크기입니다.';
-  }catch(_){status.textContent='저장된 설정을 읽지 못해 기본 크기를 적용했습니다.';}
+    if(raw!==null){const clean=raw.length<=256?normalize(JSON.parse(raw)):null;if(clean){value=clean;kinWrite(status, kinSayEn("기억한 글자 크기를 불러왔습니다."));}else kinWrite(status, kinSayEn("저장된 글자 크기 오류 · 기본 크기를 적용했습니다."));}
+    else kinWrite(status, kinSayEn("기본 글자 크기입니다."));
+  }catch(_){kinWrite(status, kinSayEn("저장된 설정을 읽지 못해 기본 크기를 적용했습니다."));}
   try{
     const raw=fontKey?storage.getItem(fontKey):null;
     hasFont=raw!==null;
-    if(raw!==null){const clean=raw.length<=256?normalizeFonts(JSON.parse(raw)):null;if(clean){fontValue=clean;fontStatus.textContent='기억한 글꼴을 불러왔습니다.';}else fontStatus.textContent='저장된 글꼴 오류 · 기본 글꼴을 적용했습니다.';}
-    else fontStatus.textContent='기본 글꼴입니다.';
-  }catch(_){fontStatus.textContent='저장된 글꼴을 읽지 못해 기본 글꼴을 적용했습니다.';}
+    if(raw!==null){const clean=raw.length<=256?normalizeFonts(JSON.parse(raw)):null;if(clean){fontValue=clean;kinWrite(fontStatus, kinSayEn("기억한 글꼴을 불러왔습니다."));}else kinWrite(fontStatus, kinSayEn("저장된 글꼴 오류 · 기본 글꼴을 적용했습니다."));}
+    else kinWrite(fontStatus, kinSayEn("기본 글꼴입니다."));
+  }catch(_){kinWrite(fontStatus, kinSayEn("저장된 글꼴을 읽지 못해 기본 글꼴을 적용했습니다."));}
   try{
     const raw=colorKey?storage.getItem(colorKey):null;
     hasColor=raw!==null;
-    if(raw!==null){const clean=raw.length<=256?normalizeColors(JSON.parse(raw)):null;if(clean){colorValue=clean;colorStatus.textContent='기억한 글자색을 불러왔습니다.';}else colorStatus.textContent='저장된 글자색 오류 · 기본 글자색을 적용했습니다.';}
-    else colorStatus.textContent='기본 글자색입니다.';
-  }catch(_){colorStatus.textContent='저장된 글자색을 읽지 못해 기본 글자색을 적용했습니다.';}
-  try{const raw=dockKey?storage.getItem(dockKey):null;if(raw!==null){const clean=raw.length<=128?normalizeDock(JSON.parse(raw)):null;if(clean)dockValue={...clean,version:2,autoHide:clean.autoHide??false};else dockStatus.textContent='저장된 도구 설정 오류 · 기본값';}}catch(_){dockStatus.textContent='도구 설정을 읽지 못해 기본값을 표시합니다.';}
-  try{const raw=toolbarKey?storage.getItem(toolbarKey):null;if(raw!==null){const clean=raw.length<=2048?normalizeToolbar(JSON.parse(raw)):null;if(clean)toolbarValue=clean;else toolbarStatus.textContent='저장된 도구 모음 오류 · 기본값';}}catch(_){toolbarStatus.textContent='도구 모음을 읽지 못해 기본값을 표시합니다.';}showToolbar();
-  try{const raw=mprKey?storage.getItem(mprKey):null;const clean=raw&&raw.length<=1024&&mprModel?.normalize(JSON.parse(raw));if(clean)mprValue=clean;}catch(_){mprStatus.textContent='MPR 설정을 읽지 못해 기본 설정을 사용합니다.';}
+    if(raw!==null){const clean=raw.length<=256?normalizeColors(JSON.parse(raw)):null;if(clean){colorValue=clean;kinWrite(colorStatus, kinSayEn("기억한 글자색을 불러왔습니다."));}else kinWrite(colorStatus, kinSayEn("저장된 글자색 오류 · 기본 글자색을 적용했습니다."));}
+    else kinWrite(colorStatus, kinSayEn("기본 글자색입니다."));
+  }catch(_){kinWrite(colorStatus, kinSayEn("저장된 글자색을 읽지 못해 기본 글자색을 적용했습니다."));}
+  try{const raw=dockKey?storage.getItem(dockKey):null;if(raw!==null){const clean=raw.length<=128?normalizeDock(JSON.parse(raw)):null;if(clean)dockValue={...clean,version:2,autoHide:clean.autoHide??false};else kinWrite(dockStatus, kinSayEn("저장된 도구 설정 오류 · 기본값"));}}catch(_){kinWrite(dockStatus, kinSayEn("도구 설정을 읽지 못해 기본값을 표시합니다."));}
+  try{const raw=toolbarKey?storage.getItem(toolbarKey):null;if(raw!==null){const clean=raw.length<=2048?normalizeToolbar(JSON.parse(raw)):null;if(clean)toolbarValue=clean;else kinWrite(toolbarStatus, kinSayEn("저장된 도구 모음 오류 · 기본값"));}}catch(_){kinWrite(toolbarStatus, kinSayEn("도구 모음을 읽지 못해 기본값을 표시합니다."));}showToolbar();
+  try{const raw=mprKey?storage.getItem(mprKey):null;const clean=raw&&raw.length<=1024&&mprModel?.normalize(JSON.parse(raw));if(clean)mprValue=clean;}catch(_){kinWrite(mprStatus, kinSayEn("MPR 설정을 읽지 못해 기본 설정을 사용합니다."));}
   apply(hasText);applyFonts(hasFont);applyColors(hasColor);showDock();opener.disabled=!live();
   let storageListener;
   const preferenceListeners=new Map();

@@ -5,7 +5,7 @@ window.KinReadingWorkspace = function (app) {
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const work=window.KinWorkContext;
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
   let renewFrame=()=>{},renewReturn=()=>{};
   const $ = s => document.querySelector(s);
@@ -72,11 +72,11 @@ window.KinReadingWorkspace = function (app) {
     preferenceGeneration++;
     const wanted = autoNote.checked, previousOwner = autoOwner;
     syncAutoNote();
-    if (autoOwner !== previousOwner) { app.notice('계정이 바뀌었습니다. 자동 열기 설정을 다시 확인하세요.'); return; }
+    if (autoOwner !== previousOwner) { app.notice(kinSayEn('계정이 바뀌었습니다. 자동 열기 설정을 다시 확인하세요.')); return; }
     autoNote.checked = wanted; autoLast = null;
     if (!autoOwner) return;
     try { localStorage.setItem(autoOwner, autoNote.checked ? 'true' : 'false'); }
-    catch (_) { app.notice('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.'); }
+    catch (_) { app.notice(kinSayEn('자동 열기 설정을 저장하지 못했습니다. 현재 화면에서만 적용됩니다.')); }
     maybeAutoNote();
   };
   const separate = button(kinSay('Open Viewer Window'), () => { if (shown && sameTarget()) app.popup(shown.uid, shown.prior, shown.series, returnLink(), shown.viewingSet ? {exam:window.KinExamScope.originalInput([shown.uid,shown.prior].filter(Boolean)),viewingSet:shown.viewingSet} : shown.exam ? {exam:shown.exam} : null); });
@@ -84,7 +84,7 @@ window.KinReadingWorkspace = function (app) {
   const target = node('div', '', bar); target.id = 'reading-target';
   const shortcutHelp = node('details', '', bar); shortcutHelp.id = 'reading-shortcut-help';
   node('summary', 'Keyboard Shortcuts', shortcutHelp);
-  const hints = node('div', 'Ctrl+Alt+1 목록 · 2 영상 · 3 과거 판독 · 4 작성 · 5 정보 · 6 영상 Tech 메모 · 7 작업 패널 · 9 기본 영상 도구 (Tab 이동·Enter 선택) · ←/→ 이전/다음 검사 (입력 중 이동 제외)', shortcutHelp);
+  const hints = node('div', kinSayEn('Ctrl+Alt+1 목록 · 2 영상 · 3 과거 판독 · 4 작성 · 5 정보 · 6 영상 Tech 메모 · 7 작업 패널 · 9 기본 영상 도구 (Tab 이동·Enter 선택) · ←/→ 이전/다음 검사 (입력 중 이동 제외)'), shortcutHelp);
   hints.id = 'reading-shortcuts';
   const shortcutButtons = {list,image:imageFocus,prior:priorFocus,report:reportFocus,context,note,tools:toolsFocus,nativeTools:nativeToolsFocus,previous,next};
   const shortcuts = KinWorkspaceShortcuts.create({host:nav,owner:app.noteOwner,allowed:app.allowed,changed:map=>{
@@ -93,7 +93,7 @@ window.KinReadingWorkspace = function (app) {
     const label=text=>Object.assign(document.createElement('span'),{textContent:text}),parts=[];
     Object.entries(shortcutButtons).forEach(([id,b],i)=>{if(i)parts.push(' · ');parts.push(label(window.KinLanguage?window.KinLanguage.source(b):b.textContent),' '+KinWorkspaceShortcuts.display(map[id]));});
     // C-R01-008: Approve is in the same map (Ctrl+S by default); the summary names it too.
-    hints.replaceChildren(...parts,' (입력 중 검사 이동 제외)',' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize),
+    hints.replaceChildren(...parts,kinWrite(document.createTextNode(''),kinSayEn(' (입력 중 검사 이동 제외)')),' · ',label('Approve'),' '+KinWorkspaceShortcuts.display(map.finalize),
       ...(map.finalizeNext?[' · ',label('Approve & Next'),' '+KinWorkspaceShortcuts.display(map.finalizeNext)]:[]));
     const approveNext=document.getElementById('b-approve-next');
     if(approveNext){if(map.finalizeNext)approveNext.setAttribute('aria-keyshortcuts',KinWorkspaceShortcuts.display(map.finalizeNext));else approveNext.removeAttribute('aria-keyshortcuts');}
@@ -129,7 +129,7 @@ window.KinReadingWorkspace = function (app) {
       if (!live()) return;
       const map = keys.current(settings);
       const shown = Object.keys(map).filter(id => map[id]).map(id => keys.display(map[id]) + ' ' + (keys.names[id] || id));
-      viewerKeys.textContent = 'Viewer 창 글자 키: ' + (shown.join(' · ') || '없음') + ' (입력 칸 밖에서)';
+      kinWrite(viewerKeys, kinSayEn("Viewer 창 글자 키: {0} (입력 칸 밖에서)", (shown.join(' · ') || kinSayEn('없음'))));
     } catch (_) {
       if (live()) kinWrite(viewerKeys, kinSay('Viewer 창 글자 키를 확인하지 못했습니다. Keyboard Shortcuts를 다시 열어 확인하세요.'));
     }
@@ -583,7 +583,10 @@ window.KinReadingWorkspace = function (app) {
   document.addEventListener('keydown', parentKeyboard, true);
   function label(uid, image = false) {
     const s = image && shown?.viewingSet === viewingSet?.opening && viewingSetRow(uid) || app.study(uid);
-    return s ? [s.name || s.patientName || '', s.patientId || s.id || '', s.date || '날짜 미확인', s.modality || '', s.desc || s.description || '', uid].filter(Boolean).join(' · ') : uid;
+    if (!s) return uid;
+    // The missing-date words stay a sentence inside the label: the screen it is written on reads them in its language.
+    const parts = [s.name || s.patientName || '', s.patientId || s.id || '', s.date || kinSayEn('날짜 미확인'), s.modality || '', s.desc || s.description || '', uid].filter(Boolean);
+    return kinSayEn(parts.map((_, i) => '{' + i + '}').join(' · '), ...parts);
   }
   const sameTarget = () => shown?.reportUid === app.current();
   function noteWindow() {
@@ -654,7 +657,7 @@ window.KinReadingWorkspace = function (app) {
     if (!selected) return;
     autoLast = key;
     const summary = app.hasNote(selected.uid);
-    if (summary === undefined) { app.notice('메모 상태가 미확인입니다. 현재 영상 Tech 메모에서 확인하세요.'); return; }
+    if (summary === undefined) { app.notice(kinSayEn('메모 상태가 미확인입니다. 현재 영상 Tech 메모에서 확인하세요.')); return; }
     if (!summary) return;
     if (document.visibilityState !== 'visible' || modalOpen(document)) return;
     try {
@@ -668,8 +671,11 @@ window.KinReadingWorkspace = function (app) {
   function showNote() {
     updateNote(); if (note.disabled) return false;
     const selected = noteTarget();
-    if (!selected) { app.notice('원본 검사가 확인되는 영상 칸을 선택하세요. 메모 대상을 확인할 수 없습니다.'); return false; }
-    app.openNote(selected.uid); autoLast = JSON.stringify([epoch, shown.reportUid, shown.uid]); return true;
+    if (!selected) { app.notice(kinSayEn('원본 검사가 확인되는 영상 칸을 선택하세요. 메모 대상을 확인할 수 없습니다.')); return false; }
+    // Opened for the reading screen, also when the workspace opens it by itself: the note reads in that screen's language.
+    const open = () => app.openNote(selected.uid);
+    if (window.KinLanguage?.opensOn) window.KinLanguage.opensOn('reading', open); else open();
+    autoLast = JSON.stringify([epoch, shown.reportUid, shown.uid]); return true;
   }
   function redrawRetainedViewer() {
     const retained = frame;
@@ -748,13 +754,13 @@ window.KinReadingWorkspace = function (app) {
   function request(uid, prior = null, series = null) {
     const valid = x => typeof x === 'string' && x.length <= 64 && /^\d+(?:\.\d+)+$/.test(x);
     if (!valid(uid) || prior !== null && !valid(prior) || series !== null && !valid(series) || !app.current()) {
-      app.notice('검사·시리즈 정보를 확인할 수 없어 열지 않았습니다.'); return null;
+      app.notice(kinSayEn('검사·시리즈 정보를 확인할 수 없어 열지 않았습니다.')); return null;
     }
-    if (!app.allowed()) { app.notice('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.'); return null; }
+    if (!app.allowed()) { app.notice(kinSayEn('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.')); return null; }
     // WORKLIST-SPLIT-UID: a new launch or replacement takes only studies the current list carries. A UID the list excluded
     // because two patient resources answer it is not one of them; the image gate refuses its sources on the server too.
     if (!app.study(uid) || prior && prior !== uid && !app.study(prior)) {
-      app.notice('현재 목록에 없는 검사(환자 식별 불일치로 제외된 검사 포함)는 영상 작업공간에서 열지 않았습니다.'); return null;
+      app.notice(kinSayEn('현재 목록에 없는 검사(환자 식별 불일치로 제외된 검사 포함)는 영상 작업공간에서 열지 않았습니다.')); return null;
     }
     let exam;
     try { const input=app.viewerInput?.(uid,prior); if(input?.scoped)exam=input; }
@@ -782,16 +788,16 @@ window.KinReadingWorkspace = function (app) {
   function openViewingSet(uid, prior, set) {
     const valid = x => typeof x === 'string' && x.length <= 64 && /^\d+(?:\.\d+)+$/.test(x);
     const refused = message => ({ status: 'refused', message });
-    if (ended) return refused('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.');
+    if (ended) return refused(String(kinSayEn('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.')));
     if (!valid(uid) || prior !== null && (!valid(prior) || prior === uid) || !(set?.metadata instanceof Map) ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(set.opening || '') ||
-        !set.metadata.has(uid) || prior && !set.metadata.has(prior)) return refused('검사 정보를 확인할 수 없어 열지 않았습니다.');
-    if (!app.current()) return refused('판독 대상을 선택하세요');
-    if (!app.allowed()) return refused('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.');
+        !set.metadata.has(uid) || prior && !set.metadata.has(prior)) return refused(String(kinSayEn('검사 정보를 확인할 수 없어 열지 않았습니다.')));
+    if (!app.current()) return refused(String(kinSayEn('판독 대상을 선택하세요')));
+    if (!app.allowed()) return refused(String(kinSayEn('현재 로그인과 검사 접근 상태를 확인한 뒤 영상을 여세요.')));
     const before = viewingSet;
     viewingSet = { opening: set.opening, metadata: new Map([...set.metadata].filter(([key]) => key === uid || key === prior)) };
     const accepted = attempt({ uid, prior: prior || null, series: null, reportUid: app.current(), viewingSet: set.opening }, false);
-    if (!accepted) { viewingSet = before; identify(); return refused(status.textContent || '영상 작업공간에서 열지 않았습니다.'); }
+    if (!accepted) { viewingSet = before; identify(); return refused(status.textContent || String(kinSayEn('영상 작업공간에서 열지 않았습니다.'))); }
     const openedFrame = frame;
     return { status: 'accepted', isOpen: () => !ended && active && frame === openedFrame && sameTarget() && shown?.viewingSet === set.opening };
   }
@@ -808,7 +814,7 @@ window.KinReadingWorkspace = function (app) {
     } catch (_) { return false; }
   }
   function attempt(r, abandon) {
-    if (ended) { app.notice('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.'); return false; }
+    if (ended) { app.notice(kinSayEn('영상 작업공간이 종료되었습니다. 판독문 초안을 저장한 뒤 화면을 새로고침하세요.')); return false; }
     if (!r || r.reportUid !== app.current() || !app.allowed()) return false;
     pending = r; active = true; layout(); identify();
     if (frame && !failed && !frameFailed() && JSON.stringify(shown) === JSON.stringify(r)) {
@@ -870,7 +876,7 @@ window.KinReadingWorkspace = function (app) {
           const keyMap=shortcuts.read();
           for(const [id,selector] of Object.entries({image:'#kin-viewer-focus-2',report:'#kin-viewer-focus-4',tools:'#kin-viewer-focus-7',nativeTools:'#kin-viewer-focus-9',note:'#kin-viewer-note-open'})){const button=doc.querySelector(selector);if(keyMap[id])button?.setAttribute('aria-keyshortcuts',KinWorkspaceShortcuts.display(keyMap[id]));else button?.removeAttribute('aria-keyshortcuts');}
           const toolHint=doc.querySelector('#kin-viewer-tool-focus > p');
-          if(toolHint){const key=id=>KinWorkspaceShortcuts.display(keyMap[id]);toolHint.textContent=key('tools')+' 측정 도구 · Control+Alt+8 비교 작업 도구 · '+key('nativeTools')+' 기본 영상 도구 (Tab 이동·Enter 선택) · '+key('image')+' 선택 영상 · '+key('report')+' 판독문으로';}
+          if(toolHint){const key=id=>KinWorkspaceShortcuts.display(keyMap[id]);const viewerWords=doc.defaultView&&doc.defaultView.KinLanguage;toolHint.textContent=viewerWords&&viewerWords.text?viewerWords.text("{0} 측정 도구 · Control+Alt+8 비교 작업 도구 · {1} 기본 영상 도구 (Tab 이동·Enter 선택) · {2} 선택 영상 · {3} 판독문으로", key('tools'), key('nativeTools'), key('image'), key('report')):key('tools')+' 측정 도구 · Control+Alt+8 비교 작업 도구 · '+key('nativeTools')+' 기본 영상 도구 (Tab 이동·Enter 선택) · '+key('image')+' 선택 영상 · '+key('report')+' 판독문으로';}
           if (!loaded) {
             loaded = true; failed = false; frame.inert = false;
             if (sameTarget()) { pending = null; recovery.hidden = true; kinWrite(status, kinSay('영상 작업공간 연결됨')); identify(); }
@@ -903,7 +909,7 @@ window.KinReadingWorkspace = function (app) {
   function resume(uid, prior = null) { return shown?.reportUid === app.current() && !failed ? attempt(shown, false) : open(uid, prior); }
   function openJob(uid,job) {
     const ids=job?.snapshot?.studies;
-    if(job?.studyUid!==uid||!Array.isArray(ids)||ids[0]!==uid||ids.length<1||ids.length>2||typeof job.id!=='string'||!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(job.id)){app.notice('저장 보기의 검사 정보를 확인할 수 없습니다.');return false;}
+    if(job?.studyUid!==uid||!Array.isArray(ids)||ids[0]!==uid||ids.length<1||ids.length>2||typeof job.id!=='string'||!/^([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(job.id)){app.notice(kinSayEn('저장 보기의 검사 정보를 확인할 수 없습니다.'));return false;}
     const r=request(uid,ids[1]??null);if(!r)return false;r.job=job.id;return attempt(r,false);
   }
   function selectionChanged(deferOpen = false) {

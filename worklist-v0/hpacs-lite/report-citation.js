@@ -329,11 +329,14 @@ window.KinReportCitation = (function () {
    * 삽입 전에 **글을 바꾸기도 전에** 거절해야 하는 것들. 잘라내지 않는다 —
    * 사람이 소견을 고쳐 다시 미리보기를 여는 것이 출구다.
    */
+  // The refusal is shown on the screen that asked (never inserted): a sentence of the page where the screen language is loaded.
+  const kinSay = (t, ...p) => typeof window !== 'undefined' && window.KinLanguage && typeof window.KinLanguage.say === 'function'
+    ? window.KinLanguage.say(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   function refuseBlock(block) {
     if (block === null || block === undefined || blockIsBlank(block))
-      return '인용할 내용이 없습니다 — 소견에 제목·본문·특성 중 하나는 있어야 합니다';
+      return kinSay('인용할 내용이 없습니다 — 소견에 제목·본문·특성 중 하나는 있어야 합니다');
     if (utf8Bytes(block) > INSERTED_TEXT_BYTES)
-      return `삽입할 내용이 ${INSERTED_TEXT_BYTES}바이트를 넘습니다 — 소견을 줄인 뒤 다시 시도하세요`;
+      return kinSay('삽입할 내용이 {0}바이트를 넘습니다 — 소견을 줄인 뒤 다시 시도하세요', INSERTED_TEXT_BYTES);
     return null;
   }
 

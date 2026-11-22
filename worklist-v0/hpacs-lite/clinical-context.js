@@ -455,7 +455,7 @@
   function summary(answer, stale, kept, options) {
     const format = options && typeof options.format === 'function' ? options.format : localTime;
     if (kept) return { label: TEXT.stateLabels.stale, text: kinSay('{t0} {t1}', { t: kinSay(TEXT.refreshFailed) }, { t: reasonText(kept.reason, kept.status, kept.code) }), title: '' };
-    if (noInformation(answer, stale)) return { label: '', text: TEXT.noInformation, title: '' };
+    if (noInformation(answer, stale)) return { label: '', text: kinSay(TEXT.noInformation), title: '' };
     return { label: '', text: fill(TEXT.observedAnswer, { observedAt: format(answer.observedAt) }), title: answer.observedAt };
   }
   /** The panel status line when no answer is shown: Failed and the reason (§7 failed, screen-made). */

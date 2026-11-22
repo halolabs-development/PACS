@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root){
   'use strict';
   const CT='1.2.840.10008.5.1.4.1.1.2';
@@ -26,7 +30,7 @@
     }
     function note(message){if(status)status.textContent=message;return message;}
     function resetForSource(message){mode='active';chosen.clear();try{baseline=signature();}catch(_){baseline=null;}try{refreshUi();}catch(_){ }if(message)note(message);}
-    function fresh(){const next=signature();if(baseline===null){baseline=next;return true;}if(next!==baseline){resetForSource('화면 또는 원본이 변경되어 표시 범위를 Active로 되돌렸습니다.');return false;}return true;}
+    function fresh(){const next=signature();if(baseline===null){baseline=next;return true;}if(next!==baseline){resetForSource(kinText("화면 또는 원본이 변경되어 표시 범위를 Active로 되돌렸습니다."));return false;}return true;}
     function idsForMode(){const state=grid?.getState?.(),all=ordered().map(view=>view.viewportId);if(mode==='all')return all;if(mode==='set')return all.filter(id=>chosen.has(id));return state?.activeViewportId?[state.activeViewportId]:[];}
     function selection(){fresh();return {mode,ids:idsForMode()};}
     function setMode(value){if(!['active','set','all'].includes(value))return false;fresh();mode=value;if(value==='active')chosen.clear();refreshUi();return true;}
@@ -34,7 +38,7 @@
     function invertSelection(){fresh();const all=ordered().map(view=>view.viewportId),selected=new Set(idsForMode());chosen=new Set(all.filter(id=>!selected.has(id)));mode='set';refreshUi();return [...chosen];}
     function toggleCell(id,checked,expected=baseline,expectedView=null){
       const currentView=grid?.getState?.().viewports?.get?.(id);
-      if(ended||expected!==baseline||signature()!==expected||expectedView&&currentView!==expectedView){resetForSource('화면 또는 원본이 변경되어 표시 범위를 Active로 되돌렸습니다.');return false;}
+      if(ended||expected!==baseline||signature()!==expected||expectedView&&currentView!==expectedView){resetForSource(kinText("화면 또는 원본이 변경되어 표시 범위를 Active로 되돌렸습니다."));return false;}
       const all=new Set(ordered().map(view=>view.viewportId));if(!all.has(id))return false;
       if(mode!=='set')chosen=new Set(idsForMode());checked?chosen.add(id):chosen.delete(id);mode='set';refreshUi();return true;
     }
@@ -74,27 +78,27 @@
       viewport.render();
     }
     function apply(action,value){
-      if(ended)return {ok:false,message:note('표시 범위 연결이 종료되었습니다.')};let before,wanted,views;try{fresh();before=signature();wanted=idsForMode();views=new Map(ordered().map(view=>[view.viewportId,view]));}catch(error){return {ok:false,message:note((error.message||'원본 표시 상태를 확인할 수 없습니다.')+' 적용 전에 중단했습니다.')}}
-      if(action==='rotate'&&![-90,90].includes(value))return {ok:false,message:note('회전은 -90 또는 +90만 적용할 수 있습니다.')};
-      if(!wanted.length)return {ok:false,message:note('적용할 화면을 선택하세요.')};if(views.size<1||views.size>4)return {ok:false,message:note('Display Scope는 현재 1~4개 화면에서 사용할 수 있습니다.')};
-      let targets;try{targets=wanted.map(id=>source(views.get(id)));}catch(error){return {ok:false,message:note((error.message||'원본 표시 상태를 확인할 수 없습니다.')+' 적용 전에 중단했습니다.')}}
-      if(targets.some(item=>!item)||targets.some(item=>!capabilities(item.viewport,action)))return {ok:false,message:note('선택 범위 전체가 원본이 확인된 일반 CT 스택이어야 합니다. 빈 화면·혼합 영상에는 적용하지 않았습니다.')};
+      if(ended)return {ok:false,message:note(kinText("표시 범위 연결이 종료되었습니다."))};let before,wanted,views;try{fresh();before=signature();wanted=idsForMode();views=new Map(ordered().map(view=>[view.viewportId,view]));}catch(error){return {ok:false,message:note(kinText("{e0} 적용 전에 중단했습니다.", (error.message||kinText("원본 표시 상태를 확인할 수 없습니다."))))}}
+      if(action==='rotate'&&![-90,90].includes(value))return {ok:false,message:note(kinText("회전은 -90 또는 +90만 적용할 수 있습니다."))};
+      if(!wanted.length)return {ok:false,message:note(kinText("적용할 화면을 선택하세요."))};if(views.size<1||views.size>4)return {ok:false,message:note(kinText("Display Scope는 현재 1~4개 화면에서 사용할 수 있습니다."))};
+      let targets;try{targets=wanted.map(id=>source(views.get(id)));}catch(error){return {ok:false,message:note(kinText("{e0} 적용 전에 중단했습니다.", (error.message||kinText("원본 표시 상태를 확인할 수 없습니다."))))}}
+      if(targets.some(item=>!item)||targets.some(item=>!capabilities(item.viewport,action)))return {ok:false,message:note(kinText("선택 범위 전체가 원본이 확인된 일반 CT 스택이어야 합니다. 빈 화면·혼합 영상에는 적용하지 않았습니다."))};
       let operationValue=value;
       if(action==='window'){
         const numeric=input=>(typeof input==='number'||typeof input==='string'&&input.trim()!=='')&&Number.isFinite(Number(input)),width=Number(value?.width),center=Number(value?.center),converter=options.toLowHighRange||root.cornerstone?.utilities?.windowLevel?.toLowHighRange;
-        if(!numeric(value?.width)||width<1||!numeric(value?.center)||typeof converter!=='function')return {ok:false,message:note('W/L은 WW>=1, 유효한 WC로 입력하세요.')};
-        try{operationValue=converter(width,center);}catch(_){return {ok:false,message:note('W/L 범위를 확인할 수 없습니다.')};}if(!Number.isFinite(operationValue?.lower)||!Number.isFinite(operationValue?.upper)||operationValue.lower>operationValue.upper)return {ok:false,message:note('W/L 범위를 확인할 수 없습니다.')};
+        if(!numeric(value?.width)||width<1||!numeric(value?.center)||typeof converter!=='function')return {ok:false,message:note(kinText("W/L은 WW>=1, 유효한 WC로 입력하세요."))};
+        try{operationValue=converter(width,center);}catch(_){return {ok:false,message:note(kinText("W/L 범위를 확인할 수 없습니다."))};}if(!Number.isFinite(operationValue?.lower)||!Number.isFinite(operationValue?.upper)||operationValue.lower>operationValue.upper)return {ok:false,message:note(kinText("W/L 범위를 확인할 수 없습니다."))};
       }
-      let saved;try{saved=targets.map(item=>[item,snapshot(item)]);}catch(error){return {ok:false,message:note((error.message||'표시 상태를 확인할 수 없습니다.')+' 적용 전에 중단했습니다.')}}const attempted=[];
-      if(action==='reset'&&saved.some(([,state])=>!state.properties?.colormap||typeof state.properties.colormap!=='object'||![0,1,2].includes(state.properties?.interpolationType)||typeof state.properties?.invert!=='boolean'||state.properties?.isComputedVOI!==false||!Number.isFinite(state.properties?.voiRange?.lower)||!Number.isFinite(state.properties?.voiRange?.upper)))return {ok:false,message:note('현재 표시 속성은 Reset 실패 시 공개 API로 정확히 복구할 수 없어 적용하지 않았습니다.')};
-      if(action==='window'&&saved.some(([item,state])=>state.properties?.isComputedVOI===true&&typeof item.viewport.resetProperties!=='function'))return {ok:false,message:note('현재 자동 W/L 상태는 실패 시 공개 API로 복구할 수 없어 적용하지 않았습니다.')};
+      let saved;try{saved=targets.map(item=>[item,snapshot(item)]);}catch(error){return {ok:false,message:note(kinText("{e0} 적용 전에 중단했습니다.", (error.message||kinText("표시 상태를 확인할 수 없습니다."))))}}const attempted=[];
+      if(action==='reset'&&saved.some(([,state])=>!state.properties?.colormap||typeof state.properties.colormap!=='object'||![0,1,2].includes(state.properties?.interpolationType)||typeof state.properties?.invert!=='boolean'||state.properties?.isComputedVOI!==false||!Number.isFinite(state.properties?.voiRange?.lower)||!Number.isFinite(state.properties?.voiRange?.upper)))return {ok:false,message:note(kinText("현재 표시 속성은 Reset 실패 시 공개 API로 정확히 복구할 수 없어 적용하지 않았습니다."))};
+      if(action==='window'&&saved.some(([item,state])=>state.properties?.isComputedVOI===true&&typeof item.viewport.resetProperties!=='function'))return {ok:false,message:note(kinText("현재 자동 W/L 상태는 실패 시 공개 API로 복구할 수 없어 적용하지 않았습니다."))};
       try{
-        for(const item of targets){const view=grid?.getState?.().viewports?.get?.(item.id),now=view&&source(view);if(signature()!==before||!now||key(now)!==key(item))throw Error('적용 중 화면 원본이 변경되었습니다.');attempted.push(item);mutate(item,action,operationValue);const afterView=grid?.getState?.().viewports?.get?.(item.id),after=afterView&&source(afterView);if(signature()!==before||!after||key(after)!==key(item))throw Error('적용 중 화면 원본이 변경되었습니다.');}
-        return {ok:true,count:targets.length,message:note(`${targets.length}개 CT 화면에 표시 조작을 적용했습니다.`)};
+        for(const item of targets){const view=grid?.getState?.().viewports?.get?.(item.id),now=view&&source(view);if(signature()!==before||!now||key(now)!==key(item))throw kinError("적용 중 화면 원본이 변경되었습니다.");attempted.push(item);mutate(item,action,operationValue);const afterView=grid?.getState?.().viewports?.get?.(item.id),after=afterView&&source(afterView);if(signature()!==before||!after||key(after)!==key(item))throw kinError("적용 중 화면 원본이 변경되었습니다.");}
+        return {ok:true,count:targets.length,message:note(kinText("{n0}개 CT 화면에 표시 조작을 적용했습니다.", targets.length))};
       }catch(error){
         let restored=true;for(const [item,state] of saved.slice(0,attempted.length).reverse())if(!restore(item,state,action))restored=false;
         let stable=false;try{stable=signature()===before;}catch(_){ }if(!stable)resetForSource();
-        const message=(error.message||'표시 조작에 실패했습니다.')+(restored&&stable?' 이전 표시로 복구했습니다.':' 일부 표시를 안전하게 복구하지 못했습니다. 새 원본은 변경하지 않았습니다.');
+        const message=(error.message||kinText("표시 조작에 실패했습니다."))+(restored&&stable?kinText(" 이전 표시로 복구했습니다."):kinText(" 일부 표시를 안전하게 복구하지 못했습니다. 새 원본은 변경하지 않았습니다."));
         return {ok:false,partial:!(restored&&stable),message:note(message)};
       }
     }
@@ -111,31 +115,31 @@
         return ids.length===1&&cornerstone?.getCornerstoneViewport?.(id)?.type==='stack'&&displaySet?.Modality==='CT'&&displaySet?.SOPClassUID===CT;}catch(_){return false;}
     }
     function applyPreset(index){
-      if(ended)return {ok:false,message:note('표시 범위 연결이 종료되었습니다.')};const control=presets();
-      if(!control||!Number.isInteger(index)||index<0||index>=control.names.length)return {ok:false,message:note('CT 프리셋 설정을 확인할 수 없습니다.')};
+      if(ended)return {ok:false,message:note(kinText("표시 범위 연결이 종료되었습니다."))};const control=presets();
+      if(!control||!Number.isInteger(index)||index<0||index>=control.names.length)return {ok:false,message:note(kinText("CT 프리셋 설정을 확인할 수 없습니다."))};
       let ok=false;try{ok=control.apply(index)===true;}catch(_){ok=false;}renderPresets();
-      return {ok,message:note(ok?`${control.names[index]} 프리셋을 활성 CT 영상에 적용했습니다.`:'CT 프리셋을 적용하지 않았습니다. CT 원본 프레임에서만 적용합니다.')};
+      return {ok,message:note(ok?kinText("{0} 프리셋을 활성 CT 영상에 적용했습니다.", control.names[index]):kinText("CT 프리셋을 적용하지 않았습니다. CT 원본 프레임에서만 적용합니다."))};
     }
     function renderPresets(){
       if(!panel)return;const box=panel.querySelector('[data-preset-buttons]'),reason=panel.querySelector('[data-preset-reason]'),control=presets(),eligible=activeClassicCT();
-      if(!control){box.replaceChildren();reason.textContent='CT 프리셋 설정을 확인할 수 없습니다.';return;}
+      if(!control){box.replaceChildren();reason.textContent=kinText("CT 프리셋 설정을 확인할 수 없습니다.");return;}
       if(box.querySelectorAll('button').length!==control.names.length){box.replaceChildren();control.names.forEach((_,index)=>{const button=root.document.createElement('button');button.type='button';button.setAttribute('data-preset',String(index));button.style.cssText='font-size:12px';button.onclick=()=>applyPreset(index);box.append(button,' ');});}
       box.querySelectorAll('button').forEach(button=>{const index=Number(button.dataset.preset),name=String(control.names[index]),value=presetValue(control,index);
         // The value is part of the label, not only the tooltip, so it is readable without hover and the button text is
         // never the bare preset name the native Window Presets menu shows.
         button.textContent=value?`${name} ${value.width}/${value.center}`:name;
-        button.title=value?`키 ${index+1} · WW ${value.width} / WC ${value.center} (프리셋 표에서 읽음)`:`키 ${index+1} · 프리셋 값을 확인할 수 없습니다.`;
+        button.title=value?kinText("키 {n0} · WW {n1} / WC {2} (프리셋 표에서 읽음)", index+1, value.width, value.center):kinText("키 {n0} · 프리셋 값을 확인할 수 없습니다.", index+1);
         button.disabled=!value||!eligible;});
-      reason.textContent=eligible?'':'CT 원본 프레임에서만 적용할 수 있습니다. 활성 영상을 일반 CT로 선택하세요.';
+      reason.textContent=eligible?'':kinText("CT 원본 프레임에서만 적용할 수 있습니다. 활성 영상을 일반 CT로 선택하세요.");
     }
     function refreshUi(){
       if(!panel)return;const views=ordered();panel.querySelectorAll('[data-scope-mode]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.scopeMode===mode)));
       const list=panel.querySelector('[data-scope-cells]');list.replaceChildren();const token=baseline;views.slice(0,4).forEach((view,index)=>{const label=root.document.createElement('label'),input=root.document.createElement('input');input.type='checkbox';input.checked=mode==='all'||mode==='active'&&grid.getState().activeViewportId===view.viewportId||mode==='set'&&chosen.has(view.viewportId);input.onchange=()=>{if(!input.isConnected||!panel?.contains(input))return;toggleCell(view.viewportId,input.checked,token,view);};label.append(input,` ${String.fromCharCode(65+index)}`);list.append(label);});
-      let count=0;try{count=idsForMode().length;}catch(_){ }panel.querySelector('[data-scope-count]').textContent=`대상 ${count}개 영상`;renderPresets();
+      let count=0;try{count=idsForMode().length;}catch(_){ }panel.querySelector('[data-scope-count]').textContent=kinText("대상 {n0}개 영상", count);renderPresets();
     }
     function mount(host=options.host||root.document?.querySelector?.('#kin-viewer-layout')){
       if(ended||panel||!host)return false;panel=root.document.createElement('section');panel.id='kin-display-scope';panel.style.cssText='border-top:1px solid #657c9f;margin-top:8px;padding-top:8px';
-      panel.innerHTML='<strong>Display Scope</strong><p>표시 조작 범위를 고릅니다. Set의 선택 반전과 Invert Images는 서로 다른 기능입니다.</p><div><button type="button" data-scope-mode="active">Active</button> <button type="button" data-scope-mode="set">Set</button> <button type="button" data-scope-mode="all">All</button> <button type="button" data-scope-invert>Invert Selection</button> <span data-scope-count style="font-size:12px">대상 0개 영상</span></div><div data-scope-cells></div><p data-scope-note style="font-size:12px;margin:6px 0 2px">선택한 영상의 표시만 바꿉니다. 원본·표식·판독은 바뀌지 않습니다.</p><div><button type="button" data-action="rotate-left">Rotate -90</button> <button type="button" data-action="rotate-right">Rotate +90</button> <button type="button" data-action="flipH">Flip H</button> <button type="button" data-action="flipV">Flip V</button> <button type="button" data-action="invert">Invert Images</button> <button type="button" data-action="fit">Fit</button> <button type="button" data-action="reset" title="표시(밝기·회전·확대)만 원래대로 — 배치는 Layout, 도구 영역은 Dock Settings에서">Reset Display</button></div><div><label>WW (>=1) <input data-ww type="number" min="1" step="any"></label> <label>WC <input data-wc type="number" step="any"></label> <button type="button" data-window>Apply W/L</button></div><div data-scope-presets role="group" aria-label="CT Presets"><strong style="font-size:12px">Presets</strong> <span style="font-size:12px">활성 영상 1개에만 적용합니다(키 1~5와 같음).</span><div data-preset-buttons></div><p data-preset-reason style="font-size:12px;margin:2px 0"></p></div><p role="status"></p>';
+      panel.innerHTML=kinHtml("<strong>Display Scope</strong><p>표시 조작 범위를 고릅니다. Set의 선택 반전과 Invert Images는 서로 다른 기능입니다.</p><div><button type=\"button\" data-scope-mode=\"active\">Active</button> <button type=\"button\" data-scope-mode=\"set\">Set</button> <button type=\"button\" data-scope-mode=\"all\">All</button> <button type=\"button\" data-scope-invert>Invert Selection</button> <span data-scope-count style=\"font-size:12px\">대상 0개 영상</span></div><div data-scope-cells></div><p data-scope-note style=\"font-size:12px;margin:6px 0 2px\">선택한 영상의 표시만 바꿉니다. 원본·표식·판독은 바뀌지 않습니다.</p><div><button type=\"button\" data-action=\"rotate-left\">Rotate -90</button> <button type=\"button\" data-action=\"rotate-right\">Rotate +90</button> <button type=\"button\" data-action=\"flipH\">Flip H</button> <button type=\"button\" data-action=\"flipV\">Flip V</button> <button type=\"button\" data-action=\"invert\">Invert Images</button> <button type=\"button\" data-action=\"fit\">Fit</button> <button type=\"button\" data-action=\"reset\" title=\"표시(밝기·회전·확대)만 원래대로 — 배치는 Layout, 도구 영역은 Dock Settings에서\">Reset Display</button></div><div><label>WW (>=1) <input data-ww type=\"number\" min=\"1\" step=\"any\"></label> <label>WC <input data-wc type=\"number\" step=\"any\"></label> <button type=\"button\" data-window>Apply W/L</button></div><div data-scope-presets role=\"group\" aria-label=\"CT Presets\"><strong style=\"font-size:12px\">Presets</strong> <span style=\"font-size:12px\">활성 영상 1개에만 적용합니다(키 1~5와 같음).</span><div data-preset-buttons></div><p data-preset-reason style=\"font-size:12px;margin:2px 0\"></p></div><p role=\"status\"></p>");
       status=panel.querySelector('[role=status]');host.append(panel);
       // A viewport's cornerstone type/display set can settle after the last grid event; re-read the preset gate when the
       // user reaches the panel so a stale disabled state does not outlive the source.

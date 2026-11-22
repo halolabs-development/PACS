@@ -1,3 +1,7 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root,factory){const api=factory(root);if(typeof module==='object'&&module.exports)module.exports=api;else root.KinVolumePath=api;})(globalThis,root=>{
   // kin-path-1: a manual 3D path and its unfolded (stretched) reconstruction. The person places
   // every control point on one of the three native planes; the centre line, arc-length columns,
@@ -9,7 +13,7 @@
   // a rotation-minimizing approximation any more. Refusing there keeps the last valid path.
   const DEGENERATE=1e-3,REVERSAL=-.5,REFLECTION=1,UNIT=1e-6;
   // The curved model owns polyline, affine, inside, sampler and raster; it may load after this file.
-  const base=()=>{const m=typeof module==='object'&&module.exports&&typeof require==='function'?require('./volume-curved.js'):root.KinVolumeCurved;if(!m)throw Error('곡면 MPR 기본 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');return m;};
+  const base=()=>{const m=typeof module==='object'&&module.exports&&typeof require==='function'?require('./volume-curved.js'):root.KinVolumeCurved;if(!m)throw kinError("곡면 MPR 기본 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");return m;};
   const LIMITS=Object.freeze({points:64,columns:4096,rows:4096,samples:1048576,arc:1000,halfHeight:150,chunk:65536});
   const finite=n=>typeof n==='number'&&Number.isFinite(n);
   const vector=v=>Array.isArray(v)&&v.length===3&&v.every(n=>finite(n)&&Math.abs(n)<=1e6);
@@ -22,9 +26,9 @@
   const fail=message=>{throw Error(message);};
   const round=p=>p.map(n=>Math.round(n*1000)/1000+0);
   const at=(array,c)=>[array[c*3],array[c*3+1],array[c*3+2]];
-  const FRAME_ERROR='경로가 너무 급하게 꺾이거나 되돌아가 경로 방향을 계산할 수 없습니다. 제어점을 조정하세요.';
+  const FRAME_ERROR=kinText("경로가 너무 급하게 꺾이거나 되돌아가 경로 방향을 계산할 수 없습니다. 제어점을 조정하세요.");
   // Degrees are stored in [0,360) at 0.01 resolution so the Job value is exact and canonical.
-  function angle(degrees){if(!finite(degrees))fail('Unfold Angle은 숫자로 입력하세요.');const a=Math.round((((degrees%360)+360)%360)*100)/100;return a>=360?0:a+0;}
+  function angle(degrees){if(!finite(degrees))fail(kinText("Unfold Angle은 숫자로 입력하세요."));const a=Math.round((((degrees%360)+360)%360)*100)/100;return a>=360?0:a+0;}
 
   function build({frameOfReference,cell,points,initialNormal,angle:degrees,column,spacing,halfHeight,display}){
     return {schema:1,algorithm:ALGORITHM,frameOfReference,coordinates:'LPS_mm',cell,
@@ -39,10 +43,10 @@
     const line=base().polyline(points,'curved'),cumulative=[0];
     for(let i=1;i<line.length;i++)cumulative.push(cumulative[i-1]+distance(line[i],line[i-1]));
     const length=cumulative[cumulative.length-1];
-    if(!(length>=spacing))fail('경로 길이가 출력 간격보다 짧습니다. 점 사이를 더 벌리세요.');
-    if(length>LIMITS.arc)fail('경로 길이는 1000 mm 이하여야 합니다.');
+    if(!(length>=spacing))fail(kinText("경로 길이가 출력 간격보다 짧습니다. 점 사이를 더 벌리세요."));
+    if(length>LIMITS.arc)fail(kinText("경로 길이는 1000 mm 이하여야 합니다."));
     const columns=Math.floor(length/spacing+1e-9)+1;
-    if(columns>LIMITS.columns)fail('펼친 결과 크기가 한도를 넘습니다. 경로를 줄이세요. 자동으로 해상도를 낮추지 않습니다.');
+    if(columns>LIMITS.columns)fail(kinText("펼친 결과 크기가 한도를 넘습니다. 경로를 줄이세요. 자동으로 해상도를 낮추지 않습니다."));
     const centres=new Float64Array(columns*3);let segment=0;
     for(let c=0;c<columns;c++){
       const s=c*spacing;
@@ -79,7 +83,7 @@
   function frames(centres,columns,spacing,normal){
     const T=tangents(centres,columns,spacing),N=new Float64Array(columns*3),B=new Float64Array(columns*3);
     const t0=at(T,0);
-    if(!vector(normal)||Math.abs(norm(normal)-1)>UNIT||Math.abs(dot(normal,t0))>UNIT)fail('경로 기준 방향을 확인할 수 없습니다.');
+    if(!vector(normal)||Math.abs(norm(normal)-1)>UNIT||Math.abs(dot(normal,t0))>UNIT)fail(kinText("경로 기준 방향을 확인할 수 없습니다."));
     let r=sub(normal,t0.map(x=>x*dot(normal,t0)));const rn=norm(r);r=r.map(x=>x/rn);
     const store=(c,t,n)=>{const b=cross(t,n);if(!b.every(Number.isFinite)||Math.abs(norm(b)-1)>UNIT)fail(FRAME_ERROR);for(let k=0;k<3;k++){N[c*3+k]=n[k];B[c*3+k]=b[k];}};
     store(0,t0,r);
@@ -100,32 +104,32 @@
   }
   function plan(spec,spacing=spec.output.spacing){
     const {length,columns,centres}=resample(spec.points,spacing),half=Math.floor(spec.output.halfHeight/spacing+1e-9),rows=2*half+1;
-    if(rows>LIMITS.rows||columns*rows>LIMITS.samples)fail('펼친 결과 크기가 한도(가로·세로 4096, 전체 1,048,576 표본)를 넘습니다. 경로를 줄이거나 Half Height를 낮추세요. 자동으로 해상도를 낮추지 않습니다.');
+    if(rows>LIMITS.rows||columns*rows>LIMITS.samples)fail(kinText("펼친 결과 크기가 한도(가로·세로 4096, 전체 1,048,576 표본)를 넘습니다. 경로를 줄이거나 Half Height를 낮추세요. 자동으로 해상도를 낮추지 않습니다."));
     return {columns,rows,half,length,spacing,centres,...frames(centres,columns,spacing,spec.frame.initialNormal)};
   }
   // Throws the reason in Korean; normalize() is the null-returning form of the same rules.
   function check(v,{partial=false}={}){
-    if(!exact(v,'algorithm,cell,coordinates,display,frame,frameOfReference,interpolation,output,points,position,schema,unfold'))fail('3D Path 형식을 확인할 수 없습니다.');
-    if(v.schema!==1||v.algorithm!==ALGORITHM||v.coordinates!=='LPS_mm'||v.interpolation!==INTERPOLATION)fail('지원하지 않는 3D Path 계산 방식입니다.');
-    if(![0,1,2].includes(v.cell))fail('3D Path 표시 기준 평면을 확인할 수 없습니다.');
-    if(typeof v.frameOfReference!=='string'||v.frameOfReference.length>64||!/^[0-9]+(\.[0-9]+)*$/.test(v.frameOfReference))fail('원본 좌표계(Frame of Reference)를 확인할 수 없습니다.');
+    if(!exact(v,'algorithm,cell,coordinates,display,frame,frameOfReference,interpolation,output,points,position,schema,unfold'))fail(kinText("3D Path 형식을 확인할 수 없습니다."));
+    if(v.schema!==1||v.algorithm!==ALGORITHM||v.coordinates!=='LPS_mm'||v.interpolation!==INTERPOLATION)fail(kinText("지원하지 않는 3D Path 계산 방식입니다."));
+    if(![0,1,2].includes(v.cell))fail(kinText("3D Path 표시 기준 평면을 확인할 수 없습니다."));
+    if(typeof v.frameOfReference!=='string'||v.frameOfReference.length>64||!/^[0-9]+(\.[0-9]+)*$/.test(v.frameOfReference))fail(kinText("원본 좌표계(Frame of Reference)를 확인할 수 없습니다."));
     const f=v.frame;
-    if(!exact(f,'initialNormal,method')||f.method!==METHOD||!vector(f.initialNormal)||Math.abs(norm(f.initialNormal)-1)>UNIT)fail('경로 기준 방향을 확인할 수 없습니다.');
-    if(!exact(v.unfold,'angle')||!finite(v.unfold.angle)||v.unfold.angle<0||v.unfold.angle>=360||angle(v.unfold.angle)!==v.unfold.angle)fail('Unfold Angle은 0 이상 360 미만(0.01° 단위)이어야 합니다.');
-    if(!exact(v.position,'column')||!Number.isInteger(v.position.column)||v.position.column<0)fail('경로 위치를 확인할 수 없습니다.');
+    if(!exact(f,'initialNormal,method')||f.method!==METHOD||!vector(f.initialNormal)||Math.abs(norm(f.initialNormal)-1)>UNIT)fail(kinText("경로 기준 방향을 확인할 수 없습니다."));
+    if(!exact(v.unfold,'angle')||!finite(v.unfold.angle)||v.unfold.angle<0||v.unfold.angle>=360||angle(v.unfold.angle)!==v.unfold.angle)fail(kinText("Unfold Angle은 0 이상 360 미만(0.01° 단위)이어야 합니다."));
+    if(!exact(v.position,'column')||!Number.isInteger(v.position.column)||v.position.column<0)fail(kinText("경로 위치를 확인할 수 없습니다."));
     const o=v.output;
-    if(!exact(o,'axis,edge,halfHeight,outside,sampling,spacing')||o.sampling!=='trilinear'||o.edge!=='half-voxel-clamp'||o.outside!=='nan'||o.axis!=='arc-length'||!finite(o.spacing)||o.spacing<.05||o.spacing>5||!finite(o.halfHeight)||o.halfHeight<1||o.halfHeight>LIMITS.halfHeight)fail('펼친 표시 출력 조건을 확인할 수 없습니다. Half Height는 1~150 mm입니다.');
+    if(!exact(o,'axis,edge,halfHeight,outside,sampling,spacing')||o.sampling!=='trilinear'||o.edge!=='half-voxel-clamp'||o.outside!=='nan'||o.axis!=='arc-length'||!finite(o.spacing)||o.spacing<.05||o.spacing>5||!finite(o.halfHeight)||o.halfHeight<1||o.halfHeight>LIMITS.halfHeight)fail(kinText("펼친 표시 출력 조건을 확인할 수 없습니다. Half Height는 1~150 mm입니다."));
     const d=v.display;
-    if(!exact(d,'VOILUTFunction,invert,voiRange')||d.VOILUTFunction!=='LINEAR'||typeof d.invert!=='boolean'||!exact(d.voiRange,'lower,upper')||![d.voiRange.lower,d.voiRange.upper].every(n=>finite(n)&&Math.abs(n)<=1e9)||d.voiRange.upper<=d.voiRange.lower)fail('3D Path 펼친 표시는 LINEAR 창 설정만 지원합니다.');
-    if(!Array.isArray(v.points)||v.points.length>LIMITS.points)fail('3D Path 제어점은 64개까지 지정할 수 있습니다.');
-    if(!partial&&v.points.length<2)fail('경로 점을 두 개 이상 지정하세요.');
+    if(!exact(d,'VOILUTFunction,invert,voiRange')||d.VOILUTFunction!=='LINEAR'||typeof d.invert!=='boolean'||!exact(d.voiRange,'lower,upper')||![d.voiRange.lower,d.voiRange.upper].every(n=>finite(n)&&Math.abs(n)<=1e9)||d.voiRange.upper<=d.voiRange.lower)fail(kinText("3D Path 펼친 표시는 LINEAR 창 설정만 지원합니다."));
+    if(!Array.isArray(v.points)||v.points.length>LIMITS.points)fail(kinText("3D Path 제어점은 64개까지 지정할 수 있습니다."));
+    if(!partial&&v.points.length<2)fail(kinText("경로 점을 두 개 이상 지정하세요."));
     for(let i=0;i<v.points.length;i++){
-      if(!vector(v.points[i]))fail('경로 점 좌표를 확인할 수 없습니다.');
-      if(i&&distance(v.points[i],v.points[i-1])<MIN_GAP)fail('이웃한 경로 점이 너무 가깝습니다.');
+      if(!vector(v.points[i]))fail(kinText("경로 점 좌표를 확인할 수 없습니다."));
+      if(i&&distance(v.points[i],v.points[i-1])<MIN_GAP)fail(kinText("이웃한 경로 점이 너무 가깝습니다."));
     }
-    if(v.points.length<2){if(v.position.column!==0)fail('경로 위치를 확인할 수 없습니다.');return null;}
+    if(v.points.length<2){if(v.position.column!==0)fail(kinText("경로 위치를 확인할 수 없습니다."));return null;}
     const grid=plan(v);
-    if(v.position.column>=grid.columns)fail('경로 위치가 경로 길이를 넘습니다.');
+    if(v.position.column>=grid.columns)fail(kinText("경로 위치가 경로 길이를 넘습니다."));
     return grid;
   }
   function normalize(v){try{check(v);return build({...v,initialNormal:v.frame.initialNormal,angle:v.unfold.angle,column:v.position.column,spacing:v.output.spacing,halfHeight:v.output.halfHeight});}catch(_){return null;}}
@@ -153,14 +157,14 @@
   // position order, show the planes with normals N and B that contain T (viewUp T). All three
   // focal points are the path point; each keeps its own camera distance and zoom.
   function cameras(grid,column,current,perpendicular){
-    if(!Number.isInteger(column)||column<0||column>=grid.columns)fail('경로 위치가 경로 길이를 넘습니다.');
-    if(!Array.isArray(current)||current.length!==3||![0,1,2].includes(perpendicular))fail('3평면 화면을 확인할 수 없습니다.');
+    if(!Number.isInteger(column)||column<0||column>=grid.columns)fail(kinText("경로 위치가 경로 길이를 넘습니다."));
+    if(!Array.isArray(current)||current.length!==3||![0,1,2].includes(perpendicular))fail(kinText("3평면 화면을 확인할 수 없습니다."));
     const centre=at(grid.centres,column),T=at(grid.tangents,column),N=at(grid.normals,column),B=at(grid.binormals,column);
     const parallel=[[N,T],[B,T]];let next=0;
     return current.map((camera,i)=>{
-      if(!camera||!vector(camera.focalPoint)||!vector(camera.position))fail('3평면 화면을 확인할 수 없습니다.');
+      if(!camera||!vector(camera.focalPoint)||!vector(camera.position))fail(kinText("3평면 화면을 확인할 수 없습니다."));
       const [normal,viewUp]=i===perpendicular?[T,B]:parallel[next++],length=distance(camera.position,camera.focalPoint);
-      if(!(length>1e-4))fail('3평면 화면을 확인할 수 없습니다.');
+      if(!(length>1e-4))fail(kinText("3평면 화면을 확인할 수 없습니다."));
       return {...camera,focalPoint:centre.slice(),position:centre.map((x,k)=>x+normal[k]*length),viewUp:viewUp.slice(),viewPlaneNormal:normal.slice()};
     });
   }

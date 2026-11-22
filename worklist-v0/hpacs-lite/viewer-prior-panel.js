@@ -1,6 +1,9 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerPriorPanel = (() => {
-  const messages = { loading: '불러오는 중…', 'no-study': '검사를 확인할 수 없습니다.',
-    none: '현재 유효한 승인 판독문이 없습니다.' };
+  const messages = { loading: kinText("불러오는 중…"), 'no-study': kinText("검사를 확인할 수 없습니다."),
+    none: kinText("현재 유효한 승인 판독문이 없습니다.") };
   function element(tag, text, parent) {
     const node = document.createElement(tag);
     if (text != null) node.textContent = String(text);
@@ -29,7 +32,7 @@ window.KinViewerPriorPanel = (() => {
     host.setAttribute('aria-label', 'Studies'); host.setAttribute('role', 'region');
     button('Close', host, close);
     if (value.state !== 'ready') { status(host, value, retry); return; }
-    const guidance = element('p', '왼쪽 클릭·Enter·Space는 영상, 오른쪽 클릭·Shift+F10·Report는 승인 판독문을 엽니다.', host);
+    const guidance = element('p', kinText("왼쪽 클릭·Enter·Space는 영상, 오른쪽 클릭·Shift+F10·Report는 승인 판독문을 엽니다."), host);
     guidance.style.color = '#B4B4B4';
     const scroll = element('div', null, host); scroll.style.overflow = 'auto'; scroll.style.minHeight = '0';
     const table = element('table', null, scroll), header = element('tr', null, element('thead', null, table));
@@ -52,7 +55,7 @@ window.KinViewerPriorPanel = (() => {
         }
       };
     }
-    if (!value.studies.some(study => study.relation === 'Prior')) element('p', '이 환자의 이전 날짜 검사가 없습니다.', host);
+    if (!value.studies.some(study => study.relation === 'Prior')) element('p', kinText("이 환자의 이전 날짜 검사가 없습니다."), host);
     if (value.message) {
       element('p', value.message, host).setAttribute('role', 'status');
       if (value.retryImageUid) button('Retry', host, () => openImages(value.retryImageUid));
@@ -107,14 +110,14 @@ window.KinViewerPriorPanel = (() => {
       if (!open) { toggle.focus(); return; }
       const close = button('Close History', list, () => show(false));
       element('h4', 'History', list);
-      if (!versions.length) element('p', '이 검사의 판독문 이력이 없습니다.', list);
+      if (!versions.length) element('p', kinText("이 검사의 판독문 이력이 없습니다."), list);
       for (const version of versions) {
         const item = element('article', null, list);
         element('h5', ['v' + version.version, ACTIONS[version.action] || version.action || 'Unknown', signer(version),
           stamp(version)].join(' | '), item);
-        if (version.reason) element('p', '사유: ' + version.reason, item);
+        if (version.reason) element('p', kinText("사유: {0}", version.reason), item);
         if (version.findings || version.conclusion || version.recommendation) sections(item, version, 'h6', false);
-        else element('p', '(내용 없음)', item);
+        else element('p', kinText("(내용 없음)"), item);
       }
       close.focus();
     }

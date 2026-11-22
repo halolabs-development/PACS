@@ -1,6 +1,9 @@
 /* Server preferences are applied only by an explicit load, never by login or resize. */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   /*
    * A read of the account copy that fails (Load, the check at start, Retry) never says anything about a write, and it
    * takes away the right to write: Save and Reset Account Layout stay off until a later read confirms the account copy
@@ -69,7 +72,7 @@
     const kept = () => { try { return localKept?.() !== false; } catch (_) { return true; } };
     const readFailedText = kind => READ_FAILED[kind].lead + (kept() ? KEPT : NOT_KEPT) + ' ' + READ_FAILED[kind].save;
     const stop = () => { ended = true; request?.abort(); refresh(); };
-    const endSession = () => { stop(); status.textContent = '세션이 변경되었습니다. 다시 로그인한 뒤 여세요.'; };
+    const endSession = () => { stop(); kinWrite(status, kinSayEn("세션이 변경되었습니다. 다시 로그인한 뒤 여세요.")); };
       const unsubscribe = work.onInvalidate(event => {
       if (event.reason === 'lifecycle' && !['active', 'preparing'].includes(event.state)) endSession();
       if (event.reason === 'cancel') {
@@ -135,25 +138,24 @@
         work.commit(at, () => {
         // A late read must not replace the user's newer local choice or update its write baseline.
         if (reading && before !== generation()) {
-          status.textContent = '현재 배치가 변경되어 적용하지 않았습니다. 다시 불러오세요.'; return;
+          kinWrite(status, kinSayEn("현재 배치가 변경되어 적용하지 않았습니다. 다시 불러오세요.")); return;
         }
         revision = saved.revision;
         const confirmed = !!access;
         if (reading) { access = null; remember(null); }
         if (action === 'load' && saved.layout) {
           const localSaved = apply(model.normalize(saved.layout));
-          status.textContent = localSaved ? '서버 배치를 불러왔습니다 · 이 브라우저에도 저장됨' : '서버 배치를 불러왔습니다 · 이 창에만 적용됨';
+          kinWrite(status, localSaved ? kinSayEn("서버 배치를 불러왔습니다 · 이 브라우저에도 저장됨") : kinSayEn("서버 배치를 불러왔습니다 · 이 창에만 적용됨"));
         } else if (action === 'save') {
-          status.textContent = before === generation() ? '현재 배치를 계정에 저장했습니다.' : '요청 당시 배치를 저장했습니다. 이후 변경은 아직 서버에 저장되지 않았습니다.';
+          kinWrite(status, before === generation() ? kinSayEn("현재 배치를 계정에 저장했습니다.") : kinSayEn("요청 당시 배치를 저장했습니다. 이후 변경은 아직 서버에 저장되지 않았습니다."));
         } else if (action === 'clear') {
-          status.textContent = '계정의 서버 배치를 초기화했습니다. 현재 창의 배치는 유지합니다.';
+          kinWrite(status, kinSayEn("계정의 서버 배치를 초기화했습니다. 현재 창의 배치는 유지합니다."));
         } else if (confirmed) {
           // The account copy is known again after a failure. Nothing is applied or uploaded: the reader chooses.
           const differs = saved.layout && JSON.stringify(model.normalize(saved.layout)) !== JSON.stringify(snapshot);
-          status.textContent = differs ? DIFFERENT : saved.layout ? '계정 배치를 다시 확인했습니다. 현재 배치와 같습니다.'
-            : '계정 배치를 다시 확인했습니다. 계정에 저장한 배치가 없으며 현재 창의 배치를 유지합니다.';
+          kinWrite(status, differs ? DIFFERENT : saved.layout ? kinSayEn("계정 배치를 다시 확인했습니다. 현재 배치와 같습니다.") : kinSayEn("계정 배치를 다시 확인했습니다. 계정에 저장한 배치가 없으며 현재 창의 배치를 유지합니다."));
         } else {
-          status.textContent = saved.layout ? '서버에 저장된 배치가 있습니다. 불러오기를 누르면 적용합니다.' : '계정에 저장한 배치가 없습니다. 현재 창의 배치를 유지합니다.';
+          kinWrite(status, saved.layout ? kinSayEn("서버에 저장된 배치가 있습니다. 불러오기를 누르면 적용합니다.") : kinSayEn("계정에 저장한 배치가 없습니다. 현재 창의 배치를 유지합니다."));
         }
         });
       } catch (error) {
@@ -173,7 +175,7 @@
     buttons.forEach(b => b.addEventListener('click', () => run(b.dataset.action)));
     refresh();
     if (owner) run('inspect');
-    else status.textContent = '로그인한 회원만 계정 배치를 사용할 수 있습니다.';
+    else kinWrite(status, kinSayEn("로그인한 회원만 계정 배치를 사용할 수 있습니다."));
   }
   root.KinWorkspaceRoaming = { mount };
 })(globalThis);

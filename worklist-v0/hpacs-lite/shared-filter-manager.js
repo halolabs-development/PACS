@@ -33,6 +33,7 @@
         <button type="button" id="sfs-delete-selected">Delete Shared Selection</button>
       </section>`;
     options.host.append(panel);
+    window.KinLanguage?.markup?.(panel);
     const $ = id => panel.querySelector('#sfs-' + id);
     const checked = new Set();
     let library = null, busy = false, baseline = '';

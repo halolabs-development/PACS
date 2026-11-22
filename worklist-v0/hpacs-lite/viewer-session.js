@@ -2,6 +2,9 @@
  * A history entry retains only its binding, never patient data or credentials. Reloading that
  * entry cannot adopt the opener's later login. The server still authorizes every bound request.
  */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   const RECORD = 'kinViewerSession';
@@ -475,7 +478,7 @@
     }
     function reopenFromList() {
       entryStopped = true; remember(false);
-      entryMessage('이 창을 연 세션을 확인할 수 없습니다. 목록에서 뷰어를 다시 열어 주세요.');
+      entryMessage(kinText("이 창을 연 세션을 확인할 수 없습니다. 목록에서 뷰어를 다시 열어 주세요."));
       return new Promise(() => {});
     }
     async function activate() {
@@ -519,7 +522,7 @@
           finally { clearTimeout(deadline); }
         }
         if (ended) return;
-        await new Promise(resolve => entryMessage('세션을 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요.', resolve));
+        await new Promise(resolve => entryMessage(kinText("세션을 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도하세요."), resolve));
       }
     }
     const api = Object.freeze({
@@ -534,7 +537,7 @@
           const original = target[name];
           if (typeof original !== 'function') throw new TypeError('Missing viewer operation: ' + name);
           target[name] = function (...args) {
-            if (gate.state() !== 'active' && !cleaning) throw new win.DOMException('뷰어 작업이 일시 중지되었습니다.', 'AbortError');
+            if (gate.state() !== 'active' && !cleaning) throw new win.DOMException(kinText("뷰어 작업이 일시 중지되었습니다."), 'AbortError');
             return original.apply(this, args);
           };
           guarded.get(target).add(name);

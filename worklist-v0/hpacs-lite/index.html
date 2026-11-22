@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html class="auto-entry">
+<html data-kin-lang-browser class="auto-entry">
 <head>
   <meta charset="utf-8">
   <title>로그인 — HALO PACS</title>
@@ -170,10 +170,15 @@
     </nav>
   </footer>
 
+  <script src="worklist-language-terms.js"></script>
+  <script src="worklist-language.js"></script>
   <script src="auth.js"></script>
   <script src="work-context.js"></script>
   <script>
     const $ = s => document.querySelector(s);
+    // Product words in the language this page took as it opened (worklist-language.js), or as written.
+    const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+    const kinHtml = (t, ...p) => window.KinLanguage && window.KinLanguage.html ? window.KinLanguage.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
     const revealLanding = () => document.documentElement.classList.remove('auto-entry');
     // 이 문서의 관문은 auth.js의 세션 상태를 따른다. 업무 화면으로의 이동은 그 관문이 업무를 받아들일 때만 한다.
     KinWorkContext.follow(KinAuth);
@@ -338,7 +343,7 @@
       if (closed)
         showEnd(closed);
       else if (authError && !refused)
-        $("#msg").textContent = ARRIVAL_NOTICES[authError] || '로그인 실패: ' + authError;
+        $("#msg").textContent = ARRIVAL_NOTICES[authError] ? kinText(ARRIVAL_NOTICES[authError]) : kinText('로그인 실패: {0}', authError);
       else if (initError)
         $("#msg").textContent = '세션을 확인하지 못했습니다. 로그인 버튼을 누르면 다시 확인합니다. ' + initError.message;
 
@@ -361,9 +366,9 @@
       probing = false;
       reachable = ok;
       if (leaving) return;
-      $("#stat").innerHTML = ok
+      $("#stat").innerHTML = kinHtml(ok
         ? '<span class="stat-dot online">●</span> 인증 서버 연결됨'
-        : '<span class="stat-dot offline">●</span> 인증 서버에 연결하지 못했습니다. 이 창으로 돌아오거나 버튼을 누르면 다시 확인합니다.';
+        : '<span class="stat-dot offline">●</span> 인증 서버에 연결하지 못했습니다. 이 창으로 돌아오거나 버튼을 누르면 다시 확인합니다.');
     }
     /**
      * 닿지 않았던 확인을 다시 한다(창 초점·탭 표시·버튼 실패 뒤). 직전 확인에서 3초가 지나지 않았으면 버리지 않고 그 3초가

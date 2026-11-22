@@ -1,6 +1,10 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinCreateVolumeDisplay=function({target,starting,permitted,alive,services,host}){
   const panel=document.createElement('section');panel.id='kin-volume-display';panel.style.cssText='border-top:1px solid #657c9f;padding:8px 0';
-  panel.innerHTML='<strong>MPR Display</strong><p class="target"></p><button type="button">Reset Windowing</button> <button type="button">Reset Zoom / Pan</button><p role="status"></p><p>선택 평면만 조절합니다. Windowing은 원본 기본 밝기·대비로, Zoom / Pan은 이 배치의 Reset Planes와 같은 기준 중심·배율로 돌아갑니다. 현재 단면 깊이·회전·반전·투영 두께와 다른 평면은 유지합니다.</p>';
+  panel.innerHTML=kinHtml("<strong>MPR Display</strong><p class=\"target\"></p><button type=\"button\">Reset Windowing</button> <button type=\"button\">Reset Zoom / Pan</button><p role=\"status\"></p><p>선택 평면만 조절합니다. Windowing은 원본 기본 밝기·대비로, Zoom / Pan은 이 배치의 Reset Planes와 같은 기준 중심·배율로 돌아갑니다. 현재 단면 깊이·회전·반전·투영 두께와 다른 평면은 유지합니다.</p>");
   host.append(panel);const [windowing,zoom]=panel.querySelectorAll('button'),caption=panel.querySelector('.target'),status=panel.querySelector('[role=status]'),model=window.KinVolumeDisplay;
   let ended=false,busy=false,baseline=null,shown=null;
   const live=()=>{try{return !ended&&alive();}catch(_){return false;}};
@@ -21,7 +25,7 @@ window.kinCreateVolumeDisplay=function({target,starting,permitted,alive,services
   const stateEqual=(a,b)=>camerasEqual(a.camera,b.camera)&&JSON.stringify(a.properties)===JSON.stringify(b.properties)&&JSON.stringify(a.range)===JSON.stringify(b.range)&&near(a.nodes,b.nodes)&&near(a.opacity,b.opacity);
   function selectedWindowing(v,properties){
     const manager=window.cornerstoneTools?.SynchronizerManager;
-    if(typeof manager?.getSynchronizersForViewport!=='function'||typeof manager?.getSynchronizer!=='function')throw Error('선택 평면의 밝기 동기화를 확인할 수 없습니다.');
+    if(typeof manager?.getSynchronizersForViewport!=='function'||typeof manager?.getSynchronizer!=='function')throw kinError("선택 평면의 밝기 동기화를 확인할 수 없습니다.");
     const groups=manager.getSynchronizersForViewport(v.id,v.renderingEngineId),muted=[];
     try{
       // Native VOI events also update the visible W/L labels. Pause only the
@@ -58,19 +62,19 @@ window.kinCreateVolumeDisplay=function({target,starting,permitted,alive,services
   async function apply(kind){
     if(busy)return;let t,v,before,applied,changed=false;
     try{
-      t=target(true);if(!t||!same(t,shown)||!sameGroup(t)||!allowed(t))throw Error('선택한 MPR 평면과 진행 중인 작업을 확인한 뒤 다시 조절하세요.');
-      v=t.views.find(view=>view.id===t.source.viewportId);const index=t.views.indexOf(v);if(index<0)throw Error('선택 평면을 확인할 수 없습니다.');
+      t=target(true);if(!t||!same(t,shown)||!sameGroup(t)||!allowed(t))throw kinError("선택한 MPR 평면과 진행 중인 작업을 확인한 뒤 다시 조절하세요.");
+      v=t.views.find(view=>view.id===t.source.viewportId);const index=t.views.indexOf(v);if(index<0)throw kinError("선택 평면을 확인할 수 없습니다.");
       before=states(t);
       const update=kind==='windowing'?model.resetWindowing(v.getDefaultProperties(v.getVolumeId())):model.resetZoomPan(before[index].camera,baseline.cameras[index]);
-      busy=true;status.textContent='선택 평면 표시를 초기화 중입니다.';refresh();changed=true;
+      busy=true;status.textContent=kinText("선택 평면 표시를 초기화 중입니다.");refresh();changed=true;
       selected(()=>{if(kind==='windowing')selectedWindowing(v,update);else v.setCamera(update);});
       v.render();applied=states(t);
-      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('화면 갱신을 확인하지 못했습니다.')),1000);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));});
-      const after=target(true);if(!same(t,after)||!allowed(after))throw Error('화면이 변경되어 초기화 결과를 확인하지 못했습니다.');
+      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(kinError("화면 갱신을 확인하지 못했습니다.")),1000);requestAnimationFrame(()=>requestAnimationFrame(()=>{clearTimeout(timer);resolve();}));});
+      const after=target(true);if(!same(t,after)||!allowed(after))throw kinError("화면이 변경되어 초기화 결과를 확인하지 못했습니다.");
       for(let i=0;i<t.views.length;i++){
         const camera=t.views[i].getCamera(),properties=t.views[i].getProperties();
-        if(!near(opacity(t.views[i]),before[i].opacity))throw Error('평면의 불투명도가 변경되어 초기화를 취소했습니다.');
-        if(i!==index){if(!stateEqual(state(t.views[i]),before[i]))throw Error('다른 평면의 표시가 변경되어 초기화를 취소했습니다.');continue;}
+        if(!near(opacity(t.views[i]),before[i].opacity))throw kinError("평면의 불투명도가 변경되어 초기화를 취소했습니다.");
+        if(i!==index){if(!stateEqual(state(t.views[i]),before[i]))throw kinError("다른 평면의 표시가 변경되어 초기화를 취소했습니다.");continue;}
         if(kind==='windowing'){
           // Native colormap is inferred from curve nodes: sigmoid gray has no
           // preset name, while linear gray matches X Ray. This derived name
@@ -84,10 +88,10 @@ window.kinCreateVolumeDisplay=function({target,starting,permitted,alive,services
             const expected=window.cornerstone.utilities.createSigmoidRGBTransferFunction(update.voiRange);
             try{if(before[i].properties.invert)window.cornerstone.utilities.invertRgbTransferFunction(expected);rangeMatches=near(nodes(v),window.cornerstone.utilities.transferFunctionUtils.getTransferFunctionNodes(expected));}finally{expected.delete();}
           }
-          if(!camerasEqual(camera,before[i].camera)||!rangeMatches||(properties.VOILUTFunction||'LINEAR')!==update.VOILUTFunction||rest(properties)!==rest(before[i].properties))throw Error('선택 평면의 밝기·대비를 확인하지 못했습니다.');
-        }else if(!camerasEqual(camera,{...before[i].camera,...update})||JSON.stringify(properties)!==JSON.stringify(before[i].properties))throw Error('선택 평면의 확대·이동을 확인하지 못했습니다.');
+          if(!camerasEqual(camera,before[i].camera)||!rangeMatches||(properties.VOILUTFunction||'LINEAR')!==update.VOILUTFunction||rest(properties)!==rest(before[i].properties))throw kinError("선택 평면의 밝기·대비를 확인하지 못했습니다.");
+        }else if(!camerasEqual(camera,{...before[i].camera,...update})||JSON.stringify(properties)!==JSON.stringify(before[i].properties))throw kinError("선택 평면의 확대·이동을 확인하지 못했습니다.");
       }
-      status.textContent=kind==='windowing'?'선택 평면의 기본 밝기·대비로 돌아왔습니다.':'현재 단면을 유지하며 초기 확대·이동으로 돌아왔습니다.';
+      status.textContent=kind==='windowing'?kinText("선택 평면의 기본 밝기·대비로 돌아왔습니다."):kinText("현재 단면을 유지하며 초기 확대·이동으로 돌아왔습니다.");
     }catch(error){
       let rollbackFailed=false;
       if(changed&&live())try{
@@ -106,7 +110,7 @@ window.kinCreateVolumeDisplay=function({target,starting,permitted,alive,services
           view.render();
         }catch(_){rollbackFailed=true;}
       }catch(_){rollbackFailed=true;}
-      if(live())status.textContent=(error.message||'선택 평면을 초기화하지 못했습니다.')+(rollbackFailed?' 초기화 전 표시를 완전히 복구하지 못했습니다. 현재 표시를 확인하세요.':'');
+      if(live())status.textContent=(error.message||kinText("선택 평면을 초기화하지 못했습니다."))+(rollbackFailed?kinText(" 초기화 전 표시를 완전히 복구하지 못했습니다. 현재 표시를 확인하세요."):'');
     }finally{busy=false;refresh();}
   }
   windowing.onclick=()=>apply('windowing');zoom.onclick=()=>apply('zoom');

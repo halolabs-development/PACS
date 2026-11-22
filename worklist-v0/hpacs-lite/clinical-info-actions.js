@@ -6,6 +6,9 @@
 // same gate, until Findings is edited again or another study opens.
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
 
   function install(context) {
     const doc = root.document;
@@ -34,10 +37,10 @@
       const now = shown();
       for (const button of [copy, paste]) {
         button.disabled = !now;
-        button.title = now ? '' : NONE;
+        kinWrite(button, now ? '' : kinSayEn(NONE), 'title');
       }
-      copy.title = now ? 'Clinical Context에 보이는 DICOM 요청 태그(이름: 값)를 클립보드에 넣습니다.' : NONE;
-      paste.title = now ? '같은 글을 Findings 맨 위에 넣습니다. 저장은 평소처럼 자동 저장이 합니다.' : NONE;
+      kinWrite(copy, kinSayEn(now ? 'Clinical Context에 보이는 DICOM 요청 태그(이름: 값)를 클립보드에 넣습니다.' : NONE), 'title');
+      kinWrite(paste, kinSayEn(now ? '같은 글을 Findings 맨 위에 넣습니다. 저장은 평소처럼 자동 저장이 합니다.' : NONE), 'title');
     }
     function say(text, withUndo = false) {
       undoable = withUndo;
@@ -48,7 +51,7 @@
       if (withUndo) {
         const undo = doc.createElement('button');
         undo.type = 'button'; undo.className = 'chip'; undo.id = 'clinical-paste-undo'; undo.textContent = 'Undo Paste';
-        undo.title = '방금 넣은 임상 정보만 Findings에서 뺍니다.';
+        kinWrite(undo, kinSayEn('방금 넣은 임상 정보만 Findings에서 뺍니다.'), 'title');
         undo.addEventListener('click', undoPaste);
         status.append(' ', undo);
       }

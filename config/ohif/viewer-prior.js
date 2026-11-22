@@ -1,12 +1,14 @@
 // U3 consumes the U2 document/viewport context. The native data source still
 // owns DICOM loading and display-set creation; reports are API reads only.
 function kinCreateViewerPrior() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, generation = 0, ready, dispose, frame;
   const assets = ['viewer-prior-controller.js', 'viewer-prior-panel.js'];
   const asset = name => new Promise((resolve, reject) => {
     const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
     script.onload = () => { script.remove(); resolve(); };
-    script.onerror = () => { script.remove(); reject(new Error('이전 검사 모듈을 불러오지 못했습니다.')); };
+    script.onerror = () => { script.remove(); reject(kinError("이전 검사 모듈을 불러오지 못했습니다.")); };
     document.head.append(script);
   });
   // report-preview.js: the report screens' one rule for a version's time (KinReportPaper), which the panel shows with. It
@@ -51,7 +53,7 @@ function kinCreateViewerPrior() {
             const url=new URL(model.viewerUrl(next,options.seriesUid),location.origin);
             url.hash=location.hash;
             const opened=await window.kinViewerOpenPatient?.(url.href,{signal:options.signal});
-            if(!opened)throw Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+            if(!opened)throw kinError("저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.");
             return {reopened:true};
           }
         }

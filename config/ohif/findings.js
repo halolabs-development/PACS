@@ -1,6 +1,8 @@
 
 // Findings live inside the Measurements panel; the dock keeps its two panels unchanged.
 function kinCreateViewerFindings() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, active = false;
   function connect(ticket = epoch) {
     ready?.then(extension => { if (active && ticket === epoch && !current && kinViewerSession.writer()) { current = extension; current.mount(); } }).catch(error => {
@@ -15,10 +17,10 @@ function kinCreateViewerFindings() {
     const load = name => new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
       script.onload = resolve;
-      script.onerror = () => reject(new Error('소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.')); document.head.append(script);
+      script.onerror = () => reject(kinError("소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.")); document.head.append(script);
     });
     ready = load('finding-link-model.js').then(() => load('viewer-findings.js')).then(() => {
-      if (typeof window.kinViewerFindings !== 'function' || !window.kinFindingLinkModel) throw new Error('소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.');
+      if (typeof window.kinViewerFindings !== 'function' || !window.kinFindingLinkModel) throw kinError("소견 화면을 불러오지 못했습니다. 뷰어를 다시 여세요.");
       // The section builds its store itself: every store it creates here is given the document's session (its /me and its end).
       const model = window.kinFindingLinkModel, session = kinViewerSession.writeModule;
       const connected = Object.create(model, { createStore: { value: deps => model.createStore({ ...deps, session }) } });

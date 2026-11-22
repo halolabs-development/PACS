@@ -2,6 +2,10 @@
 // Prev / Next Prior Exam (and the ‹ Prior · Prior › toolbar buttons), Manual Sync…, Scout Navigation, Match Zoom and
 // Match Ratio…. The study list and every opening go through the Prior Studies extension's own controller
 // (KinViewerUX.related()), so they keep its patient and cell checks; calculations are in viewer-compare-model.js.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   const grid = services.viewportGridService, cellService = services.cornerstoneViewportService, setService = services.displaySetService;
   const core = () => window.cornerstone;
@@ -108,8 +112,8 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   async function marked(viewportId, signal) {
     await ready;
     const api = related(), value = context(viewportId) || cellIds().map(context).find(Boolean);
-    if (!api) throw new Error('관련 검사 목록을 사용할 수 없습니다.');
-    if (!value) throw new Error('영상이 열린 칸이 없습니다.');
+    if (!api) throw kinError("관련 검사 목록을 사용할 수 없습니다.");
+    if (!value) throw kinError("영상이 열린 칸이 없습니다.");
     const rows = await api.studies(value, signal);
     if (!rows) return null;
     return { value, rows, list: model.marks(rows, referenceUid()) };
@@ -146,13 +150,13 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   // shown as the exam's series.
   async function seriesOf(row, signal) {
     const scope = scopeOf(row);
-    if (!scope) throw new Error(row?.examUnavailable ? '검사 묶음의 원본에 접근할 수 없습니다. 목록을 새로 고치세요.' : '이 검사의 시리즈를 확인할 수 없습니다.');
+    if (!scope) throw new Error(row?.examUnavailable ? kinText("검사 묶음의 원본에 접근할 수 없습니다. 목록을 새로 고치세요.") : kinText("이 검사의 시리즈를 확인할 수 없습니다."));
     const read = async path => {
       const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal,
         headers: { Accept: 'application/dicom+json', 'X-KIN-Series-List': 'related' } });
       if (window.KinSessionTransport?.refusal?.(response)) throw window.KinSessionTransport.responseError(response);
       if (response.status === 204) return [];
-      if (!response.ok) throw new Error(response.status === 403 || response.status === 404 ? '이 검사의 시리즈를 조회할 수 없습니다.' : '연결을 확인한 뒤 다시 시도하세요.');
+      if (!response.ok) throw new Error(response.status === 403 || response.status === 404 ? kinText("이 검사의 시리즈를 조회할 수 없습니다.") : kinText("연결을 확인한 뒤 다시 시도하세요."));
       return response.json();
     };
     return model.seriesRows(await window.KinExamScope.dicom(scope, 'series?includefield=0020000E,00200011,0008103E,00080060,00201209', read));
@@ -189,16 +193,16 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       const api = related();
       if (!api || !data) return;
       const value = context(grid.getActiveViewportId?.()) || cellIds().map(context).find(Boolean);
-      if (!value) { status.textContent = '영상이 열린 칸이 없습니다.'; return; }
-      if (!seriesUid && viewing().has(uid)) { status.textContent = '이미 열려 있는 검사입니다.'; return; }
-      status.textContent = '영상을 불러오는 중…';
+      if (!value) { status.textContent = kinText("영상이 열린 칸이 없습니다."); return; }
+      if (!seriesUid && viewing().has(uid)) { status.textContent = kinText("이미 열려 있는 검사입니다."); return; }
+      status.textContent = kinText("영상을 불러오는 중…");
       // A newer opening, closing this window or any cell given other images meanwhile drops this one.
       const watch = rowOpening = watchCells(cellIds()), signal = watch.signal;
       try {
         const ok = await api.open(value, uid, { seriesUid, studies: data.rows, signal });
         if (!panel.element.isConnected || (signal.aborted && !ok)) return;
-        status.textContent = ok ? '' : '저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.';
-      } catch (error) { if (panel.element.isConnected && !signal.aborted) status.textContent = error?.message || '영상을 열지 못했습니다.'; }
+        status.textContent = ok ? '' : kinText("저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.");
+      } catch (error) { if (panel.element.isConnected && !signal.aborted) status.textContent = error?.message || kinText("영상을 열지 못했습니다."); }
       finally { watch.done(); }
       paint();
     }
@@ -278,17 +282,17 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       const study = data.list.find(item => item.uid === chosen), at = data;
       const mine = seriesRequest = new AbortController();
       const still = () => mine === seriesRequest && !mine.signal.aborted && data === at && chosen === study?.uid && mode === 'series' && panel.element.isConnected;
-      status.textContent = '시리즈를 불러오는 중…';
+      status.textContent = kinText("시리즈를 불러오는 중…");
       paint();
       try {
         const rows = await seriesOf(study, mine.signal);
         if (!still()) return;
         series = { uid: study.uid, rows };
-        status.textContent = rows.length ? '' : '이 검사에 표시할 영상 시리즈가 없습니다.';
+        status.textContent = rows.length ? '' : kinText("이 검사에 표시할 영상 시리즈가 없습니다.");
       } catch (error) {
         if (!still()) return;
         series = { uid: study.uid, rows: [] };
-        status.textContent = error?.message || '시리즈를 불러오지 못했습니다.';
+        status.textContent = error?.message || kinText("시리즈를 불러오지 못했습니다.");
       }
       paint();
     }
@@ -298,12 +302,12 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       request?.abort(); const mine = request = new AbortController();
       seriesRequest?.abort(); seriesRequest = null; series = null;
       data = null; studySelect.disabled = true; paint();
-      status.textContent = '불러오는 중…';
+      status.textContent = kinText("불러오는 중…");
       try {
         const found = await marked(viewportId, mine.signal);
         if (mine !== request || !panel.element.isConnected) return;
-        data = found; status.textContent = found ? '' : '이 칸의 검사를 목록에서 확인할 수 없습니다.';
-      } catch (error) { if (mine === request && panel.element.isConnected) { data = null; status.textContent = error?.message || '목록을 불러오지 못했습니다.'; } }
+        data = found; status.textContent = found ? '' : kinText("이 칸의 검사를 목록에서 확인할 수 없습니다.");
+      } catch (error) { if (mine === request && panel.element.isConnected) { data = null; status.textContent = error?.message || kinText("목록을 불러오지 못했습니다."); } }
       if (mine !== request || !panel.element.isConnected) return;
       // A chosen study the new list no longer holds (another patient tab, a changed exam) goes back to the open studies.
       if (!data?.list.some(item => item.uid === chosen)) chosen = '';
@@ -341,13 +345,13 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     try {
       const found = await marked(viewportId, watch.signal);
       if (watch.signal.aborted) return;
-      if (!found) { ui.toast('이 칸의 검사를 관련 검사 목록에서 확인할 수 없습니다.'); return; }
+      if (!found) { ui.toast(kinText("이 칸의 검사를 관련 검사 목록에서 확인할 수 없습니다.")); return; }
       // A cell's images are named by their listed exam (a merged or split exam's own row), as the marks are; a
       // comparison cell shows an exam other than the one the marks count from.
       const now = referenceUid(), examOf = value => rowOf(found.list, value.studyUid, value.seriesUid)?.uid ?? value.studyUid;
       const compare = shown.filter(value => examOf(value) !== now);
       next = model.step(model.priorUids(found.list), compare[0] ? examOf(compare[0]) : null, direction);
-      if (next.end) { ui.toast(next.end === 'none' ? '과거 검사가 없습니다.' : next.end === 'older' ? '더 이전 검사가 없습니다.' : '더 이후 검사가 없습니다.'); return; }
+      if (next.end) { ui.toast(next.end === 'none' ? kinText("과거 검사가 없습니다.") : next.end === 'older' ? kinText("더 이전 검사가 없습니다.") : kinText("더 이후 검사가 없습니다.")); return; }
       row = found.list.find(item => item.uid === next.uid);
       const api = related();
       ok = compare.length ? await api.replace(compare.map(value => ({ value, uid: next.uid })), { signal: watch.signal, studies: found.rows })
@@ -355,7 +359,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     } catch (error) { if (watch.signal.aborted) return; throw error; }
     finally { watch.done(); }
     if (ok) { ui.toast([direction < 0 ? 'Prev Prior Exam' : 'Next Prior Exam', '→', row.mark, row.date, row.modality, row.desc].filter(Boolean).join(' ')); scheduleMarks(); return; }
-    if (!watch.signal.aborted) throw new Error('저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.');
+    if (!watch.signal.aborted) throw kinError("저장·편집 또는 배치를 확인한 뒤 다시 시도하세요. 현재 영상은 유지합니다.");
   }
 
   // ── Manual Sync (05-5) ──
@@ -448,7 +452,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     const status = element('p', '', panel.body, 'kin-compare-status'); status.setAttribute('role', 'status');
     const apply = button('Apply', actions, () => {
       const count = tie([...group.picked]);
-      status.textContent = group.picked.size && !count ? '영상이 있는 칸을 두 개 이상 고르세요.' : '';
+      status.textContent = group.picked.size && !count ? kinText("영상이 있는 칸을 두 개 이상 고르세요.") : '';
       paint();
     });
     const lock = button('Lock Selection', actions, () => {
@@ -456,8 +460,8 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       else {
         // Locking ties the ticked cells first when they are not tied yet.
         const same = group.picked.size === bound.size && [...group.picked].every(id => bound.has(id));
-        if (!same && tie([...group.picked]) < 2) { status.textContent = '영상이 있는 칸을 두 개 이상 고르세요.'; paint(); return; }
-        if (!group.members.length) { status.textContent = '영상이 있는 칸을 두 개 이상 고르세요.'; paint(); return; }
+        if (!same && tie([...group.picked]) < 2) { status.textContent = kinText("영상이 있는 칸을 두 개 이상 고르세요."); paint(); return; }
+        if (!group.members.length) { status.textContent = kinText("영상이 있는 칸을 두 개 이상 고르세요."); paint(); return; }
         group.locked = true;
       }
       status.textContent = ''; bind(); paint();
@@ -554,7 +558,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
       scoutSet = set; scout = null; line.setAttribute('visibility', 'hidden');
       release();
       host.replaceChildren();
-      if (!set) { info.textContent = '이 검사에는 scout으로 쓸 영상이 없습니다.'; return; }
+      if (!set) { info.textContent = kinText("이 검사에는 scout으로 쓸 영상이 없습니다."); return; }
       const ids = imageIds(set);
       try {
         const cs = core();
@@ -566,10 +570,10 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
         await view.setStack(ids, Math.floor((ids.length - 1) / 2));
         if (closed || mine !== loading) return;
         scout = view; view.render(); draw();
-      } catch (error) { if (!closed && mine === loading) info.textContent = '영상을 불러오지 못했습니다.'; }
+      } catch (error) { if (!closed && mine === loading) info.textContent = kinText("영상을 불러오지 못했습니다."); }
     }
-    const REASONS = { frame: '이 시리즈와는 위치를 맞출 수 없습니다.', parallel: '지금 칸과 같은 방향의 영상이라 위치선을 그릴 수 없습니다.',
-      outside: '지금 단면이 이 영상 밖에 있습니다.', geometry: '영상의 위치 정보를 확인할 수 없어 위치선을 그리지 않습니다.' };
+    const REASONS = { frame: kinText("이 시리즈와는 위치를 맞출 수 없습니다."), parallel: kinText("지금 칸과 같은 방향의 영상이라 위치선을 그릴 수 없습니다."),
+      outside: kinText("지금 단면이 이 영상 밖에 있습니다."), geometry: kinText("영상의 위치 정보를 확인할 수 없어 위치선을 그리지 않습니다.") };
     // The active cell's slice on the scout, only for one patient and one frame of reference with real geometry.
     function geometry() {
       const active = grid.getActiveViewportId?.() || viewportId, v = stack(active);
@@ -641,7 +645,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
   // ── Match Zoom (05-7) ──
   function matchZoom({ viewportId }) {
     const reference = viewport(viewportId);
-    if (!reference?.getZoom) throw new Error('기준이 될 영상이 없습니다.');
+    if (!reference?.getZoom) throw kinError("기준이 될 영상이 없습니다.");
     const zoom = reference.getZoom();
     let count = 0;
     for (const id of cellIds()) {
@@ -706,15 +710,15 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     } else ratio = null;
     return { matched, skipped };
   }
-  const skippedText = skipped => '간격을 확인할 수 없어 제외한 칸: ' + cellIds().map((id, i) => skipped.has(id) ? i + 1 : null).filter(Boolean).join(', ');
+  const skippedText = skipped => kinText("간격을 확인할 수 없어 제외한 칸: {0}", cellIds().map((id, i) => skipped.has(id) ? i + 1 : null).filter(Boolean).join(', '));
   // The Match Ratio key: the selected cell is the reference, matched at once without the panel; the outcome is said.
   function matchRatioNow({ viewportId }) {
     const done = matchRatio(viewportId);
-    if (!done) throw new Error('Match Ratio: 기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.');
+    if (!done) throw kinError("Match Ratio: 기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.");
     const count = done.matched.size;
     ui.toast(count ? 'Match Ratio: ' + count + ' other image' + (count === 1 ? '' : 's') + ' now at the same mm on screen as the selected image.'
       + (done.skipped.size ? ' ' + skippedText(done.skipped) : '')
-      : 'Match Ratio: 맞출 다른 영상이 없습니다.' + (done.skipped.size ? ' ' + skippedText(done.skipped) : ''));
+      : kinText("Match Ratio: 맞출 다른 영상이 없습니다.{0}", (done.skipped.size ? ' ' + skippedText(done.skipped) : '')));
   }
   function openMatchRatio({ viewportId }) {
     const panel = ui.panel({ id: 'match-ratio', title: 'Match Ratio' });
@@ -726,7 +730,7 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
     const status = element('p', '', panel.body, 'kin-compare-status'); status.setAttribute('role', 'status');
     const match = button('Match Ratio', actions, () => {
       const done = matchRatio(reference);
-      if (!done) { status.textContent = '기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다.'; paint(); return; }
+      if (!done) { status.textContent = kinText("기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞추지 않았습니다."); paint(); return; }
       status.textContent = done.skipped.size ? skippedText(done.skipped) : '';
       requestAnimationFrame(paint);
     });
@@ -741,12 +745,12 @@ window.KinViewerFeatures?.module('compare', ({ services, store, ui }) => {
         const tr = element('tr', '', table); tr.dataset.cell = id;
         element('td', (index + 1) + (id === reference ? ' (reference)' : ''), tr);
         element('td', found.spacing ? found.spacing.value.map(n => String(+n.toPrecision(10))).join('\\') : '—', tr);
-        element('td', found.spacing ? found.spacing.label : '간격을 확인할 수 없어 제외', tr);
+        element('td', found.spacing ? found.spacing.label : kinText("간격을 확인할 수 없어 제외"), tr);
         element('td', found.perMm ? found.perMm.toFixed(2) : '—', tr);
       });
       const ref = scale(reference);
       match.disabled = !ref?.perMm;
-      if (!ref?.perMm) status.textContent = '기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞출 수 없습니다.';
+      if (!ref?.perMm) status.textContent = kinText("기준 칸(선택한 칸)의 픽셀 간격을 확인할 수 없어 맞출 수 없습니다.");
     }
     paint();
   }

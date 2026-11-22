@@ -232,7 +232,7 @@
             if (!studyPanelRestoring && workspaceState.workspace.studyPanelTab !== state.tab) {
               workspaceState.workspace.studyPanelTab = state.tab; saveWorkspace(true);
             }
-            $('#study-panel-status').textContent = state.open ? 'Study Panel을 열었습니다.' : 'Study Panel을 닫았습니다.';
+            kinWrite($('#study-panel-status'), state.open ? kinSayEn("Study Panel을 열었습니다.") : kinSayEn("Study Panel을 닫았습니다."));
             if (!state.open && !studyPanelRestoring) {
               const panel = studyPanel; studyPanel = null; panel?.destroy();
               studyPanelPreview = null;
@@ -272,7 +272,7 @@
       $("#layout-toggle").textContent = {
         auto: "Layout: Auto", portrait: "Layout: Portrait", landscape: "Layout: Landscape",
       }[layoutMode];
-      $("#layout-toggle").setAttribute("aria-label", `화면 배치 ${layoutMode}`);
+      kinWrite($("#layout-toggle"), kinSayEn("화면 배치 {0}", layoutMode), "aria-label");
       $("#resize-main").setAttribute("aria-orientation", portrait ? "horizontal" : "vertical");
       // Related Report sits above Report Editor in every layout: its handle is always a height handle.
       $("#resize-related").setAttribute("aria-orientation", "horizontal");

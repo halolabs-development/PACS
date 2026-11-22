@@ -1,4 +1,7 @@
 /* D1890: pure queue and ciphertext-reference model. The worker owns encryption, disk I/O and server time. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   const GB = 1024 ** 3, TTL = 72 * 60 * 60 * 1000;
@@ -16,8 +19,8 @@
    * count of hours (a copy's count starts no later than its key's last issue, so it can be shorter than 72 hours from
    * receipt when the key could not be issued again).
    */
-  const lapsed = study => study.fetchedAt === null ? '72시간 안에 받지 못해 대기열에서 지웠습니다.'
-    : '표시된 보관 기한이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.';
+  const lapsed = study => study.fetchedAt === null ? kinText("72시간 안에 받지 못해 대기열에서 지웠습니다.")
+    : kinText("표시된 보관 기한이 지나 자동으로 지웠습니다. 다시 받으려면 Retry를 누르세요.");
   const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
   function budgetFor(diskGb) {
     const bytes = positive(diskGb) ? Math.floor(diskGb * GB) : null;
@@ -208,13 +211,13 @@
         if (budget === null || used + size > budget) {
           for (const victim of evictable(uid)) {
             if (budget !== null && used + size <= budget) break;
-            released.push(...end(victim, STATUS.evicted, '저장 공간을 비우려고 이미 본 검사를 지웠습니다. 다시 받으려면 Retry를 누르세요.'));
+            released.push(...end(victim, STATUS.evicted, kinText("저장 공간을 비우려고 이미 본 검사를 지웠습니다. 다시 받으려면 Retry를 누르세요.")));
           }
           if (budget === null || used + size > budget) {
             // Before parking: from the frames read so far, would the whole study fit even if every other study went?
             const read = study.frames.size + 1;
             if (budget !== null && study.total > read && (study.bytes + size) / read * study.total > budget) return 'oversize';
-            study.status = STATUS.queued; study.waiting = true; study.reason = '저장 공간이 비기를 기다립니다.';
+            study.status = STATUS.queued; study.waiting = true; study.reason = kinText("저장 공간이 비기를 기다립니다.");
             return 'full';
           }
         }

@@ -1,6 +1,8 @@
 
 // Position matching is display navigation, not image registration or a measurement result.
 const kinCTSyncModel = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const eps = 1e-3, dot = (a, b) => a.reduce((s, x, i) => s + x * b[i], 0);
   const sub = (a, b) => a.map((x, i) => x - b[i]);
   const vector = v => Array.isArray(v) && v.length === 3 && v.every(Number.isFinite);
@@ -13,33 +15,35 @@ const kinCTSyncModel = (() => {
   }
   function match(source, target) {
     const deny = reason => ({ reason, index: -1 });
-    if (!source?.patient || source.patient !== target?.patient) return deny('같은 환자를 확인할 수 없습니다');
+    if (!source?.patient || source.patient !== target?.patient) return deny(kinText("같은 환자를 확인할 수 없습니다"));
     const a = source.planes?.[source.index], planes = target.planes;
     if (!a?.frameOfReferenceUID || !Array.isArray(planes) || planes.length < 1 ||
-        planes.some(p => !p?.frameOfReferenceUID || p.frameOfReferenceUID !== a.frameOfReferenceUID)) return deny('좌표계가 다르거나 없습니다');
+        planes.some(p => !p?.frameOfReferenceUID || p.frameOfReferenceUID !== a.frameOfReferenceUID)) return deny(kinText("좌표계가 다르거나 없습니다"));
     const n = normal(a), t = normal(planes[0]);
-    if (!n || !t || Math.abs(dot(n, t)) < 1 - 1e-6) return deny('영상 방향 또는 위치가 맞지 않습니다');
+    if (!n || !t || Math.abs(dot(n, t)) < 1 - 1e-6) return deny(kinText("영상 방향 또는 위치가 맞지 않습니다"));
     const origin = planes[0].imagePositionPatient, values = [];
     for (const p of planes) {
       const pn = normal(p);
-      if (!pn || Math.abs(dot(pn, t)) < 1 - 1e-6) return deny('영상 방향 또는 위치가 맞지 않습니다');
+      if (!pn || Math.abs(dot(pn, t)) < 1 - 1e-6) return deny(kinText("영상 방향 또는 위치가 맞지 않습니다"));
       const d = sub(p.imagePositionPatient, origin), z = dot(d, t);
       values.push(z);
     }
     const sorted = [...values].sort((a, b) => a - b), gaps = sorted.slice(1).map((x, i) => x - sorted[i]);
-    if (gaps.some(x => x < eps)) return deny('같은 위치의 영상이 중복되어 있습니다');
+    if (gaps.some(x => x < eps)) return deny(kinText("같은 위치의 영상이 중복되어 있습니다"));
     const z = dot(sub(a.imagePositionPatient, origin), t);
-    if (z < sorted[0] - eps || z > sorted.at(-1) + eps) return deny('대상 영상의 위치 범위를 벗어났습니다');
+    if (z < sorted[0] - eps || z > sorted.at(-1) + eps) return deny(kinText("대상 영상의 위치 범위를 벗어났습니다"));
     // Preserve native nearest-position and stable first-index tie behavior, but refuse large gaps.
     let index = 0;
     for (let i = 1; i < values.length; i++) if (Math.abs(values[i]-z) < Math.abs(values[index]-z) - 1e-9) index = i;
-    if (Math.abs(values[index]-z) > gaps.reduce((min, gap) => Math.min(min, gap), Infinity) / 2 + eps) return deny('대상 영상 위치 사이에 큰 공백이 있습니다');
+    if (Math.abs(values[index]-z) > gaps.reduce((min, gap) => Math.min(min, gap), Infinity) / 2 + eps) return deny(kinText("대상 영상 위치 사이에 큰 공백이 있습니다"));
     return { index, reason: '' };
   }
   return { match };
 })();
 
 function kinCreateCTSync() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, stop;
   function mount() {
     stop?.();
@@ -51,18 +55,18 @@ function kinCreateCTSync() {
     // changed. A refused or unanswered access check is not a logout: it keeps its own reason and a Recheck Access button, and
     // nothing moves until a later check confirms access.
     const TEXT = {
-      ended: '세션이 변경되었거나 종료되어 위치 동기를 중지했습니다. 다시 로그인한 뒤 뷰어를 여세요',
-      checking: '검사 접근 정보를 확인하는 중입니다. 확인한 뒤 위치 동기를 적용합니다',
-      confirmed: '검사 접근 정보를 확인했습니다. 위치 동기를 사용할 수 있습니다',
-      failed: '검사 접근 정보를 확인하지 못해 위치 동기를 멈췄습니다. 연결 상태를 확인한 뒤 다시 확인하세요',
-      denied: '이 계정으로 검사 접근 정보를 확인할 수 없어 위치 동기를 멈췄습니다. 권한을 확인한 뒤 다시 확인하세요',
-      changed: '계정의 역할이 바뀌어 위치 동기를 멈췄습니다. 검사 접근 정보를 다시 확인하세요',
+      ended: kinText("세션이 변경되었거나 종료되어 위치 동기를 중지했습니다. 다시 로그인한 뒤 뷰어를 여세요"),
+      checking: kinText("검사 접근 정보를 확인하는 중입니다. 확인한 뒤 위치 동기를 적용합니다"),
+      confirmed: kinText("검사 접근 정보를 확인했습니다. 위치 동기를 사용할 수 있습니다"),
+      failed: kinText("검사 접근 정보를 확인하지 못해 위치 동기를 멈췄습니다. 연결 상태를 확인한 뒤 다시 확인하세요"),
+      denied: kinText("이 계정으로 검사 접근 정보를 확인할 수 없어 위치 동기를 멈췄습니다. 권한을 확인한 뒤 다시 확인하세요"),
+      changed: kinText("계정의 역할이 바뀌어 위치 동기를 멈췄습니다. 검사 접근 정보를 다시 확인하세요"),
     };
     const notice = document.createElement('div'); notice.id = 'kin-ct-sync-status'; notice.setAttribute('role', 'status');
     notice.style.cssText = 'position:fixed;top:110px;left:50%;transform:translateX(-50%);z-index:42;max-width:70vw;padding:6px 10px;background:#101e32;color:#e1ecfc;border-radius:6px;font:13px sans-serif;pointer-events:none';
     // The notice lets the pointer through to the viewport under it; only its own button takes a click.
     const message = document.createElement('span'), recheck = document.createElement('button');
-    recheck.type = 'button'; recheck.id = 'kin-ct-sync-recheck'; recheck.textContent = 'Recheck Access'; recheck.title = '검사 접근 정보를 다시 확인합니다'; recheck.hidden = true;
+    recheck.type = 'button'; recheck.id = 'kin-ct-sync-recheck'; recheck.textContent = 'Recheck Access'; recheck.title = kinText("검사 접근 정보를 다시 확인합니다"); recheck.hidden = true;
     recheck.style.cssText = 'pointer-events:auto;margin-left:8px;min-height:24px;padding:2px 8px;border:1px solid #657c9f;border-radius:4px;background:#1b3252;color:#e1ecfc;font:13px sans-serif;cursor:pointer';
     notice.append(message, recheck); notice.hidden = true; document.body.append(notice);
     const controller = new AbortController(), search = location.search, created = new Set();
@@ -193,7 +197,7 @@ function kinCreateCTSync() {
         const sync = original(id, options), fire = sync.fireEvent;
         created.add(sync); let serial = 0;
         const destroy = sync.destroy;
-        sync.destroy = function (...args) { ++serial; created.delete(sync); if (!ended) say('위치 동기 꺼짐'); return destroy.apply(this, args); };
+        sync.destroy = function (...args) { ++serial; created.delete(sync); if (!ended) say(kinText("위치 동기 꺼짐")); return destroy.apply(this, args); };
         sync.fireEvent = async function (sourceInfo, event) {
           // Cells the reader tied by hand (Compare › Manual Sync) neither lead nor follow this position sync, in either
           // direction, while they stay tied; each event asks again, so a cell untied is synchronized again.
@@ -229,7 +233,7 @@ function kinCreateCTSync() {
               if (m.index >= 0) core.utilities.spatialRegistrationMetadataProvider.add([targets[i].viewportId, sourceInfo.viewportId], [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
             });
             const denied = matches.find(m => m.index < 0 && !m.manual);
-            if (!matches.length || matches.some(m => !m.manual)) say(denied ? '위치 동기 제한: '+denied.reason : '같은 좌표계의 스택 위치 동기');
+            if (!matches.length || matches.some(m => !m.manual)) say(denied ? kinText("위치 동기 제한: {0}", denied.reason) : kinText("같은 좌표계의 스택 위치 동기"));
             return fire.call(sync, sourceInfo, event);
           } catch (error) {
             // Session termination is owned by the page transport and gate.
@@ -238,7 +242,7 @@ function kinCreateCTSync() {
             // number, its synchronizer and the screen it fired on — so a dropped event's late 403 or network error cannot replace the
             // refusal, check or confirmation shown since (and its Recheck Access).
             if (!usable(mine) || sync.isDisabled() || ticket !== serial || !current(sourceInfo, source)) return;
-            say(error?.kind === 'denied' ? '위치 동기를 적용하지 못했습니다. 이 계정의 검사 접근 권한을 확인할 수 없습니다' : '위치 동기를 적용하지 못했습니다. 영상과 연결 상태를 확인하세요');
+            say(error?.kind === 'denied' ? kinText("위치 동기를 적용하지 못했습니다. 이 계정의 검사 접근 권한을 확인할 수 없습니다") : kinText("위치 동기를 적용하지 못했습니다. 영상과 연결 상태를 확인하세요"));
           }
         };
         return sync;

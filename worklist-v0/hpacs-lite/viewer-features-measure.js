@@ -14,6 +14,9 @@
 //   not being edited) cannot.
 // - Units: a length is in mm only where the image's spacing is known and the shown spacing is that spacing (planar-geometry.js,
 //   MG through mg-length.js, ultrasound through its Region Calibration); otherwise a tool says it cannot give mm.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   const cs = window.cornerstone, ct = window.cornerstoneTools;
   if (!cs?.utilities || !ct?.annotation?.state) return undefined;
@@ -68,34 +71,34 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   // The spacing of a measurement on an image, or a reason. points: image pixel coordinates that must share one spacing.
   // tags: the original's tags when the image has no instance metadata of its own (the Job print's offscreen copy).
   function geometry(imageId, points = [], tags = instance(imageId)) {
-    if (!tags) return { reason: '영상 정보를 확인할 수 없습니다' };
+    if (!tags) return { reason: kinText("영상 정보를 확인할 수 없습니다") };
     // A screen calibration: the cached image's, or the calibrated-spacing metadata the Calibration tool writes before the
     // image is loaded again (an ultrasound region or an "uncalibrated" answer is none).
     let written; try { written = cs.metaData.get('calibratedPixelSpacing', imageId); } catch (_) { written = undefined; }
     if (cs.cache?.getImage?.(imageId)?.calibration?.type || written?.type && !['Region', 'Uncalibrated'].includes(written.type))
-      return { reason: '보정한 간격의 영상에서는 mm 값을 내지 않습니다' };
+      return { reason: kinText("보정한 간격의 영상에서는 mm 값을 내지 않습니다") };
     const plane = cs.metaData.get('imagePlaneModule', imageId) || {};
     const us = typeof window.kinUsRegionGeometry === 'function' ? window.kinUsRegionGeometry(tags) : null;
     if (us) {
       const region = us.region(points);
-      if (!region) return { reason: '초음파 보정 영역 안에서만 mm로 잴 수 있습니다' };
+      if (!region) return { reason: kinText("초음파 보정 영역 안에서만 mm로 잴 수 있습니다") };
       return { spacing: region.spacing, basis: 'us', label: us.label };
     }
     try {
       const planar = window.kinPlanarGeometry(tags, frameOf(imageId));
-      if (Number(plane.rowPixelSpacing) !== planar.spacing[0] || Number(plane.columnPixelSpacing) !== planar.spacing[1]) return { reason: '표시 간격과 원본 간격이 일치하지 않습니다' };
+      if (Number(plane.rowPixelSpacing) !== planar.spacing[0] || Number(plane.columnPixelSpacing) !== planar.spacing[1]) return { reason: kinText("표시 간격과 원본 간격이 일치하지 않습니다") };
       return { spacing: planar.spacing, basis: planar.calculator.split(':')[1], label: planar.label };
-    } catch (_) { return { reason: '이 영상에서는 간격을 확인할 수 없습니다' }; }
+    } catch (_) { return { reason: kinText("이 영상에서는 간격을 확인할 수 없습니다") }; }
   }
 
   // ── The edit gate, asked before every press and every drag ──
   function gate(v, imageId) {
-    if (ended) return '뷰어가 닫혔습니다';
-    if (['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name))) return '환자를 바꾸는 중에는 표식을 만들거나 옮기지 않습니다';
+    if (ended) return kinText("뷰어가 닫혔습니다");
+    if (['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name))) return kinText("환자를 바꾸는 중에는 표식을 만들거나 옮기지 않습니다");
     // As the toolbar's own tools: not while a History or Job workspace is being restored or saved.
-    if ([window.kinViewerHistoryWorkspaceState?.(), window.kinViewerJobWorkspaceState?.()].some(state => state?.busy)) return '영상 작업을 불러오거나 저장하는 중입니다. 완료 후 다시 누르세요';
-    if (!v || v.type !== 'stack' || !imageId) return '원본 프레임 화면(일반 영상 칸)에서 누르세요';
-    if (typeof window.kinViewerHistoryMarkGate !== 'function') return '측정 기록을 확인할 수 없어 표식을 만들지 않습니다';
+    if ([window.kinViewerHistoryWorkspaceState?.(), window.kinViewerJobWorkspaceState?.()].some(state => state?.busy)) return kinText("영상 작업을 불러오거나 저장하는 중입니다. 완료 후 다시 누르세요");
+    if (!v || v.type !== 'stack' || !imageId) return kinText("원본 프레임 화면(일반 영상 칸)에서 누르세요");
+    if (typeof window.kinViewerHistoryMarkGate !== 'function') return kinText("측정 기록을 확인할 수 없어 표식을 만들지 않습니다");
     return window.kinViewerHistoryMarkGate(imageId) || '';
   }
 
@@ -210,7 +213,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     const ring = Array.from({ length: 73 }, (_, i) => canvas([center[0] + rx * Math.cos(i * Math.PI / 36), center[1] + ry * Math.sin(i * Math.PI / 36)]));
     svg('polyline', g, { points: ring.map(p => p.join(',')).join(' '), fill: 'none', stroke: color, 'stroke-width': look.width, ...look.line });
     const right = Math.max(...ring.map(p => p[0])), top = Math.min(...ring.map(p => p[1]));
-    const lines = check.reason ? [check.reason] : model ? model.circleLines(a.data.kinBaseline?.values, a.data.kinBaseline?.calculator?.endsWith(':hu') ? 'HU' : '', check.label) : [];
+    const lines = check.reason ? [check.reason] : model ? model.circleLines(a.data.kinBaseline?.values, a.data.kinBaseline?.calculator?.endsWith(':hu') ? 'HU' : '', check.label && kinText(check.label)) : [];
     lines.forEach((line, i) => label(g, right + 6, top + 12 + i * size14(look), line, look, check.reason ? '#ff6b6b' : color));
     if (editable) { const [x, y] = canvas(center); handle(g, a, x, y, look, color); }
   });
@@ -225,7 +228,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     let shape = shapeOf(found.spacing);
     if (found.basis === 'us') {
       found = geometry(imageId, [center, [center[0] - shape.rx, center[1]], [center[0] + shape.rx, center[1]], [center[0], center[1] - shape.ry], [center[0], center[1] + shape.ry]], tags);
-      if (found.reason) return { reason: '원이 초음파 보정 영역을 벗어납니다' };
+      if (found.reason) return { reason: kinText("원이 초음파 보정 영역을 벗어납니다") };
       shape = shapeOf(found.spacing);
     }
     const image = cs.cache?.getImage?.(imageId);
@@ -255,11 +258,11 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     try {
       const center = toImage(imageId, a.data.handles.points[0]), stored = a.data.kinBaseline;
       const now = stored && circleValues(imageId, center, stored.values?.[0]);
-      if (!now || now.reason) result = { reason: '재확인 필요: ' + (now?.reason || '값을 확인할 수 없습니다') };
+      if (!now || now.reason) result = { reason: kinText("재확인 필요: {0}", (now?.reason || kinText("값을 확인할 수 없습니다"))) };
       else if (now.calculator !== stored.calculator || now.values.length !== stored.values.length || now.values.some((n, i) => Math.abs(n - stored.values[i]) > Math.max(1e-6, Math.abs(n) * 1e-9)))
-        result = { reason: '재확인 필요: 저장 당시 값과 다릅니다', shape: now.shape };
+        result = { reason: kinText("재확인 필요: 저장 당시 값과 다릅니다"), shape: now.shape };
       else result = { shape: now.shape, label: now.label };
-    } catch (error) { result = { reason: '재확인 필요: ' + error.message }; }
+    } catch (error) { result = { reason: kinText("재확인 필요: {e0}", error.message) }; }
     checks.set(a.annotationUID, { key, result });
     return result;
   }
@@ -270,21 +273,21 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     event.preventDefault(); event.stopPropagation();
     const v = viewports().find(view => imageOf(view) === a.metadata.referencedImageId && layers.get(view.id)?.layer.contains(event.target));
     const imageId = v && imageOf(v);
-    const reason = locked(a) ? '저장한 표식은 측정 기록의 Edit를 누른 뒤 옮깁니다' : gate(v, imageId);
+    const reason = locked(a) ? kinText("저장한 표식은 측정 기록의 Edit를 누른 뒤 옮깁니다") : gate(v, imageId);
     if (reason) { say(reason); return; }
     drag = { a, v, imageId, start: a.data.handles.points.map(p => [...p]), baseline: a.data.kinBaseline ? structuredClone(a.data.kinBaseline) : undefined,
       from: toImage(imageId, v.canvasToWorld(canvasPoint(v, event))), moved: false };
   }
   function dragTo(event, done) {
     const { a, v, imageId } = drag;
-    const reason = !ct.annotation.state.getAnnotation(a.annotationUID) ? '표식이 없어졌습니다' : locked(a) ? '표식이 잠겼습니다' : imageOf(v) !== imageId ? '영상이 바뀌어 옮기기를 멈췄습니다' : gate(v, imageId);
+    const reason = !ct.annotation.state.getAnnotation(a.annotationUID) ? kinText("표식이 없어졌습니다") : locked(a) ? kinText("표식이 잠겼습니다") : imageOf(v) !== imageId ? kinText("영상이 바뀌어 옮기기를 멈췄습니다") : gate(v, imageId);
     if (reason) return cancelDrag(reason);
     const at = toImage(imageId, v.canvasToWorld(canvasPoint(v, event))), delta = [at[0] - drag.from[0], at[1] - drag.from[1]];
     const moved = drag.start.map(p => { const q = toImage(imageId, p); return [q[0] + delta[0], q[1] + delta[1]]; });
-    if (!moved.every(p => insideImage(imageId, p))) return done ? cancelDrag('영상 밖으로는 옮기지 않습니다') : undefined;
+    if (!moved.every(p => insideImage(imageId, p))) return done ? cancelDrag(kinText("영상 밖으로는 옮기지 않습니다")) : undefined;
     // A circle's values follow it: computed again at every position; one where they cannot be is not taken.
     if (a.metadata.toolName === TOOLS.circle) {
-      const next = model ? circleValues(imageId, moved[0], a.data.kinBaseline?.values?.[0]) : { reason: '측정 계산을 불러오지 못했습니다' };
+      const next = model ? circleValues(imageId, moved[0], a.data.kinBaseline?.values?.[0]) : { reason: kinText("측정 계산을 불러오지 못했습니다") };
       if (next.reason) return done ? cancelDrag(next.reason) : undefined;
       a.data.kinBaseline = { calculator: next.calculator, values: next.values };
       a.data.handles.points = [toWorld(imageId, next.shape.center), toWorld(imageId, next.shape.edge)];
@@ -332,7 +335,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     const body = panel.body;
     if (spec.note) el('p', spec.note, body);
     const fields = el('div', '', body); fields.dataset.measureFields = spec.id;
-    el('b', '단계 (영상을 누르세요)', body);
+    el('b', kinText("단계 (영상을 누르세요)"), body);
     const list = el('ol', '', body); list.dataset.measureSteps = spec.id;
     const result = el('p', '', body, { 'data-measure-result': spec.id }); result.style.fontWeight = '600';
     const status = el('p', '', body, { role: 'status' });
@@ -359,17 +362,17 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     event.preventDefault(); event.stopImmediatePropagation();
     const tool = active, imageId = imageOf(v), reason = gate(v, imageId);
     if (reason) { tool.status.textContent = reason; return; }
-    if (!model) { tool.status.textContent = '측정 계산을 불러오는 중입니다. 잠시 뒤 다시 누르세요.'; return; }
+    if (!model) { tool.status.textContent = kinText("측정 계산을 불러오는 중입니다. 잠시 뒤 다시 누르세요."); return; }
     const world = v.canvasToWorld(canvasPoint(v, event)), image = toImage(imageId, world);
-    if (!insideImage(imageId, image)) { tool.status.textContent = '영상 안을 누르세요'; return; }
+    if (!insideImage(imageId, image)) { tool.status.textContent = kinText("영상 안을 누르세요"); return; }
     // The points of one mark are on one image: a press on another image starts the mark again there.
-    if (tool.presses.length && tool.presses[0].imageId !== imageId) { tool.presses = []; tool.status.textContent = '다른 영상을 눌러 그 영상에서 다시 시작합니다'; }
+    if (tool.presses.length && tool.presses[0].imageId !== imageId) { tool.presses = []; tool.status.textContent = kinText("다른 영상을 눌러 그 영상에서 다시 시작합니다"); }
     else tool.status.textContent = '';
     tool.presses.push({ viewportId: v.id, v, imageId, world, image });
     if (tool.presses.length >= total(tool.spec.steps)) {
       const presses = tool.presses; tool.presses = [];
       let outcome;
-      try { outcome = tool.spec.complete(tool, presses); } catch (error) { outcome = error.message || '표식을 만들지 못했습니다'; }
+      try { outcome = tool.spec.complete(tool, presses); } catch (error) { outcome = error.message || kinText("표식을 만들지 못했습니다"); }
       if (typeof outcome === 'string' && outcome) tool.status.textContent = outcome;
     }
     tool.refresh();
@@ -385,12 +388,12 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   const imageEvents = [cs.Enums?.Events?.IMAGE_RENDERED, cs.Enums?.Events?.CAMERA_MODIFIED, cs.Enums?.Events?.STACK_NEW_IMAGE].filter(Boolean);
   // Another image in a cell: a drag on it stops, and the points of an unfinished mark are dropped (they belong to one image).
   function imageChanged() {
-    if (drag && imageOf(drag.v) !== drag.imageId) cancelDrag('영상이 바뀌어 옮기기를 멈췄습니다');
+    if (drag && imageOf(drag.v) !== drag.imageId) cancelDrag(kinText("영상이 바뀌어 옮기기를 멈췄습니다"));
     const first = active?.presses[0];
     if (first) {
       const v = viewports().find(view => view.id === first.viewportId);
       if (!v || imageOf(v) !== first.imageId || ['kin-patient-switching', 'kin-viewer-empty'].some(name => document.body.classList.contains(name))) {
-        active.presses = []; active.status.textContent = '영상이 바뀌어 그리던 표식의 점을 지웠습니다'; active.refresh();
+        active.presses = []; active.status.textContent = kinText("영상이 바뀌어 그리던 표식의 점을 지웠습니다"); active.refresh();
       }
     }
     schedule();
@@ -409,20 +412,20 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
 
   const circle = {
     id: 'measure-circle-diameter', title: 'Circle by Diameter',
-    note: '지름(mm)을 넣고 영상에서 원의 가운데를 누르면 그 크기의 원형 ROI와 통계가 나옵니다.',
-    steps: [{ text: '원의 가운데를 누르세요', points: 1 }],
+    note: kinText("지름(mm)을 넣고 영상에서 원의 가운데를 누르면 그 크기의 원형 ROI와 통계가 나옵니다."),
+    steps: [{ text: kinText("원의 가운데를 누르세요"), points: 1 }],
     fields(body, tool) {
       const input = el('input', '', null, { type: 'number', min: '1', step: '0.5', 'aria-label': 'Diameter mm' }); input.value = '10'; input.style.width = '6em';
       const wrap = field(body, 'Diameter', input); wrap.after(' mm'); tool.state.input = input;
     },
     complete(tool, [press]) {
       const diameter = Number(tool.state.input.value);
-      if (!Number.isFinite(diameter) || diameter <= 0 || diameter > 1000) return '지름을 0보다 크고 1000 mm 이하로 넣으세요';
+      if (!Number.isFinite(diameter) || diameter <= 0 || diameter > 1000) return kinText("지름을 0보다 크고 1000 mm 이하로 넣으세요");
       const found = circleValues(press.imageId, press.image, diameter);
-      if (found.reason) return found.reason === '이 영상에서는 간격을 확인할 수 없습니다' ? '이 영상에서는 mm 지름을 쓸 수 없습니다' : found.reason;
+      if (found.reason) return found.reason === kinText('이 영상에서는 간격을 확인할 수 없습니다') ? kinText("이 영상에서는 mm 지름을 쓸 수 없습니다") : found.reason;
       stamp(tool, press, TOOLS.circle, [toWorld(press.imageId, found.shape.center), toWorld(press.imageId, found.shape.edge)],
         { kinBaseline: { calculator: found.calculator, values: found.values } });
-      tool.state.last = model.circleLines(found.values, found.calculator.endsWith(':hu') ? 'HU' : '', found.label).join(' · ');
+      tool.state.last = model.circleLines(found.values, found.calculator.endsWith(':hu') ? 'HU' : '', found.label && kinText(found.label)).join(' · ');
       return '';
     },
     result: tool => tool.state.last ? 'Result: ' + tool.state.last : '',
@@ -430,11 +433,10 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
 
   // The names to stamp, in order, for the panel's choices (measure-tools-model.js spineOrder: vertebrae, discs or both).
   const spineOrderOf = s => model?.spineOrder({ start: s.start, includeC8: s.c8, includeL6: s.l6, direction: s.direction, labels: s.labels })?.order || [];
-  const SPINE_STEPS = { Vertebrae: '척추체를 차례로 누르세요', Discs: '디스크를 차례로 누르세요', 'Vertebrae and Discs': '척추체와 디스크를 차례로 누르세요' };
+  const SPINE_STEPS = { Vertebrae: kinText("척추체를 차례로 누르세요"), Discs: kinText("디스크를 차례로 누르세요"), 'Vertebrae and Discs': kinText("척추체와 디스크를 차례로 누르세요") };
   const spine = {
     id: 'measure-spine-label', title: 'Spine Label',
-    note: '시작 레벨을 고르고 척추체를 차례로 누르면 누를 때마다 다음 레벨 이름이 붙습니다. C8·L6은 이행 척추를 넣을 때 고릅니다. ' +
-      'Labels에서 Discs를 고르면 디스크 이름(C2-3 … L4-5, L5-S1)이, Vertebrae and Discs를 고르면 척추체와 그 아래 디스크가 번갈아 붙습니다.',
+    note: kinText("시작 레벨을 고르고 척추체를 차례로 누르면 누를 때마다 다음 레벨 이름이 붙습니다. C8·L6은 이행 척추를 넣을 때 고릅니다. Labels에서 Discs를 고르면 디스크 이름(C2-3 … L4-5, L5-S1)이, Vertebrae and Discs를 고르면 척추체와 그 아래 디스크가 번갈아 붙습니다."),
     // The step names what the chosen labels mark (the panel open is the one asking).
     get steps() { return [{ text: SPINE_STEPS[active?.spec === spine && active.state.labels] || SPINE_STEPS.Vertebrae, points: 1 }]; },
     fields(body, tool) {
@@ -465,7 +467,7 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     },
     complete(tool, [press]) {
       const s = tool.state, order = spineOrderOf(s);
-      if (s.next >= order.length) return '마지막 레벨까지 붙였습니다. Restart로 다시 시작하거나 시작 레벨을 바꾸세요';
+      if (s.next >= order.length) return kinText("마지막 레벨까지 붙였습니다. Restart로 다시 시작하거나 시작 레벨을 바꾸세요");
       stamp(tool, press, TOOLS.spine, [press.world], { text: order[s.next] });
       s.next++;
       return '';
@@ -479,8 +481,8 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
 
   const marking = {
     id: 'measure-marking', title: 'Marking',
-    note: '목록에서 문구를 고르고 영상을 누르면 그 자리에 찍힙니다. 새 문구를 목록에 더할 수 있습니다(계정에 저장).',
-    steps: [{ text: '고른 문구를 찍을 자리를 누르세요', points: 1 }],
+    note: kinText("목록에서 문구를 고르고 영상을 누르면 그 자리에 찍힙니다. 새 문구를 목록에 더할 수 있습니다(계정에 저장)."),
+    steps: [{ text: kinText("고른 문구를 찍을 자리를 누르세요"), points: 1 }],
     fields(body, tool) {
       const s = tool.state; s.list = [];
       const list = el('select', '', body, { size: '6', 'aria-label': 'Marking Text List' }); list.style.width = '100%';
@@ -498,8 +500,8 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
       const save = async (next, choose) => {
         const before = s.list; s.list = next; paint(choose);
         const saved = await store.set('markingTexts', next);
-        if (!saved) { tool.status.textContent = '목록을 저장하지 못했습니다. 다시 시도하세요.'; s.list = model.markingList(store.get('markingTexts') ?? before); paint(); }
-        else if (!store.writable()) tool.status.textContent = '이 창에서만 적용합니다(저장하지 않는 세션).';
+        if (!saved) { tool.status.textContent = kinText("목록을 저장하지 못했습니다. 다시 시도하세요."); s.list = model.markingList(store.get('markingTexts') ?? before); paint(); }
+        else if (!store.writable()) tool.status.textContent = kinText("이 창에서만 적용합니다(저장하지 않는 세션).");
       };
       addButton.onclick = () => {
         if (!model) return;
@@ -512,27 +514,27 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     },
     complete(tool, [press]) {
       const text = tool.state.chosen();
-      if (!text) return '목록에서 문구를 고르세요';
+      if (!text) return kinText("목록에서 문구를 고르세요");
       stamp(tool, press, TOOLS.text, [press.world], { text });
       return '';
     },
   };
 
   const plainText = {
-    id: 'measure-text', title: 'Text', note: '화살표 없이 글만 영상 위에 놓습니다. 글을 넣고 영상을 누르세요.',
-    steps: [{ text: '글을 놓을 자리를 누르세요', points: 1 }],
+    id: 'measure-text', title: 'Text', note: kinText("화살표 없이 글만 영상 위에 놓습니다. 글을 넣고 영상을 누르세요."),
+    steps: [{ text: kinText("글을 놓을 자리를 누르세요"), points: 1 }],
     fields(body, tool) { el('div', 'Text', body); tool.state.text = textarea(body, 'Text'); },
     complete(tool, [press]) {
       const text = model.cleanText(tool.state.text.value);
-      if (!text) return '글을 넣은 뒤 영상을 누르세요(' + model.TEXT_LIMIT + '자까지)';
+      if (!text) return kinText("글을 넣은 뒤 영상을 누르세요({0}자까지)", model.TEXT_LIMIT);
       stamp(tool, press, TOOLS.text, [press.world], { text });
       return '';
     },
   };
 
   const memo = {
-    id: 'measure-memo', title: 'Memo', note: '제목과 글을 넣고 영상을 누르면 제목 달린 메모 상자가 붙습니다.',
-    steps: [{ text: '메모를 붙일 자리를 누르세요', points: 1 }],
+    id: 'measure-memo', title: 'Memo', note: kinText("제목과 글을 넣고 영상을 누르면 제목 달린 메모 상자가 붙습니다."),
+    steps: [{ text: kinText("메모를 붙일 자리를 누르세요"), points: 1 }],
     fields(body, tool) {
       tool.state.title = field(body, 'Title', el('input', '', null, { 'aria-label': 'Memo Title', maxlength: '200' }));
       el('div', 'Text', body); tool.state.text = textarea(body, 'Memo Text');
@@ -540,8 +542,8 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
     complete(tool, [press]) {
       const title = tool.state.title.value.trim(), raw = tool.state.text.value.trim();
       const text = raw ? model.cleanText(raw) : '';
-      if (title && !model.cleanText(title, model.TITLE_LIMIT) || text === null) return '제목은 ' + model.TITLE_LIMIT + '자, 글은 ' + model.TEXT_LIMIT + '자까지입니다';
-      if (!title && !text) return '제목이나 글을 넣은 뒤 영상을 누르세요';
+      if (title && !model.cleanText(title, model.TITLE_LIMIT) || text === null) return kinText("제목은 {0}자, 글은 {1}자까지입니다", model.TITLE_LIMIT, model.TEXT_LIMIT);
+      if (!title && !text) return kinText("제목이나 글을 넣은 뒤 영상을 누르세요");
       stamp(tool, press, TOOLS.memo, [press.world], { text, title });
       return '';
     },
@@ -555,14 +557,14 @@ window.KinViewerFeatures?.module('measure', ({ services, store, ui }) => {
   window.KinMeasureFrame = { open, renderer: (toolName, fn) => { renderers.set(toolName, fn); schedule(); }, geometry, gate, toImage, toWorld, addMark, removeMark, label, handle, svg,
     overlay: entry => { overlays.add(entry); schedule(); return () => { overlays.delete(entry); schedule(); }; },
     locked, viewports, imageOf, canvasPoint, insideImage, instance, schedule,
-    circleValues: (imageId, center, diameter, tags) => model ? circleValues(imageId, center, diameter, tags ?? instance(imageId)) : { reason: '측정 계산을 불러오지 못했습니다' },
+    circleValues: (imageId, center, diameter, tags) => model ? circleValues(imageId, center, diameter, tags ?? instance(imageId)) : { reason: kinText("측정 계산을 불러오지 못했습니다") },
     // The History panel's check before it saves a mark: '' when a mark's stored values are those of its place now. A circle is
     // checked here; another measuring module registers the check of its own marks (verifier gives back its unregistering).
     // required: the mark has values, so a mark with no registered check is refused.
     verify: (a, required = false) => {
       const name = a?.metadata?.toolName, check = verifiers.get(name);
-      if (name === TOOLS.circle) return !model ? '측정 계산을 불러오지 못했습니다' : circleCheck(a, a.metadata.referencedImageId, true).reason || '';
-      return check ? String(check(a) || '') : required ? '이 표식의 값을 다시 확인할 수 없습니다' : '';
+      if (name === TOOLS.circle) return !model ? kinText("측정 계산을 불러오지 못했습니다") : circleCheck(a, a.metadata.referencedImageId, true).reason || '';
+      return check ? String(check(a) || '') : required ? kinText("이 표식의 값을 다시 확인할 수 없습니다") : '';
     },
     verifier: (toolName, fn) => { verifiers.set(toolName, fn); return () => { if (verifiers.get(toolName) === fn) verifiers.delete(toolName); }; },
     model: () => model };

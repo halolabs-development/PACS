@@ -2,7 +2,7 @@
 (function(root){
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const validUid=value=>typeof value==='string'&&value.length<=64&&/^\d+(?:\.\d+)+$/.test(value);
   // null is the server's "unknown" (tag absent or non-integer in QIDO). It is neither 0 nor an
   // error: a snapshot that carries it is still comparable on the axes that are known.
@@ -140,44 +140,44 @@
     return {state:'outside_list'};
   }
 
-  function kinHeld(count,at,format){return count===null?'HALO PACS 보유 개수 모름('+format(at)+')':'HALO PACS 보유 '+count+'건('+format(at)+')';}
+  function kinHeld(count,at,format){return count===null?kinSayEn('HALO PACS 보유 개수 모름({0})',format(at)):kinSayEn('HALO PACS 보유 {n0}건({1})',count,format(at));}
 
   function assignmentLabel(value){
-    if(value==='assigned')return {key:'assigned',text:'Institution Assigned',title:'검사가 기관에 연결되어 있습니다. 영상 수신 상태가 아닙니다.'};
+    if(value==='assigned')return {key:'assigned',text:'Institution Assigned',title:kinSayEn('검사가 기관에 연결되어 있습니다. 영상 수신 상태가 아닙니다.')};
     if(value==='unassigned')return {key:'unassigned',text:'Institution Unmatched',
-      title:'DICOM 기관명이 등록된 별칭과 맞지 않아 기관이 정해지지 않았습니다. 영상 수신 상태가 아닙니다.'};
+      title:kinSayEn('DICOM 기관명이 등록된 별칭과 맞지 않아 기관이 정해지지 않았습니다. 영상 수신 상태가 아닙니다.')};
     throw new TypeError('assignment');
   }
 
   function observationLabel(b,format){
     if(b.state==='observed')return {key:'observed',text:kinHeld(b.count,b.observedAt,format),
-      title:'성공한 HALO PACS 관측 시각의 보유 개수입니다.'+(b.count===null?' 개수 태그가 없거나 정수가 아니어서 알 수 없습니다.':'')};
+      title:kinSayEn('성공한 HALO PACS 관측 시각의 보유 개수입니다.{t0}',{t:b.count===null?kinSayEn(' 개수 태그가 없거나 정수가 아니어서 알 수 없습니다.'):''})};
     if(b.state==='not_observed')return {key:'not_observed',text:'Not Observed('+format(b.observedAt)+')',
-      title:'성공한 HALO PACS 관측에 이 검사의 영상 행이 없습니다. 예고만 된 검사·아직 저장 전·제거된 검사를 구분하지 않습니다.'};
+      title:kinSayEn('성공한 HALO PACS 관측에 이 검사의 영상 행이 없습니다. 예고만 된 검사·아직 저장 전·제거된 검사를 구분하지 않습니다.')};
     if(b.state==='observation_unavailable')return {key:'observation_unavailable',
       text:PHRASES.observationUnavailable+(!b.last?'':b.last.notObserved?' · 마지막 관측('+format(b.last.observedAt)+') Not Observed':' · 마지막 '+kinHeld(b.last.count,b.last.observedAt,format)),
-      title:'HALO PACS 관측 요청이 실패했습니다. 마지막으로 성공한 관측값과 그 시각을 그대로 보여 줍니다.'};
-    if(b.state==='outside_list')return {key:'outside_list',text:'Outside Observed List',title:'이번 관측 목록에 없는 검사입니다. 삭제나 감소로 보지 않습니다.'};
+      title:kinSayEn('HALO PACS 관측 요청이 실패했습니다. 마지막으로 성공한 관측값과 그 시각을 그대로 보여 줍니다.')};
+    if(b.state==='outside_list')return {key:'outside_list',text:'Outside Observed List',title:kinSayEn('이번 관측 목록에 없는 검사입니다. 삭제나 감소로 보지 않습니다.')};
     if(b.state==='not_attempted')return {key:'not_attempted',text:'',title:''};
     throw new TypeError('observation');
   }
 
   function changeLabel(b,format){
     if(b.state!=='observed'||!b.change)return null;
-    const since=format(b.change.since),context='이 세션에서 관측한 변화';
-    if(b.change.kind==='increased')return {key:'increased',text:context+': 증가('+since+' 이후)'};
-    if(b.change.kind==='decreased')return {key:'decreased',text:context+': 감소('+since+' 이후) · Needs Check'};
-    if(b.change.kind==='no_observed_change')return {key:'no_observed_change',text:context+' 없음('+since+' 이후)'};
+    const since=format(b.change.since),context=kinSayEn('이 세션에서 관측한 변화');
+    if(b.change.kind==='increased')return {key:'increased',text:kinSayEn('{0}: 증가({1} 이후)',context,since)};
+    if(b.change.kind==='decreased')return {key:'decreased',text:kinSayEn('{0}: 감소({1} 이후) · Needs Check',context,since)};
+    if(b.change.kind==='no_observed_change')return {key:'no_observed_change',text:kinSayEn('{0} 없음({1} 이후)',context,since)};
     throw new TypeError('change');
   }
 
   const count=value=>Number.isSafeInteger(value)&&value>=0;
   function gatewayLabel(receipt,b,format){
     if(receipt===null||receipt===undefined)return {label:{key:'none',text:'No Gateway Report',
-      title:'Gateway 전송 보고가 없습니다. 장비 직송·이전 버전 agent·미설치에서도 정상이며 실패나 오프라인을 뜻하지 않습니다.'},reasons:[]};
+      title:kinSayEn('Gateway 전송 보고가 없습니다. 장비 직송·이전 버전 agent·미설치에서도 정상이며 실패나 오프라인을 뜻하지 않습니다.')},reasons:[]};
     const M=receipt?.successCount,N=receipt?.localCount;
     if(typeof receipt!=='object'||!PHASES.includes(receipt.phase)||!count(M)||!count(N)||M>N||!validTime(receipt.serverReceivedAt))
-      return {label:{key:'reported_unreadable',text:'Gateway 보고 형식을 확인할 수 없습니다',title:'보고 내용을 해석하지 못해 비교하지 않았습니다.'},reasons:['receipt_unreadable']};
+      return {label:{key:'reported_unreadable',text:kinSayEn('Gateway 보고 형식을 확인할 수 없습니다'),title:kinSayEn('보고 내용을 해석하지 못해 비교하지 않았습니다.')},reasons:['receipt_unreadable']};
     const reasons=[];
     // K<M is receiptGap's answer, the one the Technician list and the Info panel draw; null K is never read as zero.
     // The title says why it did not compare exactly when that answer did not (count unknown, or read before this report),
@@ -186,9 +186,9 @@
     const gap=receiptGap(b,receipt,format),comparable=gap!==null&&!gap.pending&&gap.held!==null;
     if(gap?.missing&&!gap.stale)reasons.push(b.state==='observed'?'kin_below_reported':'not_observed_with_reported_transfer');
     if(b.changedAt&&Date.parse(receipt.serverReceivedAt)<Date.parse(b.changedAt))reasons.push('receipt_older_than_change');
-    return {label:{key:'reported',text:'Gateway 보고('+format(receipt.serverReceivedAt)+'): Gateway가 집계한 '+N+'건 중 '+M+'건 전송',
-      title:'Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.'+(comparable?'':gap?.pending&&gap.held!==null
-        ?' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.':' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')},reasons};
+    return {label:{key:'reported',text:kinSayEn('Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송',format(receipt.serverReceivedAt),N,M),
+      title:kinSayEn('Gateway가 보고한 전송 수입니다. 검사 종료나 영상 수신 여부를 뜻하지 않습니다.{t0}',{t:comparable?'':gap?.pending&&gap.held!==null
+        ?kinSayEn(' 이 보고는 목록 조회가 시작된 뒤 도착해 다음 관측에서 HALO PACS 보유 개수와 비교합니다.'):kinSayEn(' HALO PACS 보유 개수를 알 수 없어 비교하지 않았습니다.')})},reasons};
   }
 
   /*
@@ -403,12 +403,12 @@
     const tail=needsCheck?' · Needs Check '+needsCheck:'';
     if(m.available===false)return {key:'observation_unavailable',
     text:kinSay('{t0}{t1}{t2}',{t:PHRASES.observationUnavailable},{t:m.observedAt?kinSay(' · 마지막 관측 {0} 유지',format(m.observedAt)):''},{t:tail}),
-      title:m.observedAt?'HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 HALO PACS 관측이 없습니다. 개수를 표시하지 않습니다.',
+      title:kinSayEn(m.observedAt?'HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 HALO PACS 관측이 없습니다. 개수를 표시하지 않습니다.'),
       notObserved:m.notObserved,needsCheck};
     if(m.available!==true)return {key:'not_attempted',text:'',title:'',notObserved:null,needsCheck};
   const absent=m.notObserved===null?' · Not Observed Unknown':m.notObserved.length?kinSay(' · Not Observed {n0}',m.notObserved.length):'';
   return {key:'observed',text:kinSay('Observed {0}{t1}{t2}',format(m.observedAt),{t:absent},{t:tail}),
-      title:'HALO PACS가 이 시각에 성공한 관측으로 확인한 목록입니다.'+(m.notObserved===null?' 이번 관측으로는 부재를 판정하지 못했습니다.':''),
+      title:kinSayEn('HALO PACS가 이 시각에 성공한 관측으로 확인한 목록입니다.{t0}',{t:m.notObserved===null?kinSayEn(' 이번 관측으로는 부재를 판정하지 못했습니다.'):''}),
       notObserved:m.notObserved,needsCheck};
   }
 

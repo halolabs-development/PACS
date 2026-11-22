@@ -1,6 +1,9 @@
 /* Personal saved-search editor. Opening or editing never applies a worklist filter. */
 (function () {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   window.KinSavedFilterManager = { mount };
 
   function mount(options) {
@@ -87,6 +90,7 @@
       </footer>
       <p id="sfm-status" role="status" aria-live="polite" tabindex="-1"></p>`;
     document.body.append(dialog);
+    window.KinLanguage?.markup?.(dialog);
     const $ = id => dialog.querySelector('#sfm-' + id);
     let selected = null, source = {}, baseline = '', busy = false, opener = null, editable = true;
     let copying = false, visibleNames = [], missingName = null, cursor = null;
@@ -197,7 +201,7 @@
         input.dataset.col = c.k; input.id = 'sfm-col-' + c.k;
         if (c.f !== 'text' && c.k !== 'modality') choices(input, [['', 'All'], ...c.f.map(v => [v, v])], filter.cols?.[c.k] ?? '');
         else input.value = filter.cols?.[c.k] ?? '';
-        if (c.k === 'modality') { input.placeholder = 'CT, MR'; input.title = '검사의 Modality 목록에 입력한 값 중 하나가 있으면 포함합니다. CT는 CT,SR 검사도 포함하며, CT, MR은 CT 또는 MR을 뜻합니다.'; }
+        if (c.k === 'modality') { input.placeholder = 'CT, MR'; kinWrite(input, kinSayEn("검사의 Modality 목록에 입력한 값 중 하나가 있으면 포함합니다. CT는 CT,SR 검사도 포함하며, CT, MR은 CT 또는 MR을 뜻합니다."), "title"); }
         label.append(input); return label;
       }));
       const sort = cols.some(c => c.k === filter.sortKey) ? filter.sortKey : '';
@@ -238,7 +242,7 @@
       const visibility = () => {
         const relative = operator.value === 'withinLastDays';
         if (field?.type === 'date') input.type = relative ? 'number' : 'date';
-        if (relative) { input.min = '0'; input.max = '365'; input.step = '1'; input.title = '오늘을 포함해 로컬 자정부터 계산합니다. 0은 오늘, 1은 어제부터입니다 (0~365).'; }
+        if (relative) { input.min = '0'; input.max = '365'; input.step = '1'; kinWrite(input, kinSayEn("오늘을 포함해 로컬 자정부터 계산합니다. 0은 오늘, 1은 어제부터입니다 (0~365)."), "title"); }
         else { input.removeAttribute('min'); input.removeAttribute('max'); input.removeAttribute('step'); input.title = modalityList ? modalityHelp[operator.value] || '' : ''; }
         preset.parentElement.hidden = !relative;
         input.parentElement.hidden = ['empty', 'notEmpty'].includes(operator.value);
@@ -294,9 +298,7 @@
       const modalityError = dialog.querySelector('[data-col="modality"]')?.validationMessage;
       const error = modalityError || compound.validate(filter.cols[compound.KEY], options.columns[filter.mode]);
       const note = error ? '' : options.countNote?.(filter) || '';
-      $('count').textContent = modalityError ? (commitModality ? 'Modality 오류: ' + modalityError : '')
-        : error ? '복합 조건 오류: ' + error
-        : `편집 중 조건: 로드된 목록 기준 ${options.count(filter)}건 · 기본 조건 AND 복합 조건을 적용합니다.` + (note ? ' · ' + note : '');
+      kinWrite($('count'), modalityError ? commitModality ? kinSayEn("Modality 오류: {0}", modalityError) : '' : error ? kinSayEn("복합 조건 오류: {0}", error) : kinSayEn("편집 중 조건: 로드된 목록 기준 {0}건 · 기본 조건 AND 복합 조건을 적용합니다.{1}", options.count(filter), (note ? ' · ' + note : '')));
       $('count').classList.toggle('sfm-error', !!error && (!modalityError || commitModality));
       const parts = options.bodyParts;
       $('body-parts').hidden = !parts || !compound.usesField(filter.cols[compound.KEY], 'bodyPart', options.columns[filter.mode]);
@@ -330,8 +332,7 @@
       $('heading').textContent = isNew ? 'New Search' : 'Edit Saved Search';
       $('name').value = isNew ? '' : filter.name;
       $('name').readOnly = !isNew;
-      $('name-hint').textContent = isNew ? '같은 계정에서는 폴더가 달라도 이름이 같으면 기존 검색을 덮어씁니다. 변경하지 않은 분류 정보는 유지합니다.'
-        : '기존 검색 이름은 유지됩니다. 조건을 바꾸고 ‘Save’를 누르세요.';
+      kinWrite($('name-hint'), isNew ? kinSayEn("같은 계정에서는 폴더가 달라도 이름이 같으면 기존 검색을 덮어씁니다. 변경하지 않은 분류 정보는 유지합니다.") : kinSayEn("기존 검색 이름은 유지됩니다. 조건을 바꾸고 ‘Save’를 누르세요."));
       $('quick').value = filter.quick ?? ''; $('mode').value = filter.mode;
       $('quick-match').value = compound.quickMode(filter.cols?.[compound.KEY]);
       $('folder').value = typeof filter.folder === 'string' ? filter.folder : '';
@@ -411,7 +412,7 @@
         node.filters.forEach(f => container.append(searchButton(f)));
       }
       $('list').replaceChildren(); branch(root, $('list'));
-      if (!filters.length && !root.children.size) $('list').textContent = query ? '일치하는 저장 검색이 없습니다.' : '저장한 검색이 없습니다.';
+      if (!filters.length && !root.children.size) kinWrite($('list'), query ? kinSayEn("일치하는 저장 검색이 없습니다.") : kinSayEn("저장한 검색이 없습니다."));
       $('bulk-count').textContent = `${checked.size} selected`;
       navigation();
     }
@@ -474,7 +475,7 @@
         } else if (!saved) {
           selected = null; copying = true; $('name').readOnly = false;
           $('heading').textContent = 'Save As New';
-          $('name-hint').textContent = '저장된 검색은 삭제됐습니다. 편집 조건은 유지되며 새 검색으로 저장할 수 있습니다.';
+          kinWrite($('name-hint'), kinSayEn("저장된 검색은 삭제됐습니다. 편집 조건은 유지되며 새 검색으로 저장할 수 있습니다."));
         }
       }
       list();
@@ -581,7 +582,7 @@
       while (named(candidate)) candidate = original + ' (Copy ' + (++suffix) + ')';
       $('name').value = candidate;
       $('heading').textContent = 'Save As New';
-      $('name-hint').textContent = '새 이름으로 저장합니다. 원본 검색과 기존 기본 검색은 유지하며, 같은 이름은 덮어쓰지 않습니다.';
+      kinWrite($('name-hint'), kinSayEn("새 이름으로 저장합니다. 원본 검색과 기존 기본 검색은 유지하며, 같은 이름은 덮어쓰지 않습니다."));
       status('편집 중인 조건을 복사했습니다. 이름과 조건을 확인한 뒤 ‘Save’를 누르세요.');
       $('name').focus(); $('name').select();
     });

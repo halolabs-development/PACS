@@ -1,6 +1,9 @@
 /* D1890: the existing preload panel, with encrypted disk usage and expiry. */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const WORKER_URL = '/worklist/hpacs-lite/preload-worker.js', WORKER_NAME = 'kin-preload';
   const GB = 1024 ** 3;
   let port = null, state = null, broken = false;
@@ -203,7 +206,7 @@
     panel.id = 'preload-panel';
     const summary = document.createElement('summary');
     summary.className = 'chip';
-    summary.title = '줄마다 표시된 기한에 자동으로 지웁니다(받은 뒤나 마지막으로 본 뒤 72시간 이내). 다른 계정으로는 읽을 수 없습니다.';
+    kinWrite(summary, kinSayEn("줄마다 표시된 기한에 자동으로 지웁니다(받은 뒤나 마지막으로 본 뒤 72시간 이내). 다른 계정으로는 읽을 수 없습니다."), "title");
     const body = document.createElement('div');
     body.className = 'preload-panel-body';
     const storage = document.createElement('p');
@@ -213,7 +216,7 @@
     const actions = document.createElement('p');
     const clear = document.createElement('button');
     clear.type = 'button'; clear.className = 'chip'; clear.textContent = 'Clear All'; clear.id = 'preload-clear';
-    clear.title = '미리 받은 영상 사본을 저장소에서 모두 지웁니다.';
+    kinWrite(clear, kinSayEn("미리 받은 영상 사본을 저장소에서 모두 지웁니다."), "title");
     clear.onclick = () => { if (mine()) port?.postMessage({ type: 'clear' }); };
     actions.append(clear);
     body.append(storage, table, actions);
@@ -230,9 +233,9 @@
       // Each state name is its own text (the line reads the same), so the screen language reaches every one.
       const states = ['Downloading', 'Queued', 'Ready', 'Failed', 'Evicted'].filter(name => counts[name]);
       summary.replaceChildren('Preload: ', ...(states.length ? states.flatMap((name, i) => [(i ? ' · ' : '') + counts[name] + ' ', name]) : ['0']));
-      storage.textContent = own?.budget == null
-        ? own?.unavailable || '미리 받기 저장 용량을 확인하고 있습니다.'
-        : `보관 ${gb(own.used)} / ${gb(own.budget)} GB · 줄마다 표시된 기한에 자동으로 지웁니다(받은 뒤나 마지막으로 본 뒤 72시간 이내). 다른 계정으로는 읽을 수 없습니다. 만료 항목은 표시하지 않으며, 실행 중 10분 이내 또는 다음 실행의 첫 응답 전에 지웁니다.`;
+      kinWrite(storage, own?.budget == null
+        ? kinSayEn(own?.unavailable || '미리 받기 저장 용량을 확인하고 있습니다.')
+        : kinSayEn('보관 {0} / {1} GB · 줄마다 표시된 기한에 자동으로 지웁니다(받은 뒤나 마지막으로 본 뒤 72시간 이내). 다른 계정으로는 읽을 수 없습니다. 만료 항목은 표시하지 않으며, 실행 중 10분 이내 또는 다음 실행의 첫 응답 전에 지웁니다.', gb(own.used), gb(own.budget)));
       const rows = table.tBodies[0];
       rows.replaceChildren();
       for (const s of list) {
@@ -244,11 +247,11 @@
         // Retry beside the status, so it stays in view however long the note is.
         const act = cell('');
         cell(s.total ? `${s.done}/${s.total}` : '');
-        cell(s.reason || '');
+        kinWrite(cell(''), s.reason ? kinSayEn(s.reason) : '');
         if (s.status === 'Failed' || s.status === 'Evicted') {
           const retry = document.createElement('button');
           retry.type = 'button'; retry.className = 'chip'; retry.textContent = 'Retry';
-          retry.title = '이 검사를 대기열 맨 앞에 다시 넣습니다.';
+          kinWrite(retry, kinSayEn("이 검사를 대기열 맨 앞에 다시 넣습니다."), "title");
           retry.onclick = () => { if (mine()) port?.postMessage({ type: 'retry', uid: s.uid }); };
           act.append(retry);
         }

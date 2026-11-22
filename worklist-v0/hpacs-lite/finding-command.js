@@ -71,7 +71,8 @@
   // A row source is the server's frozen copy: named units need its exact calculator (S2-V).
   function describeSource(s) {
     if (s && s.kind === 'job') return links.jobName(s);
-    const values = links.valueText(s.kind, s.calculator, s.values, 'server-copy');
+    // The source line is drawn on a screen: the value's words as a sentence of the page (valueSay); the report line keeps them as written.
+    const values = (links.valueSay || links.valueText)(s.kind, s.calculator, s.values, 'server-copy');
     return kinSay('{t0}{1} · 프레임 {n2} · r{n3}{t4}', { t: KINDS[s.kind] || s.kind }, s.label ? ' · ' + s.label : '', s.frame, s.revision, { t: values ? kinSay(' · {t0}', { t: values }) : '' });
   }
   // Include Measurements: one image source as the report line names it — the tool's name and the value text the source line

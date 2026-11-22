@@ -115,7 +115,7 @@ MODAL_CSS = slice_between(MAIN, ".modal { display: none;", "/* ══ 클릭 피
 # their first callers, so they are no longer one stretch of text).
 # (Computed where the page is built, not at import: main_split_harness.fixture_block.)
 API_FN = "\n".join((ROOT / "worklist-v0/hpacs-lite" / name).read_text(encoding="utf-8")
-                         for name in ("worklist-language-terms.js", "worklist-language.js")) + "\nconst kinSay=KinLanguage.say;\n" + extract_function(MAIN, "kinWrite") + "\n" + extract_function(MAIN, "api")
+                         for name in ("worklist-language-terms.js", "worklist-language.js")) + "\nconst kinSay=KinLanguage.say,kinSayEn=KinLanguage.sayEnglish;\n" + extract_function(MAIN, "kinWrite") + "\n" + extract_function(MAIN, "api")
 WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
 # The template half lives outside every sliced region, so it is taken by name (P-7).

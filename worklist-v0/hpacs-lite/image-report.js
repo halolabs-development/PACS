@@ -23,6 +23,9 @@
  */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
 
   // ════════ pure model ════════
   const BACKGROUNDS = Object.freeze([['breast', 'Breast diagram'], ['thyroid', 'Thyroid diagram'], ['image', 'Saved image (this study)']]);
@@ -213,7 +216,7 @@
     // strip's own moments; hidden or shown, it is the same (hiding is display only, showing again reads nothing).
     const panelOpen = $('#image-report-panel-open'), panelStatus = $('#image-report-panel-status'), panelList = $('#image-report-panel-list');
     const panelSay = message => {
-      if (panelStatus) panelStatus.textContent = message;
+      if (panelStatus) kinWrite(panelStatus, kinSayEn(message));
       panelList?.replaceChildren();
     };
     /** The panel shows one strip rendering's results: its drawings in its order, each picture the strip loaded or none. */
@@ -495,7 +498,7 @@
         session.images = images || [];
         imageSelect.replaceChildren(...session.images.map(i => node('option', { value: i.id, textContent: i.label, translate: false })));
         bgRadios[2].input.disabled = !session.images.length;
-        imageNote.textContent = images === null ? '저장한 영상 목록을 읽지 못했습니다' : session.images.length ? '' : '이 검사에 저장된 영상이 없습니다';
+        kinWrite(imageNote, images === null ? kinSayEn("저장한 영상 목록을 읽지 못했습니다") : session.images.length ? '' : kinSayEn("이 검사에 저장된 영상이 없습니다"));
         const why = ctx.report.editBlock(uid);
         session.editable = !why; session.why = why || '';
         const kept = memory.take(session.owner, session.memoryUid, { version: list.version, draftSince: list.draft?.since ?? null });

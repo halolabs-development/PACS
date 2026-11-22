@@ -47,8 +47,34 @@
       const value = name !== undefined ? (parts[0] || {})[name] : parts[index];
       return value === undefined ? slot : String(value && typeof value === 'object' ? (value.t ?? value.e ?? '') : value);
     }));
-  const say = (...args) => String(kinSay(...args));
-  const TEXT = {
+  // The write path (worklist-language.js): a product sentence reads in English on an English screen and as written otherwise
+  // (this page follows the work page's choice, English only); kinPut writes it so a later choice repaints it. Data and
+  // anything that is not a sentence are written as they are.
+  const kinSayEn = (root.KinLanguage && root.KinLanguage.sayEnglish) || kinSay;
+  const isSentence = value => !!(root.KinLanguage && root.KinLanguage.isSentence && root.KinLanguage.isSentence(value));
+  function kinPut(el, value, name) {
+    if (isSentence(value)) return root.KinLanguage.write(el, value, name);
+    if (name) el.setAttribute(name, String(value ?? '')); else el.textContent = value ?? '';
+    return el;
+  }
+  // A sentence put between other nodes of a line.
+  const textOf = value => kinPut(document.createTextNode(''), value);
+  // A message as the server or this page gave it: a whole known sentence reads in English on an English screen (the
+  // language file's error rule); any other message stays as written.
+  const kinError = message => root.KinLanguage && root.KinLanguage.error && /[\uAC00-\uD7A3]/.test(message)
+    ? root.KinLanguage.error(message) : message;
+  // A table of product words: each Korean string without parts to fill becomes a sentence; names and functions stay.
+  function words(table) {
+    for (const [key, value] of Object.entries(table)) {
+      if (typeof value === 'string' && /[\uAC00-\uD7A3]/.test(value) && !/\{(?:[ten]?\d+|[A-Za-z]\w*)\}/.test(value))
+        table[key] = kinSayEn(value);
+      else if (value && typeof value === 'object' && !Array.isArray(value)) words(value);
+    }
+    return table;
+  }
+  words(OPEN_NOTE);
+  words(STATUS_NOTE);
+  const TEXT = words({
     listLoading: '검사 목록을 불러오는 중입니다…',
     listEmpty: '표시할 검사가 없습니다. 목록 조회는 성공했습니다.',
     listFailed: '검사 목록을 불러오지 못했습니다.',
@@ -97,48 +123,51 @@
     citedElsewhere: '인용한 표식의 검사를 지금 목록에서 같은 환자로 확인할 수 없어 열지 않았습니다. 목록을 새로고침하세요.',
     citedRevised: '뷰어 창에 그 원본 영상과 표식을 열도록 요청했습니다. 인용할 때의 표식은 r{0}, 지금 표시하는 표식은 r{1}입니다.',
     citedUnread: '판독문의 인용 기록을 읽지 못해 문장에 영상 연결을 붙이지 않았습니다.',
-    closeBack: label => `이 검사를 닫고 타임라인에서 옮기기 전 검사(${label})로 돌아갑니다.`,
-  };
+    closeBack: label => kinSayEn('이 검사를 닫고 타임라인에서 옮기기 전 검사({0})로 돌아갑니다.', label),
+    sessionUnknown: '세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.',
+    examSourcesLost: '검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.',
+    examScopeChanged: '판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.',
+  });
   // C-R02-120 사용자 단추의 역할 칸. /api/me의 역할 중 KIN 업무 역할만 영어 이름으로 보인다(Keycloak 기본 역할은 뺀다).
   const ROLE_NAMES = { clinician: 'Clinician', radiologist: 'Radiologist', technician: 'Technician', admin: 'Admin' };
   const VIEWER_WINDOW = 'kin-clinician-viewer';
   const STUDY_UID = /^\d+(?:\.\d+)+$/;
   // S5-U3 타임라인 문구. 상태명·버튼·제목은 영어, 설명·툴팁은 한국어다(AGENTS §4).
-  const TIMELINE = {
-    hint: count => `지금 목록에 같은 환자 키(기관과 원본 DICOM 환자 ID)의 다른 검사가 ${count}건 있습니다. `
+  const TIMELINE = words({
+    hint: count => kinSayEn('지금 목록에 같은 환자 키(기관과 원본 DICOM 환자 ID)의 다른 검사가 {n0}건 있습니다. '
       + 'Show Timeline은 서버가 이 키로 묶은 검사 전부를 출처 기관·검사일과 함께 읽습니다. '
-      + '이름이나 화면에서 고친 환자 ID로는 묶지 않고, 원본 생년월일·성별이 서로 다르면 표시합니다.',
+      + '이름이나 화면에서 고친 환자 ID로는 묶지 않고, 원본 생년월일·성별이 서로 다르면 표시합니다.', count),
     loading: '환자 타임라인을 불러오는 중입니다…',
     failed: '환자 타임라인을 불러오지 못했습니다.',
     malformed: '타임라인 응답 형식을 확인할 수 없습니다. 새로고침하세요.',
-    ready: count => `같은 환자 키의 검사 ${count}건을 검사일 최신순으로 표시합니다.`,
+    ready: count => kinSayEn('같은 환자 키의 검사 {n0}건을 검사일 최신순으로 표시합니다.', count),
     empty: '같은 환자 키의 다른 검사가 없습니다.',
     noKey: '이 검사에는 서버 환자 키가 없어 다른 검사와 묶지 않습니다.',
-    conflict: fields => `같은 환자 키로 묶인 검사 사이에 원본 DICOM ${fields}이 서로 다릅니다. 같은 사람의 검사인지 확인한 뒤 비교하세요.`,
-    unknown: fields => `일부 검사는 원본 DICOM ${fields}이 없거나 형식이 달라 비교하지 못했습니다.`,
+    conflict: fields => kinSayEn('같은 환자 키로 묶인 검사 사이에 원본 DICOM {0}이 서로 다릅니다. 같은 사람의 검사인지 확인한 뒤 비교하세요.', fields),
+    unknown: fields => kinSayEn('일부 검사는 원본 DICOM {0}이 없거나 형식이 달라 비교하지 못했습니다.', fields),
     birth: '원본 DICOM 생년월일이 선택한 검사와 다릅니다.',
     sex: '원본 DICOM 성별이 선택한 검사와 다릅니다.',
     notListed: '이 검사는 지금 목록에 없어 열 수 없습니다. 목록을 새로고침하세요.',
-  };
+  });
   const RELATIONS = ['match', 'mismatch', 'not_comparable'];
   // S5-U4b 질문 스레드 문구. 상태명·버튼·제목은 영어, 설명·확인·오류는 한국어다(AGENTS §4).
-  const QUESTION = {
+  const QUESTION = words({
     hint: '이 검사에 대해 소속 기관 영상의학과에 질문을 남깁니다. 질문과 답변은 작성한 본인과 소속 기관의 판독의·관리자만 봅니다. '
       + '새 답변은 목록의 ‘New Answers’ 표시로 알려 줍니다(이메일·문자로 보내지 않습니다). 답변은 판독문이 아니며 판독문을 대신하지 않습니다.',
     summary: '이 검사에 대한 질문과 답변을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     loading: '질문 목록을 불러오는 중입니다…',
     failed: '질문 목록을 불러오지 못했습니다.',
     empty: '이 검사에 남긴 질문이 없습니다. 목록 조회는 성공했습니다.',
-    ready: count => `이 검사에 남긴 질문 ${count}건을 최신순으로 표시합니다.`,
+    ready: count => kinSayEn('이 검사에 남긴 질문 {n0}건을 최신순으로 표시합니다.', count),
     malformed: '질문 응답 형식을 확인할 수 없습니다. 다시 불러오세요.',
     notFound: '이 검사나 질문을 찾을 수 없습니다. 원격판독으로 받은 검사, 접근 조건이 바뀐 검사에는 질문을 남길 수 없습니다.',
-    item: (created, count, last) => `${created} 등록 · 항목 ${count}개 · 최근 ${last}`,
+    item: (created, count, last) => kinSayEn('{0} 등록 · 항목 {n1}개 · 최근 {2}', created, count, last),
     threadLoading: '질문 스레드를 불러오는 중입니다…',
     threadFailed: '질문 스레드를 불러오지 못했습니다.',
-    threadMeta: (created, name) => `${created} 등록 · 작성 ${name}`,
+    threadMeta: (created, name) => kinSayEn('{0} 등록 · 작성 {1}', created, name),
     closedNote: '닫힌 질문입니다. 새 답변·추가 질문·닫기는 서버가 거절합니다.',
     anchorChanged: '답변 이후 판독 상태가 바뀌었습니다.',
-    anchorDetail: (then, now) => `답변 때 ${then} → 지금 ${now}`,
+    anchorDetail: (then, now) => kinSayEn('답변 때 {0} → 지금 {1}', then, now),
     closeEmpty: '사유 없이 닫았습니다.',
     askHint: '작성자·기관·시각은 서버가 로그인한 계정으로 기록합니다.',
     replyHint: '같은 스레드에 추가 질문으로 이어집니다. 답변이 있던 질문은 다시 Open이 됩니다.',
@@ -154,8 +183,8 @@
     ownerChanged: '로그인한 계정이 바뀌었습니다. 이 화면에서는 질문을 더 읽거나 쓰지 않습니다. 화면을 다시 불러오세요.',
     unknown: '저장되었는지 알 수 없습니다. Retry는 같은 요청 ID로 다시 보내 저장 결과를 확인하고, Discard는 이 요청을 버립니다.',
     rejected: '서버가 요청을 거절했습니다.',
-    pending: count => `결과를 모르는 요청이나 보내지 않은 글이 남은 질문 ${count}건입니다. 최신 50건 목록에 없어도 여기서 열 수 있습니다. `
-      + '화면을 새로 불러오거나 로그아웃하면 사라집니다.',
+    pending: count => kinSayEn('결과를 모르는 요청이나 보내지 않은 글이 남은 질문 {n0}건입니다. 최신 50건 목록에 없어도 여기서 열 수 있습니다. '
+      + '화면을 새로 불러오거나 로그아웃하면 사라집니다.', count),
     pendingStates: {
       Unconfirmed: '저장되었는지 알 수 없는 요청이 있습니다. 스레드를 열면 Retry·Discard가 있습니다.',
       Sending: '보내는 중인 요청이 있습니다.',
@@ -171,7 +200,7 @@
       STUDY_ACCESS_CHANGED: '요청 중 검사 접근 조건이 바뀌었습니다. 저장되었을 수 있으니 Retry로 같은 요청을 다시 보내 확인하세요.',
     },
     statuses: { 400: '서버가 입력을 거절했습니다.', 403: '서버가 이 동작을 거절했습니다.' },
-  };
+  });
   const QUESTION_STATES = ['Open', 'Answered', 'Closed'];
   const QUESTION_BADGE = { Open: 'open', Answered: 'final', Closed: 'unknown' };
   const QUESTION_KIND = { question: 'Question', followup: 'Follow-up', answer: 'Answer', close: 'Close' };
@@ -230,7 +259,7 @@
   function node(tag, className, text) {
     const element = document.createElement(tag);
     if (className) element.className = className;
-    if (text !== undefined) element.textContent = text;
+    if (text !== undefined) kinPut(element, text);
     return element;
   }
 
@@ -273,7 +302,7 @@
   }
 
   function failure(status, body, fallback) {
-    const error = new Error(errorText(body) || fallback || '서버가 요청을 거절했습니다.');
+    const error = new Error(errorText(body) || String(fallback || kinSayEn('서버가 요청을 거절했습니다.')));
     error.status = status;
     error.code = body && typeof body.code === 'string' ? body.code : null;
     error.kin = true;
@@ -284,8 +313,8 @@
     const parts = [];
     if (error && error.status) parts.push(`HTTP ${error.status}`);
     if (error && error.code) parts.push(error.code);
-    const message = error && error.message ? error.message : '응답을 확인하지 못했습니다.';
-    return parts.length ? `${message} (${parts.join(' · ')})` : message;
+    const message = error && error.message ? kinError(error.message) : kinSayEn('응답을 확인하지 못했습니다.');
+    return parts.length ? kinSayEn('{0} ({1})', message, parts.join(' · ')) : message;
   }
 
   // B2-COMMIT B6: an answer shown although its 열람 record failed gets one line under the header; nothing is withheld
@@ -309,12 +338,12 @@
     try {
       const response = await KinSessionTransport.page().request(API + path,
         { context, deadlineMs: TIMEOUT_MS, ...(headers ? { headers } : {}) });
-      if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+      if (!KinWorkContext.admits(context)) throw failure(0, null, kinSayEn('세션이 종료되었습니다.'));
       if (!response.ok) throw failure(response.status, response.body);
       return response.body;
     } catch (error) {
       if (error && error.kin) throw error;
-      throw failure(0, null, error && error.transport === 'timeout' ? '응답이 없어 요청을 멈췄습니다.' : '서버에 연결하지 못했습니다.');
+      throw failure(0, null, error && error.transport === 'timeout' ? kinSayEn('응답이 없어 요청을 멈췄습니다.') : kinSayEn('서버에 연결하지 못했습니다.'));
     }
   }
 
@@ -335,14 +364,14 @@
       || (page.next !== null && (rows.length !== PAGE_LIMIT || page.next === after))
       || page.offset + rows.length > page.total
       || (page.next === null && page.offset + rows.length !== page.total);
-    if (bad) throw new Error('목록 페이지 형식을 확인할 수 없습니다. 새로고침하세요.');
+    if (bad) throw new Error(kinSayEn('목록 페이지 형식을 확인할 수 없습니다. 새로고침하세요.'));
     if (page.offset !== loaded.length || (total !== null && page.total !== total))
-      throw Object.assign(new Error('읽는 동안 검사 목록이 계속 바뀌었습니다. 새로고침하세요.'), { code: 'STUDY_LIST_CHANGED', moved: true });
+      throw Object.assign(new Error(kinSayEn('읽는 동안 검사 목록이 계속 바뀌었습니다. 새로고침하세요.')), { code: 'STUDY_LIST_CHANGED', moved: true });
     let previous = loaded.length ? loaded[loaded.length - 1].uid : null;
     for (const row of rows) {
       if (!row || typeof row !== 'object' || typeof row.uid !== 'string' || !row.uid || (previous !== null && row.uid <= previous)
           || !row.report || typeof row.report !== 'object' || typeof row.report.final !== 'boolean')
-        throw new Error('목록의 검사 순서 또는 형식을 확인할 수 없습니다. 새로고침하세요.');
+        throw new Error(kinSayEn('목록의 검사 순서 또는 형식을 확인할 수 없습니다. 새로고침하세요.'));
       previous = row.uid;
     }
     return page;
@@ -390,8 +419,8 @@
   function setListState(state, text, detail) {
     const box = $('#list-state');
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#list-retry').hidden = state !== 'failed';
     $('#studies').closest('table').setAttribute('aria-busy', state === 'loading' ? 'true' : 'false');
   }
@@ -420,7 +449,7 @@
         take: (data, page) => {
           if (page.next === null && Array.isArray(data.identityIssues)) issues = data.identityIssues.filter(issue => issue && typeof issue.uid === 'string');
         },
-        progress: (count, total) => setListState('loading', `${TEXT.listLoading} (${count} / ${total})`),
+        progress: (count, total) => setListState('loading', kinSayEn('{0} ({1} / {2})', TEXT.listLoading, count, total)),
         reset: () => { issues = []; setListState('loading', TEXT.listLoading); },
       });
       if (loaded === null) return;
@@ -428,7 +457,7 @@
       const me = await request('/me');
       if (!listFresh(mine)) return;
       if (!me || me.kind !== 'member' || typeof me.institution !== 'string' || typeof me.sub !== 'string')
-        throw new Error('계정 확인 응답을 읽지 못했습니다. 다시 조회하세요.');
+        throw new Error(kinSayEn('계정 확인 응답을 읽지 못했습니다. 다시 조회하세요.'));
       if (me.institution !== owner[0] || me.sub !== owner[1]) {
         accountChanged('');
         return;
@@ -483,7 +512,7 @@
     const reopen = resume;
     resume = null;
     // "No normal study" and "excluded as unresolved" read differently: the excluded count is its own sentence, not a row.
-    excludedNote = issues.length ? `Patient Identity Conflict ${issues.length} · 환자 식별 불일치로 검사 ${issues.length}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.` : '';
+    excludedNote = issues.length ? kinSayEn('Patient Identity Conflict {n0} · 환자 식별 불일치로 검사 {n1}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.', issues.length, issues.length) : '';
     folderRows('complete');
     // B14: the first complete list of this page (its account checked) opens on My Studies, even when it holds nothing;
     // after that the folder is the one the doctor chose (a refresh never moves it).
@@ -539,12 +568,12 @@
     const snapshot = folders ? folders.snapshot() : null;
     const chosen = snapshot ? snapshot.items.filter(item => item.selected) : [];
     const all = !snapshot || (chosen.length === 1 && chosen[0].id === 'all');
-    if (all) { setListState('ready', `검사 ${studies.length}건을 표시합니다.`, excludedNote); return; }
+    if (all) { setListState('ready', kinSayEn('검사 {n0}건을 표시합니다.', studies.length), excludedNote); return; }
     const name = chosen.map(item => item.name).join(', ') || 'Modality';
     const mine = chosen.some(item => item.id === 'folder:' + MY_STUDIES);
-    const detail = [mine ? TEXT.myStudiesRule : '', excludedNote].filter(Boolean).join('\n');
-    if (shown.length) setListState('ready', say(TEXT.folderShown, { t: name }, shown.length, studies.length), detail);
-    else setListState('empty', say(TEXT.folderEmpty, { t: name }, studies.length), detail);
+    const detail = mine && excludedNote ? kinSayEn('{0}\n{1}', TEXT.myStudiesRule, excludedNote) : mine ? TEXT.myStudiesRule : excludedNote;
+    if (shown.length) setListState('ready', kinSayEn(TEXT.folderShown, { t: name }, shown.length, studies.length), detail);
+    else setListState('empty', kinSayEn(TEXT.folderEmpty, { t: name }, studies.length), detail);
   }
 
   /**
@@ -557,7 +586,7 @@
     const rs = report && OPEN_STATUS[report.rs] ? report.rs : null;
     if (rs === null) return { kind: 'unknown', label: 'Unknown', note: TEXT.unknown };
     const more = rs === 'D' ? '' : rs === 'P' ? STATUS_NOTE.P : STATUS_NOTE.unsigned;
-    return { kind: 'open', label: OPEN_STATUS[rs], note: more ? `${OPEN_NOTE[rs]} ${more}` : OPEN_NOTE[rs] };
+    return { kind: 'open', label: OPEN_STATUS[rs], note: more ? kinSayEn('{0} {1}', OPEN_NOTE[rs], more) : OPEN_NOTE[rs] };
   }
 
   function statusName(report) {
@@ -568,7 +597,7 @@
     const status = reportStatus(report);
     const badge = node('span', `status ${status.kind}`, status.label);
     // 상태 뜻과 그 상태에서 무엇이 보이는지를 툴팁으로 알린다(설명은 한국어, AGENTS §4).
-    badge.title = status.note;
+    kinPut(badge, status.note, 'title');
     return badge;
   }
 
@@ -606,7 +635,7 @@
     if (lost) {
       const tag = node('span', 'tag', TEXT.unavailable);
       tag.dataset.unavailable = '';
-      tag.title = lost.message;
+      kinPut(tag, kinSayEn(lost.words), 'title');
       tag.style.marginLeft = '6px';
       tag.style.borderColor = 'var(--danger-line)';
       tag.style.color = 'var(--danger-text)';
@@ -632,7 +661,7 @@
 
   function teleTag() {
     const tag = node('span', 'tag', 'Tele');
-    tag.title = '원격판독으로 의뢰받은 검사입니다.';
+    kinPut(tag, kinSayEn('원격판독으로 의뢰받은 검사입니다.'), 'title');
     return tag;
   }
 
@@ -698,14 +727,14 @@
   // The words are state words (English); a count is the server's, never this page's.
   const UNREAD_QUESTIONS = 'question-mine', UNREAD_REQUESTS = 'image-request-mine';
   const UNREAD_POLL_MS = 60000;
-  const UNREAD = {
+  const UNREAD = words({
     answers: n => `New Answers ${n}`,
     processed: n => `Processed ${n}`,
     row: 'New',
     tip: '서버가 센 안 읽은 항목입니다. 질문 스레드나 영상 요청 칸을 열어 보면 없어집니다. 이메일·문자로 보내지 않습니다.',
     stale: '안 읽음 수를 다시 확인하지 못했습니다. 표시된 수는 마지막으로 확인한 것입니다.',
     outsideQuestion: '최신 50건 목록 밖의 질문입니다. 새 답변이 있습니다.',
-  };
+  });
   let unread = null;
 
   /** GET unread and the seen writes through this document's transport: any HTTP answer resolves with its status. */
@@ -713,7 +742,7 @@
     const context = KinWorkContext.capture('document');
     const response = await KinSessionTransport.page().request(API + path,
       method === 'GET' ? { context, deadlineMs: TIMEOUT_MS } : { method, json: body, context, deadlineMs: TIMEOUT_MS });
-    if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+    if (!KinWorkContext.admits(context)) throw failure(0, null, kinSayEn('세션이 종료되었습니다.'));
     if (!response.ok) throw failure(response.status, response.body);
     return { status: response.status, body: response.body };
   }
@@ -737,7 +766,7 @@
   function unreadTag(text, kind) {
     const tag = node('span', 'tag', text);
     tag.dataset.unread = kind;
-    tag.title = UNREAD.tip;
+    kinPut(tag, UNREAD.tip, 'title');
     tag.style.marginLeft = '6px';
     // The page's emphasis colour (the theme's --accent), as the selected folder and focus use it.
     tag.style.borderColor = 'var(--accent)';
@@ -781,7 +810,7 @@
       open.type = 'button';
       open.dataset.openThread = '';
       open.addEventListener('click', () => openQuestionThread(uid, item.id));
-      li.append(UNREAD.outsideQuestion, ' ', open);
+      li.append(textOf(UNREAD.outsideQuestion), ' ', open);
       list.append(li);
       paintItemUnread(li, UNREAD_QUESTIONS);
     }
@@ -795,7 +824,7 @@
     const answers = questions && questions.available ? questions.count : 0, processed = requests && requests.available ? requests.count : 0;
     if (box) {
       box.textContent = [answers ? UNREAD.answers(answers) : '', processed ? UNREAD.processed(processed) : ''].filter(Boolean).join(' · ');
-      box.title = (questions && questions.failed) || (requests && requests.failed) ? UNREAD.stale : UNREAD.tip;
+      kinPut(box, (questions && questions.failed) || (requests && requests.failed) ? UNREAD.stale : UNREAD.tip, 'title');
       box.hidden = !(answers || processed);
     }
     for (const tr of document.querySelectorAll('#studies tr[data-uid]')) {
@@ -817,7 +846,7 @@
   function field(label, value, note) {
     const wrap = node('div', 'field');
     const term = node('dt', null, label);
-    if (note) term.title = note;
+    if (note) kinPut(term, note, 'title');
     wrap.append(term, node('dd', null, value));
     return wrap;
   }
@@ -830,7 +859,7 @@
     identity.replaceChildren(
       field('Name', dash(row.name)),
       field('Patient ID', dash(row.id)),
-      field('Sex / Age at Study', sexAge(row), '나이는 검사일 기준입니다(생년월일과 검사일로 계산).'),
+      field('Sex / Age at Study', sexAge(row), kinSayEn('나이는 검사일 기준입니다(생년월일과 검사일로 계산).')),
       field('Birth Date', day(row.birth)),
       field('Study Date', day(row.date)),
       field('Institution', `${dash(row.institutionName)}${row.tele === true ? ' · Tele' : ''}`),
@@ -864,7 +893,7 @@
     button.hidden = selected === null;
     const back = closeTarget();
     const row = back === null ? null : byUid.get(back);
-    button.title = row ? TEXT.closeBack(`${day(row.date)} · ${dash(row.modality)} · ${dash(row.desc)}`) : TEXT.close;
+    kinPut(button, row ? TEXT.closeBack(`${day(row.date)} · ${dash(row.modality)} · ${dash(row.desc)}`) : TEXT.close, 'title');
   }
 
   /**
@@ -907,10 +936,10 @@
     const key = patientKey(row);
     const peers = key === null ? [] : studies.filter(other => other.uid !== row.uid && patientKey(other) === key);
     if (!peers.length) {
-      note.textContent = `${TEXT.viewer} ${key === null ? TEXT.compareNoKey : TEXT.compareNone}`;
+      kinPut(note, kinSayEn('{0} {1}', TEXT.viewer, key === null ? TEXT.compareNoKey : TEXT.compareNone));
       return;
     }
-    note.textContent = TEXT.viewer;
+    kinPut(note, TEXT.viewer);
     const section = node('section');
     section.id = 'compare';
     section.dataset.uid = row.uid;
@@ -969,10 +998,10 @@
     const priorUid=part&&other?part.uid:other?.uid,priorVersion=part&&other?part.version:other?.report?.final?other.report.version:null;
     if(![target?.uid||row.uid,...(other?[other.uid,priorUid]:[])].every(uid=>typeof uid==='string'&&uid.length<=64&&STUDY_UID.test(uid))){refuse(TEXT.viewerUid);return;}
     const expectedSession=KinAuth.sessionId();
-    if(!expectedSession){refuse('세션을 확인할 수 없습니다. 목록을 다시 열어 주세요.');return;}
+    if(!expectedSession){refuse(TEXT.sessionUnknown);return;}
     let input;
     try {
-      if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error('검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.');
+      if(!scope&&row.exam&&!row.exam.scope||other?.exam&&!other.exam.scope)throw Error(TEXT.examSourcesLost);
       input=root.KinExamScope.viewerInput(scope||row.report?.scope||row.exam?.scope||row,
         other&&(part?part.scope:other.report?.scope||other.exam?.scope||other),target?.version??null,priorVersion);
     } catch(error) { refuse(describe(error));return; }
@@ -987,7 +1016,7 @@
         if(input.scoped){
           const current=await root.KinExamScope.fetch(apiRead,target?.uid||row.uid,{purpose:target?'stored':'current',version:target?.version});
           const prior=other?await root.KinExamScope.fetch(apiRead,priorUid,{purpose:priorVersion?'stored':'current',version:priorVersion}):null;
-          if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error('판독 영상 범위가 바뀌었습니다. 판독문을 다시 여세요.');
+          if(scope&&root.KinExamScope.stamp(scope)!==root.KinExamScope.stamp(current))throw Error(TEXT.examScopeChanged);
           input=root.KinExamScope.viewerInput({examScope:current},prior,target?.version??null,priorVersion);
         }
         if(!fresh())return;
@@ -997,7 +1026,7 @@
         // the original image to open first (a key image, a cited line), as the server named it.
         popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician',...(image?{target:image}:{})});popup.opener=null;
         if(replace)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
-        note.textContent=asked||(image?say(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked);
+        note.textContent=asked||(image?kinSayEn(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked);
       }catch(error){if(fresh()){note.textContent=describe(error);dropWindow(held);}}
     })();
   }
@@ -1005,13 +1034,13 @@
   function setReport(state, text, detail) {
     const box = $('#report-state');
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#report-retry').hidden = state !== 'failed';
   }
 
   function setKeys(text, items) {
-    $('#keys-state').textContent = text;
+    kinPut($('#keys-state'), text);
     const list = $('#key-list');
     list.replaceChildren(...(items || []));
     list.hidden = !items || !items.length;
@@ -1042,7 +1071,7 @@
     $('#keys').hidden = true;
     $('#viewer-slot').hidden = true;
     $('#open-viewer').disabled = true;
-    $('#viewer-note').textContent = TEXT.viewer;
+    kinPut($('#viewer-note'), TEXT.viewer);
     paintClose();
     clearReadingRequest();
     clearRequests();
@@ -1051,7 +1080,7 @@
     clearTimeline();
     clearQuestions();
     const empty = $('#detail-empty');
-    empty.textContent = note || TEXT.pick;
+    kinPut(empty, note || TEXT.pick);
     empty.hidden = false;
   }
 
@@ -1060,11 +1089,11 @@
    * 목록이 없는 답은 그리지 않는다. 확정이 아닌 답은 상태만 쓴다 — 그 답에 다른 칸이 실려 와도 읽지 않는다.
    */
   function readReport(uid, body) {
-    if (!body || typeof body !== 'object' || body.uid !== uid) throw new Error('응답의 검사가 요청한 검사와 다릅니다.');
+    if (!body || typeof body !== 'object' || body.uid !== uid) throw new Error(kinSayEn('응답의 검사가 요청한 검사와 다릅니다.'));
     const report = body.report;
-    if (!report || typeof report !== 'object' || typeof report.final !== 'boolean') throw new Error('판독 응답 형식을 확인할 수 없습니다.');
+    if (!report || typeof report !== 'object' || typeof report.final !== 'boolean') throw new Error(kinSayEn('판독 응답 형식을 확인할 수 없습니다.'));
     // Key images and drawings are read apart from the text: null (not sent for this state) is not an empty list.
-    if (body.keys !== undefined && body.keys !== null && !Array.isArray(body.keys)) throw new Error('판독 응답 형식을 확인할 수 없습니다.');
+    if (body.keys !== undefined && body.keys !== null && !Array.isArray(body.keys)) throw new Error(kinSayEn('판독 응답 형식을 확인할 수 없습니다.'));
     const drawings = Array.isArray(body.drawings) ? body.drawings.filter(d => d && typeof d.id === 'string' && typeof d.png === 'string') : [];
     if (!report.final) {
       // F41: an unsigned text the server sent (the state table decides whether this account gets it) is shown as sent,
@@ -1084,7 +1113,7 @@
     const text = ['findings', 'conclusion', 'recommendation'];
     if (!Number.isSafeInteger(report.version) || report.version < 1 || !FINAL_TYPE[report.action]
         || text.some(key => typeof report[key] !== 'string') || !Array.isArray(body.keys))
-      throw new Error('판독 응답 형식을 확인할 수 없습니다.');
+      throw new Error(kinSayEn('판독 응답 형식을 확인할 수 없습니다.'));
     return { uid, final: true, scope: body.scope || report.scope || null, action: report.action, version: report.version,
       repDoc: typeof report.repDoc === 'string' ? report.repDoc : null,
       confirm: typeof report.confirm === 'string' ? report.confirm : null,
@@ -1161,13 +1190,13 @@
     }
     const frame = Number.isSafeInteger(item.frame) ? String(item.frame) : '—';
     entry.append(node('p', 'key-ref', root.KinExamScope.originalLabel(displayedExam, key?.sourceUid ? 'Study '+key.sourceUid : null, `Series ${dash(item.seriesUid)} · Instance ${dash(item.sopUid)} · Frame ${frame}`, true)));
-    const open = node('button', 'key-open', say(TEXT.openAnnotated));
+    const open = node('button', 'key-open', kinSayEn(TEXT.openAnnotated));
     open.type = 'button';
     open.addEventListener('click', () => {
       const target = imageTarget(key?.sourceUid || selected, item, key?.id);
-      if (!target) { $('#viewer-note').textContent = say(TEXT.keyTarget); return; }
+      if (!target) { kinPut($('#viewer-note'), TEXT.keyTarget); return; }
       let place;
-      try { place = imageExam(selected, target); } catch (error) { $('#viewer-note').textContent = describe(error); return; }
+      try { place = imageExam(selected, target); } catch (error) { kinPut($('#viewer-note'), describe(error)); return; }
       openViewer(place.other, target, null, null, place.part);
     });
     entry.append(open);
@@ -1185,7 +1214,7 @@
       const said = view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown;
       if (view.text || view.drawings.length) {
         // F41: the unsigned text the server sent, said to be not final.
-        setReport('open', `${said} ${TEXT.notFinal}`);
+        setReport('open', kinSayEn('{0} {1}', said, TEXT.notFinal));
         const meta = $('#report-meta');
         meta.replaceChildren(field('Version', view.version === null ? '—' : String(view.version)), field('Status', statusName(status)));
         meta.hidden = false;
@@ -1195,7 +1224,7 @@
         $('#report-body').hidden = false;
       } else {
         // A destroyed report has no final version to wait for: its line says only what happened to it.
-        setReport('status', view.rs === 'D' ? OPEN_NOTE.D : `${said} ${TEXT.noBody}`);
+        setReport('status', view.rs === 'D' ? OPEN_NOTE.D : kinSayEn('{0} {1}', said, TEXT.noBody));
       }
       paintKeys(view.keys);
       return;
@@ -1212,7 +1241,7 @@
     // FC-034: 고친 글로 바뀐 판독문은 머리에 그 사실과 시각을 한 줄 붙인다(목록의 상태 표기는 그대로).
     if (view.action === 'amend') {
       // The amendment shown is this version: its time is the one Signed On and History show for it.
-      const amended = node('p', 'amended', `수정됨 (${window.KinReportPaper.versionStamp(view) || '—'})`);
+      const amended = node('p', 'amended', kinSayEn('수정됨 ({0})', window.KinReportPaper.versionStamp(view) || '—'));
       amended.id = 'report-amended';
       body.prepend(amended);
     }
@@ -1251,7 +1280,7 @@
     for (const link of links) {
       plain(at, link.from);
       const line = node('button', 'cited-line', lines.slice(link.from, link.to).join('\n'));
-      line.type = 'button'; line.title = say(TEXT.citedTitle); line.setAttribute('translate', 'no');
+      line.type = 'button'; kinPut(line, TEXT.citedTitle, 'title'); line.setAttribute('translate', 'no');
       line.dataset.citation = link.entry.cid || '';
       line.addEventListener('click', () => openCited(link.entry, reportUid));
       p.append(line);
@@ -1276,7 +1305,7 @@
       }
     }, () => {
       if (!reportFresh(mine, uid)) return;
-      const line = node('p', 'muted', say(TEXT.citedUnread)); line.id = 'report-citations-unread';
+      const line = node('p', 'muted', kinSayEn(TEXT.citedUnread)); line.id = 'report-citations-unread';
       $('#report-body').append(line);
     });
   }
@@ -1301,7 +1330,7 @@
       .map(report => ({ ...other, examScope: report.scope, part: { uid: report.uid, version: report.version, scope: report.scope } })));
     const peer = root.KinExamScope.listedExam(own, image.studyUid, image.seriesUid)
       || root.KinExamScope.listedExam(parts, image.studyUid, image.seriesUid);
-    if (!peer) throw new Error(say(TEXT.citedElsewhere));
+    if (!peer) throw new Error(kinSayEn(TEXT.citedElsewhere));
     return { other: peer.uid, part: peer.part || null };
   }
   /**
@@ -1319,23 +1348,23 @@
     for (let n = 0; n < 100 && !revision; n++) {
       const page = await request(`/studies/${encodeURIComponent(reportUid)}/findings/${encodeURIComponent(entry.findingId)}/revisions?limit=100`
         + (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`), FINDING_SCHEMA);
-      if (!page || !Array.isArray(page.revisions)) throw new Error(say(TEXT.citedSource));
+      if (!page || !Array.isArray(page.revisions)) throw new Error(kinSayEn(TEXT.citedSource));
       revision = page.revisions.find(r => r && r.revision === entry.findingRevision) || null;
       if (revision || page.nextCursor === null || page.nextCursor === undefined || page.nextCursor === cursor) break;
       cursor = page.nextCursor;
     }
     const source = Array.isArray(revision?.item?.sources) ? revision.item.sources[entry.sourceIndex] : null;
     if (!source || source.itemId !== entry.sourceRef.itemId || typeof source.studyUid !== 'string' || !STUDY_UID.test(source.studyUid))
-      throw new Error(say(TEXT.citedSource));
+      throw new Error(kinSayEn(TEXT.citedSource));
     const list = await request(`/studies/${encodeURIComponent(source.studyUid)}/viewer-items?limit=100&recheck=${encodeURIComponent(source.itemId)}`);
-    if (!list || !Array.isArray(list.items)) throw new Error(say(TEXT.citedSource));
+    if (!list || !Array.isArray(list.items)) throw new Error(kinSayEn(TEXT.citedSource));
     const item = list.items.find(h => h && h.id === source.itemId && h.hidden !== true);
-    if (!item) throw new Error(say(TEXT.citedGone));
+    if (!item) throw new Error(kinSayEn(TEXT.citedGone));
     const image = imageTarget(source.studyUid, item.item, item.id);
-    if (!image) throw new Error(say(TEXT.citedSource));
+    if (!image) throw new Error(kinSayEn(TEXT.citedSource));
     const { other, part } = imageExam(rowUid, image);
     const then = entry.sourceRef.sourceRevision;
-    return { image, other, part, asked: Number.isSafeInteger(then) && then !== item.revision ? say(TEXT.citedRevised, then, item.revision) : null };
+    return { image, other, part, asked: Number.isSafeInteger(then) && then !== item.revision ? kinSayEn(TEXT.citedRevised, then, item.revision) : null };
   }
   function openCited(entry, reportUid) {
     if (leaving || selected === null) return;
@@ -1343,8 +1372,8 @@
     const note = $('#viewer-note'), uid = selected, mine = reportSeq, at = ++citeSequence, opened = viewerSequence;
     // The window is taken at the click, before the lookups (a later open would be a pop-up the browser may refuse).
     let held = null; try { held = root.open('', VIEWER_WINDOW); } catch (_) {}
-    if (!held) { note.textContent = TEXT.viewerBlocked; return; }
-    note.textContent = say(TEXT.citedLooking);
+    if (!held) { kinPut(note, TEXT.viewerBlocked); return; }
+    kinPut(note, TEXT.citedLooking);
     const newest = () => at === citeSequence && opened === viewerSequence;
     const fresh = () => !leaving && selected === uid && mine === reportSeq && newest();
     citedImage(uid, reportUid, entry).then(found => {
@@ -1352,7 +1381,7 @@
       openViewer(found.other, found.image, held, found.asked, found.part);
     }, error => {
       if (!fresh()) { if (newest()) dropWindow(held); return; }
-      note.textContent = describe(error); dropWindow(held);
+      kinPut(note, describe(error)); dropWindow(held);
     });
   }
 
@@ -1360,7 +1389,7 @@
   function paintKeys(list) {
     if (!Array.isArray(list)) { setKeys(TEXT.keysWithheld, null); return; }
     const keys = list.map(keyItem);
-    setKeys(keys.length ? `키 이미지 ${keys.length}건` : TEXT.keysNone, keys);
+    setKeys(keys.length ? kinSayEn('키 이미지 {n0}건', keys.length) : TEXT.keysNone, keys);
   }
 
   /** A->B->A: 화면에 쓰기 직전 요청 번호와 UID를 함께 본다. UID만 보면 A의 첫 요청 답이 A의 두 번째 요청 자리에 그려진다. */
@@ -1387,17 +1416,17 @@
     box.replaceChildren(node('b','',kind==='merge'?'Merged exam':kind==='split'?'Split exam':'Exam Reports'));
     // Row C: the reason this exam cannot be opened now, said here whether or not the row carries its exam.
     if(lost){const why=node('span','',' — '+lost.message);why.dataset.unavailable='';box.append(why);}
-    if(row.exam?.readable===false)box.append(' — 저장된 검사 범위 일부를 볼 수 없어 해당 판독문을 열 수 없습니다.');
+    if(row.exam?.readable===false)box.append(textOf(kinSayEn(' — 저장된 검사 범위 일부를 볼 수 없어 해당 판독문을 열 수 없습니다.')));
     if(current?.kind==='merge'&&current.active&&current.reportUid!==row.uid){
       const base=node('button','','Open Base Study');base.type='button';
       base.onclick=()=>byUid.has(current.reportUid)?select(current.reportUid):select(row.uid,reports.find(r=>r.uid===current.reportUid)||{uid:current.reportUid});
-      box.append(' — 이 검사는 다른 검사와 합쳐 하나로 판독합니다. ',base);
+      box.append(textOf(kinSayEn(' — 이 검사는 다른 검사와 합쳐 하나로 판독합니다. ')),base);
     }
     for(const report of reports){
       const scope=root.KinExamScope.read(report.scope);
       if(!scope)continue;
       const open=node('button','',`${scope.kind==='split'?'Split '+(scope.part+1)+'/2':scope.kind==='merge'?'Merged exam':'Original exam'} · v${report.version}`);
-      open.type='button';open.title='이 판의 저장된 판독문과 영상 범위를 엽니다.';
+      open.type='button';kinPut(open,kinSayEn('이 판의 저장된 판독문과 영상 범위를 엽니다.'),'title');
       open.onclick=()=>select(row.uid,report);
       box.append(' ',open);
     }
@@ -1447,7 +1476,7 @@
         // A stored version the server answers with its state only (P: no version, no text) is still that version: the
         // route refuses a version that is not there.
         if (version && !view.final && view.version === null) view.version = version;
-        if(version && view.version !== version)throw new Error("요청한 판독 버전과 다릅니다.");
+        if(version && view.version !== version)throw new Error(kinSayEn('요청한 판독 버전과 다릅니다.'));
       } catch (error) {
         setReport('failed', TEXT.reportFailed, describe(error));
         setKeys(TEXT.keysFailed, null);
@@ -1464,8 +1493,8 @@
         // A stored version or another study's report: the panel says which one; the row keeps its own current status.
         const base = reportUid === uid ? null : byUid.get(reportUid);
         const line = node('p', 'muted', base || reportUid !== uid
-          ? say(TEXT.storedOther, view.version ?? '—', base ? `${day(base.date)} · ${dash(base.modality)} · ${dash(base.desc)}` : reportUid)
-          : say(TEXT.storedVersion, view.version ?? '—'));
+          ? kinSayEn(TEXT.storedOther, view.version ?? '—', base ? `${day(base.date)} · ${dash(base.modality)} · ${dash(base.desc)}` : reportUid)
+          : kinSayEn(TEXT.storedVersion, view.version ?? '—'));
         line.id = 'report-target';
         $('#report-body').before(line);
       } else syncRowStatus(uid, view);
@@ -1490,7 +1519,7 @@
   // is painted only while that study is shown: a late answer never paints over a newer list or another study. A press
   // whose result is unknown leaves the button: a second press answers the open request as it is (the server keeps one per
   // study). Fixed words and data (the time, the requester) are separate nodes; data is never translated.
-  const READING = {
+  const READING = words({
     none: '이 검사에는 판독 의뢰가 없습니다. Request Reading을 누르면 소속 기관 판독의의 워크리스트(Read Req 열)에 표시됩니다.',
     open: '판독문이 승인되면 의뢰가 닫힙니다.',
     closed: '판독문이 승인되어 의뢰가 닫혔습니다.',
@@ -1507,7 +1536,7 @@
     existing: '이미 열린 판독 의뢰가 있어 그 의뢰를 그대로 보여 줍니다.',
     unknown: '저장되었는지 알 수 없습니다. 다시 눌러도 의뢰는 하나만 남고, 목록을 새로고침하면 실제 결과가 보입니다.',
     malformed: '응답 형식을 확인할 수 없습니다. 목록을 새로고침하면 실제 결과가 보입니다.',
-  };
+  });
   // The press number of each study's latest Request Reading: only that press's answer is taken.
   const readingPresses = new Map();
 
@@ -1551,7 +1580,7 @@
     const send = $('#reading-request-send');
     send.hidden = !allowed || view === undefined;
     send.disabled = false;
-    $('#reading-request-note').textContent = note;
+    kinPut($('#reading-request-note'), note);
   }
 
   // A press out stays out when the panel is closed: its answer still lands on its row (fresh() below).
@@ -1574,7 +1603,7 @@
     const fresh = () => !leaving && readingPresses.get(uid) === mine && byUid.get(uid) === row;
     const paint = note => { if (selected === uid) paintReadingRequest(row, note); };
     $('#reading-request-send').disabled = true;
-    $('#reading-request-note').textContent = READING.sending;
+    kinPut($('#reading-request-note'), READING.sending);
     let answer;
     try {
       answer = await requestSend(`/studies/${encodeURIComponent(uid)}/reading-request`, { expectedOwner: owner });
@@ -1585,7 +1614,7 @@
       if (error.status === 409 || error.status === 404 || error.status === 403) Object.assign(row, { readingRequestable: false,
         readingRequestRefusal: { READING_REQUEST_REPORTED: 'reported', READING_REQUEST_DESTROYED: 'destroyed',
           READING_REQUEST_ROLE_REQUIRED: 'role' }[error.code] || 'unavailable' });
-      paint(error.status ? describe(error) : `${describe(error)} ${READING.unknown}`);
+      paint(error.status ? describe(error) : kinSayEn('{0} {1}', describe(error), READING.unknown));
       return;
     }
     if (!fresh()) return;
@@ -1611,7 +1640,7 @@
   // 50건 밖으로 밀려도 #8로 따로 읽어 Retry·Discard를 남긴다. 쓰던 글은 검사·요청별로 이 문서의 메모리에만 두어 A->B->A로 돌아오면
   // 다시 보이고, 서버가 읽기를 거절했거나 다른 계정의 답이 오면(잠금) 이전 계정의 글이라 모두 버린다. 계정 변경은 어느 칸이
   // 알아챘든 질문 칸과 함께 잠근다(accountChanged).
-  const REQUEST = {
+  const REQUEST = words({
     summary: '이 검사에 남긴 외부영상·영상전송 요청을 엽니다. 연 뒤에만 서버에서 읽습니다.',
     hint: 'External Images는 다른 병원의 영상을 이 기관으로 가져오도록, Send Images는 이 검사의 영상을 다른 병원에 보내도록 '
       + '소속 기관 직원에게 남기는 요청입니다. 요청은 처리 상태의 기록일 뿐 이 화면이 영상을 옮기지 않고, 실제 처리는 직원이 따로 합니다. '
@@ -1620,7 +1649,7 @@
     loading: '영상 요청을 불러오는 중입니다…',
     failed: '영상 요청을 불러오지 못했습니다.',
     empty: '이 검사에 남긴 영상 요청이 없습니다. 목록 조회는 성공했습니다.',
-    ready: count => `이 검사에 남긴 영상 요청 ${count}건을 최신순으로 표시합니다.`,
+    ready: count => kinSayEn('이 검사에 남긴 영상 요청 {n0}건을 최신순으로 표시합니다.', count),
     malformed: '영상 요청 응답 형식을 확인할 수 없습니다. 다시 불러오세요.',
     notFound: '이 검사나 요청을 찾을 수 없습니다. 원격판독으로 받은 검사나 접근 조건이 바뀐 검사에서는 영상 요청을 읽거나 남길 수 없습니다.',
     // U4p §3.3 화면 문구 규칙: Closed 옆에 늘 함께 쓴다.
@@ -1662,15 +1691,15 @@
       STUDY_ACCESS_CHANGED: '요청 중 검사 접근 조건이 바뀌었습니다. 저장되었을 수 있으니 Retry로 같은 요청을 다시 보내 확인하세요.',
     },
     statuses: { 400: '서버가 입력을 거절했습니다.', 403: '서버가 이 동작을 거절했습니다.' },
-  };
+  });
   const REQUEST_STATES = ['Requested', 'Accepted', 'Closed', 'Declined', 'Cancelled'];
   const REQUEST_ACTIVE = ['Requested', 'Accepted'];
   // API 값 image-transfer는 화면에 쓰지 않는다: transfer는 Connect 전송의 말이고 요청은 전송이 아니다(U4p R06).
   const REQUEST_KINDS = { 'external-image': 'External Images', 'image-transfer': 'Send Images' };
-  const REQUEST_KIND_TIPS = {
+  const REQUEST_KIND_TIPS = words({
     'external-image': '다른 병원의 영상을 이 기관으로 가져오도록 요청합니다.',
     'image-transfer': '이 검사의 영상을 다른 병원에 보내도록 요청합니다.',
-  };
+  });
   const REQUEST_NOTE_LABEL = { Closed: 'Handling Note', Declined: 'Decline Reason', Cancelled: 'Cancel Reason' };
   const REQUEST_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   const REQUEST_COUNTERPARTY_MAX = 256;
@@ -1733,12 +1762,12 @@
     try {
       const response = await KinSessionTransport.page().request(API + path,
         { method: 'POST', json: payload, context, deadlineMs: TIMEOUT_MS });
-      if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+      if (!KinWorkContext.admits(context)) throw failure(0, null, kinSayEn('세션이 종료되었습니다.'));
       if (!response.ok) throw failure(response.status, response.body);
       return { status: response.status, body: response.body };
     } catch (error) {
       if (error && error.kin) throw error;
-      throw failure(0, null, error && error.transport === 'timeout' ? '응답이 없어 요청을 멈췄습니다.' : '서버에 연결하지 못했습니다.');
+      throw failure(0, null, error && error.transport === 'timeout' ? kinSayEn('응답이 없어 요청을 멈췄습니다.') : kinSayEn('서버에 연결하지 못했습니다.'));
     }
   }
 
@@ -1891,7 +1920,7 @@
     const head = node('p');
     head.style.margin = '0';
     const kind = node('strong', null, REQUEST_KINDS[item.kind]);
-    kind.title = REQUEST_KIND_TIPS[item.kind];
+    kinPut(kind, REQUEST_KIND_TIPS[item.kind], 'title');
     head.append(requestBadge(item.state), ' ', kind, ` · ${requestTime(item.createdAt)}`);
     info.append(head, requestLine('Counterparty', item.counterparty.text), requestLine('Reason', item.reason));
     if (item.handler) info.append(requestLine('Handler', dash(item.handler.name || item.handler.actor)));
@@ -1909,7 +1938,7 @@
     section.style.marginTop = '14px';
     const summary = node('summary', null, 'Image Requests');
     summary.id = 'image-requests-summary';
-    summary.title = REQUEST.summary;
+    kinPut(summary, REQUEST.summary, 'title');
     summary.style.cssText = 'cursor:pointer;font-weight:650;min-height:28px;padding:4px 0';
     section.append(summary);
     section.addEventListener('toggle', () => requestsToggled(section));
@@ -1985,8 +2014,8 @@
     const box = $('#image-requests-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#image-requests-retry').hidden = state !== 'failed' && !retry;
   }
 
@@ -2106,11 +2135,11 @@
     li.querySelector('[data-part="info"]').replaceWith(info);
     const aside = li.querySelector('[data-part="outside"]');
     const text = !entry ? null : entry.item ? (requestAttempts.has(key) ? REQUEST.outside : REQUEST.outsideNew) : requestAttempts.has(key)
-      ? `${REQUEST.outsideUnread}\n${describe(entry.error)}` : null;
+      ? kinSayEn('{0}\n{1}', REQUEST.outsideUnread, describe(entry.error)) : null;
     if (text === null) {
       if (aside) aside.remove();
     } else if (aside) {
-      aside.textContent = text;
+      kinPut(aside, text);
     } else {
       const line = node('p', 'muted', text);
       line.dataset.part = 'outside';
@@ -2184,7 +2213,7 @@
     for (const [value, label] of Object.entries(REQUEST_KINDS)) {
       const option = node('option', null, label);
       option.value = value;
-      option.title = REQUEST_KIND_TIPS[value];
+      kinPut(option, REQUEST_KIND_TIPS[value], 'title');
       kind.append(option);
     }
     const [counterpartyLabel, counterparty] = requestField(wrap, 'counterparty', 'Counterparty', 'input', REQUEST_COUNTERPARTY_MAX,
@@ -2256,8 +2285,8 @@
     const note = requestNotes.get(box.dataset.requestNote) || null;
     box.hidden = note === null;
     box.dataset.state = note ? note.state : 'idle';
-    box.querySelector('.state-text').textContent = note ? note.text : '';
-    box.querySelector('.state-detail').textContent = note ? note.detail : '';
+    kinPut(box.querySelector('.state-text'), note ? note.text : '');
+    kinPut(box.querySelector('.state-detail'), note ? note.detail : '');
     // 결과를 모르는 요청은 실패처럼 눈에 띄게 둔다(clinician.html은 failed만 색을 정한다).
     const alarm = note !== null && note.state === 'unknown';
     box.style.borderColor = alarm ? 'var(--danger-line)' : '';
@@ -2467,8 +2496,8 @@
     const box = $('#timeline-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#timeline-retry').hidden = state !== 'failed';
   }
 
@@ -2602,7 +2631,7 @@
     try {
       const loaded = await readPages(`/clinician/studies/${encodeURIComponent(uid)}/timeline?limit=${PAGE_LIMIT}`, () => timelineFresh(mine, uid), {
         take: data => { head = readTimelinePage(uid, data, head); },
-        progress: (count, total) => setTimelineState('loading', `${TIMELINE.loading} (${count} / ${total})`),
+        progress: (count, total) => setTimelineState('loading', kinSayEn('{0} ({1} / {2})', TIMELINE.loading, count, total)),
         reset: () => { head = null; setTimelineState('loading', TIMELINE.loading); },
       });
       if (loaded === null) return;
@@ -2623,7 +2652,7 @@
   }
 
   function fieldNames(birth, sex) {
-    return birth && sex ? '생년월일과 성별' : birth ? '생년월일' : '성별';
+    return birth && sex ? kinSayEn('생년월일과 성별') : birth ? kinSayEn('생년월일') : kinSayEn('성별');
   }
 
   function paintTimeline(uid, head, rows) {
@@ -2633,7 +2662,7 @@
     }
     if (head.conflict) {
       const box = $('#timeline-conflict');
-      box.querySelector('.state-detail').textContent = TIMELINE.conflict(fieldNames(head.birth === 'mismatch', head.sex === 'mismatch'));
+      kinPut(box.querySelector('.state-detail'), TIMELINE.conflict(fieldNames(head.birth === 'mismatch', head.sex === 'mismatch')));
       box.hidden = false;
     }
     if (rows.length < 2) {
@@ -2642,7 +2671,7 @@
     }
     const birthUnknown = head.birth === 'not_comparable', sexUnknown = head.sex === 'not_comparable';
     if (birthUnknown || sexUnknown) {
-      $('#timeline-note').textContent = TIMELINE.unknown(fieldNames(birthUnknown, sexUnknown));
+      kinPut($('#timeline-note'), TIMELINE.unknown(fieldNames(birthUnknown, sexUnknown)));
       $('#timeline-note').hidden = false;
     }
     const list = $('#timeline-list');
@@ -2653,7 +2682,7 @@
 
   function mismatchTag(label, explanation) {
     const tag = node('span', 'tag', label);
-    tag.title = explanation;
+    kinPut(tag, explanation, 'title');
     tag.style.borderColor = 'var(--danger-line)';
     tag.style.color = 'var(--danger-text)';
     tag.style.marginRight = '6px';
@@ -2690,7 +2719,7 @@
     if (current) view.disabled = true;
     else if (!byUid.has(row.uid)) {
       view.disabled = true;
-      view.title = TIMELINE.notListed;
+      kinPut(view, TIMELINE.notListed, 'title');
     } else view.addEventListener('click', () => viewFromTimeline(row.uid));
     item.append(view);
     for(const report of row.exam?.reports||[]){
@@ -2776,12 +2805,12 @@
     try {
       const response = await KinSessionTransport.page().request(API + path,
         { method: 'POST', json: payload, context, deadlineMs: TIMEOUT_MS });
-      if (!KinWorkContext.admits(context)) throw failure(0, null, '세션이 종료되었습니다.');
+      if (!KinWorkContext.admits(context)) throw failure(0, null, kinSayEn('세션이 종료되었습니다.'));
       if (!response.ok) throw failure(response.status, response.body);
       return { status: response.status, body: response.body };
     } catch (error) {
       if (error && error.kin) throw error;
-      throw failure(0, null, error && error.transport === 'timeout' ? '응답이 없어 요청을 멈췄습니다.' : '서버에 연결하지 못했습니다.');
+      throw failure(0, null, error && error.transport === 'timeout' ? kinSayEn('응답이 없어 요청을 멈췄습니다.') : kinSayEn('서버에 연결하지 못했습니다.'));
     }
   }
 
@@ -2859,7 +2888,7 @@
     section.style.marginTop = '14px';
     const summary = node('summary', null, 'Questions');
     summary.id = 'questions-summary';
-    summary.title = QUESTION.summary;
+    kinPut(summary, QUESTION.summary, 'title');
     summary.style.cssText = 'cursor:pointer;font-weight:650;min-height:28px;padding:4px 0';
     section.append(summary);
     section.addEventListener('toggle', () => questionsToggled(section));
@@ -2966,7 +2995,7 @@
     for (const [key, attempt] of questionAttempts) note(key, attempt.busy ? 'Sending' : 'Unconfirmed');
     for (const [key, text] of questionDrafts) if (text) note(key, 'Draft');
     $('#question-pending-list').replaceChildren(...[...threads].map(([id, item]) => questionPendingItem(uid, id, item)));
-    $('#question-pending-text').textContent = QUESTION.pending(threads.size);
+    kinPut($('#question-pending-text'), QUESTION.pending(threads.size));
     box.hidden = threads.size === 0;
   }
 
@@ -2983,7 +3012,7 @@
     open.dataset.openPending = '';
     open.addEventListener('click', () => openQuestionThread(uid, id));
     li.append(node('span', `status ${item.state === 'Draft' ? 'unknown' : 'open'}`, item.state), ' ',
-      QUESTION.pendingStates[item.state], ' ', node('span', null, excerpt ? `“${excerpt}”` : ''), ' ', open);
+      textOf(QUESTION.pendingStates[item.state]), ' ', node('span', null, excerpt ? `“${excerpt}”` : ''), ' ', open);
     return li;
   }
 
@@ -2991,14 +3020,14 @@
     const box = $('#questions-state');
     if (!box) return;
     box.dataset.state = state;
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#questions-retry').hidden = state !== 'failed';
   }
 
   /** 읽기 실패의 자세한 줄: 404는 이유를 먼저 쓴다(원격판독으로 받은 검사·접근이 바뀐 검사를 서버가 구별하지 않는다). */
   function questionReadDetail(error) {
-    return `${error && error.status === 404 ? `${QUESTION.notFound}\n` : ''}${describe(error)}`;
+    return error && error.status === 404 ? kinSayEn('{0}\n{1}', QUESTION.notFound, describe(error)) : describe(error);
   }
 
   /** #3. 고른 검사에서 내가 남긴 질문(서버가 작성자 본인 것만 준다). 성공하면 열린 스레드도 다시 읽는다. */
@@ -3062,7 +3091,7 @@
     open.type = 'button';
     open.dataset.openThread = '';
     open.addEventListener('click', () => openQuestionThread(uid, item.id));
-    li.append(questionBadge(item.state), ' ', QUESTION.item(questionTime(item.createdAt), item.entryCount, questionTime(item.lastEntryAt)),
+    li.append(questionBadge(item.state), ' ', textOf(QUESTION.item(questionTime(item.createdAt), item.entryCount, questionTime(item.lastEntryAt))),
       ' ', open);
     paintItemUnread(li, UNREAD_QUESTIONS);
     return li;
@@ -3146,8 +3175,8 @@
     if (!box) return;
     box.dataset.state = state;
     box.hidden = state === 'ready';
-    box.querySelector('.state-text').textContent = text;
-    box.querySelector('.state-detail').textContent = detail || '';
+    kinPut(box.querySelector('.state-text'), text);
+    kinPut(box.querySelector('.state-detail'), detail || '');
     $('#question-thread-retry').hidden = state !== 'failed';
   }
 
@@ -3196,7 +3225,7 @@
     const box = $('#question-thread');
     box.dataset.state = item.state;
     $('#question-thread-status').replaceChildren(questionBadge(item.state));
-    $('#question-thread-meta').textContent = QUESTION.threadMeta(questionTime(item.createdAt), dash(item.author.name || item.author.actor));
+    kinPut($('#question-thread-meta'), QUESTION.threadMeta(questionTime(item.createdAt), dash(item.author.name || item.author.actor)));
     $('#question-entries').replaceChildren(...item.entries.map(entry => questionEntry(entry, item.current, item.emr)));
     $('#question-closed-note').hidden = item.state !== 'Closed';
     setThreadState('ready', '');
@@ -3223,7 +3252,7 @@
       note.dataset.anchor = '';
       note.style.cssText = 'margin:4px 0 0;padding:4px 8px;border-left:3px solid #7a6a33;color:#ffe7a8';
       note.append(node('strong', null, QUESTION.anchorChanged), ' ',
-        QUESTION.anchorDetail(reportStateText(entry.reportAnchor), reportStateText(current)));
+        textOf(QUESTION.anchorDetail(reportStateText(entry.reportAnchor), reportStateText(current))));
       li.append(note);
     }
     const signed = window.KinClinicalSignature?.(evidence, entry.seq);
@@ -3329,8 +3358,8 @@
     const note = questionNotes.get(box.dataset.noteKey) || null;
     box.hidden = note === null;
     box.dataset.state = note ? note.state : 'idle';
-    box.querySelector('.state-text').textContent = note ? note.text : '';
-    box.querySelector('.state-detail').textContent = note ? note.detail : '';
+    kinPut(box.querySelector('.state-text'), note ? note.text : '');
+    kinPut(box.querySelector('.state-detail'), note ? note.detail : '');
     // 결과를 모르는 요청은 실패처럼 눈에 띄게 둔다(clinician.html은 failed만 색을 정한다).
     const alarm = note !== null && note.state === 'unknown';
     box.style.borderColor = alarm ? 'var(--danger-line)' : '';
@@ -3568,9 +3597,9 @@
     $('#home').hidden = true;
     $('#logout').hidden = true;
     $('#membership-title').textContent = pending ? 'Pending Approval' : 'Account Setup Required';
-    $('#membership-text').textContent = pending
-      ? '가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.'
-      : '기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요.';
+    kinPut($('#membership-text'), pending
+      ? kinSayEn('가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.')
+      : kinSayEn('기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요.'));
     $('#membership').hidden = false;
   }
 

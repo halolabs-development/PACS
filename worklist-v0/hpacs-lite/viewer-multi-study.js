@@ -6,6 +6,9 @@
  * (sanitized state from the worklist) and sends its two page buttons back as intents; the worklist decides everything.
  * Nothing is recorded or sent to the server here, and the strip never names another patient's study.
  */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -51,17 +54,15 @@
     let sessionChannel = null, timer = null, unsubscribe = [];
     const strip = document.createElement('section'); strip.id = 'kin-multi-study';
     strip.setAttribute('aria-label', 'Multi-Study View');
-    strip.innerHTML = '<h3>Multi-Study View</h3><p data-summary role="status"></p><ol data-members></ol>' +
-      '<p><button type="button" data-action="previous">Previous</button> <button type="button" data-action="next">Next</button> ' +
-      '<button type="button" data-action="pages">Back to Pages</button></p><p data-note>목록 창의 여러 검사 보기와 연결된 영상입니다. 판독 대상은 바꾸지 않습니다.</p>';
+    strip.innerHTML = kinHtml("<h3>Multi-Study View</h3><p data-summary role=\"status\"></p><ol data-members></ol><p><button type=\"button\" data-action=\"previous\">Previous</button> <button type=\"button\" data-action=\"next\">Next</button> <button type=\"button\" data-action=\"pages\">Back to Pages</button></p><p data-note>목록 창의 여러 검사 보기와 연결된 영상입니다. 판독 대상은 바꾸지 않습니다.</p>");
     const summary = strip.querySelector('[data-summary]'), members = strip.querySelector('[data-members]');
     const buttons = [...strip.querySelectorAll('button')];
     const live = () => !ended && root.location.search === search;
 
     function render() {
       const s = state;
-      summary.textContent = !live() ? '세션이 종료되었습니다.' : s === 'ended' ? '목록 창과의 연결이 끊어졌습니다. 목록에서 다시 여세요.'
-        : !s ? '목록 창의 상태를 기다리는 중입니다.' : [s.summary, s.status].filter(Boolean).join(' · ');
+      summary.textContent = !live() ? kinText("세션이 종료되었습니다.") : s === 'ended' ? kinText("목록 창과의 연결이 끊어졌습니다. 목록에서 다시 여세요.")
+        : !s ? kinText("목록 창의 상태를 기다리는 중입니다.") : [s.summary, s.status].filter(Boolean).join(' · ');
       members.replaceChildren(...(s && s !== 'ended' ? s.members : []).map(m => {
         const li = document.createElement('li');
         li.textContent = [m.label, m.state, m.viewing ? 'Viewing' : ''].filter(Boolean).join(' · ');

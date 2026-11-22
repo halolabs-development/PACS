@@ -7,17 +7,19 @@
     }
     function citationEntryText(entry, scope) {
       const C = KinReportCitation;
-      const when = KinReportPaper.paperStamp(entry?.insertedAt) || "시각 미확인";
+      // A sentence of the reading screen; the citation's own words (report-citation.js) stay as written there and are said here.
+      const when = KinReportPaper.paperStamp(entry?.insertedAt) || kinSay("시각 미확인");
       // 작성자는 서버가 쓰는 값이고 삽입 응답에는 실려 오지 않는다. 화면이 그 자리를
       // 추측한 문자열로 채우면 증언이 아닌 것이 증언처럼 보인다 — 방금 넣은 건은
       // 그렇게 말하고, 다음 전용 읽기가 서버의 바이트로 바꾼다.
-      const who = entry?.mine ? "방금 이 화면에서 넣음" : (displayActor(entry?.insertedBy) || "작성자 미확인");
-      const field = C.FIELD_LABEL[entry?.field] ?? "알 수 없는 칸";
-      if (C.isReduced(entry)) return `${field} · ${who} · ${when} — ${C.UNAVAILABLE_TEXT}`;
+      const who = entry?.mine ? kinSay("방금 이 화면에서 넣음") : (displayActor(entry?.insertedBy) || kinSay("작성자 미확인"));
+      const field = C.FIELD_LABEL[entry?.field] ?? kinSay("알 수 없는 칸");
+      const words = text => text ? kinSay(text) : "";
+      if (C.isReduced(entry)) return kinSay("{0} · {1} · {2} — {3}", field, who, when, words(C.UNAVAILABLE_TEXT));
       const state = C.presenceOf(entry, citationBody(scope, entry.field));
-      const source = `소견 r${entry.findingRevision} · 출처 ${Number(entry.sourceIndex) + 1}번` +
-        (entry.linkStateAtInsert ? ` · 인용 당시 연결 ${entry.linkStateAtInsert}` : "") + C.measurementNote(entry);
-      return `${field} · ${source} · ${who} · ${when} — ${C.STATE_TEXT[state] ?? ""}`;
+      const source = kinSay("소견 r{0} · 출처 {n1}번{2}{3}", entry.findingRevision, Number(entry.sourceIndex) + 1,
+        entry.linkStateAtInsert ? kinSay(" · 인용 당시 연결 {0}", entry.linkStateAtInsert) : "", words(C.measurementNote(entry)));
+      return kinSay("{0} · {1} · {2} · {3} — {4}", field, source, who, when, words(C.STATE_TEXT[state]));
     }
 
     /**
@@ -42,11 +44,11 @@
       $("#b-cite-list").style.display = row ? "" : "none";
       // The note is a sentence of its own (its own text), so the screen language reaches it whole.
       if (!row) kinWrite($("#citemsg"), kinSay("● {t0}", note ?? ""));
-      else $("#citemsg").textContent =
-        (unknownDraft
-            ? `● 승인본 ${row.head.length}건 · 저장된 초안의 인용은 다시 확인하는 중입니다` + (note ? ` (${note})` : "")
-            : `● 인용 ${count}건 — 승인본 ${row.head.length}건 · 저장된 초안 ${row.draft.length}건`) +
-          (reportConverge.has(uid) ? " · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다" : "");
+      else kinWrite($("#citemsg"), kinSay("{t0}{t1}",
+        { t: unknownDraft
+            ? kinSay("● 승인본 {n0}건 · 저장된 초안의 인용은 다시 확인하는 중입니다{1}", row.head.length, note ? kinSay(" ({0})", note) : "")
+            : kinSay("● 인용 {n0}건 — 승인본 {n1}건 · 저장된 초안 {n2}건", count, row.head.length, row.draft.length) },
+        { t: reportConverge.has(uid) ? kinSay(" · 마지막 인용이 화면에 반영되지 않아 다음 자동 저장이 서버 내용을 화면에 맞춥니다") : "" }));
       if (!row || !citationListOpen) {
         list.hidden = true; list.replaceChildren();
         $("#b-cite-list").setAttribute("aria-expanded", "false");
@@ -61,13 +63,13 @@
       const nodes = [];
       const add = (tag, text, className) => {
         const el = document.createElement(tag);
-        el.textContent = text;
+        kinWrite(el, text);
         if (className) el.className = className;
         nodes.push(el);
         return el;
       };
-      add("h5", `승인본 v${row.version}에 남은 인용 ${row.head.length}건`);
-      if (!row.head.length) add("p", "없습니다", "cite-note");
+      add("h5", kinSay("승인본 v{n0}에 남은 인용 {n1}건", row.version, row.head.length));
+      if (!row.head.length) add("p", kinSay("없습니다"), "cite-note");
       for (const entry of row.head) {
         const line = document.createElement("p");
         line.className = "cite-entry";
@@ -78,20 +80,20 @@
         box.dataset.citeRemove = String(entry?.cid ?? "");
         box.checked = citations.marked(uid, entry?.cid);
         box.disabled = !!reportWriteBlock();
-        label.append(box, document.createTextNode(" 다음 확정에서 제거"));
-        line.append(document.createTextNode(citationEntryText(entry, "head") + " · "), label);
+        label.append(box, kinWrite(document.createTextNode(""), kinSay(" 다음 확정에서 제거")));
+        line.append(kinWrite(document.createTextNode(""), kinSay("{0} · ", citationEntryText(entry, "head"))), label);
         nodes.push(line);
       }
       if (unknownDraft) {
-        add("h5", "저장된 초안의 인용");
-        add("p", "다시 확인하는 중입니다 — 확인될 때까지 이 화면은 초안의 인용을 지우지도, 건수를 말하지도 않습니다.", "cite-note");
+        add("h5", kinSay("저장된 초안의 인용"));
+        add("p", kinSay("다시 확인하는 중입니다 — 확인될 때까지 이 화면은 초안의 인용을 지우지도, 건수를 말하지도 않습니다."), "cite-note");
       } else {
-        add("h5", `저장된 초안의 인용 ${row.draft.length}건`);
-        if (!row.draft.length) add("p", "없습니다", "cite-note");
+        add("h5", kinSay("저장된 초안의 인용 {n0}건", row.draft.length));
+        if (!row.draft.length) add("p", kinSay("없습니다"), "cite-note");
         for (const entry of row.draft) add("p", citationEntryText(entry, "draft"), "cite-entry");
       }
-      add("p", KinReportCitation.PRESENT_CAVEAT, "cite-note");
-      add("p", "승인본의 인용은 다음 확정에서 제거를 골랐을 때만 빠집니다. 초안의 인용은 그 초안을 버릴 때 함께 없어집니다.", "cite-note");
+      add("p", kinSay(KinReportCitation.PRESENT_CAVEAT), "cite-note");
+      add("p", kinSay("승인본의 인용은 다음 확정에서 제거를 골랐을 때만 빠집니다. 초안의 인용은 그 초안을 버릴 때 함께 없어집니다."), "cite-note");
       list.replaceChildren(...nodes);
       if (focused) list.querySelector(`[data-cite-remove="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
     }
@@ -252,14 +254,14 @@
     function measureNote(pane) {
       if (!pane) return "";
       if (!pane.items.some(item => item.measurements.length)) return pane.items.length > 1
-        ? "고른 소견들에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다." : "이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.";
-      if (!citations.measurementLines()) return "서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.";
+        ? kinSay("고른 소견들에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.") : kinSay("이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.");
+      if (!citations.measurementLines()) return kinSay("서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.");
       const m = pane.measure;
-      if (m.state === "loading") return "영상의 Series/Image 번호를 읽는 중입니다…";
+      if (m.state === "loading") return kinSay("영상의 Series/Image 번호를 읽는 중입니다…");
       if (m.state === "ready") return kinSay("아래 줄은 화면이 붙인 글입니다 — 표식 {n0}개의 저장된 수치와 DICOM의 Series/Image 번호를 그대로 옮겼습니다.",
         m.sources.reduce((n, list) => n + (list ? list.length : 0), 0));
       if (m.state === "failed") return m.note;
-      return "켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.";
+      return kinSay("켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.");
     }
     function renderCitePreview() {
       if (!citePane) return;
@@ -282,7 +284,9 @@
       } else {
         // 여러 소견: 소견마다 출처 한 줄. 블록 칸에는 들어갈 글 전체를 그 순서로 — 측정 줄은 따로 표시된 조각으로.
         kinWrite($("#cite-preview-source"), kinSay("출처: 소견 {n0}건 — {1}", citePane.items.length,
-          citePane.items.map((item, i) => kinSay("{n0}. {1} · 소견 r{2} · 인용 당시 연결 {3}", i + 1, item.sourceLabel, item.findingRevision, item.linkState)).join(" / ")));
+          // One sentence to the write path (a joined string would take the language of the screen used last).
+          citePane.items.map((item, i) => kinSay("{n0}. {1} · 소견 r{2} · 인용 당시 연결 {3}", i + 1, item.sourceLabel, item.findingRevision, item.linkState))
+            .reduce((all, one) => all === null ? one : kinSay("{t0} / {t1}", { t: all }, { t: one }), null) ?? ""));
         const pre = $("#cite-preview-block"), parts = [];
         citePane.items.forEach((item, i) => {
           parts.push(document.createTextNode((i ? "\n" : "") + itemBlock(citePane, item)));
@@ -303,9 +307,9 @@
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
       kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
-      $("#cite-preview-status").textContent = why ?? citePane.status ??
-        (`확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 ${KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]} 칸에 붙입니다.` +
-         " 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.");
+      kinWrite($("#cite-preview-status"), why ?? citePane.status ??
+        kinSay("확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 {0} 칸에 붙입니다. 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.",
+          KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]));
       $("#cite-preview-insert").disabled = !!why || citeBusy || m.state === "loading";
     }
     /**
@@ -493,12 +497,12 @@
       // 같은 칸에 같은 출처를 또 넣는 것은 거절이 아니라 **한 번의 경고**다(여러 소견이면 그중 하나라도).
       if (!pane.warned && pane.items.some(item => citations.duplicate(pane.uid, field, item))) {
         pane.warned = true;
-        pane.status = "이 칸에 같은 출처를 이미 인용했습니다. 그래도 넣으려면 한 번 더 누르세요.";
+        pane.status = kinSay("이 칸에 같은 출처를 이미 인용했습니다. 그래도 넣으려면 한 번 더 누르세요.");
         renderCitePreview();
         return;
       }
       setCiteBusy(true);
-      pane.status = "서버에 기록하는 중…";
+      pane.status = kinSay("서버에 기록하는 중…");
       renderCitePreview();
       // 이 삽입을 시작한 문맥(세션·작업 세대). 검사와 창의 세대는 void_()와 아래 epoch이 본다.
       const at = work.capture("document");
@@ -533,7 +537,7 @@
         const plan2 = citationPlan(field, text);
         if (!pane.plan || plan2.text !== pane.plan.text) {
           pane.plan = plan2;
-          pane.status = "판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.";
+          pane.status = kinSay("판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.");
           renderCitePreview();
           return;
         }
@@ -580,7 +584,7 @@
             invalidateCitations(epoch.uid);
             // 이 요청이 서버에 닿았는지 모르는 것은 구조화 쪽도 같다. 같은 자리에서 같이 되돌린다.
             invalidateStructure(epoch.uid);
-            pane.status = "인용하지 못했습니다: " + draftFailureText(result) + " — 판독문은 그대로입니다.";
+            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureText(result));
             renderCitePreview();
             if (result.code === "REPORT_CITATION_STALE" || result.code === "REPORT_CITATION_SOURCE")
               toast("소견이 그 사이 바뀌었습니다 — Image Findings에서 Reload Findings를 누른 뒤 다시 인용하세요", "err");

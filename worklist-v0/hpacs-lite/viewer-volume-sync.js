@@ -1,6 +1,10 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
   const panel=document.createElement('section');panel.id='kin-volume-sync';panel.style.cssText='border-top:1px solid #657c9f;padding:8px 0';
-  panel.innerHTML='<strong>MPR Synchronization</strong><p class="target"></p><label><input type="checkbox" aria-label="Sync MPR Windowing"> Windowing</label> <label><input type="checkbox" aria-label="Sync MPR Zoom"> Zoom</label><p role="status"></p><p>현재 세 평면에서 이후 조절하는 밝기·대비 또는 기본 맞춤 기준 확대 배율을 함께 적용합니다. 단면 위치·회전·이동·반전은 각각 유지합니다. Reset View 및 Reset Windowing / Reset Zoom / Pan은 대기 중인 동기화를 취소하며 선택 평면만 초기화합니다. 설정은 현재 배치에만 적용됩니다.</p>';
+  panel.innerHTML=kinHtml("<strong>MPR Synchronization</strong><p class=\"target\"></p><label><input type=\"checkbox\" aria-label=\"Sync MPR Windowing\"> Windowing</label> <label><input type=\"checkbox\" aria-label=\"Sync MPR Zoom\"> Zoom</label><p role=\"status\"></p><p>현재 세 평면에서 이후 조절하는 밝기·대비 또는 기본 맞춤 기준 확대 배율을 함께 적용합니다. 단면 위치·회전·이동·반전은 각각 유지합니다. Reset View 및 Reset Windowing / Reset Zoom / Pan은 대기 중인 동기화를 취소하며 선택 평면만 초기화합니다. 설정은 현재 배치에만 적용됩니다.</p>");
   host.append(panel);const [windowing,zoom]=panel.querySelectorAll('input'),status=panel.querySelector('[role=status]'),caption=panel.querySelector('.target');
   let ended=false,session=null,kept=null,applying=false,suppressed=0,resizing=0;
   const manager=()=>window.cornerstoneTools.SynchronizerManager;
@@ -33,7 +37,7 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
     // This field is part of the pinned Synchronizer implementation. Membership
     // must be wholly within this MPR layout before its VOI group can be muted.
     return manager().getAllSynchronizers().filter(g=>g._eventName===events().VOI_MODIFIED&&[...g.getSourceViewports(),...g.getTargetViewports()].some(matches)).map(g=>{
-      if(![...g.getSourceViewports(),...g.getTargetViewports()].every(matches))throw Error('다른 화면과 연결된 밝기 동기화를 먼저 해제하세요.');
+      if(![...g.getSourceViewports(),...g.getTargetViewports()].every(matches))throw kinError("다른 화면과 연결된 밝기 동기화를 먼저 해제하세요.");
       return {group:g,enabled:!g.isDisabled()};
     });
   }
@@ -45,7 +49,7 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
   }
   function attach(t){
     clear();const initial=groups(t);
-    const engine=t.views[0].getRenderingEngine();if(t.views.some(v=>v.getRenderingEngine()!==engine))throw Error('같은 영상 엔진의 세 평면을 선택하세요.');
+    const engine=t.views[0].getRenderingEngine();if(t.views.some(v=>v.getRenderingEngine()!==engine))throw kinError("같은 영상 엔진의 세 평면을 선택하세요.");
     // The same plane viewports coming back after the grid briefly showed another cell count are the layout the
     // choice was made on. MPR Properties keeps its binding through that and does not apply its profile again.
     const back=same(kept?.target,t)?kept:null;kept=null;
@@ -56,7 +60,7 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
     // fit cameras have settled. OHIF then reapplies every presentation outside
     // the engine resize call. Guard that verified complete service operation.
     const guardResize=(owner,key)=>{
-      const original=owner[key];if(typeof original!=='function')throw Error('MPR 화면 크기 변경 경로를 확인할 수 없습니다.');
+      const original=owner[key];if(typeof original!=='function')throw kinError("MPR 화면 크기 변경 경로를 확인할 수 없습니다.");
       const hook=function(...args){
         if(session!==s)return original.apply(this,args);
         resizing++;try{return original.apply(this,args);}finally{
@@ -70,7 +74,7 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
     // Native download/magnifier use the public engine entry directly.
     guardResize(engine,'resize');
     for(const view of t.views)for(const key of ['resetProperties','resetCamera']){
-      const original=view[key];if(typeof original!=='function')throw Error('선택 평면의 초기화 경로를 확인할 수 없습니다.');
+      const original=view[key];if(typeof original!=='function')throw kinError("선택 평면의 초기화 경로를 확인할 수 없습니다.");
       const hook=function(...args){return session===s?capability.selected(()=>original.apply(this,args)):original.apply(this,args);};
       s.resizeHooks.push({owner:view,key,original,hook,own:Object.hasOwn(view,key)});view[key]=hook;
     }
@@ -101,11 +105,11 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
     try{
       const peers=s.target.views.filter(v=>v!==source);before=peers.map(v=>[v,snapshot(v)]);applying=true;
       const range=source.viewportProperties?.voiRange||event.detail?.range||source.getProperties().voiRange;
-      if(kind==='windowing'&&(!Number.isFinite(range?.lower)||!Number.isFinite(range?.upper)||range.lower>=range.upper))throw Error('밝기 범위를 확인할 수 없습니다.');
-      if(kind==='zoom'&&(!Number.isFinite(newZoom)||newZoom<=0))throw Error('확대 배율을 확인할 수 없습니다.');
+      if(kind==='windowing'&&(!Number.isFinite(range?.lower)||!Number.isFinite(range?.upper)||range.lower>=range.upper))throw kinError("밝기 범위를 확인할 수 없습니다.");
+      if(kind==='zoom'&&(!Number.isFinite(newZoom)||newZoom<=0))throw kinError("확대 배율을 확인할 수 없습니다.");
       if(kind==='windowing')normalizeWindowing(source,range);
       for(const [v,state] of before){
-        if(s!==session||!allowed()||!same(s.target,target()))throw Error('MPR 배치 또는 권한이 변경되어 동기화를 중단했습니다.');
+        if(s!==session||!allowed()||!same(s.target,target()))throw kinError("MPR 배치 또는 권한이 변경되어 동기화를 중단했습니다.");
         if(kind==='zoom')v.setZoom(newZoom);
         else{
           v.setProperties({voiRange:{...range}},v.getVolumeId());
@@ -121,14 +125,14 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
         else{v.setProperties({voiRange:state.range},v.getVolumeId());window.cornerstone.utilities.transferFunctionUtils.setTransferFunctionNodes(curve(v),state.nodes);}
         s.zooms.set(v,v.getZoom());v.render();
       }catch(_){failed=true;}
-      s[kind]=false;status.textContent='동기화를 중단했습니다. '+(error.message||'표시를 확인하세요.')+(failed?' 이전 표시를 완전히 복구하지 못했습니다.':'');
+      s[kind]=false;status.textContent=kinText("동기화를 중단했습니다. {e0}{t1}", (error.message||kinText("표시를 확인하세요.")), (failed?kinText(" 이전 표시를 완전히 복구하지 못했습니다."):''));
     }finally{applying=false;refresh();}
   }
   function change(kind,value){
     try{
-      const t=target(true);if(!allowed()||!same(session?.target,t))throw Error('현재 MPR 배치와 진행 중인 작업을 확인하세요.');
-      session[kind]=value;status.textContent='현재 배치의 이후 조절에 동기화 설정을 적용했습니다.';
-    }catch(error){if(!live()||!mounted(session))clear();status.textContent=error.message||'동기화 설정을 적용하지 못했습니다.';}
+      const t=target(true);if(!allowed()||!same(session?.target,t))throw kinError("현재 MPR 배치와 진행 중인 작업을 확인하세요.");
+      session[kind]=value;status.textContent=kinText("현재 배치의 이후 조절에 동기화 설정을 적용했습니다.");
+    }catch(error){if(!live()||!mounted(session))clear();status.textContent=error.message||kinText("동기화 설정을 적용하지 못했습니다.");}
     refresh();
   }
   function refresh(){
@@ -140,7 +144,7 @@ window.kinCreateVolumeSync=function({target,permitted,alive,services,host}){
       if(session.suspended){session.zooms=new Map(t.views.map(v=>[v,v.getZoom()]));session.scales=new Map(t.views.map(v=>[v,v.initialCamera.parallelScale]));session.suspended=false;}
       windowing.checked=session.windowing;zoom.checked=session.zoom;
       caption.textContent=t.source.study.id+' · Three Planes';windowing.disabled=zoom.disabled=!allowed();
-    }catch(error){clear();status.textContent=error.message||'동기화 대상을 확인하지 못했습니다.';}
+    }catch(error){clear();status.textContent=error.message||kinText("동기화 대상을 확인하지 못했습니다.");}
   }
   windowing.onchange=()=>change('windowing',windowing.checked);zoom.onchange=()=>change('zoom',zoom.checked);
   const capability={selected(operation){session?.pending.clear();suppressed++;try{return operation();}finally{suppressed--;}},read(){return session?{windowing:session.windowing,zoom:session.zoom}:null;},apply(value){

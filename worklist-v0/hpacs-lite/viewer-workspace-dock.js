@@ -2,6 +2,10 @@
  * survive panel switches. Reserve space instead of covering diagnostic pixels. */
 window.KinViewerWorkspaceDock = function (w, preferences) {
   'use strict';
+  // The screen-language write path of the window the dock is built in: its words read in English on an English screen and
+  // stay as written otherwise.
+  const kinSayEn=(t,...p)=>w.KinLanguage?.sayEnglish?w.KinLanguage.sayEnglish(t,...p):t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]));
+  const kinWrite=(el,value,name)=>{if(w.KinLanguage)return w.KinLanguage.write(el,value,name);if(name==='title')el.title=value;else if(name)el.setAttribute(name,value);else el.textContent=value;return el;};
   const work=w.KinWorkContext;
   if(!work)return;
   const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
@@ -19,12 +23,12 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   const origins=panels.map(p=>({panel:p,parent:p.parentNode,next:p.nextSibling,open:p.open,hidden:p.hidden}));
   const initialOwner=preferences.owner?.(),key=initialOwner?'kin-viewer-dock:v1:'+initialOwner:null;
   const normalize=window.KinViewerWorkspaceDock.normalize;
-  let ended=false,placement='bottom',selected=-1,autoHide=false,autoHidden=false,hover=false,held=false,pointerButton=null,away=false,timer,storage,initialMessage='도구 영역 · 이 창';
+  let ended=false,placement='bottom',selected=-1,autoHide=false,autoHidden=false,hover=false,held=false,pointerButton=null,away=false,timer,storage,initialMessage=kinSayEn('도구 영역 · 이 창');
   const live=()=>!ended&&preferences.allowed?.()!==false&&(!initialOwner||preferences.owner?.()===initialOwner);
   // Mount and tab clicks stay silent: the Dock Settings note says where preferences live.
   // A settings or account change confirms itself (reading-appearance copies this status),
   // and invalid, unavailable, unsaved and other-window messages show in the row at once.
-  try{storage=w.localStorage;const raw=key?storage.getItem(key):null;if(raw!==null){const value=raw.length<=128?normalize(JSON.parse(raw)):null;if(value){placement=value.placement;selected=usable(value.panel);autoHide=value.autoHide??false;initialMessage='';}else initialMessage='저장값 오류 · 기본 도구 영역';}else if(key)initialMessage='';}catch(e){initialMessage=e instanceof SyntaxError?'저장값 오류 · 기본 도구 영역':'저장소 사용 불가 · 이 창';}
+  try{storage=w.localStorage;const raw=key?storage.getItem(key):null;if(raw!==null){const value=raw.length<=128?normalize(JSON.parse(raw)):null;if(value){placement=value.placement;selected=usable(value.panel);autoHide=value.autoHide??false;initialMessage='';}else initialMessage=kinSayEn('저장값 오류 · 기본 도구 영역');}else if(key)initialMessage='';}catch(e){initialMessage=e instanceof SyntaxError?kinSayEn('저장값 오류 · 기본 도구 영역'):kinSayEn('저장소 사용 불가 · 이 창');}
   const style = d.createElement('style');
   style.textContent = `
     body.kin-docked { --kin-dock-height: 42px; }
@@ -88,7 +92,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
     return b;
   };
   const buttons = ['Measurements', 'Comparison'].map((label, i) => { const b = tab(label, i); nav.append(b); return b; });
-  const status=d.createElement('span');status.id='kin-dock-preference-status';status.setAttribute('role','status');status.textContent=initialMessage;nav.append(status);
+  const status=d.createElement('span');status.id='kin-dock-preference-status';status.setAttribute('role','status');kinWrite(status,initialMessage);nav.append(status);
   // Placement, auto-hide and reset are occasional; one disclosure keeps them out of the
   // row. It expands inside the 42px row, so it never covers images or resizes the dock.
   const settings=d.createElement('div');settings.id='kin-dock-settings';nav.append(settings);
@@ -105,11 +109,11 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   location.onchange=()=>{if(work.state()!=='active')return;if(!live()){end();return;}if(!['bottom','top'].includes(location.value))return;placement=location.value;apply();save(true);};
   const autoLabel=d.createElement('label');autoLabel.textContent='Auto-hide ';group.append(autoLabel);
   const auto=d.createElement('input');auto.type='checkbox';auto.id='kin-dock-autohide';auto.setAttribute('aria-label','Auto-hide Panels');autoLabel.append(auto);
-  autoLabel.title='영상 화면 안에서 도구 밖 조작을 마치면 패널을 접습니다. 버튼이나 키보드로 다시 열 수 있습니다.';
+  kinWrite(autoLabel,kinSayEn('영상 화면 안에서 도구 밖 조작을 마치면 패널을 접습니다. 버튼이나 키보드로 다시 열 수 있습니다.'),'title');
   auto.onchange=()=>{if(work.state()!=='active')return;if(!live()){end();return;}autoHide=auto.checked;autoHidden=false;apply();save(true);};
   const reset=d.createElement('button');reset.type='button';reset.id='kin-dock-reset';reset.textContent='Reset Dock';group.append(reset);
   reset.onclick=()=>{if(work.state()!=='active')return;if(!live()){end();return;}placement='bottom';selected=-1;autoHide=false;autoHidden=false;apply();save(true);};
-  const note=d.createElement('span');note.id='kin-dock-settings-note';note.textContent=key?'이 브라우저·이 계정에 저장됩니다.':'이 창에만 적용됩니다.';group.append(note);
+  const note=d.createElement('span');note.id='kin-dock-settings-note';kinWrite(note,key?kinSayEn('이 브라우저·이 계정에 저장됩니다.'):kinSayEn('이 창에만 적용됩니다.'));group.append(note);
   function resizeVisible(){
     // Resizing a hidden iframe's zero-size image can corrupt its camera scale.
     // The workspace redraws the retained viewer when it becomes visible again.
@@ -126,9 +130,9 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   const value=()=>({version:2,placement,panel:selected,autoHide});
   function save(announce=false){
     window.dispatchEvent(new window.CustomEvent('kin-dock-preference-changed',{detail:{owner:initialOwner,value:value()}}));
-    if(!key){status.textContent='도구 영역 · 이 창';return;}
-    try{storage.setItem(key,JSON.stringify(value()));status.textContent=announce?'도구 영역을 기억했습니다 · 이 브라우저':'';}
-    catch(_){status.textContent='저장하지 못해 이 창에만 적용합니다.';}
+    if(!key){kinWrite(status,kinSayEn('도구 영역 · 이 창'));return;}
+    try{storage.setItem(key,JSON.stringify(value()));kinWrite(status,announce?kinSayEn('도구 영역을 기억했습니다 · 이 브라우저'):'');}
+    catch(_){kinWrite(status,kinSayEn('저장하지 못해 이 창에만 적용합니다.'));}
   }
   function schedule(){
     w.clearTimeout(timer);if(work.state()!=='active'||ended||!autoHide||autoHidden||selected<0)return;
@@ -156,7 +160,7 @@ window.KinViewerWorkspaceDock = function (w, preferences) {
   const listeners=[[dock,'pointerenter',enter],[dock,'pointerleave',leave],[dock,'focusin',focus],[dock,'focusout',schedule],[dock,'click',engage],[dock,'input',engage],[dock,'change',engage],[w,'pointerdown',down],[w,'pointerup',up],[w,'pointercancel',up],[w,'pointermove',move],[w,'wheel',wheel],[w,'keydown',keyboardActivity],[w,'blur',blur],[w,'focus',schedule]];
   for(const [target,event,handler] of listeners)target.addEventListener(event,handler,true);
   function end(){if(ended)return;ended=true;w.clearTimeout(timer);for(const [target,event,handler] of listeners)target.removeEventListener(event,handler,true);placement='bottom';selected=-1;autoHide=false;autoHidden=false;apply();for(const b of buttons)b.disabled=true;location.disabled=reset.disabled=auto.disabled=toggle.disabled=true;w.removeEventListener('storage',storageListener);w.removeEventListener('pagehide',end);}
-  function onStorage(e){if(e.key===key)status.textContent='다른 창의 설정 변경 · 현재 창 유지';}
+  function onStorage(e){if(e.key===key)kinWrite(status,kinSayEn('다른 창의 설정 변경 · 현재 창 유지'));}
   panels.forEach(p => { p.hidden = true; dock.append(p); });
   // The third tab appears when its panel does, after the two tool tabs and before the status.
   function adoptReport(){

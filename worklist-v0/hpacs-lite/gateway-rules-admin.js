@@ -1,5 +1,13 @@
 (function () {
   'use strict';
+  // The page's write path (worklist-language.js): its own words read in English on an English screen and stay as written
+  // otherwise; data and the server's words are written as they are.
+  const kinSayEn = globalThis.KinLanguage?.sayEnglish || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
   // Gateway Rules: the administrator sets, for the institution's Gateways, which destinations a study goes to (rules by
   // Modality and/or sending AE Title; HALO PACS and the DICOM Peers registered as PACS / Modality), lossless compression toward HALO PACS,
   // and after how many days a Gateway deletes a copy every destination has (empty = never) (GET/PUT /api/admin/gateway-settings; the rule
@@ -15,7 +23,7 @@
 
   function message(text) {
     const box = $('#gateway-rules-message');
-    box.textContent = text || '';
+    kinWrite(box, text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -39,15 +47,15 @@
   function failure(error, what) {
     if (error?.status === 400 && typeof error.field === 'string') {
       const row = error.field.match(/^routes\[(\d+)\]\.?(\w*)$/);
-      if (error.field === 'retentionDays') return '보관 날 수는 1부터 3650까지의 정수로 적거나, 지우지 않으려면 비워 두세요.';
-      if (row) return `규칙 ${Number(row[1]) + 1}의 ${FIELD[row[2]] || '값'}을(를) 확인하세요` +
-        (row[2] === 'destinations' ? ' — 목적지를 하나 이상, 겹치지 않게 고릅니다.' : '.');
-      return '저장할 수 없는 값이 있습니다. 다시 불러와 확인하세요.';
+      if (error.field === 'retentionDays') return kinSayEn('보관 날 수는 1부터 3650까지의 정수로 적거나, 지우지 않으려면 비워 두세요.');
+      if (row) return kinSayEn('규칙 {n0}의 {1}을(를) 확인하세요{t2}', Number(row[1]) + 1, FIELD[row[2]] || kinSayEn('값'),
+        row[2] === 'destinations' ? kinSayEn(' — 목적지를 하나 이상, 겹치지 않게 고릅니다.') : '.');
+      return kinSayEn('저장할 수 없는 값이 있습니다. 다시 불러와 확인하세요.');
     }
-    if (error?.status === 409) return '다른 곳에서 Gateway 규칙이 바뀌었습니다. 지금 규칙을 다시 불러왔습니다 — 확인하고 다시 저장하세요.';
+    if (error?.status === 409) return kinSayEn('다른 곳에서 Gateway 규칙이 바뀌었습니다. 지금 규칙을 다시 불러왔습니다 — 확인하고 다시 저장하세요.');
     if (error?.status === 403) return error.code === 'GATEWAY_SETTINGS_RESTRICTED' && error.said
-      ? error.said : '이 계정으로는 Gateway 규칙을 관리할 수 없습니다.';
-    return `${what} 결과를 확인하지 못했습니다. 다시 불러와 지금 규칙을 확인하세요.`;
+      ? error.said : kinSayEn('이 계정으로는 Gateway 규칙을 관리할 수 없습니다.');
+    return kinSayEn('{0} 결과를 확인하지 못했습니다. 다시 불러와 지금 규칙을 확인하세요.', what);
   }
 
   function destinations(route) {
@@ -169,7 +177,7 @@
     controls(false);
     message('');
   });
-  $('#gateway-rules-refresh').addEventListener('click', () => void run(() => load(), '규칙 조회'));
+  $('#gateway-rules-refresh').addEventListener('click', () => void run(() => load(), kinSayEn('규칙 조회')));
   $('#gateway-rule-add').addEventListener('click', () => {
     if (!loaded || pending || KinConsoleSession.ended()) return;
     addRow({ modality: null, sourceAe: null, destinations: [KIN] });
@@ -182,14 +190,14 @@
       const answer = await request('PUT', '/admin/gateway-settings', body);
       seq++;   // a read still in flight is older than this answer
       if (answer?.settings) render(answer.settings, peers);
-      message(answer?.changed ? `Gateway 규칙을 저장했습니다(판 ${answer.settings.revision}).` : '바뀐 것이 없어 저장하지 않았습니다.');
-    }, '저장');
+      message(answer?.changed ? kinSayEn('Gateway 규칙을 저장했습니다(판 {n0}).', answer.settings.revision) : kinSayEn('바뀐 것이 없어 저장하지 않았습니다.'));
+    }, kinSayEn('저장'));
   });
   // Enabled only for the administrator session the Members console accepts.
   KinAuth.init().then(async session => {
     if (KinConsoleSession.ended() || session?.state !== 'approved' || session.demo || !KinAuth.has('admin')) return;
     enabled = true;
     controls(true);
-    if (location.hash === '#gateway-rules') void run(() => load(), '규칙 조회');
+    if (location.hash === '#gateway-rules') void run(() => load(), kinSayEn('규칙 조회'));
   }).catch(() => {});
 })();

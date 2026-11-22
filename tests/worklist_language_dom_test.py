@@ -68,6 +68,14 @@ class LanguageSite(WorkspaceSite):
         self.filters = []
         self.clinical_fixture = None
         self.planter = None  # language_data_probe.Planter: answers carry planted data
+        self.lost = {}  # uid -> exam kind: the list server's mark for an exam whose originals cannot all be read now
+
+    def list_body(self, account, rename=None):
+        body = super().list_body(account, rename)
+        for row in body["studies"]:
+            if row["uid"] in self.lost:
+                row.update(examUnavailable=True, examUnavailableKind=self.lost[row["uid"]])
+        return body
 
     def api(self, route, request, method, path, query):
         if self.planter is not None and path != "/api/reading-appearance":
@@ -215,6 +223,101 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.expect_words(WORKLIST, "en")
         self.assertEqual({"version": 1, "worklist": None, "reading": "ko"}, self.site.appearance["language"])
         self.assertEqual("— · KO", self.page.locator("#language-label").inner_text().strip())
+
+    def test_a_dialog_opened_from_either_screen_reads_in_the_language_of_that_screen(self):
+        """Tech Note opens from the list (its row chip) and from the reading screen: its words follow the screen it was
+        opened from, whichever language the other screen has."""
+        self.boot()
+        page = self.page
+        page.route("**/api/studies/*/tech-note", lambda r: r.fulfill(json={"uid": auth.UID, "writable": True, "note": None}))
+        guidance = page.locator("#tech-note-dialog > p").first
+        words = {"en": "Stored separately from the report and original images.", "ko": "판독문·원본 영상과 별도로 저장됩니다."}
+
+        def from_reading():
+            button = page.locator("#tech-note-open")
+            button.dispatch_event("pointerdown")
+            button.dispatch_event("click")
+
+        def from_list():
+            page.locator('[data-tab="Technician"]').click()
+            chip = page.locator("#rows [data-tech-note]").first
+            chip.click()
+            page.locator('[data-tab="Radiology"]').dispatch_event("click")
+
+        def by_itself_for_reading():
+            # The reading workspace opening the note by itself (its automatic opening): the last pointer was on the list.
+            page.locator('[data-tab="Technician"]').dispatch_event("pointerdown")
+            page.evaluate("() => KinLanguage.opensOn('reading', () => document.getElementById('tech-note-open').click())")
+
+        for worklist, reading in (("en", "ko"), ("ko", "en")):
+            page.evaluate("([w, r]) => KinLanguage.restore({version: 1, worklist: w, reading: r})", [worklist, reading])
+            for opened, lang in ((from_reading, reading), (from_list, worklist), (by_itself_for_reading, reading)):
+                with self.subTest(worklist=worklist, reading=reading, opened=opened.__name__):
+                    opened()
+                    expect(page.locator("#tech-note-dialog")).to_be_visible()
+                    expect(guidance).to_contain_text(words[lang])
+                    page.locator("#tech-note-close").click()
+                    expect(page.locator("#tech-note-dialog")).to_be_hidden()
+
+    def test_the_reason_an_exam_cannot_be_read_whole_reads_in_the_language_of_its_screen(self):
+        """A merged exam whose originals cannot all be read now: the list's badge (Technician) gives its reason in the list's
+        language, also when the reading screen in English was the last touched."""
+        self.site.second_study, self.site.lost = True, {auth.UID_B: "merge"}
+        self.boot()
+        page = self.page
+        ko = re.compile("^합친 검사의 원본 일부를 볼 수 없어")
+        en = "Some originals of this merged exam cannot be read, so it is not opened or preloaded. An original is missing from the image archive or this account cannot see it. Refresh the list."
+        self.apply("en")
+        page.locator('[data-tab="Technician"]').click()
+        badge = page.locator(f"#rows tr[data-uid='{auth.UID_B}'] td.acc .exam-merged-unavailable")
+        expect(badge).to_have_attribute("title", en)
+        # A Korean list beside an English reading screen: the badge stays Korean after the reading screen was touched and the
+        # list painted again.
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'en'})")
+        expect(badge).to_have_attribute("title", ko)
+        badge.evaluate("b => { b.dataset.synPainted = 'before'; }")
+        page.locator("#b-approve").dispatch_event("pointerdown")
+        page.locator("#m-refresh").dispatch_event("click")
+        expect(badge).not_to_have_attribute("data-syn-painted", "before")
+        expect(badge).to_have_attribute("title", ko)
+
+    def test_a_known_server_sentence_in_an_error_place_follows_the_screen_and_another_stays_as_written(self):
+        """History's error place: a server message that is a known sentence of the glossary reads in English on an English
+        screen; any other message keeps its words and follows the general English sentence; Korean or no choice show the
+        message exactly as the server gave it."""
+        self.boot()
+        page = self.page
+        known, other, plain = "계정 설정이 변경되었습니다. 불러온 뒤 다시 저장하세요", "SYN 처음 보는 서버 오류", "Not Found"
+        box = page.locator("#hist-body [data-kin-error]")
+        for lang in (None, "ko", "en"):
+            if lang:
+                page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang)
+            for message in (known, other, plain):
+                with self.subTest(lang=lang, message=message):
+                    page.route("**/report/versions*", lambda route, request, m=message: route.fulfill(status=409, json={"message": m}))
+                    page.locator("#b-history").dispatch_event("click")
+                    expect(box).to_be_visible()
+                    if lang == "en" and message == known:
+                        expect(box).to_have_text("Account settings have changed. Load them, then save again")
+                    elif lang == "en":
+                        expect(box).to_have_text("The request could not be processed. Original message: " + message)
+                    else:
+                        expect(box).to_have_text(message)
+                    page.locator("#hist-close").dispatch_event("click")
+                    page.unroute("**/report/versions*")
+
+    def test_the_applied_choice_is_kept_in_the_browser_for_the_other_pages(self):
+        self.boot()
+        stored = "localStorage.getItem('kin-language:v1')"
+        session = self.page.evaluate("KinAuth.sessionId()")
+        self.assertTrue(session)
+        # Kept with the sign-in it was applied in, so another account's documents never follow it.
+        self.assertIn(json.loads(self.page.evaluate(stored) or "null"), (None, {**NONE, "session": session}))
+        self.apply("en")
+        self.assertEqual({"version": 1, "worklist": "en", "reading": "en", "session": session}, json.loads(self.page.evaluate(stored)))
+        self.page.locator("#language-revert").click()
+        expect(self.page.locator("#language-applied")).to_be_hidden()
+        self.assertEqual({**NONE, "session": session}, json.loads(self.page.evaluate(stored)))
 
     def test_the_account_choice_comes_back_on_another_start(self):
         self.boot()
@@ -504,6 +607,79 @@ class WorklistLanguageDOM(unittest.TestCase):
                 self.assertTrue(lines[0].startswith("삽입 대상: " + auth.PATIENT))
                 self.assertIn("SYN CT CHEST", lines[1])
 
+    def test_a_measurement_goes_into_the_report_as_written_and_reads_in_english_on_the_screen(self):
+        """Include Measurements: the value text and the report's measurement line are the same bytes in every screen
+        language; the screen that draws the value (valueSay) says it in its own language."""
+        self.boot()
+        script = r"""() => {
+          const L = kinFindingLinkModel, C = kinFindingCommand, R = KinReportCitation;
+          const sources = [{kind:'circle', calculator:'kin-circle-v1:detector:hu', values:[10.04, 79.2, 40, 2.5, 1, 80, 64]},
+            {kind:'spineCobb', calculator:'kin-spinecobb-v1:right:ermf', values:[-12.3]},
+            {kind:'length', calculator:'kin-mg-length-v1:pixel', values:[3.21]},
+            {kind:'ellipse', calculator:'bogus', values:[1, 2]}];
+          return sources.map(s => { const m = C.measurementOf(s);
+            return {type: typeof m.value, value: m.value, line: R.measurementLine([{...m, series: 1, image: 2}]),
+              screen: String(L.valueSay(s.kind, s.calculator, s.values, 'server-copy'))}; });
+        }"""
+        seen = {}
+        for lang in ("en", "ko", None):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            seen[lang] = self.page.evaluate(script)
+        written = [{k: row[k] for k in ("type", "value", "line")} for row in seen[None]]
+        for lang in ("en", "ko"):
+            self.assertEqual(written, [{k: row[k] for k in ("type", "value", "line")} for row in seen[lang]])
+        self.assertEqual({"string"}, {row["type"] for row in written})
+        self.assertIn("지름 10.0 mm · 면적 79.2 mm²", written[0]["value"])
+        self.assertIn("검출기 기준", written[0]["value"])
+        self.assertTrue(written[0]["line"].startswith("측정: Circle by Diameter 지름 10.0 mm"))
+        for lang in ("ko", None):
+            self.assertEqual([row["value"] for row in written], [row["screen"] for row in seen[lang]])
+        english = [row["screen"] for row in seen["en"]]
+        self.assertTrue(english[0].startswith("Diameter 10.0 mm · Area 79.2 mm² · Mean 40.0 HU"), english[0])
+        self.assertIn("detector-based", english[0])
+        for text in english:
+            self.assertIsNone(re.search("[가-힣]", text), text)
+
+    def test_the_report_paper_is_the_same_in_every_language_and_its_dialog_follows_the_screen(self):
+        """The report output: the paper (the preview frame and the print window) prints as written in every screen language;
+        the dialog around it reads in the reading screen's language."""
+        self.boot()
+        self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
+            "study": {"uid": auth.UID}, "report": {"version": 0}, "canPreviewEditor": False, "keys": []}))
+        papers, titles = {}, {}
+        for lang in (None, "ko", "en"):
+            self.page.evaluate("l => KinLanguage.restore({version:1,worklist:l,reading:l})", lang)
+            self.page.locator("#b-print").dispatch_event("click")
+            self.page.wait_for_function("() => (document.querySelector('#report-preview iframe')?.srcdoc || '').includes('</html>')")
+            papers[lang] = self.page.evaluate("() => document.querySelector('#report-preview iframe').srcdoc")
+            titles[lang] = self.page.locator("#report-preview-title").inner_text()
+            self.page.locator("#report-preview").press("Escape")
+            expect(self.page.locator("#report-preview")).to_be_hidden()
+        self.assertIn("HALO PACS 판독문", papers[None])
+        self.assertEqual(papers[None], papers["ko"])
+        self.assertEqual(papers[None], papers["en"])
+        self.assertEqual(titles[None], titles["ko"])
+        self.assertNotEqual(titles[None], titles["en"])
+        self.assertIsNone(re.search("[가-힣]", titles["en"]), titles["en"])
+
+    def test_the_report_output_dialog_opened_from_an_english_reading_screen_reads_in_english_throughout(self):
+        """English on the reading screen only: the output dialog opened from it has its title, buttons and later status in
+        English alike (it takes the screen it is opened from)."""
+        self.boot()
+        self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
+            "study": {"uid": auth.UID}, "report": {"version": 0}, "canPreviewEditor": False, "keys": []}))
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:null,reading:'en'})")
+        # The pointer on the reading screen (the menu that holds Print) marks it as the screen in use.
+        self.page.locator("#reading-bar").dispatch_event("pointerdown")
+        self.page.locator("#b-print").dispatch_event("click")
+        dialog = self.page.locator("#report-preview")
+        expect(dialog).to_be_visible()
+        self.page.wait_for_function("() => (document.querySelector('#report-preview iframe')?.srcdoc || '').includes('</html>')")
+        for text in (self.page.locator("#report-preview-title").inner_text(),
+                     dialog.get_by_role("button").filter(has_text=re.compile("PDF")).first.inner_text()):
+            self.assertIsNone(re.search("[가-힣]", text), text)
+        self.assertEqual("reading", dialog.get_attribute("data-kin-lang-region"))
+
     def test_key_image_title_and_tech_note_keep_the_authors_words(self):
         self.boot()
         self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
@@ -764,6 +940,42 @@ class WorklistLanguageDOM(unittest.TestCase):
         expect(page.locator("#b-addendum")).to_have_attribute("title", re.compile("[가-힣]"))
         self.assertIsNone(page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
         self.assertEqual([], self.site.appearance_writes)
+
+    def test_words_the_worklist_writes_after_start_follow_both_languages(self):
+        """The words the page writes after its start (connection line, filter summary and filter row, folders, search
+        line, related exam filter, storage, empty list) follow the chosen language, also when written again later."""
+        self.boot()
+        page = self.page
+        name = page.locator('#filterrow input[data-f="name"]')
+        folders = page.locator("#worklist-folders nav")
+        texts = {"#dbstat": ("DB Connected", "DB 연결됨"), "#filterlist": ("Filter : -", "필터 : -"),
+                 "#storage": ("Storage Unobservable", "저장량 관측 불가"),
+                 "#worklist-folders [id$='-shortcut']": ("My Shortcuts", "내 바로가기"),
+                 "#worklist-folders [id$='-modality']": ("Modality", "장비"),
+                 "#worklist-folders [id$='-search']": ("Saved Searches", "저장 검색"),
+                 "#related-modality option[value='']": ("All Modalities", "모든 장비")}
+        line = {"en": ("Search Mode", "Search", "Clear Results on Clear"), "ko": ("검색 방식", "검색", "지우기 시 결과도 비우기")}
+        for lang in ("ko", "en", "ko"):
+            self.apply(lang)
+            # Written again after the choice: the list is drawn anew, the connection line comes back after a refresh.
+            page.locator("#m-refresh").click()
+            expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
+            for selector, pair in texts.items():
+                expect(page.locator(selector).first).to_contain_text(pair[lang == "ko"])
+            expect(folders).to_have_attribute("aria-label", "Folders" if lang == "en" else "폴더")
+            expect(page.locator("#worklist-folders li > button").first).to_contain_text("All Studies (" if lang == "en" else "전체 검사 (")
+            # The filter row's names are English words put on the write path late: a Korean screen keeps them as written.
+            expect(name).to_have_attribute("aria-label", "Name Filter")
+            expect(page.locator("#related-modality")).to_have_attribute("title", texts["#related-modality option[value='']"][lang == "ko"])
+            bar = page.locator("#toolbar-filters")
+            for word in line[lang]:
+                expect(bar).to_contain_text(word)
+            if lang == "ko":
+                expect(bar).not_to_contain_text("Search Mode")
+            name.fill("SYN-NO-SUCH-PATIENT")
+            expect(page.locator("#rows td.empty")).to_have_text("No records found" if lang == "en" else "검색 결과가 없습니다")
+            name.fill("")
+            expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
 
 
 if __name__ == "__main__":

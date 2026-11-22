@@ -2235,7 +2235,8 @@ class MeasurementCiTests(unittest.TestCase):
         cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
         self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
                          ['test_language_01_korean_buttons_approve_the_same_and_revert',
-                          'test_language_02_english_errors_known_and_unknown'])
+                          'test_language_02_english_errors_known_and_unknown',
+                          'test_language_03_the_viewer_follows_english_and_keeps_korean'])
         self.assertNotIn('screen-language', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- screen-language', dispatch)

@@ -1,4 +1,8 @@
 /* Selected-stack browser fullscreen. The native viewport and its clinical state stay mounted. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function (root) {
   'use strict';
   const uid = value => typeof value === 'string' && value.length <= 64 && /^\d+(?:\.\d+)+$/.test(value);
@@ -16,7 +20,7 @@
     let ended = false, panel = null, open = null, status = null, active = null, timer = null, channel = null;
     const subscriptions = [], listeners = [];
     const listen = (target, event, handler, settings) => { target?.addEventListener?.(event, handler, settings); listeners.push([target, event, handler, settings]); };
-    const safe = fn => { try { fn(); } catch (_) { if (active) leave('영상 화면 연결이 바뀌어 Images Only를 종료했습니다.'); else refresh(); } };
+    const safe = fn => { try { fn(); } catch (_) { if (active) leave(kinText("영상 화면 연결이 바뀌어 Images Only를 종료했습니다.")); else refresh(); } };
     const live = () => !ended && options.live?.() !== false;
     const owner = () => { try { const value = ownerOf(); return typeof value === 'string' && value.trim() && value.length <= 1024 ? value : null; } catch (_) { return null; } };
     const dialogs = () => !!doc.querySelector?.('dialog[open],[role="dialog"][aria-modal="true"],.modal.show');
@@ -31,36 +35,36 @@
         [id, value.x, value.y, value.width, value.height, value.displaySetInstanceUIDs])]);
     }
     function inspect() {
-      if (!live()) throw Error('현재 영상 세션을 확인할 수 없습니다.');
-      if (win.kinViewerImageTextHidden?.()) throw Error('Show Image Text로 문자 표시를 복원한 뒤 전체 화면을 여세요.');
-      if (doc.fullscreenElement) throw Error('열려 있는 전체 화면을 종료한 뒤 다시 시도하세요.');
-      const boundOwner = owner(); if (!boundOwner) throw Error('현재 영상 계정을 확인할 수 없습니다.');
-      if (dialogs()) throw Error('열린 대화상자를 닫은 뒤 다시 시도하세요.');
-      if (busy()) throw Error('저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.');
+      if (!live()) throw kinError("현재 영상 세션을 확인할 수 없습니다.");
+      if (win.kinViewerImageTextHidden?.()) throw kinError("Show Image Text로 문자 표시를 복원한 뒤 전체 화면을 여세요.");
+      if (doc.fullscreenElement) throw kinError("열려 있는 전체 화면을 종료한 뒤 다시 시도하세요.");
+      const boundOwner = owner(); if (!boundOwner) throw kinError("현재 영상 계정을 확인할 수 없습니다.");
+      if (dialogs()) throw kinError("열린 대화상자를 닫은 뒤 다시 시도하세요.");
+      if (busy()) throw kinError("저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.");
       const grid = services?.viewportGridService, state = grid?.getState?.(), viewportId = state?.activeViewportId;
       const cell = typeof viewportId === 'string' && state?.viewports?.get?.(viewportId);
       const setIds = cell?.displaySetInstanceUIDs;
-      if (!cell || !Array.isArray(setIds) || setIds.length !== 1 || !setIds[0]) throw Error('한 영상 묶음이 선택된 칸을 확인하세요.');
+      if (!cell || !Array.isArray(setIds) || setIds.length !== 1 || !setIds[0]) throw kinError("한 영상 묶음이 선택된 칸을 확인하세요.");
       const viewport = services?.cornerstoneViewportService?.getCornerstoneViewport?.(viewportId);
       const displaySet = services?.displaySetService?.getDisplaySetByUID?.(setIds[0]);
-      if (!viewport || viewport.type !== 'stack' || viewport.viewportStatus !== rendered() || !viewport.element?.isConnected || typeof viewport.element.requestFullscreen !== 'function') throw Error('불러온 일반 영상 칸에서만 Images Only를 사용할 수 있습니다.');
-      if (ownership.has(viewport.element)) throw Error('이 영상의 전체 화면 요청이 아직 완료되지 않았습니다. 브라우저에서 요청을 취소하거나 페이지를 다시 여세요.');
+      if (!viewport || viewport.type !== 'stack' || viewport.viewportStatus !== rendered() || !viewport.element?.isConnected || typeof viewport.element.requestFullscreen !== 'function') throw kinError("불러온 일반 영상 칸에서만 Images Only를 사용할 수 있습니다.");
+      if (ownership.has(viewport.element)) throw kinError("이 영상의 전체 화면 요청이 아직 완료되지 않았습니다. 브라우저에서 요청을 취소하거나 페이지를 다시 여세요.");
       const imageIds = viewport.getImageIds?.(), current = viewport.getCurrentImageId?.();
-      if (!Array.isArray(imageIds) || !imageIds.length || imageIds.length > 2000 || new Set(imageIds).size !== imageIds.length || !imageIds.includes(current)) throw Error('선택 영상의 원본 목록을 확인할 수 없습니다.');
-      if (!displaySet || displaySet.displaySetInstanceUID !== setIds[0] || !uid(displaySet.StudyInstanceUID) || !uid(displaySet.SeriesInstanceUID)) throw Error('선택 영상의 원본 식별을 확인할 수 없습니다.');
+      if (!Array.isArray(imageIds) || !imageIds.length || imageIds.length > 2000 || new Set(imageIds).size !== imageIds.length || !imageIds.includes(current)) throw kinError("선택 영상의 원본 목록을 확인할 수 없습니다.");
+      if (!displaySet || displaySet.displaySetInstanceUID !== setIds[0] || !uid(displaySet.StudyInstanceUID) || !uid(displaySet.SeriesInstanceUID)) throw kinError("선택 영상의 원본 식별을 확인할 수 없습니다.");
       const source = Array.isArray(displaySet.images) ? displaySet.images : Array.isArray(displaySet.instances) ? displaySet.instances : null;
-      if (!source || !source.length || source.length > 2000) throw Error('선택 영상의 원본 목록이 일치하지 않습니다.');
+      if (!source || !source.length || source.length > 2000) throw kinError("선택 영상의 원본 목록이 일치하지 않습니다.");
       const values = imageIds.map(imageId => metadata(imageId));
       if (values.some(value => !value || value.StudyInstanceUID !== displaySet.StudyInstanceUID || value.SeriesInstanceUID !== displaySet.SeriesInstanceUID ||
-          !uid(value.SOPInstanceUID) || !patient(value.PatientID))) throw Error('선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.');
+          !uid(value.SOPInstanceUID) || !patient(value.PatientID))) throw kinError("선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.");
       const patientId = values[0].PatientID;
-      if (values.some(value => value.PatientID !== patientId)) throw Error('선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.');
+      if (values.some(value => value.PatientID !== patientId)) throw kinError("선택 영상의 환자 또는 원본 식별이 일치하지 않습니다.");
       // Each entry once: by SOP, or by SOP and frame for the frames of one multi-frame file split by time point.
       const sourceSops = source.map(value => value?.SOPInstanceUID), sourceKeys = typeof win.kinSeriesSplitKey === 'function' ? source.map(value => win.kinSeriesSplitKey(value)) : sourceSops;
       if (source.some(value => value?.StudyInstanceUID !== displaySet.StudyInstanceUID || value?.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value?.PatientID !== patientId || !uid(value?.SOPInstanceUID)) ||
-          new Set(sourceKeys).size !== sourceKeys.length || !same([...new Set(sourceSops)].sort(), [...new Set(values.map(value => value.SOPInstanceUID))].sort())) throw Error('선택 영상의 원본 목록이 일치하지 않습니다.');
+          new Set(sourceKeys).size !== sourceKeys.length || !same([...new Set(sourceSops)].sort(), [...new Set(values.map(value => value.SOPInstanceUID))].sort())) throw kinError("선택 영상의 원본 목록이 일치하지 않습니다.");
       const identity = [...viewport.element.querySelectorAll('.kin-viewer-identity')].find(element => element.dataset.study === displaySet.StudyInstanceUID && element.isConnected);
-      if (!identity) throw Error('환자와 원본 식별 표시를 확인한 뒤 다시 시도하세요.');
+      if (!identity) throw kinError("환자와 원본 식별 표시를 확인한 뒤 다시 시도하세요.");
       return { owner: boundOwner, viewportId, cell, viewport, element: viewport.element, displaySet, displaySetId: setIds[0],
         imageIds: [...imageIds], grid: gridSignature(state), study: displaySet.StudyInstanceUID,
         sourceIdentity: JSON.stringify([displaySet.StudyInstanceUID, displaySet.SeriesInstanceUID, patientId,
@@ -122,18 +126,18 @@
       record.exitMessage = '';
       if (doc.fullscreenElement !== record.element) { finish(record); return; }
       if (record.exit?.dataset.kinImagesOnly === record.token) {
-        record.exit.textContent = 'Exit Images Only · Retry · 종료 요청이 거절되었습니다.';
+        record.exit.textContent = kinText("Exit Images Only · Retry · 종료 요청이 거절되었습니다.");
         record.exit.style.background = '#431414';
         if (!placeExit(record)) {
           record.placementBlocked = true;
-          record.exit.textContent = 'Exit Images Only · Retry · 종료 거절';
-          if (!placeExit(record) && status && live()) status.textContent = '안전한 Exit 위치가 없습니다. Esc로 전체 화면을 종료한 뒤 영상 배치를 확인하세요.';
+          record.exit.textContent = kinText("Exit Images Only · Retry · 종료 거절");
+          if (!placeExit(record) && status && live()) status.textContent = kinText("안전한 Exit 위치가 없습니다. Esc로 전체 화면을 종료한 뒤 영상 배치를 확인하세요.");
         }
       }
     }
     function finish(record, message) {
       release(record); removeExit(record); if (active === record) active = null;
-      if (status && live()) status.textContent = message || 'Images Only를 종료했습니다.';
+      if (status && live()) status.textContent = message || kinText("Images Only를 종료했습니다.");
       refresh();
     }
     function exitOwned(record, message) {
@@ -147,7 +151,7 @@
         catch (_) { exitFailed(record); }
       } else if (record.pending) {
         record.cancelled = true; removeExit(record); if (active === record) active = null;
-        if (status && live()) status.textContent = message || '전체 화면 요청이 끝날 때까지 기다려 주세요.';
+        if (status && live()) status.textContent = message || kinText("전체 화면 요청이 끝날 때까지 기다려 주세요.");
         refresh();
       } else finish(record, message);
     }
@@ -177,16 +181,16 @@
       if (record.placementBlocked) {
         if (placeExit(record)) {
           record.placementBlocked = false;
-          if (status && live()) status.textContent = 'Images Only · Esc 또는 Exit Images Only로 돌아갑니다.';
+          if (status && live()) status.textContent = kinText("Images Only · Esc 또는 Exit Images Only로 돌아갑니다.");
         }
       } else if (!placeExit(record)) {
         record.placementBlocked = true;
-        exitOwned(record, '환자와 원본 식별 표시를 가리지 않는 위치가 없어 Images Only를 종료했습니다.');
+        exitOwned(record, kinText("환자와 원본 식별 표시를 가리지 않는 위치가 없어 Images Only를 종료했습니다."));
       }
     }
     function observe() {
       if (!active) { refresh(); return; }
-      if (!matches(active)) exitOwned(active, '영상 화면 연결이 바뀌어 Images Only를 종료했습니다.');
+      if (!matches(active)) exitOwned(active, kinText("영상 화면 연결이 바뀌어 Images Only를 종료했습니다."));
       else ensurePlacement(active, false);
     }
     function refresh() {
@@ -194,7 +198,7 @@
       let reason = '';
       try { if (!active) inspect(); } catch (error) { reason = error.message; }
       open.disabled = ended || !!active || !!reason;
-      open.title = reason || '선택한 영상 칸만 브라우저 전체 화면으로 표시합니다.';
+      open.title = reason || kinText("선택한 영상 칸만 브라우저 전체 화면으로 표시합니다.");
       if (!active && reason && status) status.textContent = reason;
     }
     function enter() {
@@ -210,31 +214,31 @@
         record.placementBlocked = false; shieldExit(record); exitOwned(record);
       }, true);
       record.exit = exit; record.element.append(exit);
-      if (!placeExit(record)) { removeExit(record); status.textContent = '환자와 원본 식별 표시를 가리지 않는 위치를 확보한 뒤 다시 시도하세요.'; refresh(); return; }
+      if (!placeExit(record)) { removeExit(record); status.textContent = kinText("환자와 원본 식별 표시를 가리지 않는 위치를 확보한 뒤 다시 시도하세요."); refresh(); return; }
       record.pending = true; active = record; ownership.set(record.element, record); refresh();
       record.requestTimer = win.setTimeout(() => {
         if (ownership.get(record.element) !== record || !record.pending) return;
         record.timedOut = true;
         if (doc.fullscreenElement === record.element && active === record && matches(record)) {
-          record.pending = false; status.textContent = 'Images Only · Esc 또는 Exit Images Only로 돌아갑니다.';
-        } else if (status && live()) status.textContent = '전체 화면 요청이 아직 완료되지 않았습니다. 브라우저에서 요청을 취소하거나 페이지를 다시 여세요.';
+          record.pending = false; status.textContent = kinText("Images Only · Esc 또는 Exit Images Only로 돌아갑니다.");
+        } else if (status && live()) status.textContent = kinText("전체 화면 요청이 아직 완료되지 않았습니다. 브라우저에서 요청을 취소하거나 페이지를 다시 여세요.");
       }, requestTimeoutMs);
       let request;
       try { request = record.element.requestFullscreen(); }
-      catch (error) { if (doc.fullscreenElement === record.element) exitFailed(record); else finish(record, '브라우저가 Images Only 요청을 허용하지 않았습니다.'); return; }
+      catch (error) { if (doc.fullscreenElement === record.element) exitFailed(record); else finish(record, kinText("브라우저가 Images Only 요청을 허용하지 않았습니다.")); return; }
       Promise.resolve(request).then(() => {
         if (record.requestTimer) win.clearTimeout(record.requestTimer); record.requestTimer = null;
         if (ownership.get(record.element) !== record) return;
         record.pending = false;
-        if (record.cancelled || ended || active !== record || !matches(record) || doc.fullscreenElement !== record.element) exitOwned(record, '영상 화면 연결이 바뀌어 Images Only를 종료했습니다.');
-        else { status.textContent = 'Images Only · Esc 또는 Exit Images Only로 돌아갑니다.'; refresh(); }
+        if (record.cancelled || ended || active !== record || !matches(record) || doc.fullscreenElement !== record.element) exitOwned(record, kinText("영상 화면 연결이 바뀌어 Images Only를 종료했습니다."));
+        else { status.textContent = kinText("Images Only · Esc 또는 Exit Images Only로 돌아갑니다."); refresh(); }
       }, () => {
         if (record.requestTimer) win.clearTimeout(record.requestTimer); record.requestTimer = null;
         if (ownership.get(record.element) !== record) return;
         record.pending = false;
         if (active === record) {
           if (doc.fullscreenElement === record.element) exitFailed(record);
-          else finish(record, '브라우저가 Images Only 요청을 허용하지 않았습니다.');
+          else finish(record, kinText("브라우저가 Images Only 요청을 허용하지 않았습니다."));
         } else if (doc.fullscreenElement === record.element) exitOwned(record);
         else finish(record);
       });
@@ -242,10 +246,10 @@
     function fullscreenChanged() {
       if (!active) return;
       if (doc.fullscreenElement === active.element) {
-        if (!matches(active)) exitOwned(active, '영상 화면 연결이 바뀌어 Images Only를 종료했습니다.');
+        if (!matches(active)) exitOwned(active, kinText("영상 화면 연결이 바뀌어 Images Only를 종료했습니다."));
         else ensurePlacement(active, true);
       }
-      else finish(active, active.exitMessage || 'Images Only를 종료했습니다.');
+      else finish(active, active.exitMessage || kinText("Images Only를 종료했습니다."));
     }
     function end() {
       if (ended) return; ended = true;

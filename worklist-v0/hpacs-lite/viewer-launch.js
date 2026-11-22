@@ -383,7 +383,7 @@
           // Where this placement meant the window to stand (ohifPlacement), once known, and the two displays chosen for it
           // (Viewer Displays), if any. The stored choice as it was when this placement began is its gate's (placementWrite).
           let intended = null, chosen = null;
-          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
           // The window stands over two displays: remembered in the one place (rememberSpan), and what was written is
           // said here, for a window the browser put there at once and for one dragged there alike. All of it written is
           // said only to a reader who was asked to drag (asked) - a placement that simply worked says nothing, as any
@@ -545,16 +545,19 @@
     }
 
     function mountViewerWindows() {
+      // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const button = $('#viewer-windows-open'), dialog = document.createElement('dialog'); dialog.id = 'viewer-windows-dialog';
       dialog.setAttribute('aria-labelledby', 'viewer-windows-title');
       dialog.innerHTML = '<h2 id="viewer-windows-title">Viewer Windows</h2><p>이 목록에 연결된 영상 창입니다. 창 닫기는 저장 중이거나 미저장 작업이 있으면 거절합니다. 확인되지 않은 창은 Focus로 상태를 확인합니다.</p><nav aria-label="Opened viewer navigation"><button class="chip" id="viewer-windows-prev" type="button">Previous Window</button> <button class="chip" id="viewer-windows-next" type="button">Next Window</button></nav><p>이 목록에서 마지막으로 연 창 또는 Focus한 창을 기준으로 이동합니다. 판독 대상과 영상 내용은 바꾸지 않습니다.</p><div id="viewer-windows-list"></div><p id="viewer-windows-status" role="status"></p><button class="chip" id="viewer-windows-done" type="button">Done</button>';
-      document.body.append(dialog);
+      document.body.append(dialog);window.KinLanguage?.markup?.(dialog);
       const list = $('#viewer-windows-list'), status = $('#viewer-windows-status'); let signature = '';
       let displayScreens = [], displaySequence = 0, displayMoveSequence = 0;
       const movingWindows = new WeakMap();
       const detectDisplays = document.createElement('button');detectDisplays.type='button';detectDisplays.className='chip';
       detectDisplays.id='viewer-windows-displays';detectDisplays.textContent='Detect Displays';
-      detectDisplays.title='화면 접근 권한을 확인합니다. 번호는 좌표 순의 브라우저 목록이며 OS 설정 번호와 다를 수 있습니다.';
+      kinWrite(detectDisplays, kinSayEn("화면 접근 권한을 확인합니다. 번호는 좌표 순의 브라우저 목록이며 OS 설정 번호와 다를 수 있습니다."), "title");
       list.before(detectDisplays);
       const spanChoices = document.createElement('fieldset');
       const spanLegend = document.createElement('legend'); spanLegend.textContent = 'Viewer Displays'; spanChoices.append(spanLegend);
@@ -565,12 +568,12 @@
         return select;
       });
       const spanHelp = document.createElement('p');
-      spanHelp.textContent = '영상 창을 걸칠 두 화면을 선택하세요. 목록·판독 창은 이동하지 않습니다. 자동 배치가 제한되면 영상 창을 직접 늘리세요.';
+      kinWrite(spanHelp, kinSayEn("영상 창을 걸칠 두 화면을 선택하세요. 목록·판독 창은 이동하지 않습니다. 자동 배치가 제한되면 영상 창을 직접 늘리세요."));
       spanChoices.append(spanHelp); list.before(spanChoices);
       let displaySignature = '';
       function renderDisplayChoices() {
         // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
-        const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+        const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
         const next = JSON.stringify(displayScreens);
         if (next !== displaySignature) {
           displaySignature = next;
@@ -595,16 +598,16 @@
           if(!work.admits(at)||request!==displaySequence||owner!==KinViewerOpening.key(KinAuth.session())||!viewerWindows.available())return;
           if(monitorQueryUnsupported)monitorSessionGranted=true;
           cacheMonitorScreens(details);displayScreens=KinViewerDisplayLayout.screens(details);render();
-          status.textContent=displayScreens.length?'이동할 화면을 선택하세요. 화면 번호는 좌표 순이며 OS 설정 번호와 다를 수 있습니다.':'사용 가능한 화면을 확인하지 못했습니다.';
-        }catch(_){if(work.admits(at)&&request===displaySequence){displayScreens=[];render();status.textContent='화면 권한을 허용한 뒤 다시 확인하세요. 이 브라우저가 지원하지 않으면 창을 직접 이동할 수 있습니다.';}}
+          kinWrite(status, displayScreens.length ? kinSayEn("이동할 화면을 선택하세요. 화면 번호는 좌표 순이며 OS 설정 번호와 다를 수 있습니다.") : kinSayEn("사용 가능한 화면을 확인하지 못했습니다."));
+        }catch(_){if(work.admits(at)&&request===displaySequence){displayScreens=[];render();kinWrite(status, kinSayEn("화면 권한을 허용한 뒤 다시 확인하세요. 이 브라우저가 지원하지 않으면 창을 직접 이동할 수 있습니다."));}}
         finally{detectDisplays.disabled=false;}
       };
       async function moveDisplay(index,chosen){
         const owner=KinViewerOpening.key(KinAuth.session());
-        if(!viewerWindows.available()){status.textContent='현재 계정을 확인한 뒤 다시 여세요.';return;}
-        if(!monitorPermissionGranted()){status.textContent='Detect Displays에서 화면을 확인하거나 영상 창을 직접 이동하세요.';return;}
+        if(!viewerWindows.available()){kinWrite(status, kinSayEn("현재 계정을 확인한 뒤 다시 여세요."));return;}
+        if(!monitorPermissionGranted()){kinWrite(status, kinSayEn("Detect Displays에서 화면을 확인하거나 영상 창을 직접 이동하세요."));return;}
         const row=viewerWindows.rows().find(r=>r.index===index),popup=row?.popup;
-        if(!popup||row.pending||!row.status?.ready||row.status.busy||movingWindows.has(popup)||ohifPlacementWrites.get(popup)?.pending){status.textContent='창을 불러오는 중이거나 작업 중입니다. 완료 후 다시 이동하세요.';return;}
+        if(!popup||row.pending||!row.status?.ready||row.status.busy||movingWindows.has(popup)||ohifPlacementWrites.get(popup)?.pending){kinWrite(status, kinSayEn("창을 불러오는 중이거나 작업 중입니다. 완료 후 다시 이동하세요."));return;}
         const request=++displayMoveSequence;movingWindows.set(popup,request);render();
         const href=row.status.href,sequence=ohifPopupSequences.get(popup);
         // 이 이동을 시작한 문맥. 화면 정보의 답·이동 확인 타이머·끝 안내는 이것과 계정·창·요청 번호를 함께 지난다.
@@ -615,17 +618,18 @@
               current?.popup===popup&&!current.pending&&sequence===ohifPopupSequences.get(popup)&&state.ready&&!state.busy&&state.href===href&&!popup.closed;
           }catch(_){return false;}
         };
-        status.textContent='창을 이동하고 있습니다.';
+        kinWrite(status, kinSayEn("창을 이동하고 있습니다."));
         try{
+          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
           const details=await window.getScreenDetails();
-          if(!valid()){if(shown())status.textContent='창 상태가 바뀌어 이동하지 않았습니다. 현재 창을 다시 확인하세요.';return;}
+          if(!valid()){if(shown())kinWrite(status, kinSayEn("창 상태가 바뀌어 이동하지 않았습니다. 현재 창을 다시 확인하세요."));return;}
           cacheMonitorScreens(details);
           const fresh=KinViewerDisplayLayout.screens(details),spanning=Array.isArray(chosen);
           const selected=(spanning?chosen:[chosen]).map(value=>fresh.find(s=>KinViewerDisplayLayout.identity(s)===KinViewerDisplayLayout.identity(value)));
           const target=spanning?KinViewerDisplayLayout.span(selected):selected[0];
-          if(!target||!monitorPermissionGranted()){displayScreens=fresh;render();status.textContent='화면 구성이나 권한이 바뀌었습니다. 화면을 다시 확인한 뒤 선택하세요.';return;}
+          if(!target||!monitorPermissionGranted()){displayScreens=fresh;render();kinWrite(status, kinSayEn("화면 구성이나 권한이 바뀌었습니다. 화면을 다시 확인한 뒤 선택하세요."));return;}
           const rect=spanning?target:KinViewerDisplayLayout.fit(popupRect(popup),target);
-          if(!rect){status.textContent='창을 복원한 뒤 다시 이동하세요.';return;}
+          if(!rect){kinWrite(status, kinSayEn("창을 복원한 뒤 다시 이동하세요."));return;}
           const gate={pending:true,baseline:null,choice:storedSpanChoice()};ohifPlacementWrites.set(popup,gate);
           const moved=await new Promise(resolve=>{
             let finished=false;
@@ -658,7 +662,6 @@
             try{KinExamScope.raiseWindow(popup);popup.moveTo(rect.left,rect.top);popup.resizeTo(rect.width,rect.height);popup.moveTo(rect.left,rect.top);setTimeout(check,100);}
             catch(_){finish(false);}
           });
-          const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
           const number=s=>fresh.findIndex(d=>KinViewerDisplayLayout.identity(d)===KinViewerDisplayLayout.identity(s))+1;
           const [first,second]=spanning?selected.map(number):[];
           const partly=()=>kinSay('영상 창이 Display {0}·{1}에 걸쳐 있습니다. 창 위치와 화면 선택 가운데 일부만 저장했습니다. 브라우저 저장소를 확인하세요.',first,second);
@@ -679,8 +682,8 @@
             if(!there&&shown())kinWrite(status,kinSay('브라우저가 영상 창을 두 화면에 걸쳐 옮기지 않았습니다. 영상 창의 가장자리를 끌어 Display {0}과 Display {1}에 걸쳐 놓으세요. 걸쳐 놓으면 그 자리를 저장합니다.',first,second));
           }
           else if(shown()&&moved.written&&!moved.saved&&(moved.written.rect||moved.written.pair))kinWrite(status,partly());
-          else if(shown())status.textContent=moved.saved?'지정 화면으로 이동하고 창 위치를 저장했습니다.':moved.moved?'창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.':'창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요.';
-        }catch(_){if(shown())status.textContent='화면에 접근하지 못했습니다. 권한과 창 상태를 확인한 뒤 다시 시도하세요.';}
+          else if(shown())kinWrite(status, moved.saved ? kinSayEn("지정 화면으로 이동하고 창 위치를 저장했습니다.") : moved.moved ? kinSayEn("창을 이동했지만 위치를 저장하지 못했습니다. 현재 창 상태와 브라우저 저장소를 확인하세요.") : kinSayEn("창 이동을 확인하지 못해 이전 저장 위치를 유지했습니다. 창을 직접 이동하거나 다시 시도하세요."));
+        }catch(_){if(shown())kinWrite(status, kinSayEn("화면에 접근하지 못했습니다. 권한과 창 상태를 확인한 뒤 다시 시도하세요."));}
         finally{if(movingWindows.get(popup)===request)movingWindows.delete(popup);if(work.admits(at)&&viewerWindows.available())render();}
       }
       function render() {
@@ -709,14 +712,14 @@
           for (const action of ['focus', 'latest', 'close']) {
             const control = document.createElement('button'); control.type = 'button'; control.className = 'chip';
             control.textContent = action === 'focus' ? 'Focus' : action === 'latest' ? 'Latest Images' : 'Close Window';
-            if (action === 'latest') { control.disabled = row.state !== 'Open'; control.title = '같은 창에서 이 검사의 최신 영상을 다시 읽습니다. 미저장 작업이나 처리 중인 작업이 있으면 유지합니다.'; }
+            if (action === 'latest') { control.disabled = row.state !== 'Open'; kinWrite(control, kinSayEn("같은 창에서 이 검사의 최신 영상을 다시 읽습니다. 미저장 작업이나 처리 중인 작업이 있으면 유지합니다."), "title"); }
             control.dataset.windowIndex = String(row.index); control.dataset.windowAction = action;
             control.onclick = () => operate(row.index, action); section.append(control);
           }
           displayScreens.forEach((screen,i)=>{
             const control=document.createElement('button');control.type='button';control.className='chip';
             control.textContent='Move to Display '+(i+1)+(screen.primary?' · Primary':'');
-            control.title=`사용 가능 영역 ${screen.left}, ${screen.top} · ${screen.width} × ${screen.height}`;
+            kinWrite(control, kinSayEn("사용 가능 영역 {n0}, {1} · {n2} × {n3}", screen.left, screen.top, screen.width, screen.height), "title");
             control.dataset.windowIndex=String(row.index);control.dataset.windowAction='display-'+i;
             control.disabled=!['Open','Unsaved'].includes(row.state);control.onclick=()=>moveDisplay(row.index,screen);section.append(control);
           });
@@ -728,7 +731,7 @@
           }
           list.append(section);
         }
-        if (!rows.length) list.textContent = '연결된 영상 창이 없습니다.';
+        if (!rows.length) kinWrite(list, kinSayEn("연결된 영상 창이 없습니다."));
         if (dialog.open && focusIndex !== undefined) (list.querySelector('[data-window-index="' + focusIndex + '"][data-window-action="' + focusAction + '"]:not(:disabled)') || $('#viewer-windows-done')).focus();
       }
       function operate(index, action) {
@@ -737,38 +740,38 @@
         let popup = row.popup;
         if (!popup) {
           popup = window.open('', row.name, 'popup=yes,resizable=yes,scrollbars=yes');
-          if (!popup) { status.textContent = '팝업이 차단되어 창 상태를 확인하지 못했습니다.'; return; }
+          if (!popup) { kinWrite(status, kinSayEn("팝업이 차단되어 창 상태를 확인하지 못했습니다.")); return; }
           viewerWindows.attach(row, popup); ohifPopupSlots.set(popup, index);
-          try { popup.opener = null; if (popup.location.href === 'about:blank') { popup.close(); render(); status.textContent = '이미 닫힌 창의 연결을 정리했습니다.'; return; } } catch (_) {}
+          try { popup.opener = null; if (popup.location.href === 'about:blank') { popup.close(); render(); kinWrite(status, kinSayEn("이미 닫힌 창의 연결을 정리했습니다.")); return; } } catch (_) {}
         }
         if (action === 'latest') {
           const state = ohifPopupState(popup), target = state.kind === 'viewer' && state.ready && !state.busy && !row.pending && ohifScope(state.href);
-          if (!target) { status.textContent = '기존 영상 창의 검사와 계정을 확인한 뒤 다시 여세요.'; return; }
+          if (!target) { kinWrite(status, kinSayEn("기존 영상 창의 검사와 계정을 확인한 뒤 다시 여세요.")); return; }
           status.textContent = '';
           const readingReturn = new URLSearchParams(new URL(state.href, location.origin).hash.slice(1)).get('kin-reading-return');
           const input = target.exam ? popup.KinViewerExamScope?.snapshot() : null;
-          if (target.exam && !input) { status.textContent = "검사 범위를 확인한 뒤 목록에서 다시 여세요."; return; }
+          if (target.exam && !input) { kinWrite(status, kinSayEn("검사 범위를 확인한 뒤 목록에서 다시 여세요.")); return; }
           openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { status.textContent = message; } });
           render(); return;
         }
         if (action === 'close') {
           if (row.pending) {
-            status.textContent = '창을 닫지 않았습니다. 영상 창을 불러오는 중입니다. 완료 후 다시 확인하세요.';
+            kinWrite(status, kinSayEn("창을 닫지 않았습니다. 영상 창을 불러오는 중입니다. 완료 후 다시 확인하세요."));
             KinExamScope.raiseWindow(popup); return;
           }
           if (movingWindows.has(popup) || ohifPlacementWrites.get(popup)?.pending) {
-            status.textContent = '창을 닫지 않았습니다. 화면 이동과 위치 저장이 끝난 뒤 다시 확인하세요.';
+            kinWrite(status, kinSayEn("창을 닫지 않았습니다. 화면 이동과 위치 저장이 끝난 뒤 다시 확인하세요."));
             KinExamScope.raiseWindow(popup); return;
           }
           const owner = KinViewerOpening.key(KinAuth.session()), sequence = ohifPopupSequences.get(popup);
           let viewerDocument; try { viewerDocument = popup.document; } catch (_) {}
           const state = ohifPopupState(popup);
           if (state.kind !== 'viewer' || !state.ready || state.busy || state.dirty) {
-            status.textContent = '창을 닫지 않았습니다. 해당 창의 저장·복원 또는 미저장 작업을 확인하고 열린 대화상자를 닫은 뒤 다시 시도하세요.';
+            kinWrite(status, kinSayEn("창을 닫지 않았습니다. 해당 창의 저장·복원 또는 미저장 작업을 확인하고 열린 대화상자를 닫은 뒤 다시 시도하세요."));
             KinExamScope.raiseWindow(popup); return;
           }
           if (typeof popup.kinViewerFrameCoverageConfirm !== 'function' || !popup.kinViewerFrameCoverageConfirm(message => confirm(message))) {
-            status.textContent = '창을 닫지 않았습니다. Frame Coverage와 원본 영상을 확인하세요.'; return;
+            kinWrite(status, kinSayEn("창을 닫지 않았습니다. Frame Coverage와 원본 영상을 확인하세요.")); return;
           }
           const current = viewerWindows.rows().find(r => r.index === index), rechecked = ohifPopupState(popup);
           let sameDocument = false; try { sameDocument = popup.document === viewerDocument; } catch (_) {}
@@ -776,10 +779,10 @@
               movingWindows.has(popup) || ohifPlacementWrites.get(popup)?.pending ||
               sequence !== ohifPopupSequences.get(popup) || !sameDocument || popup.closed || popup.location.href !== state.href ||
               rechecked.kind !== 'viewer' || rechecked.href !== state.href || !rechecked.ready || rechecked.busy || rechecked.dirty) {
-            status.textContent = '창 상태가 바뀌어 닫지 않았습니다. 다시 확인하세요.'; return;
+            kinWrite(status, kinSayEn("창 상태가 바뀌어 닫지 않았습니다. 다시 확인하세요.")); return;
           }
           rememberOhifRect(popup); popup.close(); render();
-          status.textContent = popup.closed ? '영상 창을 닫았습니다.' : '브라우저에서 창을 닫지 못했습니다. 해당 창에서 닫으세요.';
+          kinWrite(status, popup.closed ? kinSayEn("영상 창을 닫았습니다.") : kinSayEn("브라우저에서 창을 닫지 못했습니다. 해당 창에서 닫으세요."));
         } else { viewerWindowCursor = index; dialog.close(); KinExamScope.raiseWindow(popup); watchOhifRect(popup, index); }
       }
       let storage; try { storage = sessionStorage; } catch (_) {}

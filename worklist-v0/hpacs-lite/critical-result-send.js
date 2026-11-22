@@ -1242,10 +1242,10 @@
       else if (!online()) line = TEXT.list.offline;
       else if (listPhase === 'failed') line = kinSay(TEXT.list.failed);
       else if (pending === null) line = listPhase === 'loading' ? TEXT.list.loading : '';
-      else line = `Pending ACK ${pending}${unknownCount ? ` · ${TEXT.list.unknownCount(unknownCount)}` : ''}`;
+      else line = kinSay('{t0}{t1}', { t: kinSay('Pending ACK {n0}', pending) }, { t: unknownCount ? kinSay(' · {0}', TEXT.list.unknownCount(unknownCount)) : '' });
       panel.dataset.state = lock !== null ? 'locked' : listPhase;
-      summary.textContent = line;
-      summary.title = line;
+      kinWrite(summary, line);
+      kinWrite(summary, line, 'title');
       kinWrite(toggle, paneOpen ? kinSay('Hide Sent') : kinSay('Show Sent'));
       // 연 목록 칸은 잠겨도·연결이 끊겨도 연 채로 둔다(닫히면 판독 칸이 커져 단추 줄이 움직인다). 안에 그 까닭을 쓴다.
       toggle.setAttribute('aria-expanded', String(paneOpen));

@@ -1,6 +1,9 @@
 /* Opening choices affect the next request, never the retained viewer document. */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const PREFIX = 'kin-image-opening:v1:';
   const defaults = () => ({ version: 3, listTarget: 'window', includePrior: true, maxWindows: 1, autoLoad: false, reuseClean: false });
   function normalize(value) {
@@ -54,7 +57,7 @@
       '<p>목록 행이나 이전/다음 검사로 새 검사를 선택할 때 영상을 엽니다. 이미 열린 창의 미저장 작업·대화상자와 창 수 제한을 유지합니다.</p>' +
       '<p id="image-opening-status" role="status"></p>' +
       '<div class="image-opening-actions"><button class="chip" type="button" id="image-opening-reset">Reset</button><button class="chip" type="button" id="image-opening-done">Done</button></div>';
-    document.body.append(dialog);
+    document.body.append(dialog);window.KinLanguage?.markup?.(dialog);
     const target = dialog.querySelector('#image-opening-target'), prior = dialog.querySelector('#image-opening-prior'), automatic = dialog.querySelector('#image-opening-autoload');
     const reset = dialog.querySelector('#image-opening-reset'), message = dialog.querySelector('[role=status]');
     const current = () => !ended && owner !== null && key(session()) === owner;
@@ -63,9 +66,9 @@
       target.value = value.listTarget; prior.checked = value.includePrior;
       automatic.checked = value.autoLoad;
       button.disabled = target.disabled = prior.disabled = automatic.disabled = reset.disabled = !current();
-      message.textContent = feedback || ({ empty: '기본 설정 · 이 브라우저', restored: '설정 복원됨 · 이 브라우저',
+      kinWrite(message, kinSayEn(feedback || ({ empty: '기본 설정 · 이 브라우저', restored: '설정 복원됨 · 이 브라우저',
         invalid: '저장된 설정 오류 · 기본 설정을 사용합니다.', unavailable: '저장소를 사용할 수 없어 기본 설정을 사용합니다.',
-        disabled: '로그인을 확인한 뒤 설정을 변경하세요.' })[status];
+        disabled: '로그인을 확인한 뒤 설정을 변경하세요.' })[status]));
     }
     function save(next) {
       if (work.state() !== 'active') return;

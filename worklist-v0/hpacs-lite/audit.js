@@ -1,5 +1,7 @@
 (() => {
   'use strict';
+  // Product words in the language this page took as it opened (worklist-language.js), or as written.
+  const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   const el = name => document.getElementById(`audit-${name}`);
   // Existing STATUTORY_ACT groups (emr-contract/access-event.ts); the API accepts actions.
   const actions = {
@@ -17,7 +19,9 @@
   let disclosureSequence = 0, disclosurePending = false, disclosureSnapshot = null, disclosureCopy = null;
   let rightsSequence = 0, rightsPending = false, rightsSnapshot = null;
   let incidentSequence = 0, incidentPending = false, incidentSnapshot = null, incidentDownload = null;
-  const message = text => { el('message').textContent = text; };
+  // A status line of the page: a sentence the glossary knows whole reads in English on an English page, anything else as written.
+  const statusLine = (node, text) => { const L = window.KinLanguage; if (L && L.write && L.sayEnglish && typeof text === 'string' && text) L.write(node, L.sayEnglish(text)); else node.textContent = text; };
+  const message = text => statusLine(el('message'), text);
   const value = item => item == null ? 'Not Recorded' : typeof item === 'string' ? item : JSON.stringify(item);
   const fact = item => !item ? 'Not Recorded' : item.status === 'known' ? value(item.value) : `${item.status}: ${item.reason}`;
 
@@ -158,7 +162,7 @@
     for (const name of ['downloads', 'history', 'followups']) el(`inspection-${name}`).replaceChildren();
     el('inspection-review').reset(); inspectionControls();
   }
-  const inspectionMessage = text => { el('inspection-message').textContent = text; };
+  const inspectionMessage = text => statusLine(el('inspection-message'), text);
   // A Study UID is the record ID of both its report and its Tech Note; the server refuses an unselected one that has both.
   const RECORD_KINDS = [['', 'Not Selected'], ['report', 'Report'], ['clinical', 'Clinical Entry']];
   const RECORD_KIND_BOTH = '같은 기록 ID에 판독문과 임상 기록(Tech Note 등)이 함께 저장되어 있습니다.';
@@ -291,7 +295,7 @@
   }
 
   const disclosureEl = name => el(`disclosure-${name}`);
-  const disclosureMessage = text => { disclosureEl('message').textContent = text; };
+  const disclosureMessage = text => statusLine(disclosureEl('message'), text);
   const formValues = name => Object.fromEntries(new FormData(disclosureEl(name)));
   const utcInput = text => {
     const date = new Date(`${text}Z`);
@@ -1104,7 +1108,7 @@
     incidentEl('register').elements.to.value = tomorrow.toISOString().slice(0, 16);
     rightsEl('receive').elements.receivedAt.value = new Date().toISOString().slice(0, 16);
     for (const name of ['receivedAt', 'checkedAt']) disclosureEl('receive').elements[name].value = new Date().toISOString().slice(0, 16);
-    ready = true; el('workspace').hidden = false; controls(); message('조건을 선택하고 Search로 조회하세요.');
+    ready = true; el('workspace').hidden = false; controls(); message(kinText('조건을 선택하고 Search로 조회하세요.'));
     // Pre-fill the intake forms; a refusal or failure here is said again when Receive Request is pressed.
     loadIntake().catch(() => {});
   }).catch(() => message('세션을 확인할 수 없습니다. 다시 로그인하세요.'));

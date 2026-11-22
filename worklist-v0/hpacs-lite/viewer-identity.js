@@ -1,6 +1,9 @@
 /* Account-scoped display choices; which study and patient a cell holds is always checked on its loaded image, and the
    values shown for that study are the worklist's answer for it (kinViewerStudyDisplay). */
 window.KinViewerIdentity=(()=>{
+  // The words drawn on an image cell and the window titles in the reader's screen language (English only; otherwise as
+  // written), the same as the viewer's own title (branding-defaults.js KIN_VIEWER_DEFAULT_TITLE).
+  const kinText=(words,...p)=>window.KinLanguage?.text?window.KinLanguage.text(words,...p):words.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]));
   const fonts={default:'inherit',sans:'"Malgun Gothic", sans-serif',serif:'"Batang", serif',mono:'"Consolas", monospace'};
   const colors={default:'var(--kin-ux-text, #E3E3E3)',warm:'#fff1d6',cool:'#d7f3ff',white:'#ffffff'};
   const positions=['top-left','top-right','bottom-left','bottom-right'];
@@ -86,8 +89,8 @@ window.KinViewerIdentity=(()=>{
     const work=window.KinWorkContext;
     const guarded=fn=>{const at=work.capture('document');return(...args)=>work.commit(at,()=>fn(...args));};
     const bound=JSON.stringify(owner());let value=read(bound),ended=false,observing=false;const labels=new Map(),loading=new Map(),titles=new Map(),displayed=new Map(),viewing=presence();
-    const neutral='판독 뷰어 — HALO PACS';let frame;try{frame=window.frameElement;}catch(_){}
-    function setTitle(title){if(document.title!==title)document.title=title;if(frame?.isConnected&&frame.contentWindow===window)frame.title=title===neutral?'영상 뷰어':title;}
+    const neutral=kinText('판독 뷰어 — HALO PACS');let frame;try{frame=window.frameElement;}catch(_){}
+    function setTitle(title){if(document.title!==title)document.title=title;if(frame?.isConnected&&frame.contentWindow===window)frame.title=title===neutral?kinText('영상 뷰어'):title;}
     function syncTitle(){setTitle(titles.get(services.viewportGridService.getState().activeViewportId)||neutral);}
     const text=v=>v&&typeof v==='object'?String(v.Alphabetic??v.Ideographic??v.Phonetic??''):String(v??'');
     function clear(){for(const e of labels.values())e.remove();labels.clear();titles.clear();displayed.clear();setTitle(neutral);}
@@ -135,9 +138,9 @@ window.KinViewerIdentity=(()=>{
           const patientId=seen?seen.id||'Unknown':m.PatientID;
           const description=seen?(seen.changed.includes('desc')?seen.desc:seen.desc||text(m.SeriesDescription)):text(m.StudyDescription||m.SeriesDescription);
           const shown={name:(seen?seen.name:text(m.PatientName)).slice(0,128),date:(seen?seen.date:text(m.StudyDate)).slice(0,16),description:description.slice(0,128)};
-          const titleParts=[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
-          titles.set(id,titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')+' — 판독 뷰어');
-          const groups=new Map([[p.position,[(role==='current'?'기준 검사':'비교 검사')+' · '+patientId]]]);
+          const titleParts=[(role==='current'?kinText('기준 검사'):kinText('비교 검사'))+' · '+patientId];for(const field of fields)if(p[field]&&shown[field])titleParts.push(shown[field]);
+          titles.set(id,kinText('{0} — 판독 뷰어',titleParts.concat(text(m.Modality).slice(0,16)).filter(Boolean).join(' · ')));
+          const groups=new Map([[p.position,[(role==='current'?kinText('기준 검사'):kinText('비교 검사'))+' · '+patientId]]]);
           for(const field of fields)if(p[field]&&shown[field]){const at=p.fieldPositions[field];if(!groups.has(at))groups.set(at,[]);groups.get(at).push(shown[field]);}
           // Compare › Exam Marks on Images: the study's exam mark (* current, P1… earlier and N1… later studies) goes before
           // the role, in this label's own place and settings; a related study's mark is in an italic serif face.

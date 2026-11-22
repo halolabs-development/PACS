@@ -4,7 +4,9 @@
  */
 (function () {
   'use strict';
-  const HANGUL = /[가-힣]/;
+  // A script test that runs config/ohif.js with a stand-in window has no screen to translate: the words stay as written.
+  if (typeof document === 'undefined' || typeof document.createTreeWalker !== 'function' || typeof MutationObserver !== 'function') return;
+  const HANGUL = /[\uAC00-\uD7A3]/; // 가-힣, written as escapes so the shared config/ohif.js reads the same in any page encoding
   const slots = /\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g;
   const LANGS = ['en', 'ko'];
   const REGIONS = ['worklist', 'reading'];
@@ -17,7 +19,7 @@
     glossary.set(key, HANGUL.test(key.replace(slots, ''))
       ? { en: other, ko: same || key } : { en: same || key, ko: other });
   }
-  const sentences = new WeakSet();
+  const sentences = new WeakSet(), englishOnly = new WeakSet();
   const isSentence = value => sentences.has(value);
   function say(template, ...params) {
     if (typeof template !== 'string') return template;
@@ -28,23 +30,47 @@
     sentences.add(sentence);
     return sentence;
   }
+  // English only: a sentence that reads exactly as written unless its screen is English (words put on this path after the
+  // Korean screen was settled, so a reader who chose Korean sees them as before).
+  function sayEnglish(template, ...params) {
+    const sentence = say(template, ...params);
+    if (isSentence(sentence)) englishOnly.add(sentence);
+    return sentence;
+  }
   function tr(value, lang, visiting = new Set()) {
     if (!isSentence(value)) return value;
     if (visiting.has(value)) return '';
     visiting.add(value);
+    // Its own words stay as written unless the screen is English; the sentences nested in it follow their own rule.
+    const own = lang !== 'en' && englishOnly.has(value) ? null : lang;
     const { template, params } = value;
-    const key = keyOf(template), translated = lang && glossary.get(key)?.[lang];
+    const key = keyOf(template), translated = own && glossary.get(key)?.[own];
     const pattern = translated && translated !== key
       ? template.match(/^\s*/)[0] + translated + template.match(/\s*$/)[0] : template;
-    const result = pattern.replace(slots, (slot, index, name) => {
+    let result = pattern.replace(slots, (slot, index, name) => {
       const arg = name === undefined ? params[index] : params[0]?.[name];
       if (arg === undefined) return slot;
       // Older callers wrap parts in {t} or {e}. Only a nested sentence carries a translation.
       const part = arg && typeof arg === 'object' && !isSentence(arg) ? arg.t ?? arg.e ?? '' : arg;
       return String(tr(part, lang, visiting));
     });
+    if (lang === 'en' && unknownErrors.has(value))
+      result = (glossary.get(UNKNOWN_ERROR)?.en || UNKNOWN_ERROR) + ' ' + result;
     visiting.delete(value);
     return result;
+  }
+  // ── An error as a page shows it (a place marked data-kin-error) ──
+  // The message as the server or the page gave it. A known sentence — the whole message is one entry of the glossary, such as
+  // a known refusal of the server — reads in English on an English screen. Any other message stays as written and, on an
+  // English screen, follows the general English sentence that the request failed. Korean or no choice: as written.
+  const UNKNOWN_ERROR = '요청을 처리하지 못했습니다. 원문:';
+  const unknownErrors = new WeakSet();
+  function error(message) {
+    const text = String(message ?? '');
+    if (text.trim() && glossary.has(keyOf(text))) return sayEnglish(text);
+    const sentence = sayEnglish('{e0}', text);
+    unknownErrors.add(sentence);
+    return sentence;
   }
 
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
@@ -115,23 +141,59 @@
     }
     return el;
   }
-  function registerMarkup(doc) {
+  // The page's own markup (the document at start, or a part markup() is given): a text node or a title-like attribute whose
+  // whole text is a glossary entry. Korean only for a part built later, so a screen with Korean chosen keeps it as written.
+  function registerMarkup(root, koreanOnly = false) {
     const skip = 'script,style,[translate="no"],[contenteditable="true"],[contenteditable=""]';
-    const walk = doc.createTreeWalker(doc.documentElement, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
+    const known = text => glossary.has(keyOf(text)) && (!koreanOnly || HANGUL.test(text));
+    const phrase = koreanOnly ? sayEnglish : say;
+    const top = root.nodeType === 9 ? root.documentElement : root;
+    const walk = top.ownerDocument.createTreeWalker(top, 5 /* SHOW_ELEMENT | SHOW_TEXT */);
     for (let node = walk.currentNode; node; node = walk.nextNode()) {
       const el = node.nodeType === 3 ? node.parentElement : node;
-      if (el.closest(skip)) continue;
+      if (!el || el.closest(skip)) continue;
       if (node.nodeType === 3) {
-        if (!el.closest('textarea,option:not([value])') && glossary.has(keyOf(node.data)))
-          register(node, '', say(node.data));
+        if (!el.closest('textarea,option:not([value])') && known(node.data))
+          register(node, '', phrase(node.data));
       } else {
         const keep = (el.getAttribute('data-kin-keep') || '').split(' ');
         for (const name of ATTRS) {
           const text = el.getAttribute(name);
-          if (text && !keep.includes(name) && glossary.has(keyOf(text))) register(el, name, say(text));
+          if (text && !keep.includes(name) && known(text)) register(el, name, phrase(text));
         }
       }
     }
+  }
+  /** A part of the page its script built after start from its own markup alone (a dialog template with no data in it),
+   *  registered as the page's markup is: its Korean words follow the language of their screen from now on. */
+  function markup(root) {
+    if (!root?.ownerDocument) return root;
+    flush();
+    // A dialog with no screen of its own (no region marked on it or around it) takes the screen it is opened from.
+    const dialog = root.closest?.('dialog');
+    if (dialog && !opensWhere.has(dialog) && !dialog.closest('[data-kin-lang-region]')) opensWhere.add(dialog);
+    registerMarkup(root, true);
+    if (active()) refreshAll(root);
+    return root;
+  }
+  function refreshAll(root) {
+    const walk = root.ownerDocument.createTreeWalker(root, 5);
+    for (let node = root; node; node = walk.nextNode()) if (records.has(node)) refresh(node);
+  }
+  // The one way such a dialog opens (show / showModal): it is marked with the screen last used — the one its opener is on, as
+  // the pointer or key that opened it was recorded first — and its registered words are painted in that screen's language.
+  const opensWhere = new WeakSet();
+  for (const name of ['show', 'showModal']) {
+    const proto = typeof HTMLDialogElement === 'function' ? HTMLDialogElement.prototype : null, native = proto?.[name];
+    if (typeof native !== 'function') continue;
+    proto[name] = function (...args) {
+      if (opensWhere.has(this)) {
+        flush();
+        this.setAttribute('data-kin-lang-region', lastRegion);
+        if (active()) refreshAll(this);
+      }
+      return native.apply(this, args);
+    };
   }
   const docs = new Map();
   const active = () => REGIONS.some(r => state[r]);
@@ -230,6 +292,9 @@
   const remember = e => { const el = e.target?.closest?.('[data-kin-lang-region]'); if (el) lastRegion = el.getAttribute('data-kin-lang-region'); };
   document.addEventListener('pointerdown', remember, true);
   document.addEventListener('keydown', remember, true);
+  // Input inside a frame of this page (the integrated viewer) never reaches these listeners: focus moving into the frame says
+  // which screen is in use.
+  window.addEventListener('blur', () => { const el = document.activeElement; if (el?.tagName === 'IFRAME') remember({ target: el }); });
 
   // ── The choice ────────────────────────────────────────────────────────────────────────────────────────────────
   const valid = v => v === null || LANGS.includes(v);
@@ -239,14 +304,36 @@
       v.version === 1 && valid(v.worklist) && valid(v.reading) ? { version: 1, worklist: v.worklist, reading: v.reading } : null;
   }
   const value = () => ({ version: 1, worklist: state.worklist, reading: state.reading });
+  // The other documents (clinician, administration, audit pages and the viewer) keep no choice of their own: they follow the
+  // choice the work page last applied in this browser, English only (a reader who chose Korean keeps them as they are). The
+  // work page keeps it with the sign-in it was applied in (the session's identifier — not a secret), and a document follows
+  // it only for that same sign-in: never the choice another account left in this browser.
+  const BROWSER = 'kin-language:v1';
+  const follows = document.documentElement.hasAttribute('data-kin-lang-browser');
+  // auth.js declares KinAuth as a global binding of the page (not a window property), after this file.
+  const auth = () => (typeof KinAuth !== 'undefined' ? KinAuth : null);
+  const signedIn = () => { try { return auth()?.sessionId?.() || null; } catch (_) { return null; } };
+  /** The kept choice, when it was applied in this same sign-in; otherwise none. */
+  function kept(session) {
+    if (typeof session !== 'string' || !session) return null;
+    let stored = null;
+    try { stored = JSON.parse(localStorage.getItem(BROWSER)); } catch (_) { return null; }
+    if (!stored || typeof stored !== 'object' || stored.session !== session) return null;
+    return normalize({ version: stored.version, worklist: stored.worklist, reading: stored.reading });
+  }
   function set(next) {
     const clean = normalize(next);
     if (!clean) return false;
     generation += 1;
     const changed = REGIONS.some(r => state[r] !== clean[r]);
     state.worklist = clean.worklist; state.reading = clean.reading;
+    if (!follows) try { localStorage.setItem(BROWSER, JSON.stringify({ ...clean, session: signedIn() })); } catch (_) { /* the other documents keep their words */ }
     if (changed) { repaint(); paintDialog(); }
     return true;
+  }
+  function followBrowser(session) {
+    const next = kept(session)?.worklist === 'en' ? 'en' : null;
+    if (state.worklist !== next) set({ version: 1, worklist: next, reading: null });
   }
 
   // The header mark: what the account chose (EN / KO, both when the screens differ); an account that never chose keeps
@@ -350,7 +437,7 @@
     for (const input of dialog.querySelectorAll('input[name="kin-language"]')) input.checked = input.value === state.worklist;
     dialog.querySelector('#language-scope-worklist').checked = true;
     dialog.querySelector('#language-scope-reading').checked = true;
-    dialog.querySelector('#language-dialog-status').textContent = account ? '' : '계정 설정을 불러온 뒤 언어를 저장할 수 있습니다.';
+    write(dialog.querySelector('#language-dialog-status'), account ? '' : sayEnglish('계정 설정을 불러온 뒤 언어를 저장할 수 있습니다.'));
     paintDialog();
     if (!dialog.open) dialog.showModal();
   }
@@ -372,7 +459,7 @@
     const patch = {};
     for (const r of REGIONS) if (scopes[r]) patch[r] = lang;
     const status = dialog.querySelector('#language-dialog-status');
-    busy = true; paintDialog(); status.textContent = '언어 설정을 저장하는 중…';
+    busy = true; paintDialog(); write(status, sayEnglish('언어 설정을 저장하는 중…'));
     try {
       // The latest choice of the account changes only on the ticked screens; nothing on the screen changes until it is saved.
       const result = await save({ patch });
@@ -404,6 +491,50 @@
     worklist: ['.menubar', '.split > .left', '#modal', '#batch-report-dialog', '#batch-approve-dialog', '#query-retrieve', '#study-transfer', '#ctx'],
     reading: ['.split > .right', '#reading-bar', '#reading-viewer', '#histmodal', '#stalemodal', '#tplmodal', '#tpl-preview', '#structmodal', '#cite-preview', '#reasonmodal', '#cvr-send'],
   };
+  // ── Words as a string (the viewer, and words a page writes once) ──────────────────────────────────────────────
+  // English only: a screen with Korean chosen or no choice gets the template filled with the values as written, exactly.
+  const fill = (template, params) => template.replace(/\{[ten]?(\d+)\}/g, (slot, i) => String(params[i]));
+  const english = () => state[lastRegion] === 'en';
+  /** A product sentence ({0} data, {n0} number, {t0} words, {e0} message) as a string in the language of the screen. */
+  function text(template, ...params) {
+    return english() ? String(tr(say(template, ...params.map(String)), 'en')) : fill(template, params);
+  }
+  // Markup: each piece of text between tags and each title-like attribute value is its own phrase (the way the glossary
+  // check reads a template); tags, other attributes and the values go in as written.
+  const TAG = /<\s*\/?\s*[a-zA-Z][^<>]*>/g;
+  const ATTR = /\b(title|aria-label|placeholder|alt|aria-description|aria-valuetext)(\s*=\s*)(?:"([^"]*)"|'([^']*)')/g;
+  const ENTITY = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", nbsp: ' ' };
+  const decode = s => s.replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (m, n) => ENTITY[n]);
+  const encode = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  function phrase(part, params) {
+    if (!HANGUL.test(part)) return fill(part, params);
+    const order = [];
+    const local = decode(part).replace(/\{([ten]?)(\d+)\}/g, (slot, kind, i) => {
+      if (!order.includes(+i)) order.push(+i);
+      return '{' + kind + order.indexOf(+i) + '}';
+    });
+    const key = keyOf(local), found = glossary.get(key)?.en;
+    if (!found || found === key) return fill(part, params);
+    const words = encode(String(tr(say(local, ...order.map((_, k) => '\u0001' + k + '\u0001')), 'en')));
+    return words.replace(/\u0001(\d+)\u0001/g, (m, k) => String(params[order[k]]));
+  }
+  function html(template, ...params) {
+    if (!english()) return fill(template, params);
+    let out = '', at = 0;
+    for (const tag of template.matchAll(TAG)) {
+      out += phrase(template.slice(at, tag.index), params);
+      let inner = '', from = 0;
+      for (const a of tag[0].matchAll(ATTR)) {
+        const value = a[3] ?? a[4], quote = a[3] !== undefined ? '"' : "'";
+        inner += fill(tag[0].slice(from, a.index), params) + a[1] + a[2] + quote + phrase(value, params) + quote;
+        from = a.index + a[0].length;
+      }
+      out += inner + fill(tag[0].slice(from), params);
+      at = tag.index + tag[0].length;
+    }
+    return out + phrase(template.slice(at), params);
+  }
+
   function start() {
     registerMarkup(document);
     watchMoves(document);
@@ -412,9 +543,36 @@
     styleCss(document);
     document.head.append(make('style', { id: 'language-style', textContent: css }));
     document.getElementById('language-open')?.addEventListener('click', openDialog);
+    // The sign-in is known once the page's sign-in check has answered (auth.js, loaded after this file): the kept choice is
+    // followed from then on, for that sign-in only, and dropped when it ends.
+    if (follows) {
+      const follow = () => auth()?.onLifecycle?.(e => followBrowser(e.state === 'active' ? e.session : null));
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', follow, { once: true }); else follow();
+    }
     if (active()) repaint(); else showLabel();
   }
-  start();
+  // The viewer document (config/ohif.js sets KinLanguageDocument before this file runs): OHIF's page, so its markup is
+  // never registered and nothing is stored. It is the image half of the reading screen: the words our viewer code writes
+  // follow the reading-screen choice kept for the sign-in the viewer was handed (the window name the opening page set, or
+  // on a reload the entry the viewer recorded), English only, as the viewer opens.
+  // The same order as the viewer's own session rule (viewer-session.js): a hand-off just given, then the entry this viewer
+  // recorded (its bound session, or the one it still expects), then the page this viewer belongs to (its opener, or the
+  // reading screen around the integrated viewer).
+  function viewerSession() {
+    const prefix = 'kin-viewer-entry:';
+    try {
+      if (window.name?.startsWith(prefix)) return JSON.parse(window.name.slice(prefix.length)).session || null;
+      const record = history.state?.kinViewerSession;
+      if (record) return typeof record.session === 'string' && record.session ? record.session : record.unresolved === true ? record.expected || null : null;
+      const peer = window.opener || (window.parent !== window ? window.parent : null);
+      return peer?.KinWorkContext?.session?.() || null;
+    } catch (_) { return null; }
+  }
+  function startViewer() {
+    lastRegion = 'reading';
+    if (kept(viewerSession())?.reading === 'en') state.reading = 'en';
+  }
+  if (window.KinLanguageDocument === 'viewer') startViewer(); else start();
 
   /** The words the page wrote into this element (or one of its attributes), whatever language shows now. */
   function source(el, name) {
@@ -429,7 +587,17 @@
   }
 
   window.KinLanguage = {
-    tr, say, write, normalize, value, attach, source, connect,
+    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
+    /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
+    isSentence,
+    /** A dialog the page opens by itself for one screen (no pointer or key on that screen first, such as the reading
+     * workspace opening Tech Note): it opens in that screen's language. */
+    opensOn(region, open) {
+      if (!REGIONS.includes(region)) return open();
+      const was = lastRegion;
+      lastRegion = region;
+      try { return open(); } finally { lastRegion = was; }
+    },
     /** The stored choice of the account (page start, Load Appearance). */
     restore: next => set(next),
     /** Changes with every choice applied, so a late answer read before it does not undo it. */

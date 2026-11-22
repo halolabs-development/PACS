@@ -24,6 +24,8 @@
    - 현재 검사의 목록이 접근 거절이면 환자 탭의 권한 없음 화면으로 넘긴다(KinViewerPatientTabs.imagesRefused).
    - 모양이 예상과 다르면 씌우지 않고 기본 동작을 둔 채 그 사실만 표시한다. */
 function kinCreateSeriesMetadataRecovery() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const retryDelay = 1000, own = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
   let services = null, extensions = null, ticket = null, phase = 'stopped';
   // Document lifetime: studies whose image read failed here (OHIF reuses that failure for the document's life).
@@ -84,11 +86,10 @@ function kinCreateSeriesMetadataRecovery() {
     notices.clear();
   }
   function describe(failure) {
-    const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : '요청 오류';
-    if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return failure.position + '번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.';
-    if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return failure.position + '번째 검사의 영상 정보에 접근할 수 없습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다.';
-    return failure.position + '번째 검사의 영상 정보를 ' + (failure.retried ? '한 번 다시 요청했지만 ' : '') +
-      '불러오지 못했습니다(' + code + '). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.';
+    const code = Number.isInteger(failure.status) && failure.status > 0 ? 'HTTP ' + failure.status : kinText("요청 오류");
+    if (window.KinSessionTransport.refusal(failure.error) === 'temporary') return kinText("{0}번째 검사의 연결을 확인하지 못했습니다. 뷰어를 다시 열어 재시도하세요.", failure.position);
+    if (window.KinSessionTransport.openFailure(failure.error) === 'denied') return kinText("{0}번째 검사의 영상 정보에 접근할 수 없습니다({1}). 이 검사 영상은 표시하지 않았습니다.", failure.position, code);
+    return kinText("{0}번째 검사의 영상 정보를 {t1}불러오지 못했습니다({2}). 이 검사 영상은 표시하지 않았습니다. 뷰어를 다시 여세요.", failure.position, (failure.retried ? kinText("한 번 다시 요청했지만 ") : ''), code);
   }
   function render(current) {
     const text = [...new Set([...current.failures.values()].sort((a, b) => a.position - b.position).map(describe))].join(' ');
@@ -104,7 +105,7 @@ function kinCreateSeriesMetadataRecovery() {
   }
   function install() {
     const search = location.search, studies = studiesOf(search);
-    const refuse = () => { phase = 'refused'; say('영상 정보 재요청 기능을 연결하지 못했습니다. 기본 동작으로 계속 표시하며, 영상 칸이 비어 있으면 뷰어를 다시 여세요.'); };
+    const refuse = () => { phase = 'refused'; say(kinText("영상 정보 재요청 기능을 연결하지 못했습니다. 기본 동작으로 계속 표시하며, 영상 칸이 비어 있으면 뷰어를 다시 여세요.")); };
     let client = null, config = null;
     try {
       const source = extensions?.getActiveDataSource?.()?.[0];

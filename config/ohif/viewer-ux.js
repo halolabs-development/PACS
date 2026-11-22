@@ -19,7 +19,7 @@ function kinCreateViewerUX() {
       const link = existing || document.createElement('link');
       link.rel = 'stylesheet'; link.href = href;
       link.addEventListener('load', () => resolve(), { once: true });
-      link.addEventListener('error', () => { link.remove(); reject(new Error('뷰어 화면 모듈을 불러오지 못했습니다.')); }, { once: true });
+      link.addEventListener('error', () => { link.remove(); reject(kinError("뷰어 화면 모듈을 불러오지 못했습니다.")); }, { once: true });
       if (!existing) document.head.append(link);
     });
   }
@@ -31,8 +31,8 @@ function kinCreateViewerUX() {
       // A viewer feature file that fails is reported alone; the chrome and the other features still load.
       script.onerror = () => {
         script.remove();
-        if (!name.startsWith('viewer-features')) { reject(new Error('뷰어 화면 모듈을 불러오지 못했습니다.')); return; }
-        services?.uiNotificationService?.show({ title: 'Viewer', message: '뷰어 기능 모듈을 불러오지 못했습니다: ' + name, type: 'error' });
+        if (!name.startsWith('viewer-features')) { reject(kinError("뷰어 화면 모듈을 불러오지 못했습니다.")); return; }
+        services?.uiNotificationService?.show({ title: 'Viewer', message: kinText("뷰어 기능 모듈을 불러오지 못했습니다: {0}", name), type: 'error' });
         resolve();
       };
       document.head.append(script);

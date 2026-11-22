@@ -73,10 +73,12 @@ window.KinViewerUXShortcuts = (() => {
   // viewer's hotkey gets the key. One answer for a press and for a binding the User Preferences table shows.
   let claimant = () => null;
   const claims = binding => { const parts = hotkey(binding); return parts ? claimant(parts) : null; };
+  // The reason in the reader's screen language when it is written (English only; otherwise as written).
+  const kinText = text => window.KinLanguage?.text ? window.KinLanguage.text(text) : text;
   const reasons = {
-    tool: '이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.',
-    leader: '이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.',
-    workspace: '이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.' };
+    tool: () => kinText('이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.'),
+    leader: () => kinText('이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.'),
+    workspace: () => kinText('이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.') };
   function mount({ getBindings, invoke, allowed, workspace = () => null }) {
     const blocked = event => event.isComposing || event.keyCode === 229 || event.repeat ||
       editable(event.target) || editable(document.activeElement) ||
@@ -147,7 +149,8 @@ window.KinViewerUXShortcuts = (() => {
         note.style.cssText = 'display:block;padding:4px 0;text-align:left;font-size:12px;line-height:1.3;color:var(--kin-accent);white-space:normal';
         field.dataset.kinHotkeyNote = note.id; field.setAttribute('aria-describedby', note.id); field.after(note);
       }
-      if (note.textContent !== reasons[reason]) note.textContent = reasons[reason];
+      const words = reasons[reason]();
+      if (note.textContent !== words) note.textContent = words;
       note.hidden = false; field.setAttribute('aria-invalid', 'true');
     }
     // A refused press keeps its reason shown until the field holds another binding.

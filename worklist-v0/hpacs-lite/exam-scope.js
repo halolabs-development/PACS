@@ -1,6 +1,10 @@
 /* Consume the server scope without deriving membership from worklist rows. */
 (function(root) {
   'use strict';
+  // Its own words as a string in the screen language when they are made (English only; otherwise as written), and an
+  // error with them marked as one of ours (code that keeps "our own message" tells them apart by the mark).
+  const kinText = (t, ...p) => root.KinLanguage?.text ? root.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+  const kinError = (t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true });
   const sourceFields = new Set(['id','name','acc','sourceAcc','date','time','desc','modality','birth','sex','age',
     'institutionName','reqHosp','reqDate','reqDept','reqDoc','ptClass','referredAt']);
   const copy = value => JSON.parse(JSON.stringify(value));
@@ -9,7 +13,7 @@
     if (scope) {
       if (typeof scope.reportUid !== 'string' || !Array.isArray(scope.sources) || !scope.sources.length ||
           scope.sources.some(s => typeof s.studyUid !== 'string' || !['all','include','exclude'].includes(s.series?.mode) || !Array.isArray(s.series.uids)))
-        throw new Error('검사 범위를 확인할 수 없습니다. 목록을 새로고침하세요.');
+        throw kinError('검사 범위를 확인할 수 없습니다. 목록을 새로고침하세요.');
       return copy(scope);
     }
     // Ungrouped list rows omit examScope. They describe only their own source, never an inferred group.
@@ -119,14 +123,14 @@
     if(reference)query.set('reference',JSON.stringify(reference));
     const answer=await api('GET','/studies/'+encodeURIComponent(uid)+'/exam-scope?'+query,undefined,signal,at);
     const scope=read(answer?.scope||answer);
-    if(!scope)throw new Error('검사 범위를 확인할 수 없습니다.');
+    if(!scope)throw kinError('검사 범위를 확인할 수 없습니다.');
     return scope;
   }
   async function dicom(scope, resource, request) {
     const out=[];
     for(const source of read(scope).sources) {
       const rows=await request('/dicom-web/studies/'+encodeURIComponent(source.studyUid)+'/'+resource,source);
-      if(!Array.isArray(rows))throw new Error('원본 영상 목록을 확인할 수 없습니다.');
+      if(!Array.isArray(rows))throw kinError('원본 영상 목록을 확인할 수 없습니다.');
       for(const row of rows) if(allows(source,row?.['0020000E']?.Value?.[0])) out.push({sourceUid:source.studyUid,row});
     }
     return out;
@@ -143,7 +147,10 @@
   function unavailable(row) {
     if(row?.examUnavailable!==true)return null;
     const kind=Object.hasOwn(UNAVAILABLE,row.examUnavailableKind??'')?row.examUnavailableKind:null;
-    return {kind,message:kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.'};
+    // message: the words in the language of the screen last written (its readers write it as it is); words: as written,
+    // for the list's badge, which writes them in the list's language.
+    const words=kind?UNAVAILABLE[kind]:'검사 묶음의 모든 원본에 접근할 수 없습니다. 목록을 새로고침하세요.';
+    return {kind,words,message:kinText(words)};
   }
   // The exam of this window (its current exam or its comparison) an image belongs to, by the scopes the server admitted:
   // every original of a merged exam is the current exam, never a prior; the two parts of one split original are told apart
@@ -162,10 +169,10 @@
   }
   function viewerInput(current, prior = null, version = null, priorVersion = null) {
     const lost=unavailable(current)||unavailable(prior);
-    if(lost)throw Error(lost.message);
+    if(lost)throw kinError(lost.words);
     const scope=read(current),comparison=prior?read(prior):null;
-    if(!scope || prior&&!comparison)throw new Error('검사 범위를 확인할 수 없습니다.');
-    if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw new Error('원본 검사 UID를 확인할 수 없습니다.');
+    if(!scope || prior&&!comparison)throw kinError('검사 범위를 확인할 수 없습니다.');
+    if([...scope.sources,...(comparison?.sources||[])].some(s=>s.studyUid.length>64||!/^\d+(?:\.\d+)+$/.test(s.studyUid)))throw kinError('원본 검사 UID를 확인할 수 없습니다.');
     return {reportUid:scope.reportUid,key:key(scope),generation:scope.generation,current:scope,prior:comparison,version,priorVersion,
       scoped:!!(screenScope(scope)||screenScope(comparison)),
       studyUids:[...new Set([...scope.sources,...(comparison?.sources||[])].map(s=>s.studyUid))]};
@@ -186,7 +193,7 @@
   function roleRows(input, rows, sets = []) {
     return [input.current,input.prior].filter(Boolean).map(scope=>{
       const row=rows.find(row=>row.uid===scope.reportUid)||rows.find(row=>scope.sources.some(source=>source.studyUid===row.uid || row.examScope?.sources?.some(s=>s.studyUid===source.studyUid)));
-      if(!row)throw Error('현재 검사 정보를 확인할 수 없습니다.');
+      if(!row)throw kinError('현재 검사 정보를 확인할 수 없습니다.');
       return {...row,uid:scope.reportUid,examScope:scope,displaySetIds:sets.filter(set=>scope.sources.some(source=>source.studyUid===set.StudyInstanceUID&&allows(source,set.SeriesInstanceUID))).map(set=>set.displaySetInstanceUID)};
     });
   }
@@ -209,7 +216,7 @@
     for(const row of rows) {
       if(unavailable(row))continue;
       const scope=read(row);
-      if(!scope)throw Error('미리 받을 검사 범위를 확인할 수 없습니다.');
+      if(!scope)throw kinError('미리 받을 검사 범위를 확인할 수 없습니다.');
       for(const source of scope.sources) {
         const entry=sources.get(source.studyUid)||{uid:source.studyUid,label:row.label??null,urgent:row.urgent===true};
         if(row.examScope)entry.examRefs=[...entry.examRefs||[],reference(scope)].filter((ref,index,list)=>list.findIndex(r=>JSON.stringify(r)===JSON.stringify(ref))===index);
@@ -281,7 +288,7 @@
       const phrase = words => language ? language.say(words) : words;
       dialog.className='order-dialog';write(heading,title ?? phrase('Download Originals'));
       if(said!=null)write(note,said);
-      else note.textContent=scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.';
+      else write(note,kinText(scope.kind==='split'?'나눈 시리즈만이 아니라 원본 검사 전체를 내보냅니다. 원본 UID와 영상은 바뀌지 않습니다.':'내보낼 원본 검사를 고르세요. 원본 UID와 영상은 바뀌지 않습니다.'));
       dialog.append(heading,note);const choices=[];
       for(const source of scope.sources){
         const original=metadata(row).find(s=>s.uid===source.studyUid),label=document.createElement('label'),input=document.createElement('input');

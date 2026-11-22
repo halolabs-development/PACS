@@ -1,5 +1,7 @@
 
 function kinCreateViewerTechNote() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, prepare, epoch=0, active=false, state='stopped';
   let identity, identityReady, prepareIdentity, identityServices, loadFile, dockReady;
   function stopIdentity(){identity?.dispose();identity=null;}
@@ -35,7 +37,7 @@ function kinCreateViewerTechNote() {
     }).catch(()=>{
       if(!active||ticket!==epoch)return;
       const status=document.querySelector('#kin-viewer-layout-status');
-      if(status)status.textContent='환자 식별 표시를 연결하지 못했습니다. 영상 정보 표시에서 환자와 검사를 확인하세요.';
+      if(status)status.textContent=kinText("환자 식별 표시를 연결하지 못했습니다. 영상 정보 표시에서 환자와 검사를 확인하세요.");
     });
   }
   // The bridge follows the verified role; document disposal belongs to the page boundary.
@@ -47,18 +49,18 @@ function kinCreateViewerTechNote() {
     prepare().then(extension=>{
       if(!active||ticket!==epoch)return;
       current=extension;
-      if(current.mount()!==true)throw new Error('Tech 메모 연결 대상을 확인하지 못했습니다.');
+      if(current.mount()!==true)throw kinError("Tech 메모 연결 대상을 확인하지 못했습니다.");
       state='ready';
     }).catch(e=>{
       if(!active||ticket!==epoch)return;
       state='failed';
-      kinToolRetry('kin-note-retry', 'Tech 메모 화면을 연결하지 못했습니다.', connect);
+      kinToolRetry('kin-note-retry', kinText("Tech 메모 화면을 연결하지 못했습니다."), connect);
     });
   }
   return {id:'kin.viewer-tech-note',preRegistration({servicesManager}) {
     const load=name=>new Promise((resolve,reject)=>{
       const script=document.createElement('script');script.src='/worklist/hpacs-lite/'+name;
-      const fail=()=>{clearTimeout(timer);script.onload=script.onerror=null;script.remove();reject(new Error('Tech 메모 화면을 불러오지 못했습니다. 메모 연결을 다시 시도하세요.'));};
+      const fail=()=>{clearTimeout(timer);script.onload=script.onerror=null;script.remove();reject(kinError("Tech 메모 화면을 불러오지 못했습니다. 메모 연결을 다시 시도하세요."));};
       const timer=setTimeout(fail,20000);
       script.onload=()=>{clearTimeout(timer);resolve();};script.onerror=fail;document.head.append(script);
     });

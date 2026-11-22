@@ -97,7 +97,7 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
         self.assertLess(MAIN.index('<script src="worklist-image-preview.js"></script>'), MAIN.index('<script src="worklist-image-thumbnails.js"></script>'))
         self.assertIn("imageThumbnails = window.KinWorklistImageThumbnails?.mount?.(", MAIN)
         self.assertIn("}) || null;", MAIN)
-        self.assertIn("if(!imageThumbnails)images.title='Images 모듈을 불러오지 못했습니다. 페이지를 다시 열어 주세요.';", MAIN)
+        self.assertIn('if(!imageThumbnails)kinWrite(images, kinSayEn("Images 모듈을 불러오지 못했습니다. 페이지를 다시 열어 주세요."), "title");', MAIN)
         self.assertIn("cells[index].open.disabled = false;", MAIN)
         self.assertIn("cells[index].inspect.disabled = false;", MAIN)
         self.assertIn("cells[index].images.disabled = !imageThumbnails;", MAIN)

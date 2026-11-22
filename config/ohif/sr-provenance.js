@@ -4,11 +4,13 @@
 // Received SRs retain their source values and read-only SR renderer. A native
 // hydration would turn them into local tools and silently recalculate them.
 function kinCreateSRProvenance() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, stop;
   const sequence = value => Array.isArray(value) ? value : value ? [value] : [];
   const first = value => sequence(value)[0];
   const caption = instance => instance?.Manufacturer === 'KIN' && instance?.SoftwareVersions === 'kin-manual-sr-v1'
-    ? '수동 측정 SR 원문 · 읽기 전용' : '외부 SR 원문 · 읽기 전용';
+    ? kinText("수동 측정 SR 원문 · 읽기 전용") : kinText("외부 SR 원문 · 읽기 전용");
   // What the source calls a measurement group: its Tracking Identifier text (112039) and its Finding (121071). The
   // viewers' own SRs write a tool tag there (Cornerstone3DTools@^0.1.0:Length, KIN manual v1:Length), which names nothing.
   const toolTag = /^(?:Cornerstone3DTools@[^:]*|cornerstoneTools@[^:]*|KIN manual v1):[A-Za-z]+$/;
@@ -131,7 +133,7 @@ function kinCreateSRProvenance() {
           }
           signature = '';
           for (const entry of window.cornerstone.getEnabledElements()) entry.viewport.render();
-        }).catch(() => { if (!ended) { panel.hidden = false; panel.replaceChildren(); text(panel, 'summary', 'SR 문서를 다시 열어 주세요'); } });
+        }).catch(() => { if (!ended) { panel.hidden = false; panel.replaceChildren(); text(panel, 'summary', kinText("SR 문서를 다시 열어 주세요")); } });
         return result;
       };
       if (typeof addInstances === 'function') ds.addInstances = replaceInstances;
@@ -166,16 +168,16 @@ function kinCreateSRProvenance() {
       return originalCorners.call(this, components.map(item => {
         const ids = grid.viewports.get(item.viewportId)?.displaySetInstanceUIDs || [];
         return item.id === 'viewportStatusComponent' && ids.some(uid => displaySets.getDisplaySetByUID(uid)?.Modality === 'SR')
-          ? { ...item, component: '외부 SR · 원문' } : item;
+          ? { ...item, component: kinText("외부 SR · 원문") } : item;
       }));
     };
     corners.addComponents = sourceCorners;
     restores.push(() => { if (corners.addComponents === sourceCorners) corners.addComponents = originalCorners; });
     const previousAdd = customization.get('onBeforeSRAddMeasurement');
     const addHook = { id: 'onBeforeSRAddMeasurement', value: ({ measurement, StudyInstanceUID, SeriesInstanceUID }) => {
-      if (ended) throw new Error('로그인이 종료되어 SR 표식을 표시하지 않았습니다.');
+      if (ended) throw kinError("로그인이 종료되어 SR 표식을 표시하지 않았습니다.");
       const ds = displaySets.getActiveDisplaySets().find(d => d.Modality === 'SR' && d.measurements?.includes(measurement));
-      if (!ds || !guarded.has(ds)) throw new Error('현재 SR 문서에 속하지 않는 표식입니다.');
+      if (!ds || !guarded.has(ds)) throw kinError("현재 SR 문서에 속하지 않는 표식입니다.");
       const sourceUID = measurement.kinSourceTrackingUID || measurement.TrackingUniqueIdentifier;
       const groups = values(ds?.instance), group = groups.get(sourceUID);
       // Only labels are projected. Original ContentSequence and native graphic
@@ -185,8 +187,8 @@ function kinCreateSRProvenance() {
       // Keep the derived measurement identity: the loader records imageId and
       // loaded on this same object for the SR viewport's reference navigation.
       // The native mark draws its first five lines only, so the source's name for the group follows its values.
-      measurement.labels = [{ label: '출처', value: caption(ds.instance) },
-        ...(group?.values || [{ label: '원문', value: groups.incomplete ? '표시 상한 초과: SR 원문을 확인하세요' : '수치는 SR 원문에서 확인하세요' }]),
+      measurement.labels = [{ label: kinText("출처"), value: caption(ds.instance) },
+        ...(group?.values || [{ label: kinText("원문"), value: groups.incomplete ? kinText("표시 상한 초과: SR 원문을 확인하세요") : kinText("수치는 SR 원문에서 확인하세요") }]),
         ...(group?.names || [])];
       // Tracking UIDs may be reused in later source documents. Scope only the
       // derived overlay ID by SOP so another SR cannot overwrite this overlay.
@@ -197,7 +199,7 @@ function kinCreateSRProvenance() {
     customization.setModeCustomization('onBeforeSRAddMeasurement', addHook);
     const previousHydrate = customization.get('onBeforeSRHydration');
     const hydrateHook = { id: 'onBeforeSRHydration', value: () => {
-      throw new Error('외부 SR 원문은 읽기 전용입니다. 새 측정은 원영상에서 직접 작성하세요.');
+      throw kinError("외부 SR 원문은 읽기 전용입니다. 새 측정은 원영상에서 직접 작성하세요.");
     } };
     customization.setModeCustomization('onBeforeSRHydration', hydrateHook);
     for (const [name, prior, hook] of [['onBeforeSRAddMeasurement', previousAdd, addHook], ['onBeforeSRHydration', previousHydrate, hydrateHook]]) {
@@ -218,7 +220,7 @@ function kinCreateSRProvenance() {
       panel.hidden = false; if (signature === key) return; signature = key; panel.replaceChildren();
       text(panel, 'summary', caption(instance));
       if (ds.instances?.length > 1) {
-        const select = document.createElement('select'); select.setAttribute('aria-label', 'SR 문서 선택');
+        const select = document.createElement('select'); select.setAttribute('aria-label', kinText("SR 문서 선택"));
         select.style.cssText = 'width:100%;background:#101e32;color:#e1ecfc';
         for (const document of ds.instances) {
           const option = window.document.createElement('option'); option.value = document.SOPInstanceUID;
@@ -227,12 +229,12 @@ function kinCreateSRProvenance() {
         }
         select.addEventListener('change', () => { if (!ended) ds.kinSelectDocument(select.value); }); panel.append(select);
       }
-      text(panel, 'p', '이 문서의 값과 표식을 그대로 열람합니다. 직접 작성한 측정과 저장 이력을 구분합니다.');
-      for (const [label, value] of [['문서 SOP', instance?.SOPInstanceUID], ['작성 장치', instance?.Manufacturer],
-        ['문서 일시', [instance?.ContentDate, instance?.ContentTime, instance?.SoftwareVersions === 'kin-manual-sr-v1' ? '(UTC)' : ''].filter(Boolean).join(' ')], ['원문 검증 상태', instance?.VerificationFlag]])
-        text(panel, 'p', label + ': ' + (value || '기록 없음'));
+      text(panel, 'p', kinText("이 문서의 값과 표식을 그대로 열람합니다. 직접 작성한 측정과 저장 이력을 구분합니다."));
+      for (const [label, value] of [[kinText("문서 SOP"), instance?.SOPInstanceUID], [kinText("작성 장치"), instance?.Manufacturer],
+        [kinText("문서 일시"), [instance?.ContentDate, instance?.ContentTime, instance?.SoftwareVersions === 'kin-manual-sr-v1' ? '(UTC)' : ''].filter(Boolean).join(' ')], [kinText("원문 검증 상태"), instance?.VerificationFlag]])
+        text(panel, 'p', label + ': ' + (value || kinText("기록 없음")));
       const groups = values(instance);
-      if (groups.incomplete) text(panel, 'p', '표시 상한을 초과했습니다. 수치는 업무 화면의 SR 원문에서 확인하세요.');
+      if (groups.incomplete) text(panel, 'p', kinText("표시 상한을 초과했습니다. 수치는 업무 화면의 SR 원문에서 확인하세요."));
       for (const group of groups.values()) {
         const section = text(panel, 'section', '');
         for (const name of group.names) text(section, 'p', name.label + ': ' + name.value);

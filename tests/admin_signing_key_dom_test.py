@@ -29,7 +29,7 @@ def lf_text(path):
 ORIGIN = "https://signing-keys.test"
 PAGE_PATH = "/worklist/hpacs-lite/admin.html"
 SCRIPTS = {"/worklist/hpacs-lite/" + name: lf_text(HPACS / name) for name in (
-    "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
+    "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
     "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js", "gateway-rules-admin.js", "gateway-support-admin.js", "patient-consent-admin.js",
     # CD-01: the shared Product Information panel and its embedded facts.
     "product-info-data.js", "product-info.js")}

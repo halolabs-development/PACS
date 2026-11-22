@@ -1,5 +1,13 @@
 (function () {
   'use strict';
+  // The page's write path (worklist-language.js): its own words read in English on an English screen and stay as written
+  // otherwise; data is written as it is.
+  const kinSayEn = globalThis.KinLanguage?.sayEnglish || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
   // Gateway Support: the administrator asks one of this institution's Gateways for diagnostics, a restart, or an update to
   // a version this server holds (GET/POST /api/admin/gateway-support; the rule is api/src/gateway-support.ts). The Gateway
   // fetches the request over its own outbound call. Opening the page reads nothing: Load Gateway Support (or arriving at
@@ -13,29 +21,29 @@
   const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
   const ACTIONS = { diagnostics: 'Diagnostics', restart: 'Restart', update: 'Update' };
   const STATES = {
-    requested: ['Requested', '요청을 남겼습니다. Gateway가 다음 연락(약 30초)에 가져갑니다.'],
-    delivered: ['Delivered to Gateway', 'Gateway가 요청을 가져갔습니다. 결과를 기다립니다.'],
-    accepted: ['Accepted by Gateway', 'Gateway가 요청을 받아 실행 중입니다. 결과가 오면 바뀝니다.'],
-    done: ['Done', 'Gateway가 요청을 마쳤다고 알렸습니다.'],
-    installed: ['Installed', '새 판이 3분 안에 정상으로 돌아 그대로 쓰입니다.'],
-    rolled_back: ['Rolled Back', '새 판이 정상으로 돌지 않아 이전 판으로 돌아갔습니다. 이전 판이 계속 보냅니다.'],
-    refused: ['Refused', 'Gateway가 요청을 실행하지 않았습니다. 아무것도 바뀌지 않았습니다.'],
+    requested: ['Requested', kinSayEn("요청을 남겼습니다. Gateway가 다음 연락(약 30초)에 가져갑니다.")],
+    delivered: ['Delivered to Gateway', kinSayEn("Gateway가 요청을 가져갔습니다. 결과를 기다립니다.")],
+    accepted: ['Accepted by Gateway', kinSayEn("Gateway가 요청을 받아 실행 중입니다. 결과가 오면 바뀝니다.")],
+    done: ['Done', kinSayEn("Gateway가 요청을 마쳤다고 알렸습니다.")],
+    installed: ['Installed', kinSayEn("새 판이 3분 안에 정상으로 돌아 그대로 쓰입니다.")],
+    rolled_back: ['Rolled Back', kinSayEn("새 판이 정상으로 돌지 않아 이전 판으로 돌아갔습니다. 이전 판이 계속 보냅니다.")],
+    refused: ['Refused', kinSayEn("Gateway가 요청을 실행하지 않았습니다. 아무것도 바뀌지 않았습니다.")],
   };
   const CODES = {
-    remote_support_off: '병원 IT가 이 Gateway의 원격 지원을 꺼 두었습니다.',
-    bad_signature: '이 판의 서명을 Gateway 호스트의 키로 확인할 수 없습니다.',
-    no_update_key: 'Gateway 호스트에 갱신 서명 키가 설정되지 않았습니다.',
-    bad_update_key: 'Gateway 호스트의 갱신 서명 키 설정을 읽을 수 없습니다.',
-    not_newer: '지금 도는 판보다 새 판이 아닙니다.',
-    wrong_version: '받은 파일의 판이 요청한 판과 다릅니다.',
-    invalid_bundle: '받은 파일이 갱신 파일 형식이 아닙니다.',
-    too_large: '받은 파일이 너무 큽니다.',
-    download_failed: 'Gateway가 이 서버에서 파일을 받지 못했습니다.',
-    store_failed: 'Gateway가 받은 파일을 저장하지 못했습니다.',
-    no_launcher: '이 Gateway는 갱신을 받을 수 없는 옛 설치입니다(이미지 교체가 필요합니다).',
-    exited: '새 판이 시작한 뒤 멈췄습니다.',
-    not_ready: '새 판이 3분 안에 정상으로 돌지 않았습니다.',
-    interrupted: '새 판을 시험하는 중에 Gateway가 다시 시작되었습니다.',
+    remote_support_off: kinSayEn("병원 IT가 이 Gateway의 원격 지원을 꺼 두었습니다."),
+    bad_signature: kinSayEn("이 판의 서명을 Gateway 호스트의 키로 확인할 수 없습니다."),
+    no_update_key: kinSayEn("Gateway 호스트에 갱신 서명 키가 설정되지 않았습니다."),
+    bad_update_key: kinSayEn("Gateway 호스트의 갱신 서명 키 설정을 읽을 수 없습니다."),
+    not_newer: kinSayEn("지금 도는 판보다 새 판이 아닙니다."),
+    wrong_version: kinSayEn("받은 파일의 판이 요청한 판과 다릅니다."),
+    invalid_bundle: kinSayEn("받은 파일이 갱신 파일 형식이 아닙니다."),
+    too_large: kinSayEn("받은 파일이 너무 큽니다."),
+    download_failed: kinSayEn("Gateway가 이 서버에서 파일을 받지 못했습니다."),
+    store_failed: kinSayEn("Gateway가 받은 파일을 저장하지 못했습니다."),
+    no_launcher: kinSayEn("이 Gateway는 갱신을 받을 수 없는 옛 설치입니다(이미지 교체가 필요합니다)."),
+    exited: kinSayEn("새 판이 시작한 뒤 멈췄습니다."),
+    not_ready: kinSayEn("새 판이 3분 안에 정상으로 돌지 않았습니다."),
+    interrupted: kinSayEn("새 판을 시험하는 중에 Gateway가 다시 시작되었습니다."),
   };
   const pad = value => String(value).padStart(2, '0');
   const local = iso => { const d = new Date(iso);
@@ -45,7 +53,7 @@
 
   function message(text) {
     const box = $('#gateway-support-message');
-    box.textContent = text || '';
+    kinWrite(box, text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -88,20 +96,20 @@
 
   function failure(error, what) {
     if (error?.status === 403) return error.code === 'GATEWAY_SUPPORT_RESTRICTED'
-      ? '검사 접근 범위가 제한된 계정은 Gateway 원격 지원을 쓸 수 없습니다.' : '이 계정으로는 Gateway 원격 지원을 쓸 수 없습니다.';
+      ? kinSayEn("검사 접근 범위가 제한된 계정은 Gateway 원격 지원을 쓸 수 없습니다.") : kinSayEn("이 계정으로는 Gateway 원격 지원을 쓸 수 없습니다.");
     if (error?.status === 409) return error.code === 'GATEWAY_SUPPORT_BUSY'
-      ? '이 Gateway에 아직 끝나지 않은 요청이 있습니다. 지금 상태를 다시 읽었습니다.' : '조건이 바뀌었습니다. 지금 상태를 다시 읽었습니다.';
-    if (error?.status === 404) return '그 Gateway 줄을 찾을 수 없습니다(서버가 다시 시작했거나 연락이 바뀌었습니다). 지금 상태를 다시 읽었습니다.';
-    if (error?.status === 400 && error.code === 'GATEWAY_SUPPORT_UNKNOWN_VERSION') return '이 서버에 그 판이 없습니다. 지금 상태를 다시 읽었습니다.';
-    if (error?.status === 503) return '서버가 바쁩니다. 잠시 후 다시 하세요.';
-    return `${what} 결과를 확인하지 못했습니다. 다시 불러와 지금 상태를 확인하세요.`;
+      ? kinSayEn("이 Gateway에 아직 끝나지 않은 요청이 있습니다. 지금 상태를 다시 읽었습니다.") : kinSayEn("조건이 바뀌었습니다. 지금 상태를 다시 읽었습니다.");
+    if (error?.status === 404) return kinSayEn("그 Gateway 줄을 찾을 수 없습니다(서버가 다시 시작했거나 연락이 바뀌었습니다). 지금 상태를 다시 읽었습니다.");
+    if (error?.status === 400 && error.code === 'GATEWAY_SUPPORT_UNKNOWN_VERSION') return kinSayEn("이 서버에 그 판이 없습니다. 지금 상태를 다시 읽었습니다.");
+    if (error?.status === 503) return kinSayEn("서버가 바쁩니다. 잠시 후 다시 하세요.");
+    return kinSayEn("{0} 결과를 확인하지 못했습니다. 다시 불러와 지금 상태를 확인하세요.", what);
   }
 
   function span(className, text, title, data) {
     const item = document.createElement('span');
     item.className = className;
-    item.textContent = text;
-    if (title) item.title = title;
+    kinWrite(item, text);
+    if (title) kinWrite(item, title, 'title');
     if (data) item.setAttribute('translate', 'no');
     return item;
   }
@@ -109,24 +117,24 @@
   function button(text, onClick, disabled) {
     const item = document.createElement('button');
     item.type = 'button';
-    item.textContent = text;
+    kinWrite(item, text);
     item.disabled = disabled;
     item.addEventListener('click', onClick);
     return item;
   }
 
   function requestLine(req) {
-    if (!req) return span('gw-support-request', 'No Request Since Server Start', '서버가 시작한 뒤 이 줄에 남긴 요청이 없습니다.');
+    if (!req) return span('gw-support-request', 'No Request Since Server Start', kinSayEn("서버가 시작한 뒤 이 줄에 남긴 요청이 없습니다."));
     const [word, meaning] = STATES[req.state];
     const line = document.createElement('span');
     line.className = 'gw-support-request';
     line.dataset.state = req.state;
-    line.title = meaning + (req.code && CODES[req.code] ? ` ${CODES[req.code]}` : '');
+    kinWrite(line, req.code && CODES[req.code] ? kinSayEn('{0} {1}', meaning, CODES[req.code]) : meaning, 'title');
     line.append(`Last Request: ${ACTIONS[req.action]}`);
     if (req.version) line.append(' ', span('', req.version, '', true));
     line.append(` · ${word}`);
     if (req.code) line.append(' (', span('', req.code, '', true), ')');
-    line.append(` · ${local(req.updatedAt)} · `, span('', req.requestedBy, '요청한 계정', true));
+    line.append(` · ${local(req.updatedAt)} · `, span('', req.requestedBy, kinSayEn("요청한 계정"), true));
     return line;
   }
 
@@ -138,13 +146,13 @@
       li.dataset.queueInstance = row.queueInstance;
       // The queue instance tells two lines of one Gateway name apart (as on Gateway Status); its full value is the title.
       li.append(span('gw-host-name', row.gateway, '', true),
-        span('gw-host-fact', 'Queue Instance ', `이 줄의 Gateway 큐(${row.queueInstance})입니다. 요청은 이 큐에만 갑니다.`),
-        span('gw-host-fact', 'Version ', 'Gateway가 마지막으로 알린 프로그램 버전입니다.'),
+        span('gw-host-fact', 'Queue Instance ', kinSayEn("이 줄의 Gateway 큐({0})입니다. 요청은 이 큐에만 갑니다.", row.queueInstance)),
+        span('gw-host-fact', 'Version ', kinSayEn("Gateway가 마지막으로 알린 프로그램 버전입니다.")),
         requestLine(row.request));
       li.children[1].append(span('', row.queueInstance.slice(0, 8), '', true));
       li.children[2].append(span('', row.version, '', true));
       if (row.contact === 'no_contact') li.append(span('gw-host-contact', `No Contact since ${local(row.lastContactAt)}`,
-        '이 Gateway의 연락이 끊겨 요청을 가져가지 못할 수 있습니다.'));
+        kinSayEn("이 Gateway의 연락이 끊겨 요청을 가져가지 못할 수 있습니다.")));
       const open = row.request && ['requested', 'delivered', 'accepted'].includes(row.request.state);
       const actions = document.createElement('span');
       actions.className = 'gw-support-actions';
@@ -169,7 +177,7 @@
     none.textContent = read ? `No Gateway of this institution has contacted this server since it started (${local(read.serverStartedAt)}).` : '';
     const chip = $('#gateway-support-state');
     chip.className = `gstate ${!read ? 'not_loaded' : failed ? 'query_failed' : 'observed'}`;
-    chip.textContent = !read ? 'Not Loaded' : failed ? `Query Failed · 마지막 관측 ${local(read.generatedAt)}` : `Observed ${local(read.generatedAt)}`;
+    kinWrite(chip, !read ? 'Not Loaded' : failed ? kinSayEn("Query Failed · 마지막 관측 {0}", local(read.generatedAt)) : `Observed ${local(read.generatedAt)}`);
     $('#gateway-support-refresh').disabled = !enabled || pending;
   }
 
@@ -203,7 +211,7 @@
     catch (error) {
       if (KinConsoleSession.ended()) return;
       if (error?.status === 403) clear();   // nothing of an earlier read stays for an account that may not see it
-      message(error?.message === 'answer' ? '조회 응답 형식을 확인할 수 없습니다.' : failure(error, what));
+      message(error?.message === 'answer' ? kinSayEn("조회 응답 형식을 확인할 수 없습니다.") : failure(error, what));
       if ([404, 409].includes(error?.status) || error?.code === 'GATEWAY_SUPPORT_UNKNOWN_VERSION') await load().catch(() => {});
     } finally {
       pending = false;
@@ -216,8 +224,8 @@
     void run(async () => {
       await request('POST', '/admin/gateway-support', { queueInstance, action, version });
       await load();
-      message('요청을 남겼습니다. Gateway가 다음 연락(약 30초)에 가져갑니다 — Load Gateway Support로 결과를 확인하세요.');
-    }, '요청');
+      message(kinSayEn("요청을 남겼습니다. Gateway가 다음 연락(약 30초)에 가져갑니다 — Load Gateway Support로 결과를 확인하세요."));
+    }, kinSayEn("요청"));
   }
 
   function download(id, gateway) {
@@ -233,7 +241,7 @@
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(link.href), 0);
-    }, '진단 받기');
+    }, kinSayEn("진단 받기"));
   }
 
   KinConsoleSession.onEnd(() => {
@@ -241,13 +249,13 @@
     clear();
     message('');
   });
-  $('#gateway-support-refresh').addEventListener('click', () => void run(() => load(), '조회'));
+  $('#gateway-support-refresh').addEventListener('click', () => void run(() => load(), kinSayEn("조회")));
   // Enabled only for the administrator session the Members console accepts.
   KinAuth.init().then(session => {
     if (KinConsoleSession.ended() || session?.state !== 'approved' || session.demo || !KinAuth.has('admin')) return;
     enabled = true;
     draw();
-    if (location.hash === '#gateway-support') void run(() => load(), '조회');
+    if (location.hash === '#gateway-support') void run(() => load(), kinSayEn("조회"));
   }).catch(() => {});
   window.KinGatewaySupport = Object.freeze({ readAnswer });
 })();

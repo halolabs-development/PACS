@@ -3,6 +3,8 @@
 // institution, so resolve them through the same source patient key as Related.
 // Each resulting UID still uses the ordinary scoped DICOMweb query.
 function kinCreateStudySearch() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let extensions, stop;
   function mount() {
     stop?.();
@@ -13,13 +15,13 @@ function kinCreateStudySearch() {
     const controller = new AbortController();
     const session = kinViewerOnEnd(() => { ended = true; controller.abort(); });
     const live = () => !ended && location.search === search;
-    const current = () => { if (!live()) throw new Error('검사 조회가 종료되었습니다.'); };
+    const current = () => { if (!live()) throw kinError("검사 조회가 종료되었습니다."); };
     // OHIF repeats the patient lookup for each opened study. Share the list only
     // within this mode/session; each UID query still checks current access.
     let listing;
     const readList = () => listing ||= (async () => {
       const response = await fetch('/api/studies', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-      if (!response.ok) throw new Error('이전 검사 목록을 확인하지 못했습니다 (HTTP ' + response.status + ').');
+      if (!response.ok) throw kinError("이전 검사 목록을 확인하지 못했습니다 (HTTP {0}).", response.status);
       return response.json();
     })().catch(error => { listing = null; throw error; });
     // /api/studies is the radiology list; a clinician-only session is refused it (api/src/clinician-policy.ts) and keeps the
@@ -34,15 +36,15 @@ function kinCreateStudySearch() {
       const verdict = await role();
       current();
       if (verdict === 'read-only') return original.call(this, params);
-      if (verdict !== 'writer') throw new Error('계정을 확인하지 못해 이전 검사를 찾지 않았습니다.');
+      if (verdict !== 'writer') throw kinError("계정을 확인하지 못해 이전 검사를 찾지 않았습니다.");
       const list = await readList();
       current();
       const keys = new Set(list.studies.filter(row => opened.includes(row.uid) && row.id === params.patientId && row.sourcePatientKey)
         .map(row => row.sourcePatientKey));
       // The stock MRN request does not identify which opened study asked it.
       // Keep its current-study fallback when two institutions reuse that MRN.
-      if (keys.size > 1) throw new Error('기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.');
-      if (keys.size === 0) throw new Error('열린 검사의 환자 식별을 확인하지 못했습니다.');
+      if (keys.size > 1) throw kinError("기관별 환자 식별이 달라 이전 검사를 하나로 묶을 수 없습니다.");
+      if (keys.size === 0) throw kinError("열린 검사의 환자 식별을 확인하지 못했습니다.");
       const rows = list.studies.filter(row => row.id === params.patientId && keys.has(row.sourcePatientKey));
       // A listed exam is searched by the original studies its scope holds: a merged exam's other originals have no row
       // of their own but are part of the opened exam, and each keeps its own entry, UID and count in the panel.

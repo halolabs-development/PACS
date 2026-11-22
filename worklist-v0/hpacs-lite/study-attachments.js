@@ -18,7 +18,7 @@ window.KinStudyAttachments = function (app) {
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const work = window.KinWorkContext;
   const MAX_BYTES = 20 * 1024 * 1024;      // a chosen file
   const PNG_MAX_BYTES = 64 * 1024 * 1024;  // a picture as redrawn to PNG (the server's PNG limit)
@@ -87,7 +87,7 @@ window.KinStudyAttachments = function (app) {
   cancel.id = 'attach-cancel';
   const actions = node('div', 'attach-actions');
   actions.append(send, cancel);
-  const attachedHead = node('h3', null, TEXT.attachedHeading);
+  const attachedHead = node('h3', null, kinSayEn(TEXT.attachedHeading));
   attachedHead.lang = 'ko';
   const attachedList = node('ul', 'attach-attached');
   dialog.append(title, head, sourceLabel, fileList, actions, status, attachedHead, attachedList);
@@ -120,7 +120,7 @@ window.KinStudyAttachments = function (app) {
 
   /** The toolbar button follows the role; a click without a server, a selection or on a received study says why. */
   window.addEventListener('kin-exam-scope-changed', event=>{
-    if(session?.uid===event.detail?.uid){session.canAttach=false;status.textContent='검사 범위가 바뀌었습니다. 선택한 파일은 보존했습니다. 창을 다시 열어 대상을 확인하세요.';render();}
+    if(session?.uid===event.detail?.uid){session.canAttach=false;kinWrite(status, kinSayEn("검사 범위가 바뀌었습니다. 선택한 파일은 보존했습니다. 창을 다시 열어 대상을 확인하세요."));render();}
   });
   function sync() {
     if (app.button) app.button.hidden = !canAttach();
@@ -335,7 +335,7 @@ window.KinStudyAttachments = function (app) {
     catch (_) { answer = null; }
     if (!current(mine, context) || asked !== mine.listSeq) return;
     if (!answer?.ok || answer.incomplete || !Array.isArray(answer.body?.attachments)) {
-      attachedList.replaceChildren(node('li', 'attach-done', TEXT.listFailed));
+      attachedList.replaceChildren(node('li', 'attach-done', kinSayEn(TEXT.listFailed)));
       return;
     }
     mine.canWithdraw = !!answer.body.canWithdraw;
@@ -348,7 +348,7 @@ window.KinStudyAttachments = function (app) {
     mine.sourceUid=sources.some(s=>s.studyUid===mine.sourceUid)?mine.sourceUid:sources.length===1?sources[0].studyUid:'';
     sourceChoice.value=mine.sourceUid;
     sourceLabel.hidden=!window.KinExamScope.screenScope(mine.scope);
-    if(!mine.canAttach)status.textContent='이 범위에는 새 문서를 붙일 수 없습니다. 원본 검사의 첫째 범위에서 붙이세요.';
+    if(!mine.canAttach)kinWrite(status, kinSayEn("이 범위에는 새 문서를 붙일 수 없습니다. 원본 검사의 첫째 범위에서 붙이세요."));
     render();
     renderAttached(mine, answer.body.attachments);
   }
@@ -362,7 +362,7 @@ window.KinStudyAttachments = function (app) {
 
   function renderAttached(mine, rows) {
     attachedList.replaceChildren();
-    if (!rows.length) { const empty = node('li', 'attach-done', TEXT.none); empty.lang = 'ko'; attachedList.append(empty); return; }
+    if (!rows.length) { const empty = node('li', 'attach-done', kinSayEn(TEXT.none)); empty.lang = 'ko'; attachedList.append(empty); return; }
     for (const row of rows) {
       const li = node('li', 'attach-done');
       li.dataset.id = row.id;
@@ -387,8 +387,8 @@ window.KinStudyAttachments = function (app) {
     const input = node('input');
     input.type = 'text';
     input.maxLength = 500;
-    input.setAttribute('aria-label', TEXT.reasonLabel);
-    input.placeholder = TEXT.reasonLabel;
+    kinWrite(input, kinSayEn(TEXT.reasonLabel), 'aria-label');
+    kinWrite(input, kinSayEn(TEXT.reasonLabel), 'placeholder');
     const confirm = node('button', null, 'Withdraw');
     confirm.type = 'submit';
     const back = button('Cancel', () => form.remove());
@@ -398,7 +398,7 @@ window.KinStudyAttachments = function (app) {
     form.addEventListener('submit', async event => {
       event.preventDefault();
       const reason = input.value.trim();
-      if (!reason) { note.textContent = TEXT.reason; input.focus(); return; }
+      if (!reason) { kinWrite(note, kinSayEn(TEXT.reason)); input.focus(); return; }
       confirm.disabled = true;
       const context = work.capture('document');
       let answer = null;
@@ -411,7 +411,7 @@ window.KinStudyAttachments = function (app) {
       if (!current(mine,context)) return;
       confirm.disabled = false;
       if (withdrawn) { void loadAttached(mine); return; }
-      note.textContent = typeof answer?.body?.message === 'string' ? answer.body.message : TEXT.lost;
+      kinWrite(note, typeof answer?.body?.message === 'string' ? answer.body.message : kinSayEn(TEXT.lost));
     });
     li.append(form);
     input.focus();

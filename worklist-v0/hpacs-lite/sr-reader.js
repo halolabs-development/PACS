@@ -51,6 +51,8 @@
       <p><label>SR 문서 <select id="sr-document" style="max-width:100%"></select></label> <button id="sr-read" type="button" disabled>Read Source</button></p>
       <p id="sr-status" role="status" aria-live="polite"></p><div id="sr-tree" style="overflow-wrap:anywhere;white-space:pre-wrap"></div>`;
     document.body.append(srDialog);
+    srDialog.setAttribute('data-kin-lang-region', 'reading'); // opened from the reading screen
+    window.KinLanguage?.markup?.(srDialog);
     let srEpoch = 0, srAbort = null, srUid = null, srSeries = [], srDocuments = [];
     const srVal = (ds, tag) => String(ds?.[tag]?.Value?.[0] ?? '');
     const srValidUid = value => typeof value === 'string' && /^(0|[1-9]\d*)(\.(0|[1-9]\d*))*$/.test(value) && value.length <= 64;
@@ -66,7 +68,7 @@
       // 이 읽기의 답·실패·끝이 화면에 닿는 자리는 모두 이 읽기를 시작한 문맥과 이 창의 세대를 함께 지난다. 받은 조각은 이
       // 읽기만의 것이라 쌓는 데는 관문이 없고, 다 받아 해석한 뒤 화면에 쓰는 한 자리에서 지난다.
       const apply = effect => work.commit(at, () => { if (active()) effect(); });
-      $('#sr-status').textContent = '불러오는 중…';
+      kinWrite($('#sr-status'), kinSayEn("불러오는 중…"));
       try {
         const res = await transport.request(path, { context: at, signal: controller.signal, cache: 'no-store',
           headers: { Accept: 'application/dicom+json' }, read: 'stream', deadlineMs: 15000 });
@@ -87,9 +89,9 @@
         for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
         const data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
         if (!Array.isArray(data)) throw new Error('잘못된 SR 목록 또는 문서입니다.');
-        apply(() => { consume(data); $('#sr-status').textContent = data.length ? '불러왔습니다. 지원 범위의 원문 트리이며 임상 해석을 추가하지 않습니다.' : 'SR 항목이 없습니다.'; });
+        apply(() => { consume(data); kinWrite($('#sr-status'), data.length ? kinSayEn("불러왔습니다. 지원 범위의 원문 트리이며 임상 해석을 추가하지 않습니다.") : kinSayEn("SR 항목이 없습니다.")); });
       } catch (e) {
-        apply(() => { $('#sr-tree').replaceChildren(); $('#sr-status').textContent = e.transport === 'timeout' ? '요청 시간이 초과되었습니다. 다시 시도하세요.' : 'SR 열람 실패: ' + e.message; });
+        apply(() => { $('#sr-tree').replaceChildren(); kinWrite($('#sr-status'), e.transport === 'timeout' ? kinSayEn("요청 시간이 초과되었습니다. 다시 시도하세요.") : kinSayEn("SR 열람 실패: {e0}", e.message)); });
       } finally { apply(() => { $('#sr-read').disabled = !srDocuments.some(d => srVal(d,'00080018') === $('#sr-document').value); }); }
     }
     function srOptions(select, rows, tag, label) {
@@ -111,7 +113,7 @@
     }
     $('#sr-open').addEventListener('click', () => {
       closeSR(); const s = viewed(); if (!s || demoMode || !srValidUid(s.uid)) return;
-      srUid = s.uid; $('#sr-context').textContent = '열람 검사 · ' + s.name + ' (' + s.id + ') · ' + s.date + ' · ' + shownStudyDesc(s);
+      srUid = s.uid; kinWrite($('#sr-context'), kinSayEn("열람 검사 · {0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDesc(s)));
       srDialog.showModal(); srList();
     });
     $('#sr-series').addEventListener('change', () => {
@@ -140,7 +142,7 @@
             const title = '(' + entry.tag.slice(0,4) + ',' + entry.tag.slice(4) + ') ' + entry.label + ' [' + entry.vr + ']';
             if (entry.vr === 'SQ') {
               const details = document.createElement('details'), summary = document.createElement('summary');
-              summary.textContent = title + ' · ' + entry.values.length + '개'; details.append(summary); details.open = depth < 2;
+              kinWrite(summary, kinSayEn("{0} · {n1}개", title, entry.values.length)); details.append(summary); details.open = depth < 2;
               entry.values.forEach((item, i) => { const group = document.createElement('div'); group.style.marginLeft = '16px'; const heading = document.createElement('strong'); heading.textContent = 'Item ' + (i + 1); group.append(heading); render(item,group,depth+1); details.append(group); }); parent.append(details);
             } else { const line = document.createElement('div'); line.translate = false; line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
           }
@@ -148,7 +150,7 @@
         const primary = new Set(['0040A040','0040A043','0040A050','0040A491','0040A493','0040A730']);
         render(tree.filter(e => primary.has(e.tag)),fragment,0);
         const metadata = document.createElement('details'), summary = document.createElement('summary'); metadata.dataset.srMetadata = '';
-        summary.textContent = '문서 식별정보 및 기타 태그'; metadata.append(summary); render(tree.filter(e => !primary.has(e.tag)),metadata,2); fragment.append(metadata);
+        kinWrite(summary, kinSayEn("문서 식별정보 및 기타 태그")); metadata.append(summary); render(tree.filter(e => !primary.has(e.tag)),metadata,2); fragment.append(metadata);
         $('#sr-tree').replaceChildren(fragment);
       });
     });

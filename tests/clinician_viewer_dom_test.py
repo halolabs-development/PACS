@@ -35,7 +35,7 @@ ORIGIN = "https://clinician.test"
 
 BASE = "/worklist/hpacs-lite/"
 
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js", "viewer-resources.js", "viewer-preload.js", "viewer-session.js", "viewer-exam-scope.js", "critical-result-inbox.js", "clinical-signature.js")}
 
 CONFIG = lf_text(ROOT / "config" / "ohif.js")
 
@@ -3344,6 +3344,55 @@ class ClinicianViewerDOMTest(unittest.TestCase):
           PixelSpacing: [0.5, 0.5]}; synCalibration = {type: 'User', scale: 2}; }""")
         self.assertEqual('refused', self.page.evaluate('synPressLength()'))
         self.assertEqual('표시 간격과 원본 간격이 일치하지 않습니다', self.panel()['status'])
+
+    def test_31c_a_length_basis_is_one_value_on_every_screen_and_drawn_in_its_language(self):
+        """The basis a Length is measured with is a value of the measurement: the Measurements panel's CSV carries it as written
+        on every screen, a planar image's and a mammogram's alike; the image text and the panel row draw it in the language
+        the reader chose for the reading screen (English), and as written with Korean or no choice."""
+        mappings = r'''() => {
+          const ms = synServices.measurementService;
+          window.synMeasurements = [];
+          ms.getMeasurements = () => window.synMeasurements;
+          ms.getMeasurement = uid => window.synMeasurements.find(m => m.uid === uid);
+          ms.getSourceMappings = () => [{ annotationType: 'Length', toMeasurementSchema: ({ annotation }) => ({ uid: annotation.annotationUID,
+            displayText: { primary: ['native'], secondary: [] }, getReport: () => ({ columns: ['Length', 'Unit'],
+              values: [annotation.data.cachedStats['imageId:' + annotation.metadata.referencedImageId]?.length, 'mm'] }) }) }];
+        }'''
+        place = r'''([meta]) => {
+          window.synMeta = meta;
+          window.KinViewerInfoBar = {identity: () => ({instance: synMeta})};
+          cornerstone.getEnabledElement().viewport.getImageData = () => ({spacing: [0.5, 0.5, 1], direction: [0, 1, 0, 0, 0, -1, -1, 0, 0], origin: [0, 0, 0]});
+          const uid = synPressLength();
+          if (uid === 'refused') return uid;
+          const a = cornerstoneTools.annotation.state.getAnnotation(uid);
+          a.data.handles.points = [[0, 20, -20], [0, 50, -60]]; a.data.cachedStats['imageId:' + a.metadata.referencedImageId] = {length: 25, unit: 'mm'};
+          synTools.Length.editData = null; synTools.Length.isDrawing = false; synInteracting = false;
+          window.synMeasurements = [{ uid, toolName: 'Length', source: { name: 'Cornerstone', version: '1' } }];
+          const [row] = synServices.measurementService.getMeasurements(), report = row.getReport();
+          return { text: synLengthText(uid), row: row.displayText.primary.slice(1), basis: report.values[report.columns.indexOf('Measurement basis')] };
+        }'''
+        images = {'planar': {'Modality': 'CR', 'SOPClassUID': '1.2.840.10008.5.1.4.1.1.1', 'SOPInstanceUID': 'SYN-CR', 'Rows': 512, 'Columns': 512,
+                             'PixelSpacing': [0.5, 0.5]},
+                  'mammography': {'Modality': 'MG', 'SOPClassUID': '1.2.840.10008.5.1.4.1.1.1.2', 'SOPInstanceUID': 'SYN-MG', 'Rows': 512,
+                                  'Columns': 512, 'PixelSpacing': [0.5, 0.5]}}
+        seen = {}
+        for stored in (None, 'ko', 'en'):
+            self.tearDown(); self.setUp()
+            if stored:
+                self.page.add_init_script("localStorage.setItem('kin-language:v1', JSON.stringify({version: 1, worklist: '%s', "
+                                          "reading: '%s', session: 'SYN-SESSION-%s'}))" % (stored, stored, RADIOLOGIST['sub']))
+            self.me = RADIOLOGIST
+            self.open_viewer(before_boot='() => { (' + self.CALIBRATION_TOOLS + ')(); (' + mappings + ')(); }')
+            self.wait_until(lambda: 'Length' in self.panel()['buttons'], 'writer controls')
+            for name, meta in images.items():
+                seen[stored, name] = self.page.evaluate(place, [meta])
+        for name in images:
+            with self.subTest(image=name):
+                written = {'text': ['50.0 mm', 'PixelSpacing', '원본 기준면'], 'row': ['PixelSpacing · 원본 기준면'], 'basis': 'PixelSpacing · 원본 기준면'}
+                self.assertEqual(written, seen[None, name])
+                self.assertEqual(written, seen['ko', name])
+                self.assertEqual({'text': ['50.0 mm', 'PixelSpacing', 'source reference plane'], 'row': ['PixelSpacing · source reference plane'],
+                                  'basis': 'PixelSpacing · 원본 기준면'}, seen['en', name])
 
     def test_31b_length_inside_an_ultrasound_region_is_measured_with_its_deltas(self):
         """An ultrasound image without spacing or orientation, with Region Calibrations: Length is drawn where the viewer shows
