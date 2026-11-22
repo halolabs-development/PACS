@@ -106,7 +106,6 @@ function fixture({ state = STATE, head = HEAD, draft = null } = {}) {
     report: { findUnique: async () => head },
     reportDraft: { findUnique: async () => row, findFirst: async a => (row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null) },
     reportDraftPurposeEnd: { findFirst: async () => null },
-    memberRights: { findMany: async () => [] },
     auditLog: { create: async a => { audits.push(a.data); return a.data; } },
   };
   // WORKLIST-SPLIT-UID: the request's source observation answers one resource per UID here.

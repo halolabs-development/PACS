@@ -89,7 +89,8 @@ export function versionWriterName(row: { authorName?: unknown } | null | undefin
  */
 export async function withWriters<C extends { roles?: readonly string[] | null; institution?: string | null; writers?: WriterDirectory }>(
   db: any, c: C): Promise<C> {
-  const rows: any[] = c.institution ? await db.memberRights.findMany({ where: { institution: c.institution },
+  // A store without the member table (a test's partial store) has no members to name; the product store always has it.
+  const rows: any[] = c.institution && typeof db?.memberRights?.findMany === 'function' ? await db.memberRights.findMany({ where: { institution: c.institution },
     select: { sub: true, username: true, email: true, name: true, approved: true, suspended: true, institution: true, roles: true } }) : [];
   const bySub = new Map<string, WriterMember>(), taken = new Set<string>();
   for (const row of rows) {

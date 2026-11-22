@@ -153,7 +153,6 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
     reportDraft: { findUnique: async () => { calls.push({ call: 'reportDraft.findUnique', tx: false }); return row; },
       findFirst: async a => { calls.push({ call: 'reportDraft.findFirst', tx: false }); return row && (!a?.where?.authorSub || a.where.authorSub === row.authorSub) ? row : null; } },
     reportDraftPurposeEnd: { findFirst: async () => null },
-    memberRights: { findMany: async () => [] },
     reportVersion: { findMany: async a => { calls.push({ call: 'versions', args: a });
       return [...versions.values()].map(version => a.select
         ? Object.fromEntries(Object.entries(version).filter(([key]) => a.select[key])) : { ...version }); } },
