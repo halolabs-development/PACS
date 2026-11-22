@@ -61,7 +61,7 @@ LITERAL = {
     "I-CT": (400, coded("DICTATION_AUDIO_INVALID")), "I-ENC": (400, coded("DICTATION_AUDIO_INVALID")),
     "I-FMT": (400, coded("DICTATION_AUDIO_INVALID")), "I-BIG": (413, coded("DICTATION_AUDIO_TOO_LARGE")),
     "C-W2": ADMITTED,
-    "R-HELD": (409, {"code": "REPORT_HELD", "holder": ACTORS["doctor"],
+    "R-HELD": (409, {"code": "REPORT_HELD", "holder": ACTORS["doctor"], "holderName": ACTORS["doctor"],
                      "message": ACTORS["doctor"] + " 님이 판독 중입니다"}),
     "C-HOLDER": ADMITTED, "C-EXPIRED": ADMITTED,
     "R-PRELIM": (403, nest(403, "Forbidden",

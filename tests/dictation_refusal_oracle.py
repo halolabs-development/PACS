@@ -188,12 +188,15 @@ def _ordered(problems: set[str], order: tuple[str, ...] = TAGS) -> list[str]:
 
 def expected_body(case: Case, context: dict[str, Any]) -> dict[str, Any] | None:
     if case.body == "held":
+        # The server names the holder by its account (holderName); the context's holder_name, else the login.
         holder = context.get("holder")
-        return ({"code": "REPORT_HELD", "holder": holder, "message": f"{holder} 님이 판독 중입니다"}
+        name = context.get("holder_name") or holder
+        return ({"code": "REPORT_HELD", "holder": holder, "holderName": name, "message": f"{name} 님이 판독 중입니다"}
                 if _text(holder) else None)
     if case.body == "prelim":
         reviewer = context.get("pre_reviewer")
-        return (_nest(403, "Forbidden", f"예비 판독(RS: P) 중입니다. {reviewer}만 이어서 판독할 수 있습니다.")
+        named = context.get("pre_reviewer_name") or reviewer
+        return (_nest(403, "Forbidden", f"예비 판독(RS: P) 중입니다. {named}만 이어서 판독할 수 있습니다.")
                 if _text(reviewer) else None)
     return FIXED_BODIES.get(case.body)
 
