@@ -20,10 +20,10 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
   // Dates on report paper follow one rule, kept once in KinReportPaper (report-preview.js, loaded with this
   // file's other print assets): a DICOM date prints as YYYY-MM-DD, a server instant as local YYYY-MM-DD HH:mm.
   const paperRules = () => root.KinReportPaper || require('./report-preview.js');
-  function dateText(identity) {
+  function dateText(identity, words = text => text) {
     const raw = identity && identity.date;
     const text = typeof raw === 'string' ? raw : raw === undefined || raw === null ? '' : String(raw);
-    return text.trim() ? paperRules().paperDate(text) : '날짜 없음';
+    return text.trim() ? paperRules().paperDate(text) : words('날짜 없음');
   }
   function dateRelation(currentDate, comparisonDate) {
     const current = normalizeStudyDate(currentDate), comparison = normalizeStudyDate(comparisonDate);
@@ -44,7 +44,8 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
     if (!report.version) return '저장된 판독문 없음';
     return `${report.rs === 'A' ? '승인된' : '미승인'} ${report.action === 'addendum' ? '추가기재' : '저장본'} · v${report.version} · RS ${report.rs}`;
   }
-  const comparisonLabel = comparison => `${dateText(comparison)} · ${comparison.desc || comparison.modality} · Acc ${comparison.acc || '-'}`;
+  // The dialog's choices (optionLabel) and its output scope say an empty date in the reader's language; the paper does not.
+  const comparisonLabel = comparison => `${dateText(comparison, kinText)} · ${comparison.desc || comparison.modality} · Acc ${comparison.acc || '-'}`;
   function optionLabel(value, comparison) {
     if (value === 'none') return 'Images only';
     if (value === 'saved') return 'Current study report';
@@ -869,7 +870,7 @@ globalThis.kinViewerJobPrint = function ({ api, authenticate, live, editor }) {
         caption.textContent=mipJob?kinText(item.snapshot?MIP_CURRENT_NOTE:MIP_NOTE)+'.':kinText("{t0} 현재 영상·판독 입력은 유지합니다. 실제 크기 아님.", (item.snapshot?kinText("처음 선택한 현재 평면을 재구성하며 Job·표식·판독문을 저장하지 않습니다."):kinText("저장한 생성 조건과 전체 CT 원본으로 저장한 평면을 재구성합니다.")));
       }else for (const [index, cell] of snapshot.cells.entries()) { valid(ticket, signal); images.push(cell ? await render(cell, ticket, signal, budget, cellAnnotations(data.job, cell), outputEdits[index]) : null); }
       const latest = await state(item, signal, reportChoice); valid(ticket, signal); if (!equal(latest, data)) throw kinError("작업 또는 검사 정보·판독문이 변경되었습니다. 다시 확인하세요.");
-      outputScope.textContent = kinText("출력 대상: {0}개 영상 · {1}", (batchOutput?.frames.length ?? snapshot.cells.filter(Boolean).length), data.identities.map(study => `${study.name} (${study.id}) · ${identity.dateText(study)} · Study ${study.uid}`).join(' / '));
+      outputScope.textContent = kinText("출력 대상: {0}개 영상 · {1}", (batchOutput?.frames.length ?? snapshot.cells.filter(Boolean).length), data.identities.map(study => `${study.name} (${study.id}) · ${identity.dateText(study, kinText)} · Study ${study.uid}`).join(' / '));
       ready = { data, reportChoice, html: html(data, images, outputEdits,batchOutput) }; paper.srcdoc = ready.html; printButton.disabled = !supportsIdentity();
       syncReportOptions(data);
       const selected = selection.value; selection.replaceChildren(); el('option', kinText("전체 영상 셀"), selection).value = 'all';

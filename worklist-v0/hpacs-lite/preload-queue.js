@@ -247,7 +247,7 @@
         // Retry beside the status, so it stays in view however long the note is.
         const act = cell('');
         cell(s.total ? `${s.done}/${s.total}` : '');
-        cell(s.reason || '');
+        kinWrite(cell(''), s.reason ? kinSayEn(s.reason) : '');
         if (s.status === 'Failed' || s.status === 'Evicted') {
           const retry = document.createElement('button');
           retry.type = 'button'; retry.className = 'chip'; retry.textContent = 'Retry';

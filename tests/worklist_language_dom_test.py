@@ -662,6 +662,24 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertNotEqual(titles[None], titles["en"])
         self.assertIsNone(re.search("[가-힣]", titles["en"]), titles["en"])
 
+    def test_the_report_output_dialog_opened_from_an_english_reading_screen_reads_in_english_throughout(self):
+        """English on the reading screen only: the output dialog opened from it has its title, buttons and later status in
+        English alike (it takes the screen it is opened from)."""
+        self.boot()
+        self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={
+            "study": {"uid": auth.UID}, "report": {"version": 0}, "canPreviewEditor": False, "keys": []}))
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:null,reading:'en'})")
+        # The pointer on the reading screen (the menu that holds Print) marks it as the screen in use.
+        self.page.locator("#reading-bar").dispatch_event("pointerdown")
+        self.page.locator("#b-print").dispatch_event("click")
+        dialog = self.page.locator("#report-preview")
+        expect(dialog).to_be_visible()
+        self.page.wait_for_function("() => (document.querySelector('#report-preview iframe')?.srcdoc || '').includes('</html>')")
+        for text in (self.page.locator("#report-preview-title").inner_text(),
+                     dialog.get_by_role("button").filter(has_text=re.compile("PDF")).first.inner_text()):
+            self.assertIsNone(re.search("[가-힣]", text), text)
+        self.assertEqual("reading", dialog.get_attribute("data-kin-lang-region"))
+
     def test_key_image_title_and_tech_note_keep_the_authors_words(self):
         self.boot()
         self.page.route("**/api/studies/*/report-preview", lambda r: r.fulfill(json={

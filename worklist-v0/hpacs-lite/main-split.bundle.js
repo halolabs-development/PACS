@@ -8805,14 +8805,14 @@
     function measureNote(pane) {
       if (!pane) return "";
       if (!pane.items.some(item => item.measurements.length)) return pane.items.length > 1
-        ? "고른 소견들에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다." : "이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.";
-      if (!citations.measurementLines()) return "서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.";
+        ? kinSay("고른 소견들에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.") : kinSay("이 소견에는 이 검사에서 넣을 수 있는 영상 표식이 없습니다.");
+      if (!citations.measurementLines()) return kinSay("서버가 측정 줄 기록을 지원하는지 아직 확인하지 못해 켤 수 없습니다 — 인용 목록을 다시 확인한 뒤 여세요.");
       const m = pane.measure;
-      if (m.state === "loading") return "영상의 Series/Image 번호를 읽는 중입니다…";
+      if (m.state === "loading") return kinSay("영상의 Series/Image 번호를 읽는 중입니다…");
       if (m.state === "ready") return kinSay("아래 줄은 화면이 붙인 글입니다 — 표식 {n0}개의 저장된 수치와 DICOM의 Series/Image 번호를 그대로 옮겼습니다.",
         m.sources.reduce((n, list) => n + (list ? list.length : 0), 0));
       if (m.state === "failed") return m.note;
-      return "켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.";
+      return kinSay("켜면 이 소견에 연결된 이 검사의 영상 표식 전부의 수치와 Series/Image 번호를 한 줄로 덧붙입니다.");
     }
     function renderCitePreview() {
       if (!citePane) return;
@@ -9048,12 +9048,12 @@
       // 같은 칸에 같은 출처를 또 넣는 것은 거절이 아니라 **한 번의 경고**다(여러 소견이면 그중 하나라도).
       if (!pane.warned && pane.items.some(item => citations.duplicate(pane.uid, field, item))) {
         pane.warned = true;
-        pane.status = "이 칸에 같은 출처를 이미 인용했습니다. 그래도 넣으려면 한 번 더 누르세요.";
+        pane.status = kinSay("이 칸에 같은 출처를 이미 인용했습니다. 그래도 넣으려면 한 번 더 누르세요.");
         renderCitePreview();
         return;
       }
       setCiteBusy(true);
-      pane.status = "서버에 기록하는 중…";
+      pane.status = kinSay("서버에 기록하는 중…");
       renderCitePreview();
       // 이 삽입을 시작한 문맥(세션·작업 세대). 검사와 창의 세대는 void_()와 아래 epoch이 본다.
       const at = work.capture("document");
@@ -9088,7 +9088,7 @@
         const plan2 = citationPlan(field, text);
         if (!pane.plan || plan2.text !== pane.plan.text) {
           pane.plan = plan2;
-          pane.status = "판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.";
+          pane.status = kinSay("판독문이나 삽입 위치가 그 사이 바뀌었습니다 — 위의 삽입 위치를 다시 확인하고 한 번 더 누르세요.");
           renderCitePreview();
           return;
         }
@@ -9135,7 +9135,7 @@
             invalidateCitations(epoch.uid);
             // 이 요청이 서버에 닿았는지 모르는 것은 구조화 쪽도 같다. 같은 자리에서 같이 되돌린다.
             invalidateStructure(epoch.uid);
-            pane.status = "인용하지 못했습니다: " + draftFailureText(result) + " — 판독문은 그대로입니다.";
+            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureText(result));
             renderCitePreview();
             if (result.code === "REPORT_CITATION_STALE" || result.code === "REPORT_CITATION_SOURCE")
               toast("소견이 그 사이 바뀌었습니다 — Image Findings에서 Reload Findings를 누른 뒤 다시 인용하세요", "err");

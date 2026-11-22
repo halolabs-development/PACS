@@ -4553,7 +4553,7 @@ window.KinLanguageTerms = {
     ["화면을 바꾸지 않고 계정 배치를 다시 확인합니다.", "Checks the account layout again without changing the screen.", "m"],
     ["확인 대기 중인 받은 중요 결과가 없습니다. 목록 조회는 성공했습니다.", "No received critical results are pending acknowledgement. The list loaded successfully.", "m"],
     ["확인 실패 · Refresh로 다시 시도하세요.", "Check failed · Try again with Refresh.", "m", "확인 실패 · 새로 고침으로 다시 시도하세요."],
-    ["확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 {0} 칸에 붙입니다. 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.", "When you press Confirm, the server records this sentence together with its source and then adds it to the {0} field. Nothing existing is deleted; it is inserted line by line at the position above.", "m"],
+    ["확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 {0} 칸에 붙입니다. 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.", "When you press Insert into Report, the server records this sentence together with its source and then adds it to the {0} field. Nothing existing is deleted; it is inserted line by line at the position above.", "m"],
     ["확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "Verification removed — shown as Unverified and reading is locked (except emergencies)", "m", "확인을 해제했습니다 — 미확인으로 표시되고 판독이 잠깁니다 (응급 제외)"],
     ["확인이 저장되었는지 확인하지 못했습니다. Check Again으로 확인하세요.", "Could not confirm whether the acknowledgement was saved. Check with Check Again.", "m", "확인이 저장되었는지 확인하지 못했습니다. 다시 확인으로 확인하세요."],
     ["확인하는 사이 글이나 선택이 바뀌어 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 Check를 누르세요.", "The text or selection changed while checking, so {t0}{t1} — your input is still here. To check again, press Check.", "m", "확인하는 사이 글이나 선택이 바뀌어 {t0}{t1} — 입력한 내용은 그대로 있습니다. 다시 확인하려면 확인을 누르세요."],

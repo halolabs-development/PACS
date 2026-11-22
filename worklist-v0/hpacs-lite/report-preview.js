@@ -217,6 +217,9 @@
       if (globalThis.KinLanguage?.error) kinWrite(shown, globalThis.KinLanguage.error(text)); else shown.textContent = text; status.replaceChildren(shown); };
     const printButton = control('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
+    // A dialog with no screen of its own: opened from the reading screen it reads in that screen's language, its captions
+    // and the status written later alike (worklist-language.js markup).
+    globalThis.KinLanguage?.markup?.(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
     let edits = new Map(), geometryDirty = false;
     const originalGeometry = () => ({ zoom: 100, x: 0, y: 0 });
