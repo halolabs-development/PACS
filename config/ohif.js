@@ -5175,6 +5175,18 @@ window.KinLanguageTerms = {
     ["회원을 찾을 수 없습니다.", "Member not found.", "s"],
     // Words of the clinician, administration, audit and sign-in pages and of the viewer document (English only:
     // a reader who chose Korean keeps those screens as they are).
+    ["이 검사에는 판독 의뢰가 없습니다. Request Reading을 누르면 소속 기관 판독의의 워크리스트(Read Req 열)에 표시됩니다.", "This study has no reading request. Press Request Reading to show it on the worklist (Read Req column) of your institution's radiologists.", "m"],
+    ["판독문이 승인되면 의뢰가 닫힙니다.", "The request closes when the report is approved.", "m"],
+    ["판독문이 승인되어 의뢰가 닫혔습니다.", "The report was approved and the request closed.", "m"],
+    ["판독문이 다시 승인 전 상태라 새로 의뢰할 수 있습니다.", "The report is back before approval, so a new reading can be requested.", "m"],
+    ["이 검사는 지금 판독을 의뢰할 수 없습니다(원격판독으로 받은 검사이거나 지금 열 수 없는 검사).", "A reading cannot be requested for this study now (a study received for teleradiology, or a study that cannot be opened now).", "m"],
+    ["승인된 판독문이 있어 판독을 의뢰할 수 없습니다. 판독문을 보거나 Questions로 물어보세요.", "This study has an approved report, so a reading cannot be requested. Read the report or ask through Questions.", "m"],
+    ["보존 기간이 끝나 판독문을 파기한 검사라 판독을 의뢰할 수 없습니다.", "The report of this study was destroyed at the end of its retention period, so a reading cannot be requested.", "m"],
+    ["판독 의뢰는 진료과 의사(clinician) 계정만 할 수 있습니다.", "Only a clinician account can request a reading.", "m"],
+    ["판독을 의뢰했습니다.", "Reading requested.", "m"],
+    ["이미 열린 판독 의뢰가 있어 그 의뢰를 그대로 보여 줍니다.", "A reading request is already open; it is shown as it is.", "m"],
+    ["저장되었는지 알 수 없습니다. 다시 눌러도 의뢰는 하나만 남고, 목록을 새로고침하면 실제 결과가 보입니다.", "Not known whether it was saved. Pressing again still leaves only one request, and refreshing the list shows the actual result.", "m"],
+    ["응답 형식을 확인할 수 없습니다. 목록을 새로고침하면 실제 결과가 보입니다.", "Could not check the format of the answer. Refreshing the list shows the actual result.", "m"],
     ["이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.", "Not available in this window — an image tool key takes it first (set in Viewer Settings · Edit Shortcuts › Viewer). Choose another key.", "m"],
     ["이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.", "Not available in this window — Space goes to F.Leader (Viewer Settings › Space opens F.Leader). Choose another key.", "m"],
     ["이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.", "Not available in this window — a work screen shortcut takes it (Edit Shortcuts). Choose another key.", "m"],
