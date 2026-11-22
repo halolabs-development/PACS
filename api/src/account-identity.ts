@@ -1,9 +1,11 @@
 /**
  * A member of the caller's institution as a writer is shown (member-rights.ts withWriters): the account's login now (email,
- * else username - the AuthGuard's actor), the name a screen shows for it (family and given name; the login when it has none
- * or the same), and whether it is a colleague whose name the institution's radiologists see (an approved, active radiologist).
+ * else username - the AuthGuard's actor); its registered name (named: family and given name, null when it has none or only
+ * its username - as the page always showed such a colleague by login); the name it is shown to itself (own: the name, else
+ * the username, else the login); and whether it is a colleague whose name the institution's radiologists see (an approved,
+ * active radiologist).
  */
-export type WriterMember = { login: string; name: string; colleague: boolean };
+export type WriterMember = { login: string; named: string | null; own: string; colleague: boolean };
 /**
  * The caller's institution's members by account, read once per request, and every login, username and login before the @
  * they have now. `names`: this caller is shown colleagues' names (a radiologist or an administrator, as GET colleagues).
@@ -44,10 +46,10 @@ export function writerShown(stored: string | null | undefined, storedSub: string
   const dir = caller.writers;
   if (sameAccount(storedSub, caller)) {
     const me = dir?.bySub.get(caller.sub as string);
-    return me ? me.name : (typeof caller.actor === 'string' && caller.actor ? caller.actor : stored || null);
+    return me ? me.own : (typeof caller.actor === 'string' && caller.actor ? caller.actor : stored || null);
   }
   const who = typeof storedSub === 'string' && storedSub ? dir?.bySub.get(storedSub) : undefined;
-  if (who) return dir!.names && who.colleague ? who.name : who.login;
+  if (who) return dir!.names && who.colleague && who.named ? who.named : who.login;
   if (typeof stored !== 'string' || !stored) return null;
   const mine = loginAliases(caller.actor);
   return loginAliases(stored).some(alias => mine.includes(alias) || !!dir?.taken.has(alias)) ? PRIVATE_WRITER : stored;

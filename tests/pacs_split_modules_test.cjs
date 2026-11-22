@@ -2265,6 +2265,21 @@ test('OWNER-05 another reader is shown who saved, holds or is designated by the 
   assert.equal((await stateOf(R, legacy)).holderName, '작성자 비공개');
   // a reader who is not shown colleagues' names (a technician) sees the account's login now, never the old one
   assert.equal((await stateOf(TECH_A, held)).holderName, NEW_EMAIL);
+  // a colleague with no registered name (the member import fills it with the username) is shown by login, as before
+  const U = member('rad-unnamed', INST_A, ['radiologist']), unnamed = w.study();
+  w.orthanc.rows.push(qido(unnamed.uid, 'SYN A HOSPITAL'));
+  rights(U, U.actor, U.actor.split('@')[0]);
+  await w.commit.commitReport(unnamed.uid, commitBody(U, 'save', unnamed.draftEpoch, 0, 0, { findings: 'SYN U SAVED' }), U, null);
+  assert.equal((await stateOf(R, unnamed)).savedByName, U.actor);
+
+  // a critical result's source version: a signed one by the name it was signed under, else by the login it stored (never a
+  // name read now); an unsigned one by its writer's account
+  const { sourceWriterShown } = require('/app/dist/critical-result-policy');
+  const { withWriters } = require('/app/dist/member-rights');
+  const reader = await withWriters(w.db.root, { ...R });
+  assert.equal(sourceWriterShown({ action: 'approve', author: X.actor, authorSub: X.sub, authorName: null }, reader), X.actor);
+  assert.equal(sourceWriterShown({ action: 'addendum', author: X.actor, authorSub: X.sub, authorName: 'SYN Kim Then' }, reader), 'SYN Kim Then');
+  assert.equal(sourceWriterShown({ action: 'save', author: X.actor, authorSub: X.sub }, reader), 'SYN Kim Writer');
 });
 
 test('OWNER-04 a draft record id is never issued to another account: a study deleted and arriving again under its UID keeps the emptied row', async () => {

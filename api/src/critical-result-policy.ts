@@ -1,7 +1,8 @@
 import { canReadPreliminary } from './preliminary-reader';
 import { createHash } from 'node:crypto';
 import { CLINICIAN_ROLE, clinicianFinal } from './clinician-policy';
-import { sameAccount } from './account-identity';
+import { sameAccount, writerShown, type Account } from './account-identity';
+import { versionWriterName } from './member-rights';
 
 /**
  * S7-U1a 중요 결과 전달(계약 S7-U1p §3~§8, §11)의 순수 판정. DB·Keycloak·Orthanc·Nest 예외를 모른다 — 서비스가 읽은
@@ -348,4 +349,15 @@ export function decodeCursor(text: unknown, revision: number): { at: string; id:
       || typeof value.at !== 'string' || new Date(value.at).toISOString() !== value.at) return null;
     return { at: value.at, id: value.id };
   } catch { return null; }
+}
+
+/**
+ * Who wrote a source version, as the sender's screen shows it: a signed version by the name it was signed under (member-rights.ts
+ * versionWriterName), or - signed before that name was kept - by the login it stored, as the report history shows it (never a
+ * name read now); an unsigned version by its writer's account (account-identity.ts writerShown). Never a login looked up again.
+ */
+export function sourceWriterShown(v: { action?: string | null; author?: string | null; authorSub?: string | null; authorName?: unknown } | null | undefined, c: Account): string | null {
+  if (!v) return null;
+  if (['approve', 'amend', 'addendum'].includes(String(v.action))) return versionWriterName(v) ?? (v.author || null);
+  return writerShown(v.author ?? null, v.authorSub ?? null, c);
 }

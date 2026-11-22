@@ -213,9 +213,10 @@
       preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
+        const heldBy = writerName(s.holderName, s.holder);   // one shown name for the cell and its title
         const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(writerName(s.holderName, s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(writerName(s.holderName, s.holder))}</span></span>`;
+          : `<span class="hold other" title="${heldBy === '다른 기관' ? '다른 기관 판독의가' : heldBy === '작성자 비공개' ? '비공개 작성자가' : esc(heldBy) + ' 님이'} 작성 중">✎ <span translate="no">${esc(heldBy)}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
         return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },

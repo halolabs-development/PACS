@@ -96,8 +96,10 @@ export async function withWriters<C extends { roles?: readonly string[] | null; 
   for (const row of rows) {
     const login = typeof row.email === 'string' && row.email ? row.email : typeof row.username === 'string' ? row.username : '';
     if (!row.sub || !login) continue;
-    const name = (typeof row.name === 'string' && row.name.trim()) || (typeof row.username === 'string' && row.username) || login;
-    bySub.set(row.sub, { login, name, colleague: rightsAllow(row) && row.roles.includes('radiologist') });
+    const name = typeof row.name === 'string' ? row.name.trim() : '', username = typeof row.username === 'string' ? row.username : '';
+    // The member import fills a missing name with the username: that is no registered name (others see the login, as before).
+    bySub.set(row.sub, { login, named: name && name !== username && name !== login ? name : null, own: name || username || login,
+      colleague: rightsAllow(row) && row.roles.includes('radiologist') });
     for (const alias of [...loginAliases(row.email), ...loginAliases(row.username)]) taken.add(alias);
   }
   const roles = Array.isArray(c.roles) ? c.roles : [];
