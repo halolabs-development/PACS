@@ -688,9 +688,11 @@ class ReadingBoxesDOM(unittest.TestCase):
             for swaps in arrangements:
                 with self.subTest(width=width, height=height, swaps=swaps):
                     self.set_swaps(bar, swaps)
-                    # The stacked (portrait) page puts Related Report below the window when it goes under the editor
-                    # and Clinical Information stays above them.
-                    below = width < height and 'report' in swaps and 'side' not in swaps
+                    # The stacked (portrait) page can put Related Report below the window when it goes under the editor
+                    # and Clinical Information stays above them - then it has no cover in view (measured, not assumed:
+                    # a shorter row above can bring it into the window, where its name must be clear like the others).
+                    below = width < height and 'report' in swaps and 'side' not in swaps and page.evaluate(
+                        "() => { const box = document.querySelector('.related-p'); return !box || box.getBoundingClientRect().top >= innerHeight - 1; }")
                     self.assert_names_clear(page, f'{width}x{height} {swaps}',
                                             names=tuple(n for n in self.FIVE if not (below and n == 'Related Report')))
             # A picked box says so in the bar's status line; the names stay clear.

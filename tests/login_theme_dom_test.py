@@ -101,6 +101,13 @@ LOGIN = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><met
   </div></div>
  </div>
 </div></body></html>"""
+# The same sign-in page as Keycloak draws it for an English browser: <html lang="en"> and the theme's English words.
+MSG_EN = properties(THEME / "messages" / "messages_en.properties")
+LOGIN_EN = LOGIN.replace('lang="ko"', 'lang="en"', 1)
+for _key in sorted(("loginTitle", "loginAccountTitle", "usernameOrEmail", "password", "doForgotPassword", "doLogIn",
+                    "noAccount", "doRegister"), key=lambda k: -len(MSG[k])):
+    LOGIN_EN = LOGIN_EN.replace(MSG[_key], MSG_EN[_key])
+HANGUL = re.compile(r"[가-힣]")
 # keycloak/README.md 관리자 OTP 필수: the administrator's one-time code page (26.7.3 login-otp.ftl as served with this theme).
 OTP_PATH = "/auth/realms/kin/login-actions/authenticate"
 OTP = f"""<!doctype html><html class="login-pf" lang="ko" dir="ltr"><head><meta charset="utf-8">
@@ -195,7 +202,7 @@ class LoginThemeDomTest(unittest.TestCase):
             self.unexpected.append(route.request.url)
             return route.abort()
         if url.path == "/auth/realms/kin/protocol/openid-connect/auth":
-            return route.fulfill(body=LOGIN, content_type="text/html; charset=utf-8")
+            return route.fulfill(body=LOGIN_EN if "kc_locale=en" in url.query else LOGIN, content_type="text/html; charset=utf-8")
         if url.path == TOTP_SETUP_PATH:
             return route.fulfill(body=TOTP_SETUP, content_type="text/html; charset=utf-8")
         if url.path == OTP_PATH:
@@ -214,11 +221,12 @@ class LoginThemeDomTest(unittest.TestCase):
         return route.abort()
 
     def test_04_the_otp_code_page_button_shows_its_own_label(self):
-        """The password form draws "로그인" beside a transparent button; the OTP page reuses #kc-login with no drawn label,
-        so its button must show its own text (it was blank)."""
+        """The sign-in button shows its own text (Keycloak's word in the page's language), dark on the accent, with
+        nothing drawn beside it; the OTP page reuses #kc-login the same way (it was blank once)."""
         drawn = "(e) => [getComputedStyle(e).color, getComputedStyle(e.parentElement, '::after').content]"
         color, label = self.page.locator("#kc-login").evaluate(drawn)
-        self.assertEqual((color, label), ("rgba(0, 0, 0, 0)", '"로그인"'), "the password form: one drawn label")
+        self.assertEqual((color, label), ("rgb(33, 33, 33)", "none"), "the password form: the button's own text")
+        expect(self.page.get_by_role("button", name=MSG["doLogIn"], exact=True)).to_be_visible()
         self.page.goto(ORIGIN + OTP_PATH)
         button = self.page.locator("#kc-otp-login-form #kc-login")
         expect(button).to_be_visible()
@@ -365,7 +373,7 @@ class LoginThemeDomTest(unittest.TestCase):
             eyebrow: css('#kc-header', '::before', 'content'),
             line: css('#kc-header-wrapper', '::before', 'content') + css('#kc-header-wrapper', '::after', 'content'),
             foot: css('.login-pf-page', '::after', 'content'),
-            button: css('#kc-login', null, 'backgroundColor'), label: css('#kc-form-buttons', '::after', 'color'),
+            button: css('#kc-login', null, 'backgroundColor'), label: css('#kc-login', null, 'color'),
             title: document.querySelector('#kc-page-title').textContent.trim(), titleSize: css('#kc-page-title', null, 'fontSize'),
             realmName: (() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('#kc-header-wrapper'));
               return Array.from(r.getClientRects()).reduce((a, b) => a + b.width * b.height, 0); })(),
@@ -407,6 +415,39 @@ class LoginThemeDomTest(unittest.TestCase):
                 self.assertFalse(Path(name).name.startswith("kin-"), "pictures carry the product's name, not the old one")
         self.assertFalse(list((THEME / "resources" / "img").glob("kin-*")), "no old picture left in the theme")
 
+
+    def test_09_an_english_page_draws_its_own_lines_in_english(self):
+        """An English browser: the lines the style sheet draws (the product line, its subtitle, the footer, the
+        connection note) are English, the labels and the button show Keycloak's English words, and the page keeps its
+        places at the laptop and phone sizes - nothing Korean is drawn."""
+        for width, height in ((1600, 1050), (1366, 768), (375, 667)):
+            with self.subTest(window=f"{width}x{height}"):
+                self.page.set_viewport_size({"width": width, "height": height})
+                self.page.goto(ORIGIN + "/auth/realms/kin/protocol/openid-connect/auth?kc_locale=en")
+                expect(self.page.locator("html")).to_have_attribute("lang", "en")
+                expect(self.page.locator("#kin-legal-links")).to_be_attached()
+                seen = self.page.evaluate("""() => {
+                  const menu = document.getElementById('kc-locale'); menu.style.display = 'none';
+                  const drawn = [...document.querySelectorAll('*')].flatMap(e => ['::before', '::after']
+                    .map(p => getComputedStyle(e, p).content).filter(c => c.startsWith('"')));
+                  const r = s => document.querySelector(s).getBoundingClientRect();
+                  return {text: document.body.innerText, drawn, button: document.querySelector('#kc-login').value,
+                          card: r('.card-pf'), login: r('#kc-login'), width: innerWidth,
+                          scroll: document.documentElement.scrollWidth}; }""")
+                self.assertIsNone(HANGUL.search(seen["text"]), seen["text"])
+                for line in seen["drawn"]:
+                    self.assertIsNone(HANGUL.search(line), line)
+                lines = " ".join(seen["drawn"])
+                for words in ("From the moment a study arrives", "Teleradiology reading network",
+                              "an administrator approves it", "TLS encrypted connection"):
+                    self.assertIn(words, lines)
+                self.assertEqual(seen["button"], MSG_EN["doLogIn"])
+                expect(self.page.get_by_role("button", name=MSG_EN["doLogIn"], exact=True)).to_be_visible()
+                expect(self.page.locator("label[for=username]")).to_have_text(MSG_EN["usernameOrEmail"])
+                expect(self.page.get_by_role("navigation", name="Notices").get_by_role("link")).to_have_count(4)
+                self.assertGreaterEqual(seen["card"]["left"], 0, seen)
+                self.assertLessEqual(seen["card"]["right"], seen["width"], seen)
+                self.assertLessEqual(seen["scroll"], seen["width"], seen)
 
 class LoginThemeMessagesTest(unittest.TestCase):
     """The lock sentence (Keycloak 26.7.3 draws `accountTemporarilyDisabledMessage` on the password form and

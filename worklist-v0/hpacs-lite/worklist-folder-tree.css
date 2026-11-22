@@ -43,8 +43,45 @@
 #worklist-folders-panel[open] > summary::after { content: " ◀"; font-size: 11px; opacity: .7; }
 #shortcuts-status { padding: 4px; overflow-wrap: anywhere; }
 #shortcuts-reload, #shortcuts-save { height: auto; padding: 2px 6px; font-size: 11px; margin: 2px 4px; }
-.left:has(> #worklist-folders-panel[open]) > .statusbar { flex-wrap: wrap; gap: 6px 18px; }
-/* Counts wrap between items, never inside one ("Unverified:0" stays whole); free text may still break anywhere. */
-.left:has(> #worklist-folders-panel[open]) > .statusbar > span:not(#countlist) { overflow-wrap: anywhere; }
-.left:has(> #worklist-folders-panel[open]) > .statusbar > #countlist { flex-wrap: wrap; gap: 6px 18px; }
-.left:has(> #worklist-folders-panel[open]) > .statusbar > #countlist .count { white-space: nowrap; }
+/* The count row (the status counts, the status group - the observation time, Filter, layout and refresh notes - and
+   Per page) is one bar across the whole left column: the Folders panel, open or folded, ends above it, so the bar is not
+   narrowed by the panel's width. No count and not Per page is ever cut. Where the bar is wide enough the counts, the
+   status group and Per page share one line: the group takes what is left, its texts ending in an ellipsis when that is
+   not enough, and shows them whole on pointer or keyboard focus (main.html); page buttons, when there is more than one
+   page, follow Per page and go to the next line when the line is full. In a narrower bar the items wrap between
+   themselves and counts wrap between counts, never inside one ("Unverified:0" stays whole). */
+.left > .statusbar { flex-wrap: wrap; gap: 4px 10px; container: kin-count-row / inline-size; }
+.left > .statusbar > #countlist { flex-wrap: wrap; gap: 4px 10px; }
+.left > .statusbar > #countlist .count { white-space: nowrap; }
+.left > .statusbar .toolbar-status-texts > * { overflow-wrap: anywhere; }
+/* The status group unfolds its texts out of the flow on pointer or keyboard focus; in the bar it keeps a line's height
+   meanwhile, so the pointer that unfolded it stays on it. Below 1366 px its texts already wrap whole in place, so in the bar
+   they stay there (nothing to unfold). */
+.left > .statusbar > #toolbar-status { min-height: 1lh; }
+/* In a narrow bar the group takes a line of its own rather than the few pixels left beside the counts. */
+.left > .statusbar > #toolbar-status { flex-basis: min(16em, 100%); }
+@media (max-width: 1365px) {
+  .left > .statusbar > #toolbar-status:is(:hover, :focus-within) > .toolbar-status-texts {
+    position: static !important; flex-direction: row; flex-wrap: wrap; align-items: center; width: auto; max-width: none; padding: 0;
+    background: none; border: 0; box-shadow: none; pointer-events: auto; }
+}
+/* The page buttons and Per page wrap inside their row rather than run past the bar (with more than one page they are wider\n   than a narrow bar). */
+.left > .statusbar > #worklist-pages { flex: 0 1 auto; min-width: 0; }
+@supports (anchor-name: --kin-count-row) {
+  .left > .statusbar { anchor-name: --kin-count-row; }
+  .left > #worklist-folders-panel { bottom: anchor(--kin-count-row top, 0px); }
+  /* The bar reaches back over the panel's column: the same widths the column's indent uses (main.html). */
+  .left:has(> #worklist-folders-panel[open]) > .statusbar { margin-inline-start: calc(6px - var(--workspace-rail-width, 220px)); }
+  body.workspace-rail-collapsed .left:has(> #worklist-folders-panel[open]) > .statusbar { margin-inline-start: -72px; }
+  .left:has(> #worklist-folders-panel:not([open])) > .statusbar { margin-inline-start: -22px; }
+}
+@container kin-count-row (min-width: 700px) {
+  .left > .statusbar > #countlist { order: 1; flex: 0 1 auto; min-width: 0; }
+  .left > .statusbar > #toolbar-status { order: 2; flex: 1 1 0; min-width: 4em; }
+  .left > .statusbar > #toolbar-status > .spacer { display: none; }
+  .left > .statusbar > #toolbar-status:not(:hover, :focus-within) > .toolbar-status-texts > * { white-space: nowrap; }
+  /* Per page's row keeps its padding and top line in a style attribute; in the bar its controls are the bar's items. */
+  .left > .statusbar > #worklist-pages:not([hidden]) { display: contents !important; }
+  .left > .statusbar > #worklist-pages > label { order: 3; flex: none; margin-inline-start: auto; }
+  .left > .statusbar > #worklist-pages > :not(label) { order: 4; flex: none; }
+}
