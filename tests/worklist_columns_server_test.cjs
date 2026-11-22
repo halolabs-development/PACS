@@ -30,10 +30,10 @@ test('sc01 the compiled normalizer keeps every pre-unit document and shows Hospi
     assert.deepEqual(normalizeWorklistColumns(clone(v.document)).modes.Technician.order,v.expect.modes.Technician.order,v.id+' Technician');
   }
   // Preserving pair: another permutation of the stored order stays that permutation, Hospital after it; the request columns
-  // join right after Name, Confirm right after RS and Referred right after StudyDate wherever the user put those.
+  // join right after Name, Confirm right after RS, Read Req right after Confirm and Referred right after StudyDate wherever the user put those.
   const permuted=clone(byId.V02.document);permuted.modes.Radiology.order.reverse();
   assert.deepEqual(normalizeWorklistColumns(permuted).modes.Radiology.order,[...clone(byId.V02.document).modes.Radiology.order].reverse()
-    .flatMap(k=>k==='name'?['name','reqDate','reqDept','reqDoc','ptClass']:k==='rs'?['rs','confirm']:k==='date'?['date','referredAt']:[k]).concat('institutionName','time'));
+    .flatMap(k=>k==='name'?['name','reqDate','reqDept','reqDoc','ptClass']:k==='rs'?['rs','confirm','readReq']:k==='date'?['date','referredAt']:[k]).concat('institutionName','time'));
   // PF-10: both modes with every key at the widest width and all but ID and Name hidden still fit the 8192 bound.
   const widest=mode=>{const keys=byId.V01.expect.modes[mode].order;
     return {order:[...keys],hidden:keys.filter(k=>k!=='id'&&k!=='name'),appearance:{widths:Object.fromEntries(keys.map(k=>[k,600])),font:'mono',size:20,color:'warm'}};};
@@ -215,12 +215,12 @@ test('sc06 a stored layout gains the request columns after Name and Confirm afte
   const rest=['pf','assignedReader','techNote','no','viewing','count','series','em','ss','acc','ts','id','age','birth','sex','modality','desc','date','referredAt','preDoc','preReviewer','institutionName','time'];
   // A partial order: RS and Name where the user put them, Age hidden; every other column after them as before.
   assert.deepEqual(normalizeWorklistColumns(doc({order:['rs','name'],hidden:['age']})).modes.Radiology,
-    {order:['rs','confirm','name','reqDate','reqDept','reqDoc','ptClass',...rest],hidden:['age']});
+    {order:['rs','confirm','readReq','name','reqDate','reqDept','reqDoc','ptClass',...rest],hidden:['age']});
   // A user who already moved one of them keeps it there; the ones still missing follow their own anchor.
-  assert.deepEqual(normalizeWorklistColumns(doc({order:['reqDate','name','rs'],hidden:[]})).modes.Radiology.order.slice(0,7),
-    ['reqDate','reqDept','reqDoc','ptClass','name','rs','confirm']);
+  assert.deepEqual(normalizeWorklistColumns(doc({order:['reqDate','name','rs'],hidden:[]})).modes.Radiology.order.slice(0,8),
+    ['reqDate','reqDept','reqDoc','ptClass','name','rs','confirm','readReq']);
   // All five already stored (moved and hidden by the user): nothing moves.
-  const placed={order:['confirm','ptClass','id','name','rs','reqDoc','reqDept','reqDate',...rest.filter(k=>k!=='id')],hidden:['ptClass','reqDate']};
+  const placed={order:['confirm','readReq','ptClass','id','name','rs','reqDoc','reqDept','reqDate',...rest.filter(k=>k!=='id')],hidden:['ptClass','reqDate']};
   assert.deepEqual(normalizeWorklistColumns(doc(clone(placed))).modes.Radiology,placed);
   assert.deepEqual(normalizeWorklistColumns(doc(clone(placed))).modes.Technician,TECH,'Technician unchanged');
   // The Technician list has none of them: a Technician layout that names one is refused whole.

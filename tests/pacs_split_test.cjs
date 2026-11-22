@@ -292,10 +292,11 @@ test('U0B-DI Nest metadata equals the pre-split snapshot plus declared additions
   // Gateway remote support (gateway-support): its feature controller and service (the admin's read, request and diagnostics;
   // the Gateway's poll, result and update download).
   // In-app unread (in-app-unread): its feature controller (a view's unread items, two seen marks) over the existing services.
+  // Reading request (reading-request): its feature controller (a clinician's one write) over the existing services.
   // MG-08: the recorded image relay (one wildcard route, one controller) and the study delivery recorder.
   // MG-LOADING: the viewer's frame/preview reads through the API's range reader (two routes, one controller, one service).
   // Presence and E_ROUTE constructor changes precede cold-catalog: E's own declaration pins the earlier constructor.
-  const additions = [spec.di_additions_patient_consent, spec.di_additions_in_app_unread, spec.di_additions_access_alerts, spec.di_additions_gateway_support, spec.di_additions_gateway_settings, spec.di_additions_critical_result_inbox,
+  const additions = [spec.di_additions_reading_request, spec.di_additions_patient_consent, spec.di_additions_in_app_unread, spec.di_additions_access_alerts, spec.di_additions_gateway_support, spec.di_additions_gateway_settings, spec.di_additions_critical_result_inbox,
     spec.di_additions_modality_worklist, spec.di_additions_audit_intake, spec.di_additions_gateway_status, spec.di_additions_auto_view, spec.di_additions_image_report, spec.di_additions_exam_scope, spec.di_additions_technician_orders, spec.di_additions_film_print, spec.di_additions_attachment, spec.di_additions_query_retrieve, spec.di_additions_emr_link, spec.di_additions_preload_cache, spec.di_additions_presence, spec.di_additions_held, spec.di_additions_e_route, spec.di_additions_cold_catalog, spec.di_additions_mg_loading, spec.di_additions_mg08, spec.di_additions_key_admin, spec.di_additions_d_online, spec.di_additions_f_link, spec.di_additions_emr_online, spec.di_additions_b2, declared];
   assert.equal(full.routes.length, spec.di.routes.length + additions.reduce((count, item) => count + item.routes.length, 0));
   // Undo clinical and later online/identity bindings before B2 and the earlier feature declarations.

@@ -2,6 +2,7 @@
  * 판독문 확정(commitReport): RS 상태 머신, 판(ReportVersion) 추가, 초안 경계 종료와 감사를 한 트랜잭션으로 한다.
  * PacsService가 만들어 소유하는 평범한 객체다(Nest provider가 아니다). 생성자는 참조만 저장한다.
  */
+import { closeMergedReadingRequests, ownReadingRequestClose } from './reading-request';
 import { canReadPreliminary, designationMatches } from '../preliminary-reader';
 import { assertHeadWritable, storedContent, withStoredExtras } from '../report-visibility';
 import { rightsAllow, lockMemberRights, memberNames, versionWriterName } from '../member-rights';
@@ -530,7 +531,12 @@ export class PacsReportCommit {
           released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept, ...(sameWriter ? { sameWriter: true as const } : {}) };
         }
 
+        // Reading request (pacs/reading-request.ts): this approval closes the open request of this row (judged on its locked row)
+        // and of the other studies of a merged exam, with its own time; the signing below runs in this transaction, so an
+        // approval it refuses leaves them open.
+        if (action === 'approve') Object.assign(stateData, ownReadingRequestClose(prev, at));
         const state = await tx.studyState.update({ where: { uid }, data: stateData });
+        if (action === 'approve') await closeMergedReadingRequests(tx, uid, scope, at);
         const report = await tx.report.upsert({ where: { uid },
           create: { uid, ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId },
           update: { ...content, version, updatedBy: c.actor, updatedBySub: c.sub, groupId: scope.groupId } });

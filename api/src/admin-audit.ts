@@ -126,7 +126,7 @@ export const AUDIT_HIDDEN_CONNECT: readonly string[] = Object.freeze([
  * 않는다 — 표에 없는 action의 기본 숨김에 기대지 않고 여기 적는다(중요 결과: 계약 S7-U1p §11.2, 관리자는 행위자가 아니다).
  */
 export const AUDIT_HIDDEN_STUDY_SCOPED: readonly string[] = Object.freeze([
-  "study.question", "study.image-request", "study.critical-result",
+  "study.question", "study.image-request", "study.critical-result", "study.reading-request",
 ]);
 
 /** 회원 스냅숏에서 내보내는 칸. email은 어느 회원 행에도 싣지 않는다. */

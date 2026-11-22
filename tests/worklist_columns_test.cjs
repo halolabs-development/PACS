@@ -15,7 +15,7 @@ test('server refuses deferred physician columns; a legacy document gains Hospita
   const saved = normalizeWorklistColumns(structuredClone(legacy.document));
   assert.deepEqual(saved, legacy.expect);
   assert.deepEqual(saved.modes.Radiology.order, [...legacy.document.modes.Radiology.order.flatMap(k => k === 'name'
-    ? ['name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass'] : k === 'rs' ? ['rs', 'confirm'] : k === 'date' ? ['date', 'referredAt'] : [k]),
+    ? ['name', 'reqDate', 'reqDept', 'reqDoc', 'ptClass'] : k === 'rs' ? ['rs', 'confirm', 'readReq'] : k === 'date' ? ['date', 'referredAt'] : [k]),
     'institutionName', 'time']);
 });
 test('defaults and mode-specific ordering do not mutate the column schema',()=>{
@@ -58,6 +58,25 @@ test('the page places a missing Referred right after StudyDate, opens new accoun
   // Already placed and hidden by the user: it stays there, hidden.
   state.modes.Radiology.order=['referredAt','name','date'];state.modes.Radiology.hidden=['referredAt'];
   assert.deepEqual(model.normalize(state,catalog).modes.Radiology,{order:['referredAt','name','date','no','rs','id','age','desc'],hidden:['referredAt']});
+});
+test('the page places a missing Read Req right after Confirm, opens new accounts with it, and keeps a placed one (server alike)',()=>{
+  const catalog={Radiology:['no','rs','confirm','readReq','date','id','name','age'].map(k=>({k})),Technician:[{k:'id'},{k:'name'}]};
+  const state=model.defaults(catalog);
+  assert.deepEqual(model.visible(catalog,state,'Radiology').map(c=>c.k),['no','rs','confirm','readReq','date','id','name','age']);
+  // A layout stored before the column: it joins after Confirm (Confirm itself after RS); the rest keeps its order.
+  state.modes.Radiology.order=['name','rs','date'];state.modes.Radiology.hidden=['date'];
+  assert.deepEqual(model.normalize(state,catalog).modes.Radiology,{order:['name','rs','confirm','readReq','date','no','id','age'],hidden:['date']});
+  // Already placed and hidden by the user: it stays there, hidden.
+  state.modes.Radiology.order=['readReq','name','rs','confirm'];state.modes.Radiology.hidden=['readReq'];
+  assert.deepEqual(model.normalize(state,catalog).modes.Radiology,{order:['readReq','name','rs','confirm','no','date','id','age'],hidden:['readReq']});
+  // The server's normalizer places it the same way in a stored document that lacks it.
+  require('./service_test_loader.cjs');
+  const { normalizeWorklistColumns } = require('/app/dist/worklist-columns');
+  const vectors = require('./worklist_columns_vectors.json');
+  const legacy = structuredClone(vectors.accepted.find(v=>v.id==='V02').document);
+  const order = normalizeWorklistColumns(legacy).modes.Radiology.order;
+  assert.equal(order[order.indexOf('confirm') + 1], 'readReq');
+  assert.equal(order[order.indexOf('rs') + 1], 'confirm');
 });test('immutable subject and institution partition browser storage; no demo or anonymous key',()=>{
   const session={state:'approved',institution:'A',sub:'subject',user:'old-name'};
   assert.equal(model.key(session),model.key({...session,user:'new-name'}));

@@ -20,6 +20,7 @@ import { CriticalResultController } from './critical-result.controller';
 import { CriticalResultService } from './critical-result.service';
 import { CriticalResultInboxController } from './critical-result-inbox.controller';
 import { UnreadController } from './unread.controller';
+import { ReadingRequestController } from './reading-request.controller';
 import { ReaderAssignmentController } from './reader-assignment.controller';
 import { ReaderAssignmentService } from './reader-assignment.service';
 import { DynamicModule, Module } from '@nestjs/common';
@@ -101,7 +102,7 @@ import { GatewaySettingsService } from './gateway-settings.service';
 import { GatewaySupportService } from './gateway-support.service';
 
 @Module({
-  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, UnreadController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController, GatewaySupportController, PatientConsentController],
+  controllers: [PreloadKeyController, EmrAuditController, DictationController, PacsController, AuthController, AdminController, ViewerController, MultiStudyViewController, FindingController, ViewerJobController, ConnectController, ManualSrController, ReportPreviewController, FavoriteController, StudyTagsController, ReaderAssignmentController, ConsultationController, ClinicianQuestionController, ImageRequestController, ClinicalContextController, CriticalResultController, CriticalResultInboxController, UnreadController, ReadingRequestController, StudyAccessController, StudyTransferLocalController, SigningKeyAdminController, ImageRelayController, DicomFrameController, ProductInfoController, QueryRetrieveController, StudyAttachmentController, FilmPrintController, TechnicianOrdersController, ExamMergeController, ImageReportController, ViewerAutoViewController, GatewayStatusController, GatewaySettingsController, GatewaySupportController, PatientConsentController],
   providers: [
     PreloadKeyService, PresenceService, EmrAuditService,
     ...startupClinicalProviders,

@@ -933,6 +933,9 @@ class ClinicianRequestDOMTest(Harness):
                 kind = "text/html" if name.endswith(".html") else "application/javascript"
                 route.fulfill(body=self.files[name], content_type=f"{kind}; charset=utf-8")
                 return
+        if method == "GET" and path == "/worklist/hpacs-lite/kin-emblem-j1.svg":  # the header's HALO icon
+            route.fulfill(path=HPACS / "kin-emblem-j1.svg")
+            return
         if method == "GET" and (path.startswith("/kin-brand/") or path == "/favicon.ico"):
             route.fulfill(status=404, body="")
             return

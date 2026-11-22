@@ -40,6 +40,8 @@
       if (c.k === 'techNote') return noteLabel(s.uid) === wanted;   // the note badge is not a row field
       // Confirm: Approved rows (with or without a stored time) are Confirmed; every other RS is Not Confirmed.
       if (c.k === 'confirm') return wanted === 'Confirmed' ? confirmedRow(s) : wanted === 'Not Confirmed' ? !confirmedRow(s) : true;
+      // Read Req: Requested = the row shows an open reading request (its time), None = it does not.
+      if (c.k === 'readReq') return wanted === 'Requested' ? !!s.readReq : wanted === 'None' ? !s.readReq : true;
       // ReqDate and Referred are local "YYYY-MM-DD HH:mm": "2026-11", "2026-11-12", "2026-11-12 09".
       if (c.k === 'reqDate' || c.k === 'referredAt') return String(s[c.k] ?? '').startsWith(wanted);
       if (c.k === 'reqDept') return String(s.reqDept ?? '').toUpperCase() === wanted.toUpperCase();   // one department, as listed

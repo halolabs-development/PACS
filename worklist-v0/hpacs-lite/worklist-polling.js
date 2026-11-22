@@ -237,7 +237,9 @@
             if (existing) Object.assign(existing, {examScope:s.examScope??null, reportScope:s.reportScope??null,
               draftEpoch:s.state?.draftEpoch??null, sourceMetadata:sourceMetadataView(s.sourceMetadata),
               // Referred is fixed once the study exists; written here by the same rule as fromApi all the same.
-              ...referredFields(s)});
+              ...referredFields(s),
+              // Read Req: the open reading request moves with every poll (approved elsewhere: blank).
+              ...readingRequestFields(s)});
             if (existing) for (const field of ['count', 'series'])
               if (s[field] === null || Number.isSafeInteger(s[field]) && s[field] >= 0) existing[field] = s[field];
             updateNoteSummary(uid, s.techNote);

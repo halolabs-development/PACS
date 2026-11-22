@@ -393,6 +393,8 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.unexpected, self.errors, self.dialogs, self.finished = [], [], [], []
         # CD-01: GET /api/version reads of the Product Information panel, kept apart from self.calls.
         self.version_reads = []
+        # Request Reading presses (uid, body), the case's answers by uid, and presses held by a case.
+        self.readings, self.reading_answers, self.held_readings = [], {}, None
         self.context = None
         self.fresh_context()
 
@@ -509,6 +511,18 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             else:
                 route.fulfill(json=answer)
             return
+        # Reading request (Request Reading): logged apart; answered by the case (reading_answers, uid -> (status, body)),
+        # else a new request of this session. A held press waits in held_readings.
+        found = re.fullmatch(r"/api/studies/([^/]+)/reading-request", path)
+        if method == "POST" and found:
+            target = unquote(found.group(1))
+            self.readings.append((target, request.post_data_json))
+            if self.held_readings is not None:
+                self.held_readings.append((target, route))
+                return
+            status, body = self.reading_answers.get(target) or self.reading_created()
+            route.fulfill(status=status, json=body)
+            return
         if method == "POST" and path == "/api/auth/logout":
             self.logouts.append(request.headers.get("x-kin-csrf"))
             if self.held_logouts is not None:
@@ -541,6 +555,12 @@ class ClinicianHomeDOMTest(unittest.TestCase):
             return
         self.unexpected.append(f"{method} {request.url}")
         route.abort()
+
+    def reading_created(self, created=True):
+        account = self.me if isinstance(self.me, dict) else {}
+        return (201 if created else 200), {"owner": [account.get("institution"), account.get("sub")], "created": created,
+                                           "readingRequest": {"at": "2026-11-21T05:03:00.000Z", "by": "SYN Clinician",
+                                                              "open": True, "closedAt": None}}
 
     def listing(self, after, rows=None):
         # study-page.ts studyPageSlice: UID order, `next` only when rows remain, total = every visible study.
@@ -1488,6 +1508,146 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.page.wait_for_url(ORIGIN + BASE + "index.html")
         expect(self.page.locator("#stand-in")).to_have_text("SYN index stand-in")
 
+    # ── Reading request (B19): the server says the row's latest request and whether this account may ask now ──
+    def reading_rows(self):
+        self.rows[4]["readingRequest"], self.rows[4]["readingRequestable"] = None, True            # uid(5) W: may ask
+        self.rows[6]["readingRequest"] = {"at": "2026-11-20T23:30:00.000Z", "by": "SYN Dr. ASKER <b>x</b>",
+                                          "open": True, "closedAt": None}                          # uid(7) T: asked
+        self.rows[6]["readingRequestable"] = False
+        self.rows[1]["readingRequest"] = {"at": "2026-09-21T00:10:00.000Z", "by": "SYN Dr. ASKER", "open": False,
+                                          "closedAt": "2026-09-22T01:00:00.000Z"}                  # uid(2) A: closed
+        self.rows[1]["readingRequestable"] = False
+        self.rows[3]["readingRequest"], self.rows[3]["readingRequestable"] = None, False           # uid(4): not now,
+        self.rows[3]["readingRequestRefusal"] = "reported"                                        # its report approved
+
+    def release_reading(self, route, status, body):
+        request = route.request
+        route.fulfill(status=status, json=body)
+        self.wait_until(lambda: any(item is request for item in self.finished), "the released answer reaching the page")
+        self.settle()
+
+    def local(self, iso):
+        """`iso` as the browser's own local YYYY-MM-DD HH:mm (the zone of the run: KST on a laptop, UTC on a runner)."""
+        return self.page.evaluate("t => { const d = new Date(t), two = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}`; }", iso)
+
+    def reading(self):
+        return self.page.evaluate("""() => { const s = document.querySelector('#reading-request');
+          return {hidden: s.hidden, state: s.dataset.state || null, uid: s.dataset.uid || null,
+            text: document.querySelector('#reading-request-state').textContent,
+            note: document.querySelector('#reading-request-note').textContent,
+            button: !document.querySelector('#reading-request-send').hidden,
+            data: [...document.querySelectorAll('#reading-request-state [translate=no]')].map(e => e.textContent)}; }""")
+
+    def test_b19_reading_request_states_and_a_press_from_the_server_answers(self):
+        self.reading_rows()
+        self.open_home()
+        self.assertTrue(self.reading()["hidden"], "no study picked: no Reading Request")
+        # A study that may be asked for: the sentence and Request Reading.
+        self.pick(5, "status")
+        shown = self.reading()
+        self.assertEqual(("none", uid(5), True), (shown["state"], shown["uid"], shown["button"]))
+        self.assertIn("이 검사에는 판독 의뢰가 없습니다", shown["text"])
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: self.reading()["state"] == "open", "the request shown open")
+        self.assertEqual([(uid(5), {"expectedOwner": [self.me["institution"], self.me["sub"]]})], self.readings)
+        shown = self.reading()
+        self.assertEqual((False, "판독을 의뢰했습니다."), (shown["button"], shown["note"]))
+        # The time in this browser's zone and who asked are data; the words around them are the page's.
+        self.assertEqual([self.local("2026-11-21T05:03:00.000Z"), "SYN Clinician"], shown["data"])
+        self.assertTrue(shown["text"].startswith("Requested "), shown["text"])
+        # Another study asked for already (by someone else): its request as the server sent it, no button.
+        self.pick(7, "status")
+        shown = self.reading()
+        self.assertEqual(("open", False), (shown["state"], shown["button"]))
+        self.assertEqual([self.local("2026-11-20T23:30:00.000Z"), "SYN Dr. ASKER <b>x</b>"], shown["data"])
+        self.assertEqual(0, self.page.locator("#reading-request-state b", has_text="x").count(), "a name is never markup")
+        # An approved study: the request is closed with the approval time; no button.
+        self.pick(2, "final")
+        shown = self.reading()
+        self.assertEqual(("closed", False), (shown["state"], shown["button"]))
+        self.assertEqual([self.local("2026-09-22T01:00:00.000Z"), self.local("2026-09-21T00:10:00.000Z"), "SYN Dr. ASKER"], shown["data"])
+        self.assertIn("판독문이 승인되어 의뢰가 닫혔습니다.", shown["text"])
+        # A study the server says may not be asked for now: no button, and why, as the server said it.
+        self.pick(4, "status")
+        shown = self.reading()
+        self.assertEqual(("unavailable", False), (shown["state"], shown["button"]))
+        self.assertIn("승인된 판독문이 있어 판독을 의뢰할 수 없습니다", shown["text"])
+        # Back to the study asked for on this page: still shown open from the answer, no second press.
+        self.pick(5, "status")
+        self.assertEqual(("open", False), (self.reading()["state"], self.reading()["button"]))
+        self.assertEqual(1, len(self.readings))
+
+    def test_b19_a_second_press_and_refusals_are_shown_as_the_server_says(self):
+        self.reading_rows()
+        self.rows[6]["readingRequestable"] = True        # uid(7): the list said it may be asked for
+        self.rows[6]["readingRequest"] = None
+        self.reading_answers[uid(7)] = self.reading_created(created=False)
+        self.reading_answers[uid(5)] = (409, {"statusCode": 409, "code": "READING_REQUEST_REPORTED",
+                                              "message": "이미 승인된 판독문이 있습니다. 판독문을 보거나 Questions로 물어보세요"})
+        self.open_home()
+        # Someone asked meanwhile: the server answers that open request as it is (200, created false).
+        self.pick(7, "status")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: self.reading()["state"] == "open", "the open request shown")
+        self.assertEqual("이미 열린 판독 의뢰가 있어 그 의뢰를 그대로 보여 줍니다.", self.reading()["note"])
+        # Approved meanwhile: the server's refusal, word for word, and no button for it any more.
+        self.pick(5, "status")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: "READING_REQUEST_REPORTED" in self.reading()["note"], "the refusal shown")
+        self.assertIn("이미 승인된 판독문이 있습니다", self.reading()["note"])
+        self.assertFalse(self.reading()["button"])
+        self.assertEqual("unavailable", self.reading()["state"])
+        self.assertIn("승인된 판독문이 있어 판독을 의뢰할 수 없습니다", self.reading()["text"])
+
+    def test_b19_closing_the_study_while_a_press_is_out_keeps_its_answer(self):
+        self.reading_rows()
+        self.open_home()
+        self.held_readings = []
+        self.pick(5, "status")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: len(self.held_readings) == 1, "the press reached the server")
+        # Close takes the study down; the answer that arrives then still belongs to the row it was pressed on.
+        self.page.locator("#detail-close").click()
+        self.wait_until(lambda: self.reading()["hidden"], "the study taken down")
+        target, route = self.held_readings.pop()
+        self.release_reading(route, *self.reading_created())
+        self.pick(5, "status")
+        shown = self.reading()
+        self.assertEqual(("open", False), (shown["state"], shown["button"]))
+        self.assertEqual(1, len(self.readings), "no second press")
+
+    def test_b19_a_late_answer_lands_on_its_own_row_and_never_over_a_newer_list(self):
+        self.reading_rows()
+        self.open_home()
+        self.held_readings = []
+        # A -> B -> A: the answer for A arrives while B is shown; B is untouched, A shows it when picked again.
+        self.pick(5, "status")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: len(self.held_readings) == 1, "the press reached the server")
+        self.pick(7, "status")
+        target, route = self.held_readings.pop()
+        self.release_reading(route, *self.reading_created())
+        shown = self.reading()
+        self.assertEqual((uid(7), [self.local("2026-11-20T23:30:00.000Z"), "SYN Dr. ASKER <b>x</b>"], ""), (shown["uid"], shown["data"], shown["note"]))
+        self.pick(5, "status")
+        self.assertEqual(("open", False), (self.reading()["state"], self.reading()["button"]))
+        # A press answered after the list was read again: the newer list says the truth (closed), the old answer is dropped.
+        self.rows[4]["readingRequest"], self.rows[4]["readingRequestable"] = None, True
+        self.page.locator("#refresh").click()
+        expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+        self.wait_until(lambda: self.reading()["state"] == "none", "the study read again")
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: len(self.held_readings) == 1, "the second press reached the server")
+        self.rows[4]["readingRequest"] = {"at": "2026-11-21T05:03:00.000Z", "by": "SYN Clinician", "open": False,
+                                          "closedAt": "2026-11-21T06:00:00.000Z"}
+        self.rows[4]["readingRequestable"] = False
+        self.page.locator("#refresh").click()
+        expect(self.page.locator("#list-state")).to_have_attribute("data-state", "ready")
+        self.wait_until(lambda: self.reading()["state"] == "closed", "the newer list shown")
+        target, route = self.held_readings.pop()
+        self.release_reading(route, *self.reading_created())
+        self.assertEqual("closed", self.reading()["state"], "the old answer did not paint over the newer list")
+
     def test_08_wording_dialogs_fonts_hit_targets_and_keyboard(self):
         for name in ("clinician.js", "clinician.html"):
             for needle in ("alert(", "confirm(", "prompt(", "<dialog", "showModal", "innerHTML", "insertAdjacentHTML",
@@ -1551,9 +1711,9 @@ class ClinicianHomeDOMTest(unittest.TestCase):
                           "All Studies (7)", "My Studies (0)", "My Shortcuts", "Modality", "CT (7)", "MR (0)", "CR (0)", "US (0)",
                           "SC (0)", "Saved Searches",
                           "Refresh", "Retry", "View", "Viewing", "View", "View", "View", "View",
-                          "View", "Close", "Retry", "Open Viewer", "Log out"], labels["buttons"])
+                          "View", "Close", "Retry", "Request Reading", "Open Viewer", "Log out"], labels["buttons"])
         self.assertEqual(["Clinician Home", "Folders", "Studies", "Study", "Report", "Findings", "Conclusion", "Recommendation",
-                          "Key Images", ""], labels["headings"])
+                          "Reading Request", "Key Images", ""], labels["headings"])
         self.assertEqual(["Action", "Name", "Patient ID", "Sex / Age", "Birth Date", "Study Date", "Modality", "Description",
                           "Institution", "Report"], labels["th"])
         self.assertEqual(["User", "Institution", "Role", "Name", "Patient ID", "Sex / Age at Study", "Birth Date", "Study Date",

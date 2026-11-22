@@ -2156,6 +2156,34 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertIn('- in-app-unread', dispatch)
         self.assertIn('tests/e2e/artifacts/in-app-unread-ci/', dispatch)
 
+    def test_reading_request_profile_is_exact_and_dispatch_only(self):
+        # Reading request: the declared cases of one class in one unit, reached only through the Focused integration dispatch.
+        import ast
+        profile = ci.PROFILES['clinician-reading-request']
+        suite, class_name, unit = 'e2e/test_reading_request.py', 'ReadingRequestE2E', 'ci-clinician-reading-request'
+        self.assertEqual(profile['suites'], ((suite, class_name, unit),))
+        self.assertEqual(profile['out'].name, 'clinician-reading-request-ci')
+        self.assertEqual(profile['project_prefix'], 'kin-clinician-reading-request-ci-')
+        command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
+        self.assertEqual(command[command.index('--class')+1], class_name)
+        self.assertEqual(outer, 935)
+        for name, other in ci.PROFILES.items():
+            if name != 'clinician-reading-request':
+                self.assertNotEqual(profile['out'], other['out'], name)
+                self.assertNotEqual(profile['project_prefix'], other['project_prefix'], name)
+                self.assertNotIn(suite, [row[0] for row in other['suites']], name)
+        tree = ast.parse((ci.ROOT/'tests'/suite).read_text(encoding='utf-8'))
+        cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name)
+        self.assertEqual([node.name for node in cls.body if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')],
+                         ['test_reading_01_one_request_per_study_shown_on_both_screens',
+                          'test_reading_02_refusals_write_nothing_and_a_requested_study_is_not_deleted',
+                          'test_reading_03_the_approval_closes_it_and_a_reset_keeps_it_closed',
+                          'test_reading_04_a_merged_exam_and_an_approval_racing_a_press'])
+        self.assertNotIn('clinician-reading-request', self.catalog.text(automatic_only=True))
+        dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
+        self.assertIn('- clinician-reading-request', dispatch)
+        self.assertIn('tests/e2e/artifacts/clinician-reading-request-ci/', dispatch)
+
     def test_mark_autosave_profile_is_exact_and_dispatch_only(self):
         # Marks saved on their own and deleted: the declared cases of one class in one unit, reached only through the
         # Focused integration dispatch.
@@ -2353,6 +2381,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'auto-save-view',
                           # In-app unread marks on a real stack (API level), Focused integration dispatch only.
                           'in-app-unread',
+                          # A clinician's reading request on a real stack (API level), Focused integration dispatch only.
+                          'clinician-reading-request',
                           # Marks saved without the Save button and saved marks deleted, Focused integration dispatch only.
                           'mark-autosave',
                           # Screen language on a real stack, Focused integration dispatch only.

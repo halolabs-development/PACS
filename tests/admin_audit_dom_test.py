@@ -296,6 +296,9 @@ class AdminAuditDOMTest(unittest.TestCase):
         if method == "GET" and path == BASE + "index.html":
             route.fulfill(body=INDEX, content_type="text/html; charset=utf-8")
             return
+        if method == "GET" and path == "/worklist/hpacs-lite/kin-emblem-j1.svg":  # the header's HALO icon
+            route.fulfill(path=HPACS / "kin-emblem-j1.svg")
+            return
         if path == "/favicon.ico":
             route.fulfill(status=404, body="")
             return
