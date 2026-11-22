@@ -375,6 +375,8 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         if tab.get_attribute('aria-expanded') != 'true':
             tab.click()
         expect(page.locator('#kin-viewer-layout')).to_be_visible()
+        # Cell Merge joins the tools tab once its script has loaded (asynchronously): the tab is measured with it there.
+        expect(page.locator('#kin-cell-merge')).to_be_visible(timeout=15000)
         measure('tools tab')
         # Edit Toolbar's button is there only while the viewer's toolbar is the stock one (its own cases open it).
         try:
