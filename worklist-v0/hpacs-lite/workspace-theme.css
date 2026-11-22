@@ -116,7 +116,9 @@ tbody tr.sel td { background: var(--kin-row-sel); }
 .modal .box { background: var(--kin-panel); border-color: var(--kin-line2); }
 .modal .box h3, .modal .foot { background: var(--kin-bg); color: var(--kin-text); }
 .modal .body label, .modal .note, .stalecols h5 { color: var(--kin-muted); }
-.modal .body input, .modal .body select, .modal .tplbody textarea { background: var(--kin-panel); border-color: var(--kin-line2); color: var(--kin-text); }
+/* A field one writes in is a panel (#2D2D2D) marked apart from the panel it lies on by a secondary edge (3:1 or more), as the
+   report fields are. */
+.modal .body input, .modal .body select, .modal .tplbody textarea { background: var(--kin-panel); border-color: var(--kin-muted); color: var(--kin-text); }
 .stalecols pre, .hist pre { background: var(--kin-bg); border-color: var(--kin-line2); color: var(--kin-text); }
 .modal .foot button { background: var(--kin-panel); border-color: var(--kin-line2); color: var(--kin-text); }
 #cite-preview-target, #cite-preview-source, #stale-msg, .stalecols h4, .vh b, .vcite h5 { color: var(--kin-text); }
@@ -180,9 +182,19 @@ body .left, body .right, body .workrow, body .rw { background: var(--kin-bg); }
 .redit textarea:read-write { background: var(--kin-panel); border-color: var(--kin-muted); }
 .redit textarea:read-write:focus { border-color: var(--kin-accent); }
 
-/* Native controls nobody styled (browser white/grey): zero specificity, so every styled control keeps its own colours. */
+/* Native controls nobody styled (browser white/grey): zero specificity, so every styled control keeps its own colours. A field one
+   writes in, in a window opened from the page (a dialog, a modal, a panel that is a dialog), is marked apart from the panel
+   it lies on by a secondary edge (3:1 or more), as the report fields are; a read-only field keeps its look. */
 :where(button, select, textarea, input:not([type=checkbox], [type=radio], [type=range])) {
   background-color: var(--kin-panel); color: var(--kin-text); border-color: var(--kin-line2); }
+:where(dialog, [role="dialog"], .modal) :where(select, textarea:read-write, input:not([type=checkbox], [type=radio], [type=range], [type=button], [type=submit], [type=reset], [type=color], [type=file]):read-write) {
+  border-color: var(--kin-muted); }
+/* Keyboard focus on such a field is the accent edge (the named dialogs below, the modals and the panels that are dialogs). */
+:root :is(dialog, [role="dialog"], .modal, #favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog,
+  #reader-assignment-dialog, #tech-note-dialog, #sr-dialog, #worklist-alerts-dialog, #workspace-shortcuts-dialog, #report-preview,
+  #viewer-windows-dialog, #image-opening-dialog, #reading-appearance-dialog)
+  :is(select, textarea, input:not([type=checkbox], [type=radio], [type=range])):focus-visible {
+  border-color: var(--kin-accent) !important; outline-color: var(--kin-accent); }
 :where(input[type=checkbox], input[type=radio]) { accent-color: var(--kin-accent); }
 :where(fieldset) { border-color: var(--kin-line2); }
 .menubar :where(button.item) { background-color: transparent; border-color: transparent; }
@@ -223,8 +235,8 @@ body .left, body .right, body .workrow, body .rw { background: var(--kin-bg); }
 :root :is(#favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog, #reader-assignment-dialog,
   #tech-note-dialog, #sr-dialog, #worklist-alerts-dialog, #workspace-shortcuts-dialog, #report-preview,
   #viewer-windows-dialog, #image-opening-dialog, #reading-appearance-dialog)
-  :is(select, textarea, input:not([type=checkbox], [type=radio], [type=range])) { background: var(--kin-panel); }
-:root #workspace-shortcuts-dialog input { background: var(--kin-panel) !important; border-color: var(--kin-line2) !important; }
+  :is(select, textarea, input:not([type=checkbox], [type=radio], [type=range])) { background: var(--kin-panel); border-color: var(--kin-muted); }
+:root #workspace-shortcuts-dialog input { background: var(--kin-panel) !important; border-color: var(--kin-muted) !important; }
 :root :is(#favorite-dialog, #study-tag-dialog, #saved-filter-manager, #consultations-dialog) button[aria-pressed=true],
 :root #saved-filter-manager #sfm-list button[aria-pressed=true] {
   background: var(--kin-row-sel); border-color: var(--kin-accent); }

@@ -2,7 +2,7 @@
    values shown for that study are the worklist's answer for it (kinViewerStudyDisplay). */
 window.KinViewerIdentity=(()=>{
   const fonts={default:'inherit',sans:'"Malgun Gothic", sans-serif',serif:'"Batang", serif',mono:'"Consolas", monospace'};
-  const colors={default:'#d7f3ff',warm:'#fff1d6',cool:'#d7f3ff',white:'#ffffff'};
+  const colors={default:'var(--kin-ux-text, #E3E3E3)',warm:'#fff1d6',cool:'#d7f3ff',white:'#ffffff'};
   const positions=['top-left','top-right','bottom-left','bottom-right'];
   const modalities=['CT','MR','CR','DX','US','MG','XA','RF','PT','NM','OT'];
   const fields=['name','date','description'],profileKeys='color,date,description,fieldPositions,font,name,position,size',profileOverrideKeys='color,date,description,fieldPositions,font,name,overrides,position,size';

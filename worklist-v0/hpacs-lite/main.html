@@ -1817,12 +1817,13 @@
       <details id="not-observed" style="padding:2px 10px;font-size:12px" hidden><summary id="not-observed-summary"></summary><div id="not-observed-list"></div></details>
       <div class="statusbar">
         <span id="countlist"></span>
-        <span id="observation-status" role="status" hidden></span>
-        <span id="filterlist">Filter : -</span>
-    <!-- 상태 묶음은 한 줄에서 말줄임되므로 포인터를 올리거나 Tab으로 이 묶음에 오면 전문을 아래에 펼쳐 보인다. -->
+    <!-- 상태 묶음은 한 줄에서 말줄임되므로 포인터를 올리거나 Tab으로 이 묶음에 오면 전문을 아래에 펼쳐 보인다.
+         관측 시각과 Filter도 이 묶음에 있어, 건수 줄이 좁아 잘릴 때 같은 방법으로 전문을 본다. -->
     <div class="toolbar-status" id="toolbar-status" role="group" aria-label="Status" tabindex="0">
       <div class="spacer"></div>
       <div class="toolbar-status-texts">
+        <span id="observation-status" role="status" hidden></span>
+        <span id="filterlist">Filter : -</span>
         <span id="layout-status" role="status" style="font-size:11px;color:var(--kin-muted)" title="계정별로 이 브라우저에 배치를 기억합니다. 작은 세로 창은 768×1024 이상에서 확인했습니다."></span>
         <small id="worklist-refresh-status" role="status" aria-live="polite"></small>
         <small id="body-parts-status" role="status" style="max-width:100%;overflow-wrap:anywhere"></small>
