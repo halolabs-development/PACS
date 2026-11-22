@@ -324,13 +324,14 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         measure('Cine')
         page.locator('[data-cy="cine-player-close"]').first.click()
         expect(page.locator('#kin-cine')).not_to_be_visible()
-        toolbar = page.locator('#kin-native-toolbar-dialog')
-        if page.locator('#kin-native-toolbar-edit').is_visible() and page.locator('#kin-native-toolbar-edit').is_enabled():
-            page.locator('#kin-native-toolbar-edit').click()
-        else:
-            # Edit Toolbar's window as the button opens it (its button sits in Viewer Settings).
-            toolbar.evaluate('d => d.show ? d.show() : (d.hidden = false)')
-        expect(toolbar).to_be_visible()
+        # The dock's tools tab (Recent Layout and Edit Toolbar's button), then Edit Toolbar's window.
+        tab = page.locator('#kin-workspace-dock nav button[aria-controls="kin-viewer-layout"]')
+        if tab.get_attribute('aria-expanded') != 'true':
+            tab.click()
+        expect(page.locator('#kin-native-toolbar-edit')).to_be_visible(timeout=45000)
+        measure('tools tab')
+        page.locator('#kin-native-toolbar-edit').click()
+        expect(page.locator('#kin-native-toolbar-dialog')).to_be_visible()
         measure('Edit Toolbar')
         self.record(page, 'space-06-theme')
         for state, found in seen.items():

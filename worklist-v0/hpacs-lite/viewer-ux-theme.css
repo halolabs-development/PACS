@@ -82,13 +82,7 @@ body.kin-viewer-ux [data-cy="viewport-grid"] > .border-primary-light { border-co
 body.kin-viewer-ux [data-cy^="viewport-overlay-"], body.kin-viewer-ux [data-cy^="viewport-overlay-"] .text-primary-light {
   color: var(--kin-ux-text) !important;
 }
-body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) :is(.bg-bkg-low, .bg-black, .bg-primary-dark, .bg-primary-main) {
-  background-color: var(--kin-ux-background) !important;
-}
-body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) :is(.bg-secondary-dark, .bg-secondary-main) {
-  background-color: var(--kin-panel) !important;
-}
-body.kin-viewer-ux #root div:has(> .bg-bkg-med [data-cy="seriesList-btn"]) .text-white { color: var(--kin-ux-text) !important; }
+
 /* The stock parts drawn from the viewer's colour variables (the Studies band above the images, its study rows and
    thumbnails, menus and dialogs) take the five colours from the variables themselves (hue saturation lightness, as the
    stock writes them): background, panel, text, secondary text; the stock blue (shown series, hover) is the accent. The
@@ -106,8 +100,16 @@ body.kin-viewer-ux {
 body.kin-viewer-ux :is(.bg-bkg-low, .bg-bkg-full) { background-color: var(--kin-ux-background) !important; }
 body.kin-viewer-ux .bg-bkg-med { background-color: var(--kin-panel) !important; }
 body.kin-viewer-ux .border-primary-dark { border-color: var(--kin-panel) !important; }
+/* The stock fixed colours of the controls drawn over the images (the stock cine bar) and in the header: panel, primary
+   and secondary text, secondary edges. */
+body.kin-viewer-ux .bg-primary-dark { background-color: var(--kin-panel) !important; color: var(--kin-ux-text); }
+body.kin-viewer-ux [class*="border-secondary-light"] { border-color: var(--kin-ux-secondary) !important; }
+body.kin-viewer-ux :is(.text-white, .text-common-bright) { color: var(--kin-ux-text) !important; }
+body.kin-viewer-ux .text-aqua-pale { color: var(--kin-ux-secondary) !important; }
+/* A control on the accent tint (the Studies view switch) is primary text, which reads on it; keyboard focus is the accent. */
+body.kin-viewer-ux .bg-primary\/10 > button { color: var(--kin-ux-text); }
+body.kin-viewer-ux :focus-visible { outline-color: var(--kin-accent); }
 body.kin-viewer-ux [data-kin-studies-panel] h3 > button { background-color: var(--kin-panel) !important; color: var(--kin-ux-text) !important; }
-body.kin-viewer-ux [data-cy="Layout"] { color: var(--kin-ux-text); }
 /* Tool windows the viewer's scripts open (Cine, History, Recent Layout, the CT sync notice, the mammography hanging panel,
    Edit Toolbar, the source PDF, job print, jobs, MIP, volume rendering): the frame is a panel with primary text and a
    secondary edge, and so are their fields and buttons; a pressed, checked, selected or current control is marked in the
