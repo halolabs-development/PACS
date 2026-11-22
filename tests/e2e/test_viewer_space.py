@@ -19,6 +19,7 @@ import uuid
 from playwright.sync_api import expect
 
 from test_prior_selection import canvas_ready
+from viewer_tools import select_image_tool
 from test_viewer_layout import ViewerLayoutE2E
 from test_viewer_windows import ViewerWindowsE2E
 from test_workspace_persistence import WorkspacePersistenceE2E
@@ -41,6 +42,63 @@ BAND_OUTLINE = '''() => { const band = document.querySelector('[data-kin-studies
       Math.round(r.width), Math.round(r.height), s.display, s.flexDirection, s.overflowX + '/' + s.overflowY]);
     for (const child of [...node.children].slice(0, node.matches('svg, svg *') ? 0 : 5)) walk(child, depth + 1); };
   walk(band, 0); return out; }'''
+# The viewer chrome as drawn: colours outside the five (any alpha; near-black shadows are neutral), text under 4.5:1 on
+# its composited background (disabled controls aside; an icon-only control under 3:1), the image text's colours, and the Report Editor fields. A colour
+# the page sets on the element itself (the reader's image-text colour, a cell border) is listed apart, not judged.
+VIEWER_THEME = r'''() => {
+  const palette = ['33,33,33', '45,45,45', '227,227,227', '180,180,180', '138,180,200'];
+  const parse = s => [...String(s).matchAll(/rgba?\(([^)]+)\)/g)].map(m => { const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1]; });
+  const key = c => c.slice(0, 3).join(',');
+  const off = (s, neutralBlack) => parse(s).filter(c => c[3] !== 0 && !palette.includes(key(c)) && !(neutralBlack && c.slice(0, 3).every(n => n <= 24)));
+  const lin = c => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const mix = (top, under) => [0, 1, 2].map(i => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+  const ratio = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
+  const bgOf = el => { const layers = []; for (let n = el; n && n.nodeType === 1; n = n.parentElement) { const c = parse(getComputedStyle(n).backgroundColor)[0];
+      if (c && c[3] > 0) { layers.push(c); if (c[3] >= 1) break; } }
+    let base = parse(getComputedStyle(document.body).backgroundColor)[0] || [0, 0, 0, 1]; if (base[3] < 1) base = mix(base, [0, 0, 0, 1]);
+    for (const c of layers.reverse()) base = mix(c, base); return base; };
+  const shown = e => { const r = e.getBoundingClientRect(), cs = getComputedStyle(e);
+    return r.width >= 1 && r.height >= 1 && cs.visibility !== 'hidden' && cs.opacity !== '0' && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  const name = e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.dataset.cy ? '[' + e.dataset.cy + ']' : '') + [...e.classList].slice(0, 3).map(c => '.' + c).join('');
+  const where = e => { const a = []; for (let n = e; n && n !== document.body && a.length < 3; n = n.parentElement) a.unshift(name(n)); return a.join(' > '); };
+  const ownText = e => [...e.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim());
+  const IMAGE_TEXT = '[data-cy^="viewport-overlay-"], .kin-viewer-identity';
+  const onImage = e => e.closest('[data-cy="viewport-pane"]') && !e.closest('.kin-viewer-info-bar, [role=toolbar], [role=menu], [role=dialog]');
+  const out = {off: [], low: [], overlay: [], chosen: [], report: []};
+  for (const e of document.body.querySelectorAll('*')) {
+    if (e.closest('svg, canvas, img, video, iframe, option, script, style') || !shown(e)) continue;
+    const cs = getComputedStyle(e), own = e.getAttribute('style') || '';
+    // The black around and under the images (the image area, its holders, a thumbnail's picture) is the image's own.
+    const imageWell = !!e.closest('[data-cy="viewport-grid"], .kin-series-preview, [data-cy^="study-browser-thumbnail"] img');
+    if (e.closest(IMAGE_TEXT)) { if (ownText(e)) out.overlay.push([e.textContent.trim().slice(0, 30), cs.color, where(e)]); continue; }
+    if (/(^|;)\s*(color|border(-\w+)*-color|border|outline|background(-color)?)\s*:/.test(own) && onImage(e)) { out.chosen.push(where(e) + ' ' + own.slice(0, 80)); continue; }
+    const check = (prop, value, neutralBlack) => { if (off(value, neutralBlack).length) out.off.push(where(e) + ' ' + prop + ' ' + value + ' {' + String(e.className).slice(0, 160) + '}'); };
+    if (!(imageWell && /^rgba?\(0, 0, 0[,)]/.test(cs.backgroundColor))) check('background', cs.backgroundColor);
+    const control = e.matches('input:not([type=range], [type=checkbox], [type=radio]), select, textarea, button');
+    if (control || ownText(e)) check('color', cs.color);
+    for (const side of ['Top', 'Right', 'Bottom', 'Left'])
+      if (parseFloat(cs['border' + side + 'Width']) > 0 && cs['border' + side + 'Style'] !== 'none') check('border' + side, cs['border' + side + 'Color']);
+    if (cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) > 0) check('outline', cs.outlineColor);
+    if (cs.boxShadow !== 'none') check('boxShadow', cs.boxShadow, true);
+    if ((control || ownText(e)) && !onImage(e) && !e.closest(':disabled, [aria-disabled="true"]')) {
+      const fg = parse(cs.color)[0], bg = bgOf(e); let o = 1; for (let n = e; n && n.nodeType === 1; n = n.parentElement) o *= parseFloat(getComputedStyle(n).opacity); if (fg) fg[3] *= o;
+      // A control that shows only an icon (no text drawn) is judged as a control: 3:1 (its name lives in the label).
+      const icon = control && !(e.value || e.innerText || '').trim() && !!e.querySelector('svg');
+      if (fg) { const r = ratio(fg[3] < 1 ? mix(fg, bg) : fg, bg);
+        if (r < (icon ? 3 : 4.5)) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
+    }
+  }
+  for (const t of document.querySelectorAll('#kin-viewer-report textarea')) {
+    const cs = getComputedStyle(t), around = bgOf(t.parentElement), edge = parse(cs.borderTopColor)[0];
+    out.report.push({id: t.id, background: cs.backgroundColor, border: cs.borderTopColor + ' ' + cs.borderTopStyle, around: 'rgb(' + around.slice(0, 3).map(Math.round) + ')',
+      edge: edge ? Math.round(ratio(edge[3] < 1 ? mix(edge, around) : edge, around) * 100) / 100 : 0, readOnly: t.readOnly});
+  }
+  const grid = document.querySelector('[data-cy="viewport-grid"]');
+  out.frames = grid ? [...grid.querySelectorAll(':scope > * > *')].map(f => name(f) + ' ' + getComputedStyle(f).borderTopColor + ' active=' + !!f.querySelector('.kin-viewer-info-bar')) : [];
+  out.vars = ['--background', '--muted', '--muted-foreground', '--primary', '--input', '--border'].map(v => v + ':' + getComputedStyle(document.body).getPropertyValue(v));
+  return out; }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
     flip: !!v.getCamera().flipHorizontal}; }'''
@@ -223,6 +281,95 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         page.wait_for_function('id => services.viewportGridService.getActiveViewportId() === id', arg=ids[0])
         self.assertEqual(page.evaluate(CELL, ids[1])['scale'] != start[1]['scale'], True, 'the second cell keeps its zoom')
         self.record(page, 'space-03-cell-tools')
+
+    def test_space_06_one_theme_and_readable_text(self):
+        """FA-153: the viewer's panels, header, tools, lists (the Studies band included), the dock and the tool windows a
+        reader opens (Cine, Edit Toolbar) use the five colours; the image text (the stock date/series/W-L text, the
+        orientation letters, the zoom figure, the study label at its default) is the primary text #E3E3E3, not the light
+        sky blue; text around the images reads at 4.5:1 or more on its own background - idle, a hovered, a selected and a
+        keyboard-focused thumbnail, the Report Editor tab open; the Report Editor's three read-only fields are panels
+        (#2D2D2D) marked apart by their edge. The reader's own colours (a saved study-label colour, marks, a chosen cell
+        border) are checked by their own cases and are not judged here."""
+        fixture = self.multiple('VTHEME-' + uuid.uuid4().hex[:12], 'current', '20260801')
+        page = self.viewer(self.login(), fixture)
+        self.grid(page, 2)
+        page.wait_for_function('''() => [...services.viewportGridService.getState().viewports.values()]
+          .every(c => services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCurrentImageId?.())''')
+        self.panels_are(page, True, False)
+        page.wait_for_timeout(500)
+        seen = {}
+
+        def measure(state):
+            seen[state] = page.evaluate(VIEWER_THEME)
+            print('VIEWER THEME ' + json.dumps({state: seen[state]}), flush=True)
+        measure('idle')
+        thumbnail = page.locator('[data-kin-studies-panel] [data-cy^="study-browser-thumbnail"]').first
+        expect(thumbnail).to_be_visible()
+        thumbnail.hover()
+        measure('thumbnail hovered')
+        thumbnail.click()
+        page.wait_for_timeout(300)
+        measure('thumbnail selected')
+        thumbnail.focus()
+        page.keyboard.press('Tab')
+        page.keyboard.press('Shift+Tab')
+        measure('thumbnail keyboard focus')
+        page.mouse.move(5, 5)
+        # The dock's own controls: a closed tab under the pointer, Dock Settings open, the dock moved to the top.
+        page.locator('#kin-workspace-dock nav button[aria-expanded="false"]').first.hover()
+        measure('dock tab hovered')
+        page.locator('#kin-dock-settings-toggle').click()
+        expect(page.locator('#kin-dock-settings-panel')).to_be_visible()
+        page.locator('#kin-dock-settings-toggle').hover()
+        measure('Dock Settings open')
+        page.locator('#kin-dock-placement').select_option('top')
+        page.wait_for_function("document.body.classList.contains('kin-dock-top')")
+        measure('dock at the top')
+        page.locator('#kin-dock-placement').select_option('bottom')
+        page.wait_for_function("!document.body.classList.contains('kin-dock-top')")
+        page.locator('#kin-dock-settings-toggle').click()
+        # The dock's Report Editor tab shows the read-only mirror's three fields.
+        page.locator('#kin-workspace-dock').get_by_role('button', name='Report Editor', exact=True).click()
+        expect(page.locator('#kin-viewer-report')).to_be_visible()
+        for field in ('findings', 'conclusion', 'recommendation'):
+            expect(page.locator('#kin-viewer-report-' + field)).to_be_visible()
+        measure('Report Editor tab')
+        select_image_tool(page, 'Cine')
+        expect(page.locator('#kin-cine')).to_be_visible()
+        measure('Cine')
+        page.locator('[data-cy="cine-player-close"]').first.click()
+        expect(page.locator('#kin-cine')).not_to_be_visible()
+        # The dock's tools tab (Recent Layout and Edit Toolbar's button), then Edit Toolbar's window.
+        tab = page.locator('#kin-workspace-dock nav button[aria-controls="kin-viewer-layout"]')
+        if tab.get_attribute('aria-expanded') != 'true':
+            tab.click()
+        expect(page.locator('#kin-viewer-layout')).to_be_visible()
+        measure('tools tab')
+        # Edit Toolbar's button is there only while the viewer's toolbar is the stock one (its own cases open it).
+        try:
+            expect(page.locator('#kin-native-toolbar-edit')).to_be_visible(timeout=10000)
+        except AssertionError:
+            print('EDIT TOOLBAR not offered in this viewer', flush=True)
+        else:
+            page.locator('#kin-native-toolbar-edit').click()
+            expect(page.locator('#kin-native-toolbar-dialog')).to_be_visible()
+            measure('Edit Toolbar')
+        self.record(page, 'space-06-theme')
+        for state, found in seen.items():
+            with self.subTest(contract='five colours in the viewer chrome', state=state):
+                self.assertEqual([], found['off'])
+            with self.subTest(contract='text reads at 4.5:1 or more around the images', state=state):
+                self.assertEqual([], found['low'])
+            with self.subTest(contract='the image text is the primary text', state=state):
+                self.assertTrue(found['overlay'])
+                self.assertEqual([], [t for t in found['overlay'] if t[1] != 'rgb(227, 227, 227)'])
+        with self.subTest(contract='Report Editor fields are panels, apart by their edge'):
+            fields = seen['Report Editor tab']['report']
+            self.assertEqual(3, len(fields), fields)
+            for field in fields:
+                self.assertEqual(field['background'], 'rgb(45, 45, 45)', field)
+                self.assertGreaterEqual(field['edge'], 3, field)
+                self.assertTrue(field['readOnly'], field)
 
     def test_space_04_tools_that_do_not_fit_keep_a_visible_control(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')

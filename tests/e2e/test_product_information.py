@@ -156,8 +156,8 @@ class ProductInformationE2E(WorklistE2E):
         expect(home.locator("#actor")).to_contain_text(actor)
         self.assertTrue(home.url.endswith("/worklist/hpacs-lite/clinician.html"))
 
-        # 5. The real login page.
-        context = self.browser.new_context(ignore_https_errors=True, viewport={"width": 1280, "height": 900})
+        # 5. The real login page, in an English browser (the notices are named in the page's language).
+        context = self.browser.new_context(ignore_https_errors=True, locale="en-US", viewport={"width": 1280, "height": 900})
         self.contexts.append(context)
         login = context.new_page()
         login.goto(self.stack.proxy + "/")

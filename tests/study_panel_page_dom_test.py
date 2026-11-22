@@ -1615,6 +1615,9 @@ class StudyPanelPageDOM(unittest.TestCase):
                     related = page.evaluate(RELATED)
                     self.assertTrue(related['head']['whole'], f'{phase}: Related header reachable {related}')
                     self.assertGreaterEqual(related['line_visible'], 8, f'{phase}: prior report first line {related}')
+                    # Back to the list: its header too (a short scroll to the Related header can leave the first row
+                    # in view with the header part way under the column's top, so the row alone would not scroll back).
+                    page.locator('.left > .grid thead').first.evaluate("e => e.scrollIntoView({block: 'nearest'})")
                     page.locator('#rows tr[data-uid]').first.scroll_into_view_if_needed()
                     settle(page)
                 # The next row: whole in a 768 px window's band; in a shorter window the band
