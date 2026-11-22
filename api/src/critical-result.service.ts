@@ -2,6 +2,7 @@ import { criticalRead } from './emr-viewing/consumer-read';
 import { rightsUser, lockMemberRights, withWriters } from './member-rights';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { StudyAccessService } from './study-access.service';
 import { KeycloakService, KeycloakUser } from './keycloak.service';
@@ -280,12 +281,15 @@ export class CriticalResultService {
       authorName: row.headAuthorName ?? null, content: row.headContent !== false };
   }
 
-  /** The writer of each sent record's pinned version (studyUid, sourceVersion), by record id, as sourceWriter says it. */
+  /**
+   * The writer of each sent record's pinned version (studyUid, sourceVersion), by record id, as sourceWriterShown says it - read
+   * from those pinned rows only (their writer columns, never a body), after the answer's transaction.
+   */
   private async pinnedWriters(c: any, rows: any[]): Promise<Map<string, string | null>> {
     if (!rows.length) return new Map();
     const shown = await withWriters(this.prisma, c);
-    const pins: any[] = await this.prisma.reportVersion.findMany({ where: { OR: rows.map(row => ({ uid: row.studyUid, version: row.sourceVersion })) },
-      select: { uid: true, version: true, action: true, author: true, authorSub: true, authorName: true } });
+    const pins: any[] = await this.prisma.$queryRaw`SELECT uid, version, action, author, "authorSub", "authorName" FROM "ReportVersion"
+      WHERE (uid, version) IN (${Prisma.join(rows.map(row => Prisma.sql`(${String(row.studyUid)}, ${Number(row.sourceVersion)}::int)`))})`;
     const byPin = new Map(pins.map(v => [`${v.uid}\u0000${v.version}`, v]));
     return new Map(rows.map(row => [row.id, sourceWriterShown(byPin.get(`${row.studyUid}\u0000${row.sourceVersion}`)
       ?? { action: row.sourceAction, author: row.sourceAuthor, authorSub: null }, shown)]));
