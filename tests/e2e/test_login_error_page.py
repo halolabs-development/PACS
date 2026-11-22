@@ -348,6 +348,27 @@ class LoginErrorPageE2E(base.WorklistE2E):
                 expect(coder.locator("#kc-otp-login-form")).to_be_visible()
                 self.assert_one_language(coder, language, f"{language}-otp-code")
 
+    def test_login_error_page_09_an_administrator_signs_in_with_the_password_only(self):
+        """No account is required to set up OTP (keycloak/README.md, OTP는 스스로 등록한 계정만): an administrator without OTP types the password once and is on
+        the worklist - no OTP set-up page, no one-time code form, no second sign-in - and the administration screen opens."""
+        self.stack.create_test_identity("plain-admin", ["admin", "radiologist"], "hallym")
+        time.sleep(1.05)  # the fixture's whole-second allowance after a rights change
+        page = self.fresh_page()
+        seen = []
+        page.on("framenavigated", lambda frame: seen.append(urlsplit(frame.url).path) if frame == page.main_frame else None)
+        page.goto(self.stack.proxy + HOME)
+        expect(page.locator("#kc-form-login")).to_be_visible()
+        self.submit(page, self.stack.username("plain-admin"), self.stack.passwords["plain-admin"])
+        page.wait_for_url("**/worklist/hpacs-lite/main.html", timeout=30000)
+        expect(page.locator("#roles")).to_contain_text("admin")
+        self.assertFalse([path for path in seen if "/login-actions/required-action" in path], seen)
+        expect(page.locator("#kc-otp-login-form, #kc-totp-settings")).to_have_count(0)
+        page.goto(self.stack.proxy + "/worklist/hpacs-lite/admin.html")
+        expect(page.locator("#users tr").first).to_be_visible(timeout=30000)
+        ARTIFACTS.mkdir(exist_ok=True)
+        page.screenshot(path=str(ARTIFACTS / "LOGIN-ERROR-PAGE-admin-password-only.png"), full_page=True)
+
+
 def load_tests(loader, tests, pattern):
     # Only the cases declared here: the worklist cases this class inherits are not part of this profile.
     return unittest.TestSuite(LoginErrorPageE2E(name) for name in sorted(vars(LoginErrorPageE2E)) if name.startswith("test_"))

@@ -62,13 +62,6 @@ AUTH_TIME_MAPPER = {
     "config": {"user.session.note": "AUTH_TIME", "claim.name": "auth_time", "jsonType.label": "long",
                "access.token.claim": "true", "id.token.claim": "true"},
 }
-# The authentication methods Keycloak recorded for the login (kin-bff's mapper in kin-realm.json): an administrator's token
-# carries "otp" only after the realm's administrator OTP step, and the API admits administrators only with it.
-AMR_MAPPER = {
-    "name": "kin-authentication-methods", "protocol": "openid-connect", "consentRequired": False,
-    "protocolMapper": "oidc-amr-mapper",
-    "config": {"id.token.claim": "false", "access.token.claim": "true", "introspection.token.claim": "true"},
-}
 
 
 def load_local_env() -> None:
@@ -678,7 +671,6 @@ class LiveStack:
         self.test_client_uuid = str(created.body)
         mappers = (
             AUTH_TIME_MAPPER,
-            AMR_MAPPER,
             {
                 "name": "kin-api-audience", "protocol": "openid-connect",
                 "protocolMapper": "oidc-audience-mapper", "consentRequired": False,
@@ -869,7 +861,7 @@ class LiveStack:
     # one product session per institution: hallym's imported realm administrator (jmryu); every other institution its
     # own administrator, made once with the operator command api/prisma/designate-first-admin.cjs (keycloak/README.md
     # "기관 첫 관리자 지정") — kin-center's fixed one (made once per stack, reused), a run's own institutions a synthetic
-    # one owned by the run. Each signs in with a real credential and the synthetic OTP, as every administrator must.
+    # one owned by the run. Each signs in with a real credential - its password only: no account is required to have OTP.
     FIXED_INSTITUTION_ADMINS = {"kin-center": "kin-center-admin"}
     _INSTITUTION = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
@@ -895,7 +887,7 @@ class LiveStack:
         return institution or None, suspended == "true", [role for role in roles.split(",") if role]
 
     def _admin_bff_session(self, username: str, password: str, sub: str) -> tuple:
-        """A real credential login (with the administrator OTP) on the public origin: an auth_time-bearing BFF session."""
+        """A real credential login (the password; no OTP is required) on the public origin: an auth_time-bearing BFF session."""
         public = urlparse(self.proxy)
         jar = http.cookiejar.CookieJar()
         trace = []
@@ -925,7 +917,7 @@ class LiveStack:
                           headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
         with opener.open(request, timeout=30) as response:
             page, url = response.read().decode("utf-8", "replace"), response.geturl()
-        # Every administrator answers the synthetic OTP (admin_otp.seed / live_admin_credential).
+        # No OTP is required of an administrator; an account that has one is asked it (admin_otp answers the synthetic one).
         landed = urlparse(admin_otp.answer_http(opener, page, url, username)[1])
         if not any(path == "/api/auth/callback" for path, _, _ in trace) or landed.path != "/worklist/hpacs-lite/main.html":
             # Audit causes are allowlisted classifications, never the audit body or credentials.
@@ -997,7 +989,6 @@ class LiveStack:
                 raise RuntimeError(f"First administrator designation failed ({institution}): {designated.stdout}{designated.stderr}")
             row = self._member_rights_row(sub)
         self._await_roster(sub, institution, row[2])
-        admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), sub)
         time.sleep(1.05)  # A login after the designation's re-login boundary.
         return username, password, sub
 
@@ -1058,9 +1049,6 @@ class LiveStack:
         self.__dict__.setdefault("member_rights", {})[user_id] = result
         if "institution" in changes or "roles" in changes:
             self._await_roster(user_id, result["institution"], result["roles"])
-            if "admin" in result["roles"]:
-                # Administrators sign in with OTP (keycloak/README.md): the test identity gets the synthetic one.
-                admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), user_id)
         for logical, sub in self.user_ids.items():
             if sub == user_id:
                 self.tokens.pop(logical, None)
@@ -1996,7 +1984,7 @@ class BffInvariantTests(unittest.TestCase):
         # The operator command api/prisma/replace-sole-admin.cjs (keycloak/README.md): an institution's sole administrator
         # left while their rights are live; the hospital names a successor. On a run-owned institution: the predecessor's
         # open session and a new login are refused, the successor's earlier (waiting-room) session ends, a colleague's
-        # session lives, and the successor signs in again with the administrator OTP to manage that institution only.
+        # session lives, and the successor signs in again (its password only) to manage that institution only.
         tag = uuid.uuid4().hex[:8]
         institution = "kin-test-replace-" + tag
         created = self.stack.kc_admin("POST", "/groups", {"name": institution})
@@ -2045,9 +2033,8 @@ class BffInvariantTests(unittest.TestCase):
             self.assertEqual(self.proxy(waiting_opener, "GET", "/api/me").status, 401)
             self.assertEqual(self.stack.request("GET", "/me", successor).status, 401, "an authentication from before the replacement")
             self.assertEqual(self.proxy(colleague_opener, "GET", "/api/me").status, 200)
-            # The successor signs in again (administrator OTP) and manages this institution only.
+            # The successor signs in again (its password only) and manages this institution only.
             self.stack._await_roster(successor_id, institution, ["admin"])
-            admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.stack.kc_admin(method, path, body)), successor_id)
             time.sleep(1.05)  # A login after the replacement's re-login boundary.
             opener, session = self.stack._admin_bff_session(self.stack.usernames[successor], self.stack.passwords[successor], successor_id)
             rows, page, pages = {}, 1, 1

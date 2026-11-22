@@ -58,7 +58,7 @@ CASES = (
     "test_10_a_session_ended_on_the_dicom_path_records_the_proxys_address",
     "test_11_api_answers_are_not_stored_and_the_account_console_is_closed",
     "test_11b_login_logout_server_time_and_timezone",
-    "test_11c_administrators_need_otp_and_no_one_else_does",
+    "test_11c_no_one_is_made_to_set_up_otp",
     "test_12_cleanup_leaves_no_owned_row_or_session",
 )
 AUTH = ("auth.login", "auth.logout", "auth.session.expired")
@@ -711,19 +711,46 @@ class AuthAuditLive(unittest.TestCase):
                                              admin_otp.FORM_HEADERS)
         return browser, status, headers, page
 
-    def test_11c_administrators_need_otp_and_no_one_else_does(self):
-        """keycloak/README.md 관리자 OTP 필수: a clinician's password goes straight back to the product; an administrator's
-        goes to the OTP form, where a wrong code is refused and the right one returns; an administrator without OTP is sent
-        to enrol it before any session exists."""
+    def test_11c_no_one_is_made_to_set_up_otp(self):
+        """No account is required to set up OTP (keycloak/README.md, OTP는 스스로 등록한 계정만): a radiologist's and an administrator's password each go straight
+        back to the product and open a session - no OTP form, no OTP set-up; an administrator who has an OTP of their own
+        is asked it, where a wrong code makes no session and the right one enters. The realm signs in and resets
+        passwords with Keycloak's built-in flows, whose only OTP steps are the ones for an account that has OTP."""
+        realm = self.stack.kc_admin("GET", "").body
+        self.assertEqual((realm.get("browserFlow"), realm.get("resetCredentialsFlow")), ("browser", "reset credentials"))
+        for flow in ("browser", "reset%20credentials"):
+            steps = [(row.get("providerId"), row.get("requirement")) for row in self.stack.kc_admin(
+                "GET", f"/authentication/flows/{flow}/executions").body]
+            self.assertIn(("conditional-user-configured", "REQUIRED"), steps, flow)
+            self.assertNotIn("conditional-user-role", [provider for provider, _ in steps], flow)
+            self.assertEqual([requirement for provider, requirement in steps if provider in ("auth-otp-form", "reset-otp")],
+                             ["ALTERNATIVE"] if flow == "browser" else ["REQUIRED"], flow)
         member = self.members["ma"]
         _, status, headers, page = self.password_step(member["username"], member["password"])
         self.assertEqual(status, 302, "a radiologist has no OTP step")
         self.assertNotIn(admin_otp.OTP_FORM, page)
         self.assertEqual(urlparse(headers.get("Location", "")).path, "/api/auth/callback")
 
+        def enters(browser, headers, label):
+            self.assertEqual(urlparse(headers.get("Location", "")).path, "/api/auth/callback", label + ": back to the product")
+            status, headers, _ = browser.call("GET", headers["Location"])
+            self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/worklist/hpacs-lite/main.html"), label)
+            self.assertIsNotNone(browser.sid(), label + ": a product session")
+
+        # An administrator without OTP: the password alone, no set-up page (no CONFIGURE_TOTP), straight into the product.
         admin = self.stack.username("u5-admin-a")
-        browser, status, _, page = self.password_step(admin, self.stack.passwords["u5-admin-a"])
-        self.assertEqual(status, 200, "an administrator is asked for OTP")
+        browser, status, headers, page = self.password_step(admin, self.stack.passwords["u5-admin-a"])
+        self.assertEqual(status, 302, "an administrator without OTP is not stopped")
+        self.assertNotIn("/login-actions/required-action", headers.get("Location", ""))
+        self.assertNotIn(admin_otp.OTP_FORM, page)
+        enters(browser, headers, "administrator, password only")
+
+        # An administrator who set up OTP of their own (the synthetic one here) is asked it.
+        coded = self.stack.create_test_identity("u5-admin-own-otp", ["admin"], self.groups["A"][0])
+        admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.stack.kc_admin(method, path, body)), coded)
+        username = self.stack.username("u5-admin-own-otp")
+        browser, status, _, page = self.password_step(username, self.stack.passwords["u5-admin-own-otp"])
+        self.assertEqual(status, 200, "an administrator with OTP is asked for it")
         self.assertIn(admin_otp.OTP_FORM, page)
         action = html.unescape(re.search(r'<form[^>]+id="kc-otp-login-form"[^>]*action="([^"]+)"', page).group(1))
         wrong = admin_otp.code_at(int(time.time() // admin_otp.PERIOD) + 1000)
@@ -731,47 +758,9 @@ class AuthAuditLive(unittest.TestCase):
         self.assertEqual(status, 200, "a wrong code does not pass")
         self.assertIn(admin_otp.OTP_FORM, page)
         self.assertIsNone(browser.sid())
-        status, headers, _ = admin_otp.answer_call(browser, (status, {}, page), admin)
-        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/api/auth/callback"), "the right code returns")
-
-        enrolling = self.stack.create_test_identity("u5-admin-new", ["admin"], self.groups["A"][0])
-        for row in self.stack.kc_admin("GET", f"/users/{enrolling}/credentials").body:
-            if row.get("type") == "otp":
-                self.assertEqual(self.stack.kc_admin("DELETE", f"/users/{enrolling}/credentials/{row['id']}").status, 204)
-        browser, status, headers, page = self.password_step(self.stack.username("u5-admin-new"), self.stack.passwords["u5-admin-new"])
-        # Keycloak sends the browser to its own required-action page (CONFIGURE_TOTP), never back to the product.
-        self.assertEqual(status, 302)
-        self.assertEqual(urlparse(headers.get("Location", "")).path, "/auth/realms/kin/login-actions/required-action")
-        status, _, page = browser.call("GET", headers["Location"])
-        self.assertEqual(status, 200, "an administrator without OTP is stopped at enrolment")
-        self.assertIn('id="kc-totp-settings"', page)
-        self.assertIsNone(browser.sid(), "no product session before OTP is enrolled")
-
-        # The enrolment itself (with the page's own secret): Keycloak returns to the product, but that sign-in's token records
-        # the enrolment, not an OTP step (no amr "otp"), so the product refuses it with its dedicated notice and no session.
-        form = next(f for f in re.findall(r"<form[^>]*>.*?</form>", page, re.S | re.I) if "totpSecret" in f)
-        fields = {name: html.unescape(value) for name, value in re.findall(r'<input[^>]*\bname="([^"]+)"[^>]*\bvalue="([^"]*)"', form)}
-        secret = fields["totpSecret"].encode("utf-8")
-        step = int(time.time() // admin_otp.PERIOD)
-        fields.update(totp=admin_otp.code_at(step, secret), userLabel=admin_otp.LABEL + " (enrolled)")
-        action = html.unescape(re.search(r'action="([^"]+)"', form).group(1))
-        status, headers, _ = browser.call("POST", action, urlencode(fields).encode("utf-8"), admin_otp.FORM_HEADERS)
-        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/api/auth/callback"), "enrolment returns")
-        status, headers, _ = browser.call("GET", headers["Location"])
-        landed = urlparse(headers.get("Location", ""))
-        self.assertEqual((status, landed.path, parse_qs(landed.query).get("auth_error")),
-                         (302, "/worklist/hpacs-lite/index.html", ["admin_otp_required"]), "the enrolment sign-in is refused")
-        self.assertIsNone(browser.sid(), "no product session from the enrolment sign-in")
-        # The next sign-in answers the OTP form with the enrolled code and enters as administrator.
-        browser, status, _, page = self.password_step(self.stack.username("u5-admin-new"), self.stack.passwords["u5-admin-new"])
-        self.assertIn(admin_otp.OTP_FORM, page)
-        action = html.unescape(re.search(r'<form[^>]+id="kc-otp-login-form"[^>]*action="([^"]+)"', page).group(1))
-        status, headers, _ = browser.call("POST", action, urlencode({"otp": admin_otp.code_at(step + 1, secret)}).encode("ascii"),
-                                          admin_otp.FORM_HEADERS)
-        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/api/auth/callback"))
-        status, headers, _ = browser.call("GET", headers["Location"])
-        self.assertEqual((status, urlparse(headers.get("Location", "")).path), (302, "/worklist/hpacs-lite/main.html"))
-        self.assertIsNotNone(browser.sid(), "the sign-in after enrolment enters")
+        status, headers, _ = admin_otp.answer_call(browser, (status, {}, page), username)
+        self.assertEqual(status, 302, "the right code returns")
+        enters(browser, headers, "administrator with their own OTP")
         print("S7-U5-AUTH-LIVE " + json.dumps({"case": "AL-11c", "rows": 0, "hits": [], "ip_ok": True}))
 
     def test_12_cleanup_leaves_no_owned_row_or_session(self):

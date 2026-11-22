@@ -86,7 +86,7 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         self.assertGreaterEqual(len(first), 32)
         self.assertEqual(stdout.getvalue() + stderr.getvalue(), "")
         calls = self.transport.calls
-        self.assertEqual([r.method for r in calls], ["POST", "GET", "GET", "PUT", "GET", "PUT"])
+        self.assertEqual([r.method for r in calls], ["POST", "GET", "GET", "PUT"])
         self.assertEqual(calls[0].full_url,
                          "http://synthetic.invalid/auth/realms/master/protocol/openid-connect/token")
         self.assertEqual(parse_qs(calls[0].data.decode()), {
@@ -94,9 +94,7 @@ class ImportedAdminCredentialTests(unittest.TestCase):
             "username": ["admin"], "password": ["stub-master-password"]})
         self.assertEqual(calls[2].full_url, URL + "/users?username=jmryu&exact=true")
         self.assertEqual(json.loads(calls[3].data), {"type": "password", "value": first, "temporary": False})
-        # jmryu holds admin: the synthetic OTP (admin_otp) is given beside the password.
-        self.assertEqual(calls[4].full_url, URL + "/users/fixture-admin/credentials")
-        self.assertEqual(json.loads(calls[5].data), {"credentials": [credential.admin_otp.credential()]})
+        # No account is required to have OTP: jmryu gets its password only, no OTP credential.
         self.assertTrue(all(r.get_header("Authorization") == "Bearer stub-master-token" for r in calls[1:]))
 
     def test_missing_or_false_synthetic_attestation_refuses_before_transport(self):
@@ -114,7 +112,7 @@ class ImportedAdminCredentialTests(unittest.TestCase):
         os.environ.pop("KIN_SYNTHETIC_REALM")
         with self.assertRaises(RuntimeError):
             self.ensure()
-        self.assertEqual(len(self.transport.calls), 6)
+        self.assertEqual(len(self.transport.calls), 4)
 
     def test_other_realm_or_ambiguous_endpoint_refuses_before_transport(self):
         for url in (URL.replace("/kin", "/production"), URL + "?realm=other", URL + "#other",
@@ -163,13 +161,6 @@ class ImportedAdminCredentialTests(unittest.TestCase):
             results = list(executor.map(lambda _: self.ensure(), range(8)))
         self.assertEqual(len(set(results)), 1)
         self.assertEqual(sum(r.full_url.endswith("/reset-password") for r in self.transport.calls), 1)
-
-    def test_a_foreign_otp_is_replaced_by_the_synthetic_one(self):
-        self.transport.credentials.append({"id": "foreign-otp", "type": "otp", "userLabel": "phone"})
-        self.ensure()
-        tail = [(r.method, r.full_url.removeprefix(URL)) for r in self.transport.calls[4:]]
-        self.assertEqual(tail, [("GET", "/users/fixture-admin/credentials"), ("DELETE", "/users/fixture-admin/credentials/foreign-otp"),
-                                ("PUT", "/users/fixture-admin")])
 
     def test_redirects_cannot_forward_admin_credentials(self):
         headers = Message()

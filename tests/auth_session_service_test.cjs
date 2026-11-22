@@ -747,11 +747,11 @@ const w ={ t, base, calls: [], gates: [], faults: [], secrets: [], labels: new M
    * session unless the case names another - a refresh continues its session's provider session, and two logins of one
    * browser share its SSO; a case about two PCs, or about sessions that must end apart, names them. `idp: null` issues
    * a token without the claim. `authTime` (seconds, as Keycloak truncates it) is the `auth_time` claim: when the provider
-   * authenticated that SSO; without it the token carries none (U5E-21 is the case about it). `amr` is what kin-bff's AMR
-   * mapper writes: by default "otp" for a token with the admin role (the realm's administrator OTP step ran), none otherwise.
+   * authenticated that SSO; without it the token carries none (U5E-21 is the case about it). `amr` is the
+   * authentication methods claim: none by default (the realm maps none; no account is required to have OTP).
    */
   w.issue = async (label, { sub, groups = [A], email, roles = ['radiologist'], expIn = HOUR / 1000, key = 'main', same, idp, authTime, identity = {},
-    amr = roles.includes('admin') ? ['otp'] : [] } = {}) => {
+    amr = [] } = {}) => {
     // Provisioning fixture, independent of token issuance after the first version. JWT changes never change this row.
     const cleanGroups = groups.filter(g => typeof g === 'string').map(g => g.replace(/^\//, ''));
     const managedRoles = roles.filter(role => ['admin','radiologist','technician','clinician'].includes(role));
@@ -1036,9 +1036,9 @@ test('AS-03 a failed login of a login this server started leaves one failure row
   p = await begin();
   await w.call(w.I1, 'callback', { cookie: p.pending, query: { error: 'temporarily_unavailable', state: p.state } });
   assert.deepEqual(await last(), failure('provider_error'), 'another error value: the same row, no error text');
-  // This server's own landing answers come only from its checks: a provider error carrying one (the administrator OTP
+  // This server's own landing answers come only from its checks: a provider error carrying one (a suspended member's
   // answer, or any other) is a plain login failure, before any code exchange or token check.
-  for (const own of ['admin_otp_required', 'stale', 'session_active', 'login_failed', 'member_suspended', 'member_suspended_unapproved']) {
+  for (const own of ['stale', 'session_active', 'login_failed', 'member_suspended', 'member_suspended_unapproved']) {
     p = await begin();
     out = await w.call(w.I1, 'callback', { cookie: p.pending, query: { error: own, state: p.state } });
     assert.equal(out.location, ORIGIN + '/worklist/hpacs-lite/index.html?auth_error=login_failed', own);
@@ -4266,249 +4266,86 @@ test('U5E-03 (acceptance 3) the same doctor on two PCs: the Log out of one leave
   await w.finish('U5E-03');
 });
 
-// ── The administrator OTP gate (AuthService.adminProved). Rights stay the DB's; DB rights that give admin are admitted only
-// with a verified access token carrying the admin realm role and Keycloak's mark of a performed OTP step (amr "otp", the
-// realm's administrator OTP reference). Each case builds the tokens Keycloak gives in that situation (measured on Keycloak
-// 26.7.3: an OTP enrolment sign-in carries amr [], the next sign-in ["otp"]; a sign-in while Keycloak does not hold the
-// admin role asks no OTP). A refused callback makes no session, writes one failure row and lands on admin_otp_required. ──
-const OTP_REQUIRED = landing('admin_otp_required');
-/** An approved administrator in the DB and in Keycloak, and its first OTP sign-in token. */
-async function otpAdmin(w, sub) {
+// ── Administrators and OTP. No account is required to have OTP (keycloak/README.md): Keycloak 26.7.3's built-in flows
+// ask it only of an account that has one, so an administrator's token may carry no amr "otp", and a token read while
+// Keycloak does not (yet) hold the admin role carries none. Rights stay the DB's: an approved DB administrator enters,
+// stays, refreshes and calls with any verified token of theirs, and the token's roles never add a right. ──
+/** An approved administrator in the DB and in Keycloak, and its first sign-in token (no amr). */
+async function dbAdmin(w, sub) {
   r10Member(sub, [], [A], ['admin']); kc.members[sub].emailVerified = true;
   return w.issue(sub, { sub, roles: ['admin'], authTime: Math.floor(Date.now() / 1000) });
 }
 /** A sign-in in a later second than the member's last command (its new-authentication boundary). */
-async function adminSignIn(w, inst, sub, label, { roles = ['admin'], amr, identity } = {}) {
+async function adminSignIn(w, inst, sub, label, { roles = ['admin'], identity } = {}) {
   w.tick(1000);
-  const token = await w.issue(label, { sub, roles, amr, identity, authTime: Math.floor(Date.now() / 1000) });
+  const token = await w.issue(label, { sub, roles, identity, authTime: Math.floor(Date.now() / 1000) });
   return { token, ...(await login(w, inst, token)) };
 }
-function refusedForOtp(out, label) {
-  assert.equal(out.done.newSid, null, label + ': no session');
-  assert.equal(out.done.location, OTP_REQUIRED, label + ': the dedicated landing');
-}
-const otpFailures = async (w, sub) => rowsOf(await w.rows(), sub)
-  .filter(r => r.action === 'auth.login' && r.detail.outcome === 'failure' && r.detail.cause === 'admin_otp_required').length;
-/** Holds the member's next roster publication (its first Keycloak read after the command commits). */
-function holdPublication(w, t, sub) {
-  let armed = false, taken = false;
-  const arrived = deferred(), release = deferred();
-  w.observe({ inst: 'I1', scope: 'tx', model: 'providerChange', method: 'create', phase: 'after' }, () => { armed = true; });
-  kc.beforeAdmin = (name, id) => {
-    if (armed && !taken && id === sub && name === 'GET groups') { taken = true; arrived.resolve(); return release.promise; }
-  };
-  t.after(() => release.resolve('drop'));
-  return { arrived: () => within(arrived.promise, 'roster publication held'), release: how => release.resolve(how) };
-}
-const credentialsState = async (w, sub) => (await w.base.providerChange.findFirst({ where: { sub, kind: 'credentials' }, orderBy: { id: 'desc' } })).state;
+const loginFailures = async (w, sub) => rowsOf(await w.rows(), sub)
+  .filter(r => r.action === 'auth.login' && r.detail.outcome === 'failure').length;
 
-test('admin_login_denied_during_roster_delay_or_failure', async t => {
-  const w = await world(t), m = 'syn-otp-delay', { admin } = await coreMember(w, m);
-  const held = holdPublication(w, t, m);
-  assert.equal((await r10Patch(admin, m, { roles: ['radiologist', 'admin'] })).status, 200);
-  await held.arrived();
-  // The publication is late: Keycloak still evaluates a radiologist and asks no OTP.
-  const delayed = await adminSignIn(w, w.I2, m, m + '-delayed', { roles: ['radiologist'] });
-  refusedForOtp(delayed, 'publication delayed');
-  assert.equal((await w.call(w.I2, 'get', { bearer: delayed.token.access })).status, 401, 'its Bearer too');
-  // The publication's answer is lost: its outcome stays unknown and the DB keeps the administrator.
-  held.release('drop'); await coreSettled(w, m);
-  assert.equal(await credentialsState(w, m), 'unknown');
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-failed', { roles: ['radiologist'] }), 'publication unknown');
-  assert.equal(await w.base.authSession.count({ where: { sub: m } }), 0);
-  assert.equal(await otpFailures(w, m), 2, 'one failure row per refused callback');
-  assert.deepEqual([...(await w.base.memberRights.findUnique({ where: { sub: m } })).roles].sort(), ['admin', 'radiologist'], 'rights are not cut');
-  await w.finish('admin_login_denied_during_roster_delay_or_failure');
+test('db_admin_enters_without_otp_or_the_token_role', async t => {
+  const w = await world(t), m = 'syn-admin-plain';
+  assert.ok((await login(w, w.I1, await dbAdmin(w, m))).done.newSid, 'the password-only sign-in enters');
+  for (const [label, options] of [['no amr claim', { identity: { amr: undefined } }], ['amr without otp', { identity: { amr: ['pwd'] } }],
+    ['the admin role not in the token', { roles: [] }]]) {
+    const { token, done } = await adminSignIn(w, label === 'no amr claim' ? w.I1 : w.I2, m, m + '-' + label.replace(/\W+/g, '-'), options);
+    assert.ok(done.newSid, label + ': a session');
+    assert.equal(new URL(done.location).pathname, '/worklist/hpacs-lite/main.html', label);
+    const me = await w.call(w.I1, 'me', { sid: done.newSid });
+    assert.deepEqual([me.status, me.body.roles], [200, ['admin']], label + ': the DB rights');
+    assert.equal((await w.call(w.I2, 'get', { bearer: token.access })).status, 200, label + ': its Bearer');
+  }
+  assert.equal(await loginFailures(w, m), 0, 'no refused sign-in');
+  await w.finish('db_admin_enters_without_otp_or_the_token_role');
 });
 
-test('admin_password_only_code_exchange_after_role_publish_denied', async t => {
-  const w = await world(t), m = 'syn-otp-exchange', { admin } = await coreMember(w, m);
-  const held = holdPublication(w, t, m);
-  assert.equal((await r10Patch(admin, m, { roles: ['radiologist', 'admin'] })).status, 200);
-  await held.arrived();
-  // The browser authenticates with the password while Keycloak evaluates a radiologist (no OTP step) ...
-  w.tick(1000);
-  const begin = await w.call(w.I1, 'login'), authTime = Math.floor(Date.now() / 1000);
-  // ... the role lands, and the code is exchanged after it: the token reads the admin role, no OTP was performed.
-  held.release(); await coreSettled(w, m);
-  assert.equal(await credentialsState(w, m), 'done');
-  assert.ok(kc.members[m].roles.includes('admin'));
-  const late = await w.issue(m + '-late', { sub: m, roles: ['radiologist', 'admin'], amr: [], authTime });
-  const done = await answerFlow(w, w.I1, begin, late);
-  assert.equal(done.newSid, null);
-  assert.equal(done.location, OTP_REQUIRED);
-  assert.equal((await w.call(w.I1, 'get', { bearer: late.access })).status, 401);
-  // The same account after its OTP step enters.
-  assert.ok((await adminSignIn(w, w.I2, m, m + '-otp', { roles: ['radiologist', 'admin'] })).done.newSid);
-  assert.equal(await otpFailures(w, m), 1);
-  await w.finish('admin_password_only_code_exchange_after_role_publish_denied');
-});
-
-test('admin_role_drift_and_restore_race_denied', async t => {
-  const w = await world(t), m = 'syn-otp-drift', token = await otpAdmin(w, m);
+test('db_admin_session_refresh_and_recheck_need_no_otp', async t => {
+  const w = await world(t), m = 'syn-admin-refresh', token = await dbAdmin(w, m);
   const { newSid: sid } = (await login(w, w.I1, token)).done;
   assert.ok(sid);
-  // The console removes the admin role: the refreshed token no longer carries it, and the session ends.
+  // A refresh whose new token carries neither amr nor the admin role is stored; the session goes on with the DB rights.
   await w.base.authSession.update({ where: { sid }, data: { atExpiresAt: lapsed() } });
-  const dropped = await w.issue(m + '-dropped', { sub: m, roles: [], amr: ['otp'] });
-  kc.auto = () => reply.tokens(dropped);
-  const out = await w.call(w.I2, 'get', { sid });
+  const renewed = await w.issue(m + '-renewed', { sub: m, roles: [] });
+  kc.auto = () => reply.tokens(renewed);
+  const kept = await w.call(w.I2, 'me', { sid });
   kc.auto = null;
-  assert.equal(out.status, 401);
-  assert.equal(await w.base.authSession.findUnique({ where: { sid } }), null, 'the token without the role does not carry the session on');
-  // A sign-in while the role is gone: no role, no OTP step.
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-no-role', { roles: [], amr: [] }), 'role removed');
-  // The password while the role is gone, the role restored, the code exchanged: the role is back, the OTP never ran.
-  w.tick(1000);
-  const begin = await w.call(w.I2, 'login');
-  const restored = await w.issue(m + '-restored', { sub: m, roles: ['admin'], amr: [], authTime: Math.floor(Date.now() / 1000) });
-  const done = await answerFlow(w, w.I2, begin, restored);
-  assert.equal(done.newSid, null);
-  assert.equal(done.location, OTP_REQUIRED);
-  assert.equal((await w.call(w.I2, 'get', { bearer: restored.access })).status, 401);
-  assert.equal(await otpFailures(w, m), 2);
-  await w.finish('admin_role_drift_and_restore_race_denied');
+  assert.deepEqual([kept.status, kept.body.roles], [200, ['admin']]);
+  assert.equal(await w.version(sid), m + '-renewed');
+  // The business recheck of a session and of a Bearer.
+  const rights = await w.base.memberRights.findUnique({ where: { sub: m } });
+  await w.I1.service.bindCurrentAuthorization(await w.I1.service.verifyAccessToken(renewed.access), renewed.access,
+    await w.base.authSession.findUnique({ where: { sid } }), rights)();
+  await w.I1.service.bindCurrentAuthorization(await w.I1.service.verifyAccessToken(token.access), token.access, null, rights)();
+  // A session stored before this version (its token has the admin role and no amr) keeps working.
+  const legacy = await w.session(await w.issue(m + '-legacy', { sub: m, roles: ['admin'] }));
+  assert.equal((await w.call(w.I1, 'get', { sid: legacy })).status, 200);
+  assert.equal(await loginFailures(w, m), 0);
+  await w.finish('db_admin_session_refresh_and_recheck_need_no_otp');
 });
 
-test('admin_promotion_otp_enrollment_and_login_succeed', async t => {
-  const w = await world(t), m = 'syn-otp-promotion', { admin } = await coreMember(w, m);
+test('db_admin_after_promotion_enters_while_keycloak_lags', async t => {
+  const w = await world(t), m = 'syn-admin-promotion', { admin } = await coreMember(w, m);
   assert.equal((await r10Patch(admin, m, { roles: ['radiologist', 'admin'] })).status, 200);
   await coreSettled(w, m);
-  assert.equal(await credentialsState(w, m), 'done');
-  // The first sign-in enrols OTP: Keycloak records the enrolment, not an OTP step (amr []). Refused, once.
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-enrol', { roles: ['radiologist', 'admin'], amr: [] }), 'enrolment sign-in');
-  assert.equal(await w.base.authSession.count({ where: { sub: m } }), 0);
-  // The next sign-in answers the OTP form and enters as administrator.
-  const next = await adminSignIn(w, w.I2, m, m + '-otp', { roles: ['radiologist', 'admin'] });
+  // The first sign-in after the promotion: no OTP set-up, no second sign-in; even a token Keycloak issued before the
+  // role landed (radiologist only) enters with the DB's rights.
+  const lagging = await adminSignIn(w, w.I1, m, m + '-lagging', { roles: ['radiologist'] });
+  assert.ok(lagging.done.newSid);
+  assert.deepEqual([...(await w.call(w.I1, 'me', { sid: lagging.done.newSid })).body.roles].sort(), ['admin', 'radiologist']);
+  const next = await adminSignIn(w, w.I2, m, m + '-next', { roles: ['radiologist', 'admin'] });
   assert.ok(next.done.newSid);
-  const me = await w.call(w.I2, 'me', { sid: next.done.newSid });
-  assert.equal(me.status, 200);
-  assert.deepEqual([...me.body.roles].sort(), ['admin', 'radiologist']);
   assert.equal((await w.call(w.I1, 'me', { bearer: next.token.access })).status, 200);
-  assert.equal(await otpFailures(w, m), 1);
-  await w.finish('admin_promotion_otp_enrollment_and_login_succeed');
-});
-
-test('imported_and_reactivated_admin_without_publication_record_succeed', async t => {
-  const w = await world(t, { imported: false }), m = 'syn-otp-imported', { importMemberRights } = require('/app/dist/member-rights-import');
-  r10Member(m, [], [A], ['admin']);
-  const users = [{ id: m, username: m, email: m + '@synthetic.test', emailVerified: true, firstName: 'Synthetic', lastName: 'Admin',
-    enabled: true, serviceAccountClientId: null, groups: [A], roles: ['admin'] }];
-  await importMemberRights(w.I1.prisma, { listUsers: async page => ({ total: users.length, users: users.slice((page - 1) * 2, page * 2) }) }, w.I1.ledger);
-  assert.equal(await w.base.providerChange.count({ where: { sub: m, kind: 'credentials' } }), 0, 'the import records no publication');
-  // Judged by the token's evidence, not by a publication record.
-  const first = await adminSignIn(w, w.I1, m, m + '-otp');
-  assert.ok(first.done.newSid, 'the imported administrator with OTP enters');
-  assert.equal((await w.call(w.I1, 'me', { bearer: first.token.access })).status, 200);
-  refusedForOtp(await adminSignIn(w, w.I2, m, m + '-bare', { amr: [] }), 'imported administrator without the OTP step');
-  // Suspend and Activate record no publication either; the reactivated administrator enters on an OTP sign-in.
-  const admin = r10Admin(w);
-  assert.equal((await r10Patch(admin, m, { enabled: false })).status, 200);
-  assert.equal((await r10Patch(admin, m, { enabled: true })).status, 200);
-  assert.equal(await w.base.providerChange.count({ where: { sub: m, kind: 'credentials' } }), 0);
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-react-bare', { amr: [] }), 'reactivated without the OTP step');
-  assert.ok((await adminSignIn(w, w.I2, m, m + '-react-otp')).done.newSid, 'the reactivated administrator with OTP enters');
-  await w.finish('imported_and_reactivated_admin_without_publication_record_succeed');
-});
-
-test('legacy_admin_session_denied_and_relogin_reachable', async t => {
-  const w = await world(t), m = 'syn-otp-legacy';
-  r10Member(m, [], [A], ['admin']);
-  // A session made before the gate: its stored token has the admin role and no OTP mark.
-  const sid = await w.session(await w.issue(m + '-legacy', { sub: m, roles: ['admin'], amr: [] }));
-  const refused = await w.call(w.I1, 'get', { sid });
-  assert.deepEqual([refused.status, refused.body.code], [401, 'AUTH_SESSION_ENDED']);
-  // Its expired token is refused before Keycloak is asked for a refresh.
-  await w.base.authSession.update({ where: { sid }, data: { atExpiresAt: lapsed() } });
-  const tokens = kc.tokens;
-  assert.equal((await w.call(w.I2, 'get', { sid })).status, 401);
-  assert.equal(kc.tokens, tokens, 'no refresh exchange for the refused session');
-  // The refused session does not hold the login start back: it goes to the provider, not to session_active.
-  const begin = await w.call(w.I1, 'login', { sid });
-  assert.ok(atProvider(begin), 'login starts');
-  assert.equal(promptOf(begin), 'login');
-  w.tick(1000);
-  const fresh = await w.issue(m + '-fresh', { sub: m, roles: ['admin'], expIn: 1, authTime: Math.floor(Date.now() / 1000) });
-  const done = await answerFlow(w, w.I1, begin, fresh, { sid });
-  assert.ok(done.newSid, 'the OTP sign-in enters');
-  // A session with the proof keeps the session contract: its really expired stored token is refreshed, not refused.
-  w.tick(2000);
-  const renewed = await w.issue(m + '-renewed', { sub: m, roles: ['admin'] });
-  kc.auto = () => reply.tokens(renewed);
-  const kept = await w.call(w.I2, 'me', { sid: done.newSid });
-  kc.auto = null;
-  assert.equal(kept.status, 200);
-  assert.deepEqual(kept.body.roles, ['admin']);
-  assert.equal(await w.version(done.newSid), m + '-renewed');
-  await w.finish('legacy_admin_session_denied_and_relogin_reachable');
-});
-
-test('admin_refresh_and_transaction_recheck_require_proof', async t => {
-  const w = await world(t), m = 'syn-otp-refresh', token = await otpAdmin(w, m);
-  const { newSid: sid } = (await login(w, w.I1, token)).done;
-  assert.ok(sid);
-  // A refresh that carries the proof is stored.
-  await w.base.authSession.update({ where: { sid }, data: { atExpiresAt: lapsed() } });
-  const kept = await w.issue(m + '-kept', { sub: m, roles: ['admin'] });
-  kc.auto = () => reply.tokens(kept);
-  assert.equal((await w.call(w.I2, 'get', { sid })).status, 200);
-  kc.auto = null;
-  assert.equal(await w.version(sid), m + '-kept');
-  // The business recheck carries the token's roles and amr: a proved Bearer passes it, one without the OTP step does not.
-  const rights = await w.base.memberRights.findUnique({ where: { sub: m } });
-  await w.I1.service.bindCurrentAuthorization(await w.I1.service.verifyAccessToken(token.access), token.access, null, rights)();
-  const bare = await w.issue(m + '-bare', { sub: m, roles: ['admin'], amr: [] });
-  await assert.rejects(w.I1.service.bindCurrentAuthorization(await w.I1.service.verifyAccessToken(bare.access), bare.access, null, rights)(),
-    e => e.getStatus?.() === 401, 'the Bearer recheck without the OTP step');
-  // The session recheck reads the session's current stored token.
-  const recheck = w.I1.service.bindCurrentAuthorization(await w.I1.service.verifyAccessToken(kept.access), kept.access,
-    await w.base.authSession.findUnique({ where: { sid } }), rights);
-  await recheck();
-  // A refresh whose token lost the OTP mark (past its max age) does not carry the session on: the session ends.
-  await w.base.authSession.update({ where: { sid }, data: { atExpiresAt: lapsed() } });
-  const lost = await w.issue(m + '-lost', { sub: m, roles: ['admin'], amr: [] });
-  kc.auto = () => reply.tokens(lost);
-  const out = await w.call(w.I1, 'get', { sid });
-  kc.auto = null;
-  assert.deepEqual([out.status, out.body.code], [401, 'AUTH_SESSION_ENDED']);
-  assert.equal(await w.base.authSession.findUnique({ where: { sid } }), null);
-  assert.deepEqual(rowsOf(await w.rows(), m).filter(r => r.action === 'auth.session.expired').map(r => r.detail.cause), ['refresh_failed']);
-  await assert.rejects(recheck(), e => e.getStatus?.() === 401, 'the admitted request ends with its session');
-  await w.finish('admin_refresh_and_transaction_recheck_require_proof');
-});
-
-test('admin_bearer_requires_otp_including_direct_grant', async t => {
-  const w = await world(t), m = 'syn-otp-bearer', token = await otpAdmin(w, m), authTime = jose.decodeJwt(token.access).auth_time;
-  const me = await w.call(w.I1, 'me', { bearer: token.access });
-  assert.deepEqual([me.status, me.body.roles], [200, ['admin']]);
-  // Every member Bearer of the verified issuer and audience, from any client, passes the same gate.
-  const runner = { azp: 'kin-local-test-runner' };
-  for (const [label, options] of [
-    ['kin-bff without the OTP step', { roles: ['admin'], amr: [] }],
-    ['no amr claim', { roles: ['admin'], identity: { amr: undefined } }],
-    ['a test client direct grant', { roles: ['admin'], amr: [], identity: runner }],
-    ['a direct grant naming another method', { roles: ['admin'], amr: ['pwd'], identity: runner }],
-    ['OTP without the admin role', { roles: [], amr: ['otp'] }],
-    ['amr not a list', { roles: ['admin'], identity: { amr: 'otp' } }],
-  ]) {
-    const bare = await w.issue(m + '-' + label.replace(/\W+/g, '-'), { sub: m, authTime, ...options });
-    const out = await w.call(w.I1, 'get', { bearer: bare.access });
-    assert.deepEqual([out.status, out.body.code], [401, 'AUTH_SESSION_ENDED'], label);
-  }
-  // A test client's browser sign-in that ran the OTP step passes; a non-administrator's direct grant is unchanged.
-  const proved = await w.issue(m + '-runner-otp', { sub: m, roles: ['admin'], authTime, identity: runner });
-  assert.equal((await w.call(w.I1, 'get', { bearer: proved.access })).status, 200);
-  const doctor = await w.issue('syn-otp-bearer-doctor', { sub: 'syn-otp-bearer-doctor', amr: [], identity: runner });
-  assert.equal((await w.call(w.I1, 'get', { bearer: doctor.access })).status, 200);
-  await w.finish('admin_bearer_requires_otp_including_direct_grant');
+  assert.equal(await loginFailures(w, m), 0);
+  await w.finish('db_admin_after_promotion_enters_while_keycloak_lags');
 });
 
 test('non_admin_demotion_and_gateway_behavior_unchanged', async t => {
   const w = await world(t);
-  // Readers, radiographers and clinicians carry no OTP mark, with or without the claim.
+  // Readers, radiographers and clinicians, with or without the amr claim.
   for (const [label, roles, document] of [['reader', ['radiologist'], 'main.html'], ['tech', ['technician'], 'main.html'],
     ['clinician', ['clinician'], 'clinician.html']]) {
-    const sub = 'syn-otp-plain-' + label;
+    const sub = 'syn-plain-' + label;
     const token = await w.issue('plain-' + label, { sub, roles });
     const { done } = await login(w, w.I1, token);
     assert.ok(done.newSid, label);
@@ -4520,74 +4357,23 @@ test('non_admin_demotion_and_gateway_behavior_unchanged', async t => {
     assert.equal((await w.call(w.I2, 'get', { sid: done.newSid })).status, 200, label + ': refresh without the claim');
     kc.auto = null;
   }
-  // Keycloak's admin role with OTP but no admin in the DB: the DB's rights, no gate.
-  const kcOnly = 'syn-otp-kc-only';
+  // Keycloak's admin role (with OTP) but no admin in the DB: the DB's rights.
+  const kcOnly = 'syn-kc-only-admin';
   await w.issue(kcOnly + '-row', { sub: kcOnly });
-  const elevated = await w.issue(kcOnly, { sub: kcOnly, roles: ['radiologist', 'admin'] });
+  const elevated = await w.issue(kcOnly, { sub: kcOnly, roles: ['radiologist', 'admin'], identity: { amr: ['otp'] } });
   const entered = (await login(w, w.I1, elevated)).done;
   assert.deepEqual((await w.call(w.I1, 'me', { sid: entered.newSid })).body.roles, ['radiologist']);
-  // Demotion: the DB drops admin; a token that still carries admin and OTP, or neither, enters as the DB says.
-  const d = 'syn-otp-demoted';
-  await otpAdmin(w, d);
+  // Demotion: the DB drops admin; a token that still carries admin, or does not, enters as the DB says.
+  const d = 'syn-demoted-admin';
+  await dbAdmin(w, d);
   assert.equal((await r10Patch(r10Admin(w), d, { roles: ['radiologist'] })).status, 200);
   const still = await adminSignIn(w, w.I2, d, d + '-still');
   assert.deepEqual((await w.call(w.I2, 'me', { sid: still.done.newSid })).body.roles, ['radiologist']);
   assert.ok((await adminSignIn(w, w.I2, d, d + '-plain', { roles: ['radiologist'] })).done.newSid);
   // Gateway: decided before the member gate, as before.
-  const gw = await w.issue('gateway', { sub: 'gw-syn-otp', roles: ['gateway'], identity: { azp: 'gw-syn-otp' } });
+  const gw = await w.issue('gateway', { sub: 'gw-syn-plain', roles: ['gateway'], identity: { azp: 'gw-syn-plain' } });
   assert.equal((await w.call(w.I1, 'get', { bearer: gw.access })).status, 403);
   assert.equal((await w.call(w.I1, 'authz', { bearer: gw.access, headers: { 'x-original-method': 'POST' } })).status, 204);
-  assert.equal(await otpFailures(w, d), 0);
+  assert.equal(await loginFailures(w, d), 0);
   await w.finish('non_admin_demotion_and_gateway_behavior_unchanged');
-});
-
-test('admin_reset_sso_and_amr_lifetime_preserve_otp_requirement', async t => {
-  const w = await world(t), m = 'syn-otp-reset';
-  await otpAdmin(w, m);
-  // A password reset ends in a sign-in whose token carries the reset flow's OTP step.
-  assert.ok((await adminSignIn(w, w.I1, m, m + '-reset')).done.newSid);
-  // An administrator who enrols OTP inside the reset flow gets no OTP mark in that sign-in: refused once.
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-reset-enrol', { amr: [] }), 'reset with enrolment');
-  // Another sign-in on the same provider session (SSO; every login start asks prompt=login) is judged by its own token.
-  const sso = await adminSignIn(w, w.I2, m, m + '-sso');
-  assert.equal(promptOf(sso.begin), 'login');
-  assert.ok(sso.done.newSid);
-  refusedForOtp(await adminSignIn(w, w.I2, m, m + '-sso-bare', { amr: [] }), 'SSO token without the OTP step');
-  // The mark lasts the SSO session (realm: maxAge = ssoSessionMaxLifespan); a refresh past it has none and ends the session.
-  await w.base.authSession.update({ where: { sid: sso.done.newSid }, data: { atExpiresAt: lapsed() } });
-  const aged = await w.issue(m + '-aged', { sub: m, roles: ['admin'], amr: [] });
-  kc.auto = () => reply.tokens(aged);
-  assert.equal((await w.call(w.I1, 'get', { sid: sso.done.newSid })).status, 401);
-  kc.auto = null;
-  assert.equal(await w.base.authSession.findUnique({ where: { sid: sso.done.newSid } }), null);
-  assert.equal(await otpFailures(w, m), 2);
-  await w.finish('admin_reset_sso_and_amr_lifetime_preserve_otp_requirement');
-});
-
-test('last_admin_roster_recovery_restores_login', async t => {
-  const w = await world(t), m = 'syn-otp-last-admin', { retryMemberRoster } = require('/app/dist/member-rights-import');
-  assert.ok((await login(w, w.I1, await otpAdmin(w, m))).done.newSid, 'the only administrator signs in');
-  // An institution change publishes the roster; its answer is lost, and Keycloak no longer holds the admin role.
-  let armed = false;
-  w.observe({ inst: 'I1', scope: 'tx', model: 'providerChange', method: 'create', phase: 'after' }, () => { armed = true; });
-  kc.beforeAdmin = name => armed && name === 'GET groups' ? 503 : undefined;
-  assert.equal((await r10Patch(r10Admin(w), m, { institution: B, roles: ['admin'] })).status, 200);
-  await coreSettled(w, m);
-  assert.equal(await credentialsState(w, m), 'unknown');
-  kc.beforeAdmin = null;
-  kc.members[m].roles = [];
-  // Without the role Keycloak asks no OTP: refused, with no sign-in exception for the last administrator.
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-no-role', { roles: [], amr: [] }), 'roster unknown');
-  // The operator CLI resends the unconfirmed publication; the administrator signs in with OTP again.
-  assert.deepEqual(await retryMemberRoster(w.I2.prisma, new KeycloakService()), { attempted: 1, unconfirmed: 0, superseded: 0, overlaps: 0 });
-  assert.deepEqual(kc.members[m].roles, ['admin']);
-  const back = await adminSignIn(w, w.I2, m, m + '-recovered');
-  assert.ok(back.done.newSid);
-  const me = await w.call(w.I2, 'me', { sid: back.done.newSid });
-  assert.deepEqual([me.body.institution, me.body.roles], [B, ['admin']]);
-  // A drift after a confirmed publication is not the CLI's to repair: it resends nothing (Keycloak's own procedure does).
-  kc.members[m].roles = [];
-  assert.equal((await retryMemberRoster(w.I2.prisma, new KeycloakService())).attempted, 0);
-  refusedForOtp(await adminSignIn(w, w.I1, m, m + '-drift', { roles: [], amr: [] }), 'drift after a confirmed publication');
-  await w.finish('last_admin_roster_recovery_restores_login');
 });

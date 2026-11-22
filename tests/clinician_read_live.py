@@ -42,7 +42,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import HTTPCookieProcessor, HTTPSHandler, Request, build_opener
 
 import admin_otp
-from invariants_live import AMR_MAPPER, AUTH_TIME_MAPPER, HttpResult, LiveStack, _json_or_text, psql, purge_user_audit
+from invariants_live import AUTH_TIME_MAPPER, HttpResult, LiveStack, _json_or_text, psql, purge_user_audit
 from document_session import session_headers
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -58,7 +58,6 @@ OWNED_USERNAME = re.compile(r"kin-test-[0-9a-f]{12}-[a-z0-9_-]+")
 SHORT_BEARER_SECONDS = 120
 CLIENT_MAPPERS = (
     AUTH_TIME_MAPPER,
-    AMR_MAPPER,
     {"name": "kin-api-audience", "protocol": "openid-connect", "protocolMapper": "oidc-audience-mapper",
      "consentRequired": False, "config": {"included.custom.audience": "kin-api", "id.token.claim": "false",
                                           "access.token.claim": "true"}},
