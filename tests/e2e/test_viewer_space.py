@@ -295,29 +295,34 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
           .every(c => services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCurrentImageId?.())''')
         self.panels_are(page, True, False)
         page.wait_for_timeout(500)
-        seen = {'idle': page.evaluate(VIEWER_THEME)}
+        seen = {}
+
+        def measure(state):
+            seen[state] = page.evaluate(VIEWER_THEME)
+            print('VIEWER THEME ' + json.dumps({state: seen[state]}), flush=True)
+        measure('idle')
         thumbnail = page.locator('[data-kin-studies-panel] [data-cy^="study-browser-thumbnail"]').first
         expect(thumbnail).to_be_visible()
         thumbnail.hover()
-        seen['thumbnail hovered'] = page.evaluate(VIEWER_THEME)
+        measure('thumbnail hovered')
         thumbnail.click()
         page.wait_for_timeout(300)
-        seen['thumbnail selected'] = page.evaluate(VIEWER_THEME)
+        measure('thumbnail selected')
         thumbnail.focus()
         page.keyboard.press('Tab')
         page.keyboard.press('Shift+Tab')
-        seen['thumbnail keyboard focus'] = page.evaluate(VIEWER_THEME)
+        measure('thumbnail keyboard focus')
         page.mouse.move(5, 5)
         # The dock's Report Editor tab shows the read-only mirror's three fields.
         page.locator('#kin-workspace-dock').get_by_role('button', name='Report Editor', exact=True).click()
         expect(page.locator('#kin-viewer-report')).to_be_visible()
         for field in ('findings', 'conclusion', 'recommendation'):
             expect(page.locator('#kin-viewer-report-' + field)).to_be_visible()
-        seen['Report Editor tab'] = page.evaluate(VIEWER_THEME)
+        measure('Report Editor tab')
         select_image_tool(page, 'Cine')
         expect(page.locator('#kin-cine')).to_be_visible()
-        seen['Cine'] = page.evaluate(VIEWER_THEME)
-        page.locator('[data-cy="cine-player-close"]').click()
+        measure('Cine')
+        page.locator('[data-cy="cine-player-close"]').first.click()
         expect(page.locator('#kin-cine')).not_to_be_visible()
         toolbar = page.locator('#kin-native-toolbar-dialog')
         if page.locator('#kin-native-toolbar-edit').is_visible() and page.locator('#kin-native-toolbar-edit').is_enabled():
@@ -326,9 +331,8 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
             # Edit Toolbar's window as the button opens it (its button sits in Viewer Settings).
             toolbar.evaluate('d => d.show ? d.show() : (d.hidden = false)')
         expect(toolbar).to_be_visible()
-        seen['Edit Toolbar'] = page.evaluate(VIEWER_THEME)
+        measure('Edit Toolbar')
         self.record(page, 'space-06-theme')
-        print('VIEWER THEME ' + json.dumps(seen), flush=True)
         for state, found in seen.items():
             with self.subTest(contract='five colours in the viewer chrome', state=state):
                 self.assertEqual([], found['off'])
