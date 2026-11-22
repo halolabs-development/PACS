@@ -160,7 +160,7 @@ function world({ resources = [], states = [], policy = null, institutions = INST
       order: { findMany: async arg => { if (w.hooks.orderFind) await w.hooks.orderFind(arg, store); return clone(w.orders ?? []).filter(o => matches(o, arg?.where)); },
         count: async () => 1, updateMany: async () => ({ count: 0 }) },
       institution: { upsert: async () => ({}), findMany: async () => clone(institutions) },
-      memberRights: { findUnique: async () => null },
+      memberRights: { findUnique: async () => null, findMany: async () => [] },
       readingTemplate: { count: async () => 1, findMany: async () => [] }, userFilter: { findMany: async () => [] },
       reportDraftPurposeEnd: { findFirst: async () => null },
       $queryRaw: raw, $executeRaw: async () => 1,

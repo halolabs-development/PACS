@@ -1,5 +1,6 @@
 import { criticalRead } from './emr-viewing/consumer-read';
-import { rightsUser, lockMemberRights } from './member-rights';
+import { rightsUser, lockMemberRights, withWriters, versionWriterName } from './member-rights';
+import { writerShown } from './account-identity';
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from './prisma.service';
@@ -269,7 +270,7 @@ export class CriticalResultService {
   /** 머리 판 = ReportVersion(uid, Report.version) 한 행의 번호·action·작성자·시각. Report의 본문 칸은 읽지 않는다. */
   private async head(tx: any, uid: string): Promise<Head> {
     // headContent: the head version stored text, a structured item or a drawing (an empty head is nobody's work to keep).
-    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v."authorSub" AS "headAuthorSub",v.at AS "headAt",
+    const rows: any[] = await tx.$queryRaw`SELECT r.version AS "headVersion",v.action AS "headAction",v.author AS "headAuthor",v."authorSub" AS "headAuthorSub",v."authorName" AS "headAuthorName",v.at AS "headAt",
         (COALESCE(v.findings,'')<>'' OR COALESCE(v.conclusion,'')<>'' OR COALESCE(v.recommendation,'')<>''
           OR CASE WHEN jsonb_typeof(v.structured)='array' THEN jsonb_array_length(v.structured)>0 ELSE false END
           OR CASE WHEN jsonb_typeof(v.drawings)='array' THEN jsonb_array_length(v.drawings)>0 ELSE false END) AS "headContent"
@@ -277,7 +278,28 @@ export class CriticalResultService {
     const row = rows[0];
     if (!row || !Number.isSafeInteger(row.headVersion) || row.headVersion < 1) return null;
     return { version: row.headVersion, action: row.headAction ?? null, author: row.headAuthor ?? null, authorSub: row.headAuthorSub ?? null, at: row.headAt ?? null,
-      content: row.headContent !== false };
+      authorName: row.headAuthorName ?? null, content: row.headContent !== false };
+  }
+
+  /**
+   * Who wrote a source version, as the sender's screen shows it: a signed version by the name it was signed under (member-rights.ts
+   * versionWriterName), else the writer by its account (account-identity.ts writerShown) - never its stored login looked up again.
+   */
+  private static sourceWriter(v: { action?: string | null; author?: string | null; authorSub?: string | null; authorName?: unknown } | null | undefined, c: any): string | null {
+    if (!v) return null;
+    const kept = ['approve', 'amend', 'addendum'].includes(String(v.action)) ? versionWriterName(v) : undefined;
+    return kept ?? writerShown(v.author ?? null, v.authorSub ?? null, c);
+  }
+
+  /** The writer of each sent record's pinned version (studyUid, sourceVersion), by record id, as sourceWriter says it. */
+  private async pinnedWriters(c: any, rows: any[]): Promise<Map<string, string | null>> {
+    if (!rows.length) return new Map();
+    const shown = await withWriters(this.prisma, c);
+    const pins: any[] = await this.prisma.reportVersion.findMany({ where: { OR: rows.map(row => ({ uid: row.studyUid, version: row.sourceVersion })) },
+      select: { uid: true, version: true, action: true, author: true, authorSub: true, authorName: true } });
+    const byPin = new Map(pins.map(v => [`${v.uid}\u0000${v.version}`, v]));
+    return new Map(rows.map(row => [row.id, CriticalResultService.sourceWriter(byPin.get(`${row.studyUid}\u0000${row.sourceVersion}`)
+      ?? { action: row.sourceAction, author: row.sourceAuthor, authorSub: null }, shown)]));
   }
 
   /**
@@ -514,6 +536,7 @@ export class CriticalResultService {
     return { owner: this.owner(c), uid, sendable: reason === null, inbox: out.inbox, orderingPhysician: out.orderingPhysician, reason,
       // 발신자가 읽을 수 없는 머리(P 짝 밖)는 판 메타데이터도 싣지 않는다.
       source: out.pinnable && out.readable ? { version: out.head.version, action: out.head.action, author: out.head.author,
+        authorName: CriticalResultService.sourceWriter(out.head, await withWriters(this.prisma, c)),
         at: out.head.at == null ? null : new Date(out.head.at).toISOString(), final: clinicianFinal(out.state.rs, out.head) } : null,
       recipients: out.recipients };
   }
@@ -917,8 +940,9 @@ export class CriticalResultService {
     const nextCursor = rows.length > CRITICAL_RESULT_PAGE ? encodeCursor(last.createdAt, last.id, access.revision) : null;
     if (sent) {
       const delivery = await this.deliveries(c, page.map(row => ({ row, head: CriticalResultService.headOf(row), state: CriticalResultService.stateOf(row) })));
+      const writers = await this.pinnedWriters(c, page);
       return criticalRead({ owner: this.owner(c), view: 'sent', items: page.map(row => senderView(row, CriticalResultService.headOf(row),
-        studyIdentity(row, row.ov), delivery.get(row.id) ?? null, row.replacedById ?? null)), nextCursor, pending }, page);
+        studyIdentity(row, row.ov), delivery.get(row.id) ?? null, row.replacedById ?? null, writers.get(row.id) ?? null)), nextCursor, pending }, page);
     }
     const items = page.map(row => {
       const head = CriticalResultService.headOf(row), state = CriticalResultService.stateOf(row);
@@ -965,7 +989,8 @@ export class CriticalResultService {
     if (!out.sender) return criticalRead({ owner: this.owner(c), item: out.item }, [out.row], true);
     const delivery = await this.deliveries(c, [{ row: out.row, head: out.head, state: out.state }]);
     return criticalRead({ owner: this.owner(c), item: {
-      ...senderView(out.row, out.head, studyIdentity(out.row, out.state.ov), delivery.get(out.row.id) ?? null, out.replacedBy),
+      ...senderView(out.row, out.head, studyIdentity(out.row, out.state.ov), delivery.get(out.row.id) ?? null, out.replacedBy,
+        (await this.pinnedWriters(c, [out.row])).get(out.row.id) ?? null),
       ...(out.dispatch ? { dispatch: out.dispatch } : {}) } }, [out.row], true);
   }
 
@@ -1004,8 +1029,9 @@ export class CriticalResultService {
     const sentRows = out.rows.filter(mine);
     const delivery = await this.deliveries(c, sentRows.map(row => ({ row, head: out.head, state: out.state })));
     const study = (row: any) => studyIdentity(row, out.state.ov);
+    const writers = await this.pinnedWriters(c, sentRows);
     const items = out.rows.map(row => {
-      if (mine(row)) return senderView(row, out.head, study(row), delivery.get(row.id) ?? null, row.replacedById ?? null);
+      if (mine(row)) return senderView(row, out.head, study(row), delivery.get(row.id) ?? null, row.replacedById ?? null, writers.get(row.id) ?? null);
       const kase = recipientCase({ cls, visible: true, pin: row.sourceVersion, head: out.head, state: out.state, actor: c.actor, sub: c.sub });
       const next = row.replacedById ? { id: row.replacedById, sourceVersion: row.replacedByVersion } : null;
       return recipientView(row, kase, study(row), { findings: row.pinFindings, conclusion: row.pinConclusion, recommendation: row.pinRecommendation },

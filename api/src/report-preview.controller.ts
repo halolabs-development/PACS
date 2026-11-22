@@ -1,3 +1,4 @@
+import { withWriters } from './member-rights';
 import { canReadPreliminary } from './preliminary-reader';
 import { StudyAccessService } from './study-access.service';
 import { BadRequestException, Controller, ForbiddenException, Get, Param, Query, Req } from '@nestjs/common';
@@ -87,7 +88,7 @@ export class ReportPreviewController {
       // The state table (report-visibility.ts): another physician's unsigned head keeps its text - the preview (study, key images)
       // still opens and its report part is empty and says why; one of their Save versions and my draft over their head are refused.
       const withheld=!query.draft&&query.version===undefined&&!!report&&reportBodyLock(state,(await withStoredExtras(tx,[{...report,uid}]))[0],caller)==='in-progress';
-      if(query.draft)assertHeadReadable(state,await headForLock(tx,uid,state),caller);
+      if(query.draft)assertHeadReadable(state,await headForLock(tx,uid,state),await withWriters(tx,caller));
       if(query.version!==undefined&&report&&!await storedVersionReadable(tx,uid,report,caller))throw inProgressRefusal(null);
       const scope=await resolveExamScope(tx,this.studyAccess,caller,{uid,purpose:report?'stored':'current',...(report?{record:report}:{}),prepared:before});
       if(query.generation!==undefined&&query.generation!==scope.generation)throw examScopeChanged();

@@ -176,13 +176,13 @@
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
         label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           // 서버가 하는 일 그대로: 점유만 풀린다(api/src/pacs/hold.ts forceRelease). 이름은 자료라 번역되지 않는 자리({0})로.
-          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", displayActor(s.holder)))) return;
+          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", writerName(s.holderName, s.holder)))) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null; s.holderMine = false;
-            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
+            s.holder = null; s.holderName = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderName: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");

@@ -23,11 +23,11 @@ import { ForbiddenException } from '@nestjs/common';
 import { canReadPreliminary } from './preliminary-reader';
 import { structureArray } from './report-structure';
 import { versionDrawings } from './image-report';
-import { sameAccount, shownActor } from './account-identity';
+import { sameAccount, shownActor, writerShown, type WriterDirectory } from './account-identity';
 
 export type ReportBodyLock = 'preliminary' | 'in-progress' | 'destroyed' | null;
 
-type Reader = { actor: string; sub?: string; roles?: readonly string[] };
+type Reader = { actor: string; sub?: string; roles?: readonly string[]; writers?: WriterDirectory };
 /**
  * The head as stored: its writer and text, and - where the caller read its version - storedExtras, whether that version
  * stored a structured item or a drawing (a head without text is judged by them).
@@ -80,15 +80,15 @@ export function reportBodyLock(state: any, head: Head, reader: Reader): ReportBo
 export const IN_PROGRESS_MESSAGE = '다른 판독의가 Save해 둔 진행 중 판독입니다. 그 판독의만 보고 이어 쓸 수 있습니다 — 이어 쓰려면 Reset으로 Unread로 되돌리세요';
 
 /** The refusal of a read or a write over another physician's unsigned text. Its words never say a version was saved. */
-export function inProgressRefusal(author: string | null): ForbiddenException {
-  return new ForbiddenException({ code: 'REPORT_IN_PROGRESS', savedBy: author, message: IN_PROGRESS_MESSAGE });
+export function inProgressRefusal(author: string | null, authorName: string | null = author): ForbiddenException {
+  return new ForbiddenException({ code: 'REPORT_IN_PROGRESS', savedBy: author, savedByName: authorName, message: IN_PROGRESS_MESSAGE });
 }
 
 /** Reads of the head's text (citations, structure, drawings, preview): refused while it is another physician's. */
 export function assertHeadReadable(state: any, head: Head, reader: Reader): void {
   if (reportBodyLock(state, head, reader) === 'in-progress') {
     const writer = unsignedAuthor(state, head);
-    throw inProgressRefusal(writer ? shownActor(writer.actor, writer.sub, reader) : null);
+    throw inProgressRefusal(writer ? shownActor(writer.actor, writer.sub, reader) : null, writer ? writerShown(writer.actor, writer.sub, reader) : null);
   }
 }
 

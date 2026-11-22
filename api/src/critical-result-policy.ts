@@ -25,7 +25,7 @@ export const CRITICAL_RESULT_TRANSITIONS: Readonly<Record<string, { from: string
 
 export type RecipientClass = 'clinician' | 'radiologist';
 export type Refusal = { status: 400 | 403 | 404 | 409 | 503; code: string; id?: string; replacedBy?: string };
-export type Head = { version: number; action: string | null; author?: string | null; authorSub?: string | null; at?: any; content?: boolean } | null;
+export type Head = { version: number; action: string | null; author?: string | null; authorSub?: string | null; authorName?: string | null; at?: any; content?: boolean } | null;
 type StudyReadState = { rs?: string | null; preDoc?: string | null; preReviewer?: string | null; preDocSub?: string | null; preReviewerSub?: string | null };
 type RecipientCase = {
   case: 'C2' | 'C3' | 'C4' | 'C5' | 'R2' | 'R3' | 'R4' | 'R5';
@@ -322,12 +322,14 @@ export function recipientView(record: any, kase: RecipientCase, study: Record<st
 }
 
 /** 발신자 투영(§3.3). 본문은 없다(발신자는 판독 화면에서 읽는다). delivery는 확인 대기 기록에만 값이 있다. */
-export function senderView(record: any, head: Head, study: Record<string, string>, delivery: string | null, replacedBy: string | null) {
+export function senderView(record: any, head: Head, study: Record<string, string>, delivery: string | null, replacedBy: string | null,
+  authorName: string | null = null) {
   const current = !!head && head.version > 0 && record.sourceVersion === head.version;
   return { ...base(record, replacedBy), supersedes: record.supersedesId ?? null, view: 'sender' as const,
     ...(record.sendOutcome ? { send: record.sendOutcome } : {}),
     recipient: { actor: record.recipientActor, name: record.recipientName, role: record.recipientRole }, study, message: record.message,
-    source: { version: record.sourceVersion, action: record.sourceAction, author: record.sourceAuthor, at: iso(record.sourceAt), current,
+    // authorName: the writer of the pinned version as the sender's screen shows it (critical-result.service.ts sourceWriter).
+    source: { version: record.sourceVersion, action: record.sourceAction, author: record.sourceAuthor, authorName, at: iso(record.sourceAt), current,
       reason: current ? null : head?.action === 'reset' ? 'reset' : 'head_moved' },
     delivery: record.state === 'created' ? delivery : null,
     acknowledgedAt: iso(record.acknowledgedAt), cancelledAt: iso(record.cancelledAt), cancelReason: record.cancelReason ?? null,

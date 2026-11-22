@@ -11,7 +11,7 @@ import type { NamedDrawings } from '../image-report';
 import { relatedInsertIdReused } from '../report-related-insert';
 import type { Caller } from './access';
 import { qcView } from './qc-flag';
-import { sameAccount, shownActor, PRIVATE_WRITER } from '../account-identity';
+import { sameAccount, shownActor, writerShown, PRIVATE_WRITER } from '../account-identity';
 import { draftRecordOf } from '../emr-viewing/consumer-read';
 
 /**
@@ -118,6 +118,21 @@ export function visibleHolder(s: any, caller: Caller): string | null {
 }
 
 /**
+ * The words a screen shows for the holder (account-identity.ts writerShown), under the same institution rule as visibleHolder:
+ * the holder's person by its account to the caller's institution (and to the holder), else the same withholding words.
+ */
+export function visibleHolderName(s: any, caller: Caller): string | null {
+  if (!s?.holder) return null;
+  if (sameAccount(s.holderSub, caller) || (caller.institution && s.holderInstitutionId === caller.institution))
+    return writerShown(s.holder, s.holderSub, caller);
+  return s.holderInstitutionId ? '다른 기관' : PRIVATE_WRITER;
+}
+
+/** The designated reader of a Preliminary as a sentence names it: its person (writerShown), else the generic words. */
+export const shownPreReviewer = (s: any, caller: Caller): string =>
+  (s?.preReviewer ? writerShown(s.preReviewer, s.preReviewerSub, caller) : null) ?? '지정된 판독의';
+
+/**
  * A holder as an audit record wrote it: named to the caller's institution, and to the caller when the record names the
  * caller's account (an older record names no account: then only the institution rule).
  */
@@ -164,10 +179,10 @@ export const visibleDraftSummary = (drafts: any[], caller: Caller) =>
 export const recordedDraftSummary = (drafts: any[], caller: Caller) => visibleDraftSummary(drafts, caller);
 
 export function reportHeld(s: any, caller: Caller): ConflictException {
-  const holder = visibleHolder(s, caller);
-  const writer = holder === '다른 기관' ? '다른 기관 판독의가'
-    : holder === '작성자 비공개' ? '비공개 작성자가' : `${holder} 님이`;
-  return new ConflictException({ code: 'REPORT_HELD', holder, message: `${writer} 판독 중입니다` });
+  const holder = visibleHolder(s, caller), holderName = visibleHolderName(s, caller);
+  const writer = holderName === '다른 기관' ? '다른 기관 판독의가'
+    : holderName === '작성자 비공개' ? '비공개 작성자가' : `${holderName} 님이`;
+  return new ConflictException({ code: 'REPORT_HELD', holder, holderName, message: `${writer} 판독 중입니다` });
 }
 
 /**
@@ -208,9 +223,11 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
   const hidden = bodyLock !== null;
   const unsigned = unsignedAuthor(s, head);
   const holding = !!holdAlive(s);
-  const saver = r?.updatedBy ? shownActor(r.updatedBy, r.updatedBySub, caller) : null;
-  const savedBy = bodyLock === 'in-progress' ? (unsigned ? shownActor(unsigned.actor, unsigned.sub, caller) : null)
-    : !hidden && r && storedContent({ ...r, storedExtras: head?.storedExtras }) ? saver : null;
+  // Who saved the text this answer speaks of: the unsigned head's writer under another physician's lock, else the head's writer
+  // when its text is the caller's to read. `savedBy` keeps the login contract; `savedByName` is the person a screen shows.
+  const saved = bodyLock === 'in-progress' ? unsigned
+    : !hidden && r?.updatedBy && storedContent({ ...r, storedExtras: head?.storedExtras }) ? { actor: r.updatedBy as string, sub: r.updatedBySub ?? null } : null;
+  const savedBy = saved ? shownActor(saved.actor, saved.sub, caller) : null;
   return {
     rs: s.rs, ss: s.ss, em: s.em, ts: s.ts,
     matched: s.matched, ward: s.ward, reqHosp: s.reqHosp,
@@ -230,6 +247,9 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
      * 비움도 값이다. 값이 사라졌다는 것도 전송해야 한다.
      */
     preDoc: s.preDoc ?? null, preReviewer: s.preReviewer ?? null,
+    // The person each is, as a screen shows it (account-identity.ts writerShown) - by its account, never its login looked up again.
+    preDocName: s.preDoc ? writerShown(s.preDoc, s.preDocSub, caller) : null,
+    preReviewerName: s.preReviewer ? writerShown(s.preReviewer, s.preReviewerSub, caller) : null,
     // 화면이 "왜 비어 있는지" 말할 수 있어야 한다. 빈 판독문과 가려진 판독문은 다르다.
     prelimHidden: hidden,
     bodyLock,
@@ -251,13 +271,15 @@ export function toClient(s: any, r: any, caller: Caller, d: any = null, head: an
     // 키가 사라지면 클라이언트의 `{...기존, ...응답}` 이 이전 점유자를 그대로 남긴다.
     // "값을 비웠다"는 사실도 전송되어야 한다.
     holder: holding ? visibleHolder(s, caller) : null,
+    holderName: holding ? visibleHolderName(s, caller) : null,
     holderMine: holding && sameAccount(s.holderSub, caller),
     holdReason: s.holdReason ?? null,
     version: r?.version ?? 0,
     // 머리 판의 글을 확정한 사람(본문이 있을 때만). 그 판의 작성자로 이력에 이미 보이는 사실이다 — 화면이 "남이 Save해 둔
     // 진행 중 판독"을 알아 되돌리기(FC-040)를 연다.
     // Another physician's unsigned text: its writer is said ("In Progress by ...") while the text stays with them.
-    savedBy, savedByMine: !!savedBy && sameAccount(bodyLock === 'in-progress' ? unsigned?.sub : r?.updatedBySub, caller),
+    savedBy, savedByName: saved ? writerShown(saved.actor, saved.sub, caller) : null,
+    savedByMine: !!savedBy && sameAccount(bodyLock === 'in-progress' ? unsigned?.sub : r?.updatedBySub, caller),
     findings: hidden ? '' : (r?.findings ?? ''),
     conclusion: hidden ? '' : (r?.conclusion ?? ''),
     recommendation: hidden ? '' : (r?.recommendation ?? ''),

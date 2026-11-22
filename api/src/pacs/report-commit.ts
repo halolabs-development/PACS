@@ -13,7 +13,7 @@ import { ContractError } from '../emr-contract/validation';
 import type { KeycloakService } from '../keycloak.service';
 import { applyKeepList, citationArray, citationUnion } from '../report-citation';
 import { applyStructureKeepList, commitStructureSelection, structureArray, structureUnion } from '../report-structure';
-import { holdAlive, reportHeld, visibleHolder, toClient, draftOwner, draftExpected, draftEnvelope, amendUntil, draftDrawingIds, drawingsConflict } from './values';
+import { holdAlive, reportHeld, visibleHolder, visibleHolderName, shownPreReviewer, toClient, draftOwner, draftExpected, draftEnvelope, amendUntil, draftDrawingIds, drawingsConflict } from './values';
 import { draftDrawings, drawingEntries, effectiveDrawingIds, namesDraftDrawings, namesEffectiveDrawings, versionDrawings, DRAWING_LIMITS } from '../image-report';
 import { need, inst } from './access';
 import type { Caller } from './access';
@@ -22,7 +22,7 @@ import type { PacsReportEvidence } from './report-evidence';
 import type { PacsReportDraft, DraftRequestFacts, EndedWork } from './report-draft';
 import { resolveExamScope, examScopeChanged } from '../exam-merge.service';
 import { nativeReportScope } from '../emr-report/native-snapshot';
-import { sameAccount, shownActor, draftOf, PRIVATE_WRITER } from '../owner-identity';
+import { sameAccount, shownActor, writerShown, draftOf, PRIVATE_WRITER } from '../owner-identity';
 
 /**
  * The approved head a stale-draft answer shows names its writer by the name that head version was written under
@@ -82,6 +82,8 @@ export class PacsReportCommit {
    */
   async commitReport(uid: string, body: any, c: Caller, session: string | null, facts: DraftRequestFacts) {
     need(c.roles, 'radiologist', '판독문 확정');
+    // Who saved, holds or is designated is said by the account (account-identity.ts writerShown): draftTransaction puts the
+    // institution's members on the caller before its first read.
     const me = inst(c);
     const action = body?.action;
     if (!['save', 'approve', 'amend', 'addendum', 'reset', 'preliminary', 'defer'].includes(action))
@@ -156,7 +158,7 @@ export class PacsReportCommit {
     // 읽기만 막고 쓰기를 열어두면, 내용을 못 본 채로 덮어쓸 수 있다 — 더 나쁘다.
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 이어서 판독할 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 이어서 판독할 수 있습니다.`);
 
     // Addendum은 승인된 판독에만 붙는다. 승인 전이라면 그냥 고쳐 쓰면 되기 때문.
     if (action === 'addendum' && prev?.rs !== 'A')
@@ -253,7 +255,7 @@ export class PacsReportCommit {
     // 예비 판독을 쓴 사람이 스스로 승인하면 감독이라는 절차 자체가 없어진다.
     if (action === 'approve' && prev?.rs === 'P' && !designationMatches(prev.preReviewerSub, c))
       throw new ForbiddenException(
-        `예비 판독의 최종 승인은 지정된 상급 판독의(${prev.preReviewer})만 할 수 있습니다`);
+        `예비 판독의 최종 승인은 지정된 상급 판독의(${shownPreReviewer(prev, c)})만 할 수 있습니다`);
 
     let rs = { save: 'T', approve: 'A', amend: 'A', addendum: 'A', reset: 'W', preliminary: 'P', defer: 'H' }[action as string];
 
@@ -397,7 +399,7 @@ export class PacsReportCommit {
           const mine = !!cur?.updatedBy && sameAccount(cur.updatedBySub, c);
           throw new ConflictException({ code: 'REPORT_VERSION_CONFLICT',
             message: mine ? `다른 창에서 이 계정으로 v${cur.version}을 저장했습니다. 이 창의 글은 그대로 있습니다.`
-              : `그 사이 ${cur?.updatedBy ? shownActor(cur.updatedBy, cur.updatedBySub, c) : '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
+              : `그 사이 ${(cur?.updatedBy ? writerShown(cur.updatedBy, cur.updatedBySub, c) : null) ?? '다른 사용자'}가 v${cur?.version}을 저장했습니다. ` +
                 `내용을 다시 불러온 뒤 작성해 주세요.`,
             head: { version: cur?.version ?? 0, mine } });
         }
@@ -515,7 +517,8 @@ export class PacsReportCommit {
          * (있는지만 본다 — 같은 부모 잠금 아래라 이 읽기와 그 사람의 초안 쓰기는 엇갈리지 않는다), 남이 Save해 둔 글은
          * 위의 `discarded` 판에 더해 그 글을 쓴 사람의 개인 초안으로 옮긴다(그 사람에게 살아 있는 초안이 없을 때만).
          */
-        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean; sameWriter?: true } | null = null;
+        let released: { holder: string | null; holderDraft: boolean; savedBy: string | null; savedKept: boolean; sameWriter?: true;
+        holderName: string | null; savedByName: string | null } | null = null;
         if (takeover) {
           const holderDraft = !!heldByOther && !!(await draftOf(tx, uid, { sub: prev.holderSub }, { present: true }))?.present;
           // Only saved text moves into the writer's draft; a Save of drawings alone has none to move - its drawings stay with
@@ -528,7 +531,11 @@ export class PacsReportCommit {
           const sameWriter = !!(savedByOther && heldByOther && sameAccount(early.updatedBySub, { sub: prev.holderSub }));
           const savedName = !savedByOther ? null : sameWriter
             ? takeover.holder : shownActor(savedByOther, early.updatedBySub, c);
-          released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept, ...(sameWriter ? { sameWriter: true as const } : {}) };
+          // The notice names each by its own account (writerShown); the reason and the audit above keep what they recorded.
+          const holderName = heldByOther ? visibleHolderName(prev, c) : null;
+          const savedByName = !savedByOther ? null : sameWriter ? holderName : writerShown(savedByOther, early.updatedBySub, c);
+          released = { holder: takeover.holder, holderDraft, savedBy: savedName, savedKept, ...(sameWriter ? { sameWriter: true as const } : {}),
+            holderName, savedByName };
         }
 
         // Reading request (pacs/reading-request.ts): this approval closes the open request of this row (judged on its locked row)

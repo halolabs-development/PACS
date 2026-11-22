@@ -12,6 +12,8 @@ import type { EmrRecordWork } from '../emr-runtime/record-port';
 import { REQUEST_CONTEXT_SOURCE, RequestContextSource, RequestFacts } from '../emr-runtime/request-context';
 import { Caller, PacsAccess } from '../pacs/access';
 import { canReadPreliminary } from '../preliminary-reader';
+import { shownPreReviewer } from '../pacs/values';
+import { withWriters } from '../member-rights';
 import { PrismaService } from '../prisma.service';
 import { StudyAccessService } from '../study-access.service';
 import { LOCAL_READ_UNAVAILABLE } from './response-lifecycle';
@@ -100,7 +102,7 @@ export class ReportObservationService {
     if (!state) throw new NotFoundException('검사를 찾을 수 없습니다');
     studies.assertUnsplitSource(c, uid);
     if (!canReadPreliminary(state, c))
-      throw new ForbiddenException(`예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+      throw new ForbiddenException(`예비 판독(RS: P) 중입니다. ${shownPreReviewer(state, await withWriters(this.modules.get(PrismaService, { strict: false }), c))}만 볼 수 있습니다.`);
   }
 
   /** The original provide-prepared, read back from B2 and bound to this member, institution, session and study. */

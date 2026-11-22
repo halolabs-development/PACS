@@ -366,7 +366,9 @@ class CvrServer:
         if uid not in self.heads:
             return 404, {"code": "STUDY_NOT_FOUND", "message": "SYN study not found"}
         head, reason = self.heads[uid], self.reasons.get(uid)
-        source = None if reason in ("NO_PINNABLE_SOURCE", "SOURCE_FORBIDDEN") else {**head, "final": head["action"] in ("approve", "addendum")}
+        # authorName: the source version's writer as the server names it (by its account / its signed name); shown as is.
+        source = None if reason in ("NO_PINNABLE_SOURCE", "SOURCE_FORBIDDEN") else {**head, "authorName": NAMES.get(head["author"], head["author"]),
+                                                                         "final": head["action"] in ("approve", "addendum")}
         people = [] if reason else self.candidates.get(uid, [])
         answer = {"owner": self.owner, "uid": uid, "sendable": reason is None and bool(people), "reason": reason or (None if people else "NO_ELIGIBLE_RECIPIENT"),
                   "source": source, "recipients": [{k: p[k] for k in ("sub", "actor", "name", "role")} for p in people]}
@@ -391,7 +393,7 @@ class CvrServer:
                   "study": {"uid": uid, "name": row["name"], "id": row["id"], "birth": row["birth"], "date": row["date"]},
                   "message": extra.pop("message", "SYN message"),
                   "source": {"version": head["version"] if current else head["version"] - 1, "action": head["action"],
-                             "author": head["author"], "at": head["at"]},
+                             "author": head["author"], "authorName": NAMES.get(head["author"], head["author"]), "at": head["at"]},
                   "delivery": delivery, "acknowledgedAt": None, "cancelledAt": None, "cancelReason": None, "supersededAt": None}
         record.update(extra)
         self.records[rid] = record

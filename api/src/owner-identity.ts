@@ -13,7 +13,7 @@
 import type { Prisma } from '@prisma/client';
 import { ForbiddenException } from '@nestjs/common';
 import type { Account } from './account-identity';
-export { sameAccount, shownActor, PRIVATE_WRITER } from './account-identity';
+export { sameAccount, shownActor, writerShown, PRIVATE_WRITER } from './account-identity';
 
 /** The caller's own draft row of a study (by its account), or null. Reads only; `lockedDraftOf` reads it locked. */
 export function draftOf(db: any, uid: string, caller: Account, select?: Record<string, boolean>) {

@@ -248,7 +248,7 @@
       const lockSay = locked && typeof reportLockSay === "function" ? reportLockSay(r) : lockWhy;
       const ph = !locked ? ""
         : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockSay
-        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"));
+        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", (r.preReviewer ? writerName(r.preReviewerName, r.preReviewer) : "") || kinSay("지정된 판독의"));
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
@@ -392,8 +392,8 @@
       const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
         : holder && target.holderMine ? "✎ Held by you"
-        : holder ? `✎ Held by ${displayActor(holder)}`
-        : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
+        : holder ? `✎ Held by ${writerName(target.holderName, holder)}`
+        : savedByOther ? `✎ In Progress by ${writerName(state.savedByName, savedByOther)}`
         : "Opened by you";
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.

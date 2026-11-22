@@ -39,8 +39,8 @@
         const r = await api("POST", `/studies/${encodeURIComponent(uid)}/hold`, undefined, undefined, at);
         if (!work.admits(at)) return;
         const s = studies.find(x => x.uid === uid);
-        if (s) { s.holder = r.holder; s.holderMine = r.mine === true; }
-        appState[uid] = { ...appState[uid], holder: r.holder, holderMine: r.mine === true };
+        if (s) { s.holder = r.holder; s.holderName = r.holderName ?? null; s.holderMine = r.mine === true; }
+        appState[uid] = { ...appState[uid], holder: r.holder, holderName: r.holderName ?? null, holderMine: r.mine === true };
         render();
         if (uid === selectedUid) { updateReportButtons(); loadReport(); }
 
@@ -49,8 +49,9 @@
           holdBlocked = { uid, at: Date.now() };
           if (warnedFor !== uid) {
             warnedFor = uid;
-            const writer = r.holder === '다른 기관' ? '다른 기관 판독의가'
-              : r.holder === '작성자 비공개' ? '비공개 작성자가' : `${displayActor(r.holder)} 님이`;
+            const named = writerName(r.holderName, r.holder);
+            const writer = named === '다른 기관' ? '다른 기관 판독의가'
+              : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
             toast(`${writer} 먼저 판독을 시작했습니다 — 잠금이 풀리면 이어서 할 수 있습니다`, "err");
           }
           return;
@@ -70,9 +71,9 @@
         if (uid !== selectedUid) {
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release`, undefined, undefined, at); } catch (e) {}
           work.commit(at, () => {
-            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderMine: false });
+            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderName: null, holderMine: false });
             const s2 = studies.find(x => x.uid === uid);
-            if (s2) Object.assign(s2, { holder: null, holderMine: false });
+            if (s2) Object.assign(s2, { holder: null, holderName: null, holderMine: false });
             render();
           });
           return;
@@ -102,10 +103,10 @@
       if (!r?.lost || heldUid !== uid || generation !== holdGeneration) return;
       heldUid = null; holdGeneration++;
       clearInterval(heartbeat); heartbeat = null;
-      const holder = r.holder ?? null;
+      const holder = r.holder ?? null, holderName = r.holderName ?? null;
       const s = studies.find(x => x.uid === uid);
-      if (s) { s.holder = holder; s.holderMine = false; }
-      appState[uid] = { ...appState[uid], holder, holderMine: false };
+      if (s) { s.holder = holder; s.holderName = holderName; s.holderMine = false; }
+      appState[uid] = { ...appState[uid], holder, holderName, holderMine: false };
       render();
       if (uid === selectedUid) updateReportButtons();
       toast("이 검사의 판독 점유가 풀렸습니다 — 이어 쓰면 다시 판독을 시작합니다.", "err");
@@ -117,8 +118,8 @@
       heldUid = null;
       clearInterval(heartbeat); heartbeat = null;
       const s = studies.find(x => x.uid === uid);
-      if (s) Object.assign(s, { holder: undefined, holderMine: false });
-      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderMine: false });
+      if (s) Object.assign(s, { holder: undefined, holderName: undefined, holderMine: false });
+      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderName: undefined, holderMine: false });
       // 세션을 끝내는 중의 해제(auth.js가 종료 기록·통지 뒤, 로그아웃 POST 앞에 부른다)는 업무가 아니라 그 종료의 일부다:
       // 닫힌 문서의 수명주기 문맥으로, 끝나는 그 세션의 식별값을 실어 나간다. 그 밖에는 평소의 업무 요청이다.
       const at = work.capture(closing ? "lifecycle" : "document");

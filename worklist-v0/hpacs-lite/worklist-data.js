@@ -72,9 +72,13 @@
       s.reqHosp = s.institutionName ? s.reqHosp : (a.reqHosp ?? s.reqHosp ?? "KIN");
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
+      // The person each is, as the server names it (writerName) - the list never looks a login up again.
+      s.preDocName = a.preDocName ?? null;
+      s.preReviewerName = a.preReviewerName ?? null;
       s.prelimHidden = a.prelimHidden;
       s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
+      s.holderName = a.holderName ?? null;
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
       // above always stay as the server sent them, whatever a stored overlay carries.
@@ -806,7 +810,8 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
+      return heldByOther(s) ? writerName(s.holderName, s.holder)
+        : savedBy && !appState[s.uid].savedByMine ? writerName(appState[s.uid].savedByName, savedBy) : null;
     }
     function updateReportButtons() {
       const s = cur();
@@ -814,7 +819,7 @@
       const filming = s?.ss === "Unverified" && s?.em !== "E";
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
-      const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
+      const heldTitle = `${writerName(s?.holderName, held)} 님이 판독 중입니다`;
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
@@ -847,7 +852,7 @@
       const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
-        $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
+        $("#b-unread").title = `${takeover} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
           "(쓰던 글은 지우지 않습니다 — 개인 임시글 또는 이력에 남습니다)";
       }
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.

@@ -25,6 +25,14 @@
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
     }
     /**
+     * Who saved, holds or wrote something, as the server names that person for this reader (<field>Name: by the record's account -
+     * api/src/account-identity.ts writerShown): as is, never looked up again by a login (a login that moved to another member would
+     * name them). An answer without the name shows the login as is.
+     */
+    function writerName(name, login) {
+      return typeof name === "string" && name ? name : String(login ?? "");
+    }
+    /**
      * Who signed a report version: the member name the server sent with it (authorName, the name it was signed under), else
      * the login the version stored, as is - never a name looked up now (a rename after signing does not change it).
      */
@@ -47,7 +55,7 @@
       if (!a?.prelimHidden) return "";
       if (a.bodyLock === "destroyed") return kinSay("보존 기간이 끝나 판독문을 파기한 검사입니다");
       if (a.bodyLock === "in-progress")
-        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", displayActor(a.savedBy) || kinSay("다른 판독의"));
+        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", writerName(a.savedByName, a.savedBy) || kinSay("다른 판독의"));
       return kinSay("다른 판독의의 예비 판독(RS: P)입니다");
     }
     function tagv(st, key) {
@@ -199,7 +207,7 @@
         const j = answer.body || {};
         if (answer.status === 409 && j.code === "REPORT_HELD") {
           const uid = decodeURIComponent(path.split("/")[2]);
-          work.commit(at, () => noteHeld(uid, j.holder));
+          work.commit(at, () => noteHeld(uid, j.holder, j.holderName ?? null));
         }
         // 본문을 버리지 않는다. 거절이 "무엇을 확인해야 하는가"를 함께 보낼 때
         // (승인본 판 번호와 그 본문 같은 것) 메시지 한 줄만 남기면 화면은 사용자에게
@@ -1061,9 +1069,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: writerName(s.holderName, s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? writerName(appState[s.uid]?.savedByName, saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -1102,13 +1110,13 @@
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
       desc: s => esc(shownStudyDesc(s)),
-      preDoc: s => esc(displayActor(s.preDoc)),
-      preReviewer: s => esc(displayActor(s.preReviewer)),
+      preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
+      preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
         const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
+          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(writerName(s.holderName, s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(writerName(s.holderName, s.holder))}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
         return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },
@@ -1579,9 +1587,13 @@
       s.reqHosp = s.institutionName ? s.reqHosp : (a.reqHosp ?? s.reqHosp ?? "KIN");
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
+      // The person each is, as the server names it (writerName) - the list never looks a login up again.
+      s.preDocName = a.preDocName ?? null;
+      s.preReviewerName = a.preReviewerName ?? null;
       s.prelimHidden = a.prelimHidden;
       s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
+      s.holderName = a.holderName ?? null;
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
       // above always stay as the server sent them, whatever a stored overlay carries.
@@ -2313,7 +2325,8 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
+      return heldByOther(s) ? writerName(s.holderName, s.holder)
+        : savedBy && !appState[s.uid].savedByMine ? writerName(appState[s.uid].savedByName, savedBy) : null;
     }
     function updateReportButtons() {
       const s = cur();
@@ -2321,7 +2334,7 @@
       const filming = s?.ss === "Unverified" && s?.em !== "E";
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
-      const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
+      const heldTitle = `${writerName(s?.holderName, held)} 님이 판독 중입니다`;
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
@@ -2354,7 +2367,7 @@
       const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
-        $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
+        $("#b-unread").title = `${takeover} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
           "(쓰던 글은 지우지 않습니다 — 개인 임시글 또는 이력에 남습니다)";
       }
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
@@ -3221,8 +3234,8 @@
       // same-ID Retry; the Notice speaks for that operation (its own action), and no ordinary write is sent for its text.
       const related = relatedInsertPending(uid);
       if (related) return { status: related.state === "refused" ? "refused" : "unknown", reason: RELATED_PENDING_REASON };
-      const held = heldByOther(studies.find(s => s.uid === uid));
-      if (held) return { status: "refused", reason: `${displayActor(held)} 님이 판독 중입니다` };
+      const row = studies.find(s => s.uid === uid), held = heldByOther(row);
+      if (held) return { status: "refused", reason: `${writerName(row.holderName, held)} 님이 판독 중입니다` };
       return null;
     }
 
@@ -6471,7 +6484,7 @@
       const lockSay = locked && typeof reportLockSay === "function" ? reportLockSay(r) : lockWhy;
       const ph = !locked ? ""
         : r.bodyLock === "in-progress" || r.bodyLock === "destroyed" ? lockSay
-        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", displayActor(r.preReviewer) || kinSay("지정된 판독의"));
+        : kinSay("{0} 님이 최종 판독 중입니다 (RS: P) — 내용은 지정된 판독의만 볼 수 있습니다", (r.preReviewer ? writerName(r.preReviewerName, r.preReviewer) : "") || kinSay("지정된 판독의"));
       for (const [sel, base] of [["#findings", "Please enter findings"],
                                  ["#conclusion", "Please enter conclusion"],
                                  ["#recommendation", "Please enter recommendation"]]) {
@@ -6615,8 +6628,8 @@
       const savedByOther = !holder && state?.bodyLock === "in-progress" && state.savedBy ? state.savedBy : null;
       const own = !target ? ""
         : holder && target.holderMine ? "✎ Held by you"
-        : holder ? `✎ Held by ${displayActor(holder)}`
-        : savedByOther ? `✎ In Progress by ${displayActor(savedByOther)}`
+        : holder ? `✎ Held by ${writerName(target.holderName, holder)}`
+        : savedByOther ? `✎ In Progress by ${writerName(state.savedByName, savedByOther)}`
         : "Opened by you";
       line.textContent = [own, others].filter(Boolean).join(" · ");
       // The head can wrap in a narrow column; keep presence updates within their reserved space so typing stays put.
@@ -8090,14 +8103,15 @@
       onWrite: uid => reportConverge.add(uid) });
 
     /** 점유 거절(REPORT_HELD): 누가 잡고 있는지 화면에 반영하고 그 검사에 한 번만 알린다. */
-    function noteHeld(uid, holder) {
-      appState[uid] = { ...appState[uid], holder, holderMine: false };
+    function noteHeld(uid, holder, holderName = null) {
+      appState[uid] = { ...appState[uid], holder, holderName, holderMine: false };
       syncStudy(uid);
       if (uid === selectedUid) { updateReportButtons(); loadReport(); }
       if (warnedFor !== uid) {
         warnedFor = uid;
-        const writer = holder === '다른 기관' ? '다른 기관 판독의가'
-          : holder === '작성자 비공개' ? '비공개 작성자가' : `${displayActor(holder)} 님이`;
+        const named = writerName(holderName, holder);
+        const writer = named === '다른 기관' ? '다른 기관 판독의가'
+          : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
         toast(`${writer} 판독 중입니다 — 저장되지 않았습니다`, "err");
       }
     }
@@ -8124,7 +8138,7 @@
       work.commit(at, () => {
         if (converge) reportConverge.add(uid);
         if (result.outcome === "conflict") { openDraftConflict(uid); return; }
-        if (result.code === "REPORT_HELD") { noteHeld(uid, result.answer?.body?.holder); return; }
+        if (result.code === "REPORT_HELD") { noteHeld(uid, result.answer?.body?.holder, result.answer?.body?.holderName ?? null); return; }
         if (uid === selectedUid) renderDraftBar();
         if (quiet) return;
         // 버리기의 실패는 저장의 실패가 아니다 — 무엇이 되지 않았는지를 그대로 말한다. 화면의 글은 어느 쪽이든 그대로다.
@@ -9579,16 +9593,16 @@
       const parts = [];
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
       if (r.holder && r.holderDraft && !r.sameWriter) {
-        const who = displayActor(r.holder);
+        const who = writerName(r.holderName, r.holder);
         parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
       }
       if (r.savedBy) {
-        const who = displayActor(r.savedBy);
+        const who = writerName(r.savedByName, r.savedBy);
         parts.push(r.savedKept ? `${who} 선생님이 저장해 둔 글은 ${who} 선생님의 개인 임시글로 옮겼습니다.`
           : `${who} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.`);
       }
       return parts.length ? parts.join(" ") + " 판독 상태를 Unread로 되돌렸습니다."
-        : `${displayActor(r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
+        : `${writerName(r.holderName, r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
     }
 
     /** 받아들여진 확정의 완료 안내. `lateText`는 그 확정이 싣지 않은, 누른 뒤에 친 글이 남았다는 뜻이다. */
@@ -9884,7 +9898,7 @@
             }
             // 작성자 대조의 거절을 포함해, 서버가 이유를 대고 받지 않은 확정이다. 아무것도 바뀌지 않았다.
             const refused = result.answer?.body || {};
-            if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder);
+            if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder, refused.holderName ?? null);
             throw Object.assign(new Error(draftFailureText(result)), { code: result.code ?? refused.code, status: result.answer?.status, body: refused });
           }
           heldUid = null; clearInterval(heartbeat); heartbeat = null;   // 확정하면 서버가 점유를 푼다
@@ -10144,7 +10158,7 @@
         designated: a.rs === "P" && !a.prelimHidden,
         texts: Object.fromEntries(RFIELDS.map(k => [k, String(a[k] ?? "")])),
         draft: !a.prelimHidden && !!a.draft,
-        holder: holder ? (holder === "다른 기관" || holder === "작성자 비공개" ? holder : displayActor(holder)) : null,
+        holder: holder ? writerName(a.holderName, holder) : null,
         // 이 문서에 서버가 확인하지 않은 글·나가 있는 초안 명령·결과를 모르는 확정·확정되지 않은 Related 삽입이 있다.
         unconfirmed: reportConverge.has(uid) || draftClient.busy(uid) || draftClient.uncertain(uid) || !!draftClient.conflict(uid)
           || reportUnknownCommits.has(uid) || relatedInsertPending(uid) || (uid === selectedUid && reportDirty()),
@@ -10219,7 +10233,7 @@
       if (result.outcome === "unknown") return { status: "unknown", sentAt, seq };
       if (result.outcome === "unsent" || result.outcome === "auth") return { status: "stopped" };
       const refused = result.answer?.body || {};
-      if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder);
+      if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder, refused.holderName ?? null);
       return { status: "failed", reason: draftFailureText(result), code: result.code ?? refused.code ?? null };
     }
     /**
@@ -10445,10 +10459,10 @@
       const s = studies.find(x => x.uid === uid);
       const a = appState[uid];
       if (!s || !a) return;
-      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderMine", "version", "repDoc", "confirm",
-                        "preDoc", "preReviewer", "prelimHidden", "holdReason"])
+      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderName", "holderMine", "version", "repDoc", "confirm",
+                        "preDoc", "preReviewer", "preDocName", "preReviewerName", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
-      if (a.holder === null || a.holder === undefined) s.holder = a.holder;
+      if (a.holder === null || a.holder === undefined) { s.holder = a.holder; s.holderName = a.holderName ?? null; }
       // Read Req: an approved row has no open reading request - the approval closed it in its own commit and a request is
       // never made on an approved report (api/src/pacs/reading-request.ts) - so the mark leaves with the approval, at once.
       if (s.rs === "A") Object.assign(s, { readReq: "", readReqBy: "" });
@@ -10502,8 +10516,8 @@
         const r = await api("POST", `/studies/${encodeURIComponent(uid)}/hold`, undefined, undefined, at);
         if (!work.admits(at)) return;
         const s = studies.find(x => x.uid === uid);
-        if (s) { s.holder = r.holder; s.holderMine = r.mine === true; }
-        appState[uid] = { ...appState[uid], holder: r.holder, holderMine: r.mine === true };
+        if (s) { s.holder = r.holder; s.holderName = r.holderName ?? null; s.holderMine = r.mine === true; }
+        appState[uid] = { ...appState[uid], holder: r.holder, holderName: r.holderName ?? null, holderMine: r.mine === true };
         render();
         if (uid === selectedUid) { updateReportButtons(); loadReport(); }
 
@@ -10512,8 +10526,9 @@
           holdBlocked = { uid, at: Date.now() };
           if (warnedFor !== uid) {
             warnedFor = uid;
-            const writer = r.holder === '다른 기관' ? '다른 기관 판독의가'
-              : r.holder === '작성자 비공개' ? '비공개 작성자가' : `${displayActor(r.holder)} 님이`;
+            const named = writerName(r.holderName, r.holder);
+            const writer = named === '다른 기관' ? '다른 기관 판독의가'
+              : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
             toast(`${writer} 먼저 판독을 시작했습니다 — 잠금이 풀리면 이어서 할 수 있습니다`, "err");
           }
           return;
@@ -10533,9 +10548,9 @@
         if (uid !== selectedUid) {
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release`, undefined, undefined, at); } catch (e) {}
           work.commit(at, () => {
-            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderMine: false });
+            if (appState[uid]) Object.assign(appState[uid], { holder: null, holderName: null, holderMine: false });
             const s2 = studies.find(x => x.uid === uid);
-            if (s2) Object.assign(s2, { holder: null, holderMine: false });
+            if (s2) Object.assign(s2, { holder: null, holderName: null, holderMine: false });
             render();
           });
           return;
@@ -10565,10 +10580,10 @@
       if (!r?.lost || heldUid !== uid || generation !== holdGeneration) return;
       heldUid = null; holdGeneration++;
       clearInterval(heartbeat); heartbeat = null;
-      const holder = r.holder ?? null;
+      const holder = r.holder ?? null, holderName = r.holderName ?? null;
       const s = studies.find(x => x.uid === uid);
-      if (s) { s.holder = holder; s.holderMine = false; }
-      appState[uid] = { ...appState[uid], holder, holderMine: false };
+      if (s) { s.holder = holder; s.holderName = holderName; s.holderMine = false; }
+      appState[uid] = { ...appState[uid], holder, holderName, holderMine: false };
       render();
       if (uid === selectedUid) updateReportButtons();
       toast("이 검사의 판독 점유가 풀렸습니다 — 이어 쓰면 다시 판독을 시작합니다.", "err");
@@ -10580,8 +10595,8 @@
       heldUid = null;
       clearInterval(heartbeat); heartbeat = null;
       const s = studies.find(x => x.uid === uid);
-      if (s) Object.assign(s, { holder: undefined, holderMine: false });
-      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderMine: false });
+      if (s) Object.assign(s, { holder: undefined, holderName: undefined, holderMine: false });
+      if (appState[uid]) Object.assign(appState[uid], { holder: undefined, holderName: undefined, holderMine: false });
       // 세션을 끝내는 중의 해제(auth.js가 종료 기록·통지 뒤, 로그아웃 POST 앞에 부른다)는 업무가 아니라 그 종료의 일부다:
       // 닫힌 문서의 수명주기 문맥으로, 끝나는 그 세션의 식별값을 실어 나간다. 그 밖에는 평소의 업무 요청이다.
       const at = work.capture(closing ? "lifecycle" : "document");
@@ -16952,13 +16967,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const forceReleaseItems = KinAuth.has("admin") && s?.holder ? [{
         label: kinSay("점유 강제 해제 (관리자)"), dis: s.holderMine === true, act: async () => {
           // 서버가 하는 일 그대로: 점유만 풀린다(api/src/pacs/hold.ts forceRelease). 이름은 자료라 번역되지 않는 자리({0})로.
-          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", displayActor(s.holder)))) return;
+          if (!confirm(kinSay("{0} 님의 점유를 강제로 해제할까요? 저장된 초안은 그대로 남고, 해제 내역은 감사로그에 기록됩니다. 다른 사람이 먼저 점유하지 않으면 그분은 이어서 저장할 수 있습니다.", writerName(s.holderName, s.holder)))) return;
           const at = work.capture("document");
           try { await api("POST", `/studies/${encodeURIComponent(uid)}/release/force`, undefined, undefined, at); }
           catch (e) { work.commit(at, () => apiFail(e)); return; }
           work.commit(at, () => {
-            s.holder = null; s.holderMine = false;
-            appState[uid] = { ...appState[uid], holder: null, holderMine: false };
+            s.holder = null; s.holderName = null; s.holderMine = false;
+            appState[uid] = { ...appState[uid], holder: null, holderName: null, holderMine: false };
             render();
             if (uid === selectedUid) { updateReportButtons(); loadReport(); }
             toast("점유를 해제했습니다 (감사로그 기록)");
