@@ -2420,9 +2420,16 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             self.release(self.held_items.pop()[1], self.clinician_page(VA, None)['json'])
             seen = self.wait_panel('ready', VA)
             self.assertEqual(('unmatched', a_labels, []), (seen['frame'], [row[2] for row in seen['rows']], self.page.evaluate('synDrawn()')))
+            before = self.probes()
             self.frameless(False)
             self.wait_until(lambda: self.page.evaluate('synDrawn()') == a_drawn, 'the final mark drawn with the frame back')
             self.assertIsNone(self.panel()['frame'])
+            # The frame's return checks the list again (test_12). That check is this clinician-only document's own: it is
+            # answered before the next step makes the account a writer, so the harness judges its read by the account it was
+            # sent for.
+            self.wait_until(lambda: self.probes() > before, "the check on the frame's return")
+            self.settle()
+            self.assertEqual((a_labels, a_drawn), (self.labels(), self.page.evaluate('synDrawn()')))
         with self.subTest(step='d: a-b-a'):
             self.writer_open(hold={(VA, 'first')})
             self.wait_until(lambda: len(self.held_writer) == 1, "A's first author page held")
