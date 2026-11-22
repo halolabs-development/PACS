@@ -1577,6 +1577,30 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.assertEqual(("open", False), (self.reading()["state"], self.reading()["button"]))
         self.assertEqual(1, len(self.readings))
 
+    def test_b19_on_an_english_page_the_reading_request_reads_in_english(self):
+        """The same states on a page that follows the English chosen on the work page: the page's sentences read in
+        English; the time and who asked stay as the server sent them."""
+        self.fresh_context("localStorage.setItem('kin-language:v1', JSON.stringify("
+                           "{version: 1, worklist: 'en', reading: 'en', session: 'SYN-SESSION-SYN-CLIN-SUB'}))")
+        self.reading_rows()
+        self.open_home()
+        self.pick(5, "status")
+        self.assertIn("This study has no reading request.", self.reading()["text"])
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: self.reading()["state"] == "open", "the request shown open")
+        shown = self.reading()
+        self.assertEqual("Reading requested.", shown["note"])
+        self.assertIn("The request closes when the report is approved.", shown["text"])
+        self.assertEqual([self.local("2026-11-21T05:03:00.000Z"), "SYN Clinician"], shown["data"])
+        self.pick(7, "status")
+        self.assertEqual([self.local("2026-11-20T23:30:00.000Z"), "SYN Dr. ASKER <b>x</b>"], self.reading()["data"])
+        self.pick(2, "final")
+        self.assertIn("The report was approved and the request closed.", self.reading()["text"])
+        self.pick(4, "status")
+        shown = self.reading()
+        self.assertIn("This study has an approved report, so a reading cannot be requested.", shown["text"])
+        self.assertIsNone(re.search("[가-힣]", shown["text"] + shown["note"]), shown)
+
     def test_b19_a_second_press_and_refusals_are_shown_as_the_server_says(self):
         self.reading_rows()
         self.rows[6]["readingRequestable"] = True        # uid(7): the list said it may be asked for
