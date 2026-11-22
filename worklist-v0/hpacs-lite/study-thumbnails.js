@@ -116,10 +116,10 @@
             cell.className = "thumb-card";
             const heading = `항목 ${start + index + 1} · ${rep.number ? `번호 ${rep.number}` : "번호 없음"}`;
             const description = rep.description || "설명 없음";
-            cell.title = `${heading}\n${description}\nSeries UID: ${rep.seriesUid || "없음"}\n더블클릭: Film Box`;
+            kinWrite(cell, kinSayEn("{0}\n{1}\nSeries UID: {2}\n더블클릭: Film Box", heading, description, rep.seriesUid || kinSayEn("없음")), "title");
             const preview = document.createElement("div");
             preview.className = "thumb-preview";
-            preview.textContent = "로딩…";
+            kinWrite(preview, kinSayEn("로딩…"));
             const label = document.createElement("div");
             label.className = "thumb-label";
             const number = document.createElement("div"), detail = document.createElement("div");
@@ -128,20 +128,20 @@
             label.append(number, detail);
             // title과 생략 표시만으로는 키보드나 터치에서 전체 식별 정보를 읽을 수 없다.
             const disclosure = document.createElement("details"), summary = document.createElement("summary"), full = document.createElement("div");
-            disclosure.className = "thumb-details"; summary.textContent = "상세 정보";
+            disclosure.className = "thumb-details"; kinWrite(summary, kinSayEn("상세 정보"));
             full.className = "thumb-full"; full.textContent = `${heading}\n${description}\nSeries UID: ${rep.seriesUid || "없음"}`;
             disclosure.append(summary, full);
             const seriesKey = rep.sourceUid + ":" + rep.seriesUid;
             disclosure.open = opened.series.has(seriesKey);
             disclosure.ontoggle = () => { if (disclosure.open) opened.series.add(seriesKey); else opened.series.delete(seriesKey); };
             const open = document.createElement("button");
-            open.type = "button"; open.className = "chip thumb-open"; open.textContent = "시리즈 열기"; open.disabled = true;
-            open.setAttribute("aria-label", `시리즈 열기 · ${heading} · ${description} · Series UID: ${rep.seriesUid || "없음"}`);
+            open.type = "button"; open.className = "chip thumb-open"; kinWrite(open, kinSayEn("시리즈 열기")); open.disabled = true;
+            kinWrite(open, kinSayEn("시리즈 열기 · {0} · {1} · Series UID: {2}", heading, description, rep.seriesUid || kinSayEn("없음")), "aria-label");
             open.onclick = () => { if (!stale() && !open.disabled) openFilmbox(uid, null, rep.seriesUid); };
             const inspect=document.createElement('button');inspect.type='button';inspect.className='chip thumb-preview-open';inspect.textContent='Image Preview';inspect.disabled=true;
             inspect.onclick=()=>{if(!stale()&&!inspect.disabled){const study=viewed();if(study?.uid===uid)imagePreview?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid,sop:rep.sopUid});}};
             const images=document.createElement('button');images.type='button';images.className='chip thumb-images-open';images.textContent='Images';images.disabled=true;
-            if(!imageThumbnails)images.title='Images 모듈을 불러오지 못했습니다. 페이지를 다시 열어 주세요.';
+            if(!imageThumbnails)kinWrite(images, kinSayEn("Images 모듈을 불러오지 못했습니다. 페이지를 다시 열어 주세요."), "title");
             images.onclick=()=>{if(!stale()&&!images.disabled){const study=viewed();if(study?.uid!==uid)return;cancelThumbs(true);if(!imageThumbnails?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid}))renderThumbs();}};
             cell.append(label, disclosure, preview, open, inspect, images);
             grid.appendChild(cell);
@@ -165,7 +165,7 @@
                   thumbUrls.push(url);
                   const img = document.createElement("img");
                   img.alt = cells[index].alt;
-                  img.onerror = () => apply(() => { cells[index].open.disabled = cells[index].inspect.disabled = cells[index].images.disabled = true; cells[index].preview.textContent = "썸네일 표시 실패"; });
+                  img.onerror = () => apply(() => { cells[index].open.disabled = cells[index].inspect.disabled = cells[index].images.disabled = true; kinWrite(cells[index].preview, kinSayEn("썸네일 표시 실패")); });
                   img.ondblclick = () => { if (!stale()) openFilmbox(uid, null, batch[index].seriesUid); };
                   img.src = url;
                   cells[index].preview.replaceChildren(img);
@@ -175,12 +175,12 @@
                 })) return;
               } catch (e) {
                 if (!apply(() => {
-                  cells[index].preview.textContent = `썸네일 실패: ${e.message}`;
+                  kinWrite(cells[index].preview, kinSayEn("썸네일 실패: {e0}", e.message));
                   cells[index].images.disabled = true;
                   // 연결/세션 전체의 실패를 24개 개별 결함처럼 재요청하지 않는다. 이미 시작한 항목은 마저 종결한다.
                   if (e.transport === "network" || e.status === 401) {
                     stopped = true;
-                    cells.slice(next).forEach(cell => { cell.preview.textContent = "요청 중단 · 새로고침하여 다시 시도하세요"; });
+                    cells.slice(next).forEach(cell => { kinWrite(cell.preview, kinSayEn("요청 중단 · 새로고침하여 다시 시도하세요")); });
                   }
                 })) return;
               }
@@ -193,7 +193,8 @@
           apply(() => {
             thumbUrls.forEach(url => URL.revokeObjectURL(url));
             thumbUrls = [];
-            wrap.innerHTML = `<div style="color:#ff8080;padding:10px">썸네일 실패: ${esc(e.message)}</div>`;
+            const failed = document.createElement("div"); failed.style.cssText = "color:#ff8080;padding:10px";
+            kinWrite(failed, kinSayEn("썸네일 실패: {e0}", e.message)); wrap.replaceChildren(failed);
           });
         }
       });

@@ -11,6 +11,7 @@ import type { PrismaService } from '../prisma.service';
 import { noteTransactionError, dump } from './values';
 import { examParentAccess, prepareExamParent } from '../exam-merge.service';
 import { draftOf } from '../owner-identity';
+import type { WriterDirectory } from '../account-identity';
 
 /**
  * 호출자. 다섯 필드 모두 **서명된 토큰**과 가드 판정에서 나온다 — 클라이언트가 정할 수 없다.
@@ -26,6 +27,8 @@ export interface Caller {
   roles: string[];
   institution: string | null;
   kind: 'member' | 'gateway';
+  /** The institution's members as writers are shown (member-rights.ts withWriters), when the request has read them. */
+  writers?: WriterDirectory;
 }
 
 /**

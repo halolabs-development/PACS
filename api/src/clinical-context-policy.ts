@@ -9,6 +9,7 @@
  * 응답 모양은 닫혀 있어(§9.1) 그런 칸이 끼면 그 구역이 source_invalid가 된다. 시드 오더가 권위 있는 오더로 보이는 길
  * (RISK-S7-U4p-SEED-AS-AUTHORITY / ORDER-VIA-OVERLAY)을 입력과 출력 양쪽에서 막는 이유다.
  */
+import { writerShown, type Account } from './account-identity';
 import { clinicianFinal, clinicianIdentityRelation, clinicianTimelineMembers } from './clinician-policy';
 import type { ClinicianIdentityKeys, ClinicianIdentityRelation } from './clinician-policy';
 import { birthKey, sexKey } from './study-identity';
@@ -275,12 +276,16 @@ export function contextPriorItem(member: ContextMember, body: any, anchorKeys: C
   };
 }
 
-/** §5.5 Tech Note 메타. 본문·사유·authorSub·기관은 싣지 않는다. 내용을 비운 판도 기록된 사실이라 present다. */
-export function contextTechNoteItem(uid: string, note: any, observedAt: string) {
+/**
+ * §5.5 Tech Note 메타. 본문·사유·authorSub·기관은 싣지 않는다. 내용을 비운 판도 기록된 사실이라 present다. uthor는 그 판을 쓴
+ * 사람을 화면이 그대로 보이는 글자다(account-identity.ts writerShown — 계정으로; 화면은 다시 찾지 않는다).
+ */
+export function contextTechNoteItem(uid: string, note: any, observedAt: string, reader?: Account) {
   return {
     version: note?.version ?? null, hasText: typeof note?.text === 'string' ? note.text !== '' : null,
     provenance: { kind: CONTEXT_PROVENANCE_KINDS.techNote, recordId: `${uid}#${note?.version}`, version: note?.version ?? null,
-      author: typeof note?.author === 'string' ? note.author : null, recordedAt: contextInstant(note?.createdAt), observedAt },
+      author: typeof note?.author === 'string' && note.author ? (reader ? writerShown(note.author, note.authorSub ?? null, reader) : note.author) : null,
+      recordedAt: contextInstant(note?.createdAt), observedAt },
   };
 }
 

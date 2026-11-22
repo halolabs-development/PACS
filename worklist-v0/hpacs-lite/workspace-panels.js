@@ -148,7 +148,7 @@
       workspaceState = KinWorkspaceLayout.withHiddenPanels(workspaceState, ['thumbnail', 'aiReport', 'imageReport', 'template']) || workspaceState;
       readingWorkspace.applyPanels(KinReadingPanelLayout.defaults());
       applyLayout();
-      $("#layout-status").textContent = removed ? "기본 배치 · 이 브라우저" : "초기화 저장 안 됨 · 이 창에서만 유지";
+      kinWrite($("#layout-status"), removed ? kinSayEn("기본 배치 · 이 브라우저") : kinSayEn("초기화 저장 안 됨 · 이 창에서만 유지"));
     });
     window.addEventListener("resize", applyLayout);
     /**
@@ -211,6 +211,7 @@
       <p id="panel-settings-status" role="status"></p>
       <footer><button type="button" id="box-arrange-open"></button><button type="button" id="panel-settings-show-all">Show All Panels</button><button type="button" id="panel-settings-close">Close</button></footer>`;
     document.body.append(panelDialog);
+    window.KinLanguage?.markup?.(panelDialog);
     // Arrange Boxes is written as a product sentence (the dialog is built after the page's first markup was read).
     kinWrite($('#box-arrange-open'), kinSay('Arrange Boxes'));
     kinWrite($('#box-arrange-open'), kinSay('Worklist·Related Exam·Clinical Information·Related Report·Report Editor 상자를 끌어 서로 자리를 바꿉니다.'), 'title');
@@ -223,12 +224,11 @@
     function choosePanels(hidden) {
       if (!workspaceEditable()) { renderPanelSettings(); return; }
       const next = KinWorkspaceLayout.withHiddenPanels(workspaceState, KinWorkspaceLayout.PANELS.filter(key => hidden.includes(key)));
-      if (!next) { $('#panel-settings-status').textContent = '패널 설정을 확인할 수 없습니다. Reset Layout으로 기본 배치를 사용할 수 있습니다.'; return; }
+      if (!next) { kinWrite($('#panel-settings-status'), kinSayEn("패널 설정을 확인할 수 없습니다. Reset Layout으로 기본 배치를 사용할 수 있습니다.")); return; }
       // The dialog says the outcome itself: rewriting the toolbar status line would wrap it in narrow windows and move
       // the list and the work area under the reader (W3R7-04, as for Study Panel choices).
       workspaceState = next; applyLayout(); saveWorkspace(true); renderPanelSettings();
-      $('#panel-settings-status').textContent = workspaceLocalKept ? '패널 표시를 기억했습니다 · 이 브라우저'
-        : '패널 표시를 이 창에만 적용했습니다. 브라우저에 저장하지 못했습니다.';
+      kinWrite($('#panel-settings-status'), workspaceLocalKept ? kinSayEn("패널 표시를 기억했습니다 · 이 브라우저") : kinSayEn("패널 표시를 이 창에만 적용했습니다. 브라우저에 저장하지 못했습니다."));
     }
     panelDialog.querySelector('fieldset').addEventListener('change', event => {
       const input = event.target.closest('input[data-panel]'); if (!input) return;

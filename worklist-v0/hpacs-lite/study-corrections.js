@@ -228,7 +228,7 @@
       else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));
       else {
         const why = document.createElement("span"); why.translate = false; why.textContent = mark.reason;
-        const who = [mark.by ? displayActor(mark.by) : "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
+        const who = [mark.byName ?? "", mark.at ? localStamp(mark.at) : ""].filter(Boolean).join(" · ");
         now.replaceChildren(kinWrite(document.createElement("span"), kinSay("Flagged")), ": ", why,
           ...(who ? [" · ", Object.assign(document.createElement("span"), { translate: false, textContent: who })] : []));
       }

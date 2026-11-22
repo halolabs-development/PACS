@@ -1,4 +1,7 @@
 window.KinConsultations = function(app) {
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const work=window.KinWorkContext;
   const dialog=document.createElement('dialog');dialog.id='consultations-dialog';dialog.setAttribute('aria-labelledby','consultations-title');
   dialog.innerHTML=`<h2 id="consultations-title">Consultations</h2>
@@ -19,7 +22,7 @@ window.KinConsultations = function(app) {
         <div class="consultation-actions"><button id="co-accept" type="button">Accept</button><button id="co-complete" type="button">Complete with Reply</button><button id="co-cancel-request" type="button">Cancel Request</button></div></div>
     </section></div><p id="co-status" role="status" aria-live="polite"></p>
     <footer><button id="co-retry" type="button" hidden>Retry Same Request</button><button id="co-close" type="button">Close</button></footer>`;
-  document.body.append(dialog);
+  document.body.append(dialog);window.KinLanguage?.markup?.(dialog);
   const $=id=>dialog.querySelector('#co-'+id);
   let owner=null,ended=false,busy=false,sequence=0,controller=null,pending=null,items=[],cursor=null,direction='received',row=null,createUid=null,opener=null;
   const same=()=>work.state()==='active'&&!ended&&dialog.open&&app.allowed()&&JSON.stringify(owner)===JSON.stringify(app.identity());
@@ -68,7 +71,7 @@ window.KinConsultations = function(app) {
     if(busy||!same())return;const ticket=++sequence;interruptedTask=task;busy=true;controls();controller=new AbortController();
     const local=controller,timer=setTimeout(()=>local.abort(),15000);
     try {await task(local.signal,()=>work.admits(at)&&ticket===sequence&&same(),at);}
-    catch(e){work.commit(at,()=>{if(ticket===sequence&&same())$('status').textContent='자문 처리 확인 실패: '+e.message+' · 입력은 유지했습니다.';});}
+    catch(e){work.commit(at,()=>{if(ticket===sequence&&same())kinWrite($('status'), kinSayEn("자문 처리 확인 실패: {e0} · 입력은 유지했습니다.", e.message));});}
     finally{clearTimeout(timer);if(ticket===sequence){busy=false;controller=null;work.commit(at,()=>{interruptedTask=null;controls();});}}
   }
   function mayLeave(){return !busy&&(!pending&&!dirty()||confirm('저장하지 않은 입력이나 결과를 확인하지 못한 요청이 있습니다. 이동할까요?'));}
@@ -76,41 +79,41 @@ window.KinConsultations = function(app) {
     if(pending||!same())return;
     const wanted=$('direction').value,next=more?cursor:null;
     run(async(signal,current,at)=>{
-      $('status').textContent='자문 목록을 읽는 중…';
+      kinWrite($('status'), kinSayEn("자문 목록을 읽는 중…"));
       const value=await app.api('GET','/consultations?direction='+wanted+(next?'&cursor='+encodeURIComponent(next):''),undefined,signal,at);
       work.commit(at,()=>{
       if(!current())return;verified(value);
       if(value.direction!==wanted||!Array.isArray(value.items)||value.items.length>50||value.nextCursor!==null&&typeof value.nextCursor!=='string')throw Error('자문 목록 응답을 확인할 수 없습니다');
       const incoming=value.items.map(item),merged=more?[...items,...incoming]:incoming;
       if(new Set(merged.map(r=>r.id)).size!==merged.length)throw Error('자문 목록이 바뀌었습니다. Reload로 다시 읽으세요');
-      direction=wanted;items=merged;cursor=value.nextCursor;drawList();$('status').textContent='현재 불러온 의뢰에서 검색·상태 필터를 적용합니다.';});
+      direction=wanted;items=merged;cursor=value.nextCursor;drawList();kinWrite($('status'), kinSayEn("현재 불러온 의뢰에서 검색·상태 필터를 적용합니다."));});
     });
   }
   function loadRow(id) {
     pending=null;
     run(async(signal,current,at)=>{const value=await app.api('GET','/consultations/'+encodeURIComponent(id),undefined,signal,at);
       work.commit(at,()=>{
-      if(!current())return;verified(value);if(value.item?.id!==id)throw Error('자문 대상이 바뀌었습니다');drawRow(value.item,value.emr);$('status').textContent='최신 자문 의뢰입니다.';});});
+      if(!current())return;verified(value);if(value.item?.id!==id)throw Error('자문 대상이 바뀌었습니다');drawRow(value.item,value.emr);kinWrite($('status'), kinSayEn("최신 자문 의뢰입니다."));});});
   }
   function create() {
-    if(!mayLeave())return;const study=app.current();if(!study){$('status').textContent='검사 목록에서 의뢰할 검사를 먼저 선택하세요.';return;}
+    if(!mayLeave())return;const study=app.current();if(!study){kinWrite($('status'), kinSayEn("검사 목록에서 의뢰할 검사를 먼저 선택하세요."));return;}
     pending=null;clearEditor();createUid=study.uid;$('heading').textContent='New Consultation';$('study').textContent=identity(createUid);$('create').hidden=false;
     run(async(signal,current,at)=>{const value=await app.api('GET','/consultation-candidates',undefined,signal,at);
       work.commit(at,()=>{if(!current())return;verified(value);
       if(!Array.isArray(value.readers))throw Error('수신자 목록을 확인할 수 없습니다');
       const blank=document.createElement('option');blank.value='';blank.textContent='Select Consultant';$('reader').replaceChildren(blank);
       for(const reader of value.readers){const option=document.createElement('option');option.value=reader.sub;option.textContent=reader.name+' · '+reader.actor;option.translate=false;$('reader').append(option);}
-      $('status').textContent='수신자와 의뢰 사유를 확인한 뒤 Send Request를 누르세요.';});});
+      kinWrite($('status'), kinSayEn("수신자와 의뢰 사유를 확인한 뒤 Send Request를 누르세요."));});});
   }
   function send() {
     if(!pending)return;const request=pending;
     run(async(signal,current,at)=>{
-      $('status').textContent='자문 요청을 저장하는 중…';
+      kinWrite($('status'), kinSayEn("자문 요청을 저장하는 중…"));
       try {
         const value=await app.api('POST',request.path,request.body,signal,at);
       work.commit(at,()=>{if(!current())return;verified(value);
         if(value.item?.studyUid!==request.uid||value.item?.id!==request.id)throw Error('자문 저장 대상을 확인할 수 없습니다');
-        const next=item(value.item);pending=null;items=items.map(r=>r.id===next.id?next:r);drawRow(next,value.emr);$('status').textContent='자문 요청을 저장했습니다. 목록은 Reload로 갱신할 수 있습니다.';});
+        const next=item(value.item);pending=null;items=items.map(r=>r.id===next.id?next:r);drawRow(next,value.emr);kinWrite($('status'), kinSayEn("자문 요청을 저장했습니다. 목록은 Reload로 갱신할 수 있습니다."));});
       } catch(e) {
         work.commit(at,()=>{if(current()&&[400,403,404,409].includes(e.status))pending=null;});
         if(current()&&e.status===409&&request.path.startsWith('/consultations/')) {
@@ -127,13 +130,13 @@ window.KinConsultations = function(app) {
   }
   $('send').onclick=()=>{
     if(busy||pending||!same()||!createUid)return;
-    if(!$('reader').value){$('status').textContent='수신자를 선택하세요. 사유는 선택입니다.';return;}
+    if(!$('reader').value){kinWrite($('status'), kinSayEn("수신자를 선택하세요. 사유는 선택입니다."));return;}
     const id=crypto.randomUUID();pending={id,uid:createUid,path:'/studies/'+encodeURIComponent(createUid)+'/consultations',
       body:{expectedOwner:owner,requestId:id,recipientSub:$('reader').value,reason:$('reason').value}};send();
   };
   for(const [control,action] of [['accept','accept'],['complete','complete'],['cancel-request','cancel']])$(control).onclick=()=>{
     if(busy||pending||!same()||!row)return;const note=action==='accept'?'':$('note').value;
-    if(action==='complete'&&!note.trim()){$('status').textContent='답변 또는 취소 사유를 입력하세요.';return;}
+    if(action==='complete'&&!note.trim()){kinWrite($('status'), kinSayEn("답변 또는 취소 사유를 입력하세요."));return;}
     pending={id:row.id,uid:row.studyUid,path:'/consultations/'+encodeURIComponent(row.id),body:{expectedOwner:owner,requestId:crypto.randomUUID(),revision:row.revision,action,note}};send();
   };
   function close(force=false) {
@@ -153,6 +156,6 @@ window.KinConsultations = function(app) {
     if(event.reason==='cancel'){const task=interruptedTask;interruptedTask=null;sequence++;busy=false;controller=null;controls();if(task&&dialog.open)run(task);}
   });
   window.addEventListener('pagehide',end);
-  return {refresh(){if(dialog.open){controls();if(!same())$('status').textContent='서버 연결과 계정을 확인하세요. 입력은 유지했습니다.';}},open(){if(ended||dialog.open||!app.allowed())return;owner=app.identity();if(!owner)return;opener=document.activeElement;
+  return {refresh(){if(dialog.open){controls();if(!same())kinWrite($('status'), kinSayEn("서버 연결과 계정을 확인하세요. 입력은 유지했습니다."));}},open(){if(ended||dialog.open||!app.allowed())return;owner=app.identity();if(!owner)return;opener=document.activeElement;
     direction=$('direction').value='received';$('search').value=$('state').value='';dialog.showModal();controls();loadList();}};
 };

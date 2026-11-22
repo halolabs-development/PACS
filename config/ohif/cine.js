@@ -34,6 +34,8 @@ function kinCineNext(index, first, last, mode, direction, loop) {
 }
 
 function kinCreateCine() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, extensions, dispose;
   function mount() {
     dispose?.();
@@ -87,7 +89,7 @@ function kinCreateCine() {
     const status = document.createElement('span'); status.setAttribute('role', 'status');
     const first = document.createElement('button'); first.textContent = 'First Frame';
     const last = document.createElement('button'); last.textContent = 'Last Frame';
-    const help = document.createElement('span'); help.textContent = '범위는 1부터 시작합니다. Yoyo는 양 끝 프레임을 중복하지 않고 왕복합니다.';
+    const help = document.createElement('span'); help.textContent = kinText("범위는 1부터 시작합니다. Yoyo는 양 끝 프레임을 중복하지 않고 왕복합니다.");
     panel.append('Selected View ', direction, label, ' Range ', rangeStart, ' to ', rangeEnd, applyRange, first, last, status, help); document.body.append(panel);
     for (const control of [direction, rangeStart, rangeEnd, applyRange, first, last]) control.style.cssText = 'background:#263c57;color:white;border:1px solid #6884a6;border-radius:3px;padding:2px 5px';
     rangeStart.style.width = rangeEnd.style.width = '58px';
@@ -108,13 +110,13 @@ function kinCreateCine() {
     function volumeFrames(v,target) {
       const {sliceRange,spacingInNormalDirection:step,camera}=core.utilities.getVolumeViewportScrollInfo(v,target.volume.volumeId).sliceRangeInfo;
       const {min,max,current}=sliceRange,last=Math.floor((max-min)/step+1e-6),index=Math.round((current-min)/step);
-      if(![min,max,current,step].every(Number.isFinite)||step<=0||max<=min||!Number.isSafeInteger(last)||last<1||!Number.isSafeInteger(index))throw Error('MPR 재생 범위를 확인할 수 없습니다.');
+      if(![min,max,current,step].every(Number.isFinite)||step<=0||max<=min||!Number.isSafeInteger(last)||last<1||!Number.isSafeInteger(index))throw kinError("MPR 재생 범위를 확인할 수 없습니다.");
       return {min,step,last,index,current,camera};
     }
     function moveVolume(v,target,frames,index) {
       const {camera,min,step,current}=frames,delta=min+index*step-current;
       const next={focalPoint:camera.focalPoint.map((n,i)=>n+camera.viewPlaneNormal[i]*delta),position:camera.position.map((n,i)=>n+camera.viewPlaneNormal[i]*delta)};
-      try{v.setCamera(next);v.render();const actual=v.getCamera();if(Object.keys(next).some(key=>next[key].some((n,i)=>Math.abs(n-actual[key][i])>1e-5)))throw Error('MPR 재생 위치를 확인하지 못했습니다.');}
+      try{v.setCamera(next);v.render();const actual=v.getCamera();if(Object.keys(next).some(key=>next[key].some((n,i)=>Math.abs(n-actual[key][i])>1e-5)))throw kinError("MPR 재생 위치를 확인하지 못했습니다.");}
       catch(error){if(volumeTarget(v)?.key===target.key)try{v.setCamera({focalPoint:camera.focalPoint,position:camera.position});v.render();}catch(_){}throw error;}
     }
     function record(v) {
@@ -160,25 +162,25 @@ function kinCreateCine() {
       panel.hidden = !cine.getState().isCineEnabled || (!supported&&v?.type!=='orthographic');
       panel.style.display = panel.hidden ? 'none' : 'flex';
       direction.disabled=loop.disabled=rangeStart.disabled=rangeEnd.disabled=applyRange.disabled=!supported;
-      if (!supported) { first.disabled=last.disabled=true;rangeShown=undefined;status.textContent='완전히 로드된 단일 정규 CT의 MPR 평면을 선택하고 다른 작업을 마친 뒤 재생하세요.';positionControls(v);return; }
+      if (!supported) { first.disabled=last.disabled=true;rangeShown=undefined;status.textContent=kinText("완전히 로드된 단일 정규 CT의 MPR 평면을 선택하고 다른 작업을 마친 뒤 재생하세요.");positionControls(v);return; }
       const r = record(v);
       if (r.signature !== signature(v)) { r.signature = signature(v);const content=contentSignature(v);if(r.content!==content){r.content=content;resetPlayback(r);}else resetRange(r);halt(id); }
       const total=frameCount(v);let bounds=playbackRange(r,total);
-      if(!bounds){resetRange(r);r.message='영상 범위가 변경되어 전체 범위로 초기화했습니다.';bounds=playbackRange(r,total);}
+      if(!bounds){resetRange(r);r.message=kinText("영상 범위가 변경되어 전체 범위로 초기화했습니다.");bounds=playbackRange(r,total);}
       showRange(r,total,bounds);
       direction.value = r.mode; loop.checked = r.loop;
       first.disabled = last.disabled = r.loading || total < 1; applyRange.disabled = r.loading || total < 2;
-      status.textContent = r.message || (r.loading ? '프레임 준비 중' : total<1?'재생할 프레임을 확인할 수 없습니다.':`범위 ${bounds.first+1}~${bounds.last+1}` + (v.type==='orthographic'?' · 원본 CT에서 재구성한 평면을 재생합니다.':''));
+      status.textContent = r.message || (r.loading ? kinText("프레임 준비 중") : total<1?kinText("재생할 프레임을 확인할 수 없습니다."):kinText("범위 {0}~{1}{t2}", bounds.first+1, bounds.last+1, (v.type==='orthographic'?kinText(" · 원본 CT에서 재구성한 평면을 재생합니다."):'')));
       positionControls(v);
     }
     async function session() {
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
       try {
         const response = await fetch('/api/me', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
-        if (!response.ok) throw Error('로그인 상태를 확인할 수 없습니다');
+        if (!response.ok) throw kinError("로그인 상태를 확인할 수 없습니다");
         const me = await response.json();
         const key = me?.kind === 'member' && me.institution && me.sub ? JSON.stringify([me.institution, me.sub]) : null;
-        if (!key || (owner && key !== owner)) throw Error('계정이 변경되었습니다');
+        if (!key || (owner && key !== owner)) throw kinError("계정이 변경되었습니다");
         owner = key;
       } finally { clearTimeout(timer); }
     }
@@ -202,10 +204,10 @@ function kinCreateCine() {
       r.loading = true; r.message = ''; render();
       try {
         if(v.type==='orthographic') {
-          const target=volumeTarget(v,true);if(!target)throw Error('완전히 로드된 정규 CT MPR 평면을 선택하세요.');
-          const fps=Math.abs(Number(options.framesPerSecond||24));if(!Number.isFinite(fps)||fps<1||fps>90)throw Error('MPR 재생 속도는 1~90 fps입니다.');
+          const target=volumeTarget(v,true);if(!target)throw kinError("완전히 로드된 정규 CT MPR 평면을 선택하세요.");
+          const fps=Math.abs(Number(options.framesPerSecond||24));if(!Number.isFinite(fps)||fps<1||fps>90)throw kinError("MPR 재생 속도는 1~90 fps입니다.");
           await session();if(!current())return;
-          let frames=volumeFrames(v,target);const bounds=playbackRange(r,frames.last+1);if(!bounds)throw Error('MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.');
+          let frames=volumeFrames(v,target);const bounds=playbackRange(r,frames.last+1);if(!bounds)throw kinError("MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.");
           if(frames.index<bounds.first||frames.index>bounds.last){moveVolume(v,target,frames,bounds.first);frames=volumeFrames(v,target);}
           nativeStop.call(cine,element,{viewportId:id});clearInterval(r.volumeTimer);r.loading=false;
           // Anchor a physical grid at the first plane. Native cine excludes the
@@ -216,7 +218,7 @@ function kinCreateCine() {
               const frames=volumeFrames(v,target);if(frames.index<bounds.first||frames.index>bounds.last){moveVolume(v,target,frames,bounds.first);return;}
               const step=kinCineNext(frames.index,bounds.first,bounds.last,r.mode,r.playDirection,r.loop);
               if(step.stop){resetDirection(r);halt(id);render();return;}r.playDirection=step.direction;moveVolume(v,target,frames,step.next);
-            }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||'MPR 재생을 중단했습니다.';if(r.ticket===ticket)halt(id);render();}}
+            }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||kinText("MPR 재생을 중단했습니다.");if(r.ticket===ticket)halt(id);render();}}
           },1000/fps);r.volumeTimer=timer;render();return;
         }
         const ids = v.getImageIds(), metadata = ids.map(imageId => core.metaData.get('imagePixelModule', imageId));
@@ -235,7 +237,7 @@ function kinCreateCine() {
         if (heap && Number.isFinite(heap.jsHeapSizeLimit - heap.usedJSHeapSize))
           available = Math.min(available, heap.jsHeapSizeLimit - heap.usedJSHeapSize);
         if (!kinCineWithinBudget(ids, pixels, available, cached, bytes => core.cache.isCacheable(bytes))) {
-          r.message = '현재 영상 캐시·메모리 여유가 부족합니다. 다른 검사를 정리하거나 뷰어를 다시 연 뒤 재생하세요.';
+          r.message = kinText("현재 영상 캐시·메모리 여유가 부족합니다. 다른 검사를 정리하거나 뷰어를 다시 연 뒤 재생하세요.");
           throw Error(r.message);
         }
         await session(); if (!current()) return;
@@ -245,7 +247,7 @@ function kinCreateCine() {
           while (current() && next < ids.length) { const imageId = ids[next++]; await core.imageLoader.loadAndCacheImage(imageId); }
         }));
         if (!current()) return;
-        const bounds=playbackRange(r,ids.length);if(!bounds)throw Error('재생 범위가 바뀌었습니다. 다시 적용하세요.');const currentIndex=()=>v.getTargetImageIdIndex?.()??v.getCurrentImageIdIndex?.();
+        const bounds=playbackRange(r,ids.length);if(!bounds)throw kinError("재생 범위가 바뀌었습니다. 다시 적용하세요.");const currentIndex=()=>v.getTargetImageIdIndex?.()??v.getCurrentImageIdIndex?.();
         if(currentIndex()<bounds.first||currentIndex()>bounds.last){
           clearTimeout(v.debouncedTimeout);
           await core.utilities.jumpToSlice(v.element,{imageIndex:bounds.first,debounceLoading:true});
@@ -257,7 +259,7 @@ function kinCreateCine() {
         // This pinned native API retains loop from its first play; update its public cine state on every explicit start.
           window.cornerstoneTools.utilities.cine.getToolState(element).loop = r.loop;render();return;
         }
-        const fps=Math.abs(Number(options.framesPerSecond||10));if(!Number.isFinite(fps)||fps<1||fps>90)throw Error('재생 속도는 1~90 fps입니다.');
+        const fps=Math.abs(Number(options.framesPerSecond||10));if(!Number.isFinite(fps)||fps<1||fps>90)throw kinError("재생 속도는 1~90 fps입니다.");
         nativeStop.call(cine,element,{viewportId:id});
         const timer=setInterval(()=>{
           if(!current()){clearInterval(timer);if(records.get(id)===r&&r.ticket===ticket){halt(id);render();}return;}
@@ -266,11 +268,11 @@ function kinCreateCine() {
             const index=currentIndex();if(index<bounds.first||index>bounds.last){core.utilities.scroll(v,{delta:bounds.first-index,debounceLoading:true});return;}
             const step=kinCineNext(index,bounds.first,bounds.last,r.mode,r.playDirection,r.loop);
             if(step.stop){resetDirection(r);halt(id);render();return;}r.playDirection=step.direction;core.utilities.scroll(v,{delta:step.next-index,debounceLoading:true});
-          }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||'재생을 중단했습니다.';if(r.ticket===ticket)halt(id);render();}}
+          }catch(error){clearInterval(timer);if(records.get(id)===r){r.message=error.message||kinText("재생을 중단했습니다.");if(r.ticket===ticket)halt(id);render();}}
         },1000/fps);r.volumeTimer=timer;
         render();
       } catch (error) {
-        if (current()) { r.message = v.type==='orthographic' ? (error.message || 'MPR 재생을 준비할 수 없습니다.') : (r.message || '재생을 준비할 수 없습니다. 로그인 상태와 영상을 확인하고 다시 시도하세요.'); halt(id); render(); }
+        if (current()) { r.message = v.type==='orthographic' ? (error.message || kinText("MPR 재생을 준비할 수 없습니다.")) : (r.message || kinText("재생을 준비할 수 없습니다. 로그인 상태와 영상을 확인하고 다시 시도하세요.")); halt(id); render(); }
       } finally {
         if(v.type==='orthographic'&&records.get(id)===r&&r.ticket===ticket&&!current()){halt(id);render();}
       }
@@ -279,16 +281,16 @@ function kinCreateCine() {
       const v = viewport(grid.getActiveViewportId()); if (!eligible(v)) return;
       const r = record(v), modeChanged = r.mode !== direction.value; r.mode = direction.value; r.loop = loop.checked;
       if (modeChanged) resetDirection(r);
-      halt(v.id); r.message = '설정을 바꿨습니다. 재생을 눌러 시작하세요.'; render();
+      halt(v.id); r.message = kinText("설정을 바꿨습니다. 재생을 눌러 시작하세요."); render();
     };
     listen(direction, 'change', change); listen(loop, 'change', change);
     listen(applyRange,'click',()=>{
       const v=viewport(grid.getActiveViewportId());if(!eligible(v))return;const r=record(v),total=frameCount(v);
       const parse=value=>/^\d+$/.test(value)?Number(value):NaN,firstValue=parse(rangeStart.value),lastValue=parse(rangeEnd.value);
       if(!Number.isSafeInteger(firstValue)||!Number.isSafeInteger(lastValue)||firstValue<1||firstValue>=lastValue||lastValue>total){
-        r.message=`재생 범위는 1~${total} 안에서 시작이 끝보다 작아야 합니다.`;render();return;
+        r.message=kinText("재생 범위는 1~{n0} 안에서 시작이 끝보다 작아야 합니다.", total);render();return;
       }
-      r.range={first:firstValue-1,last:lastValue-1};r.rangeRevision++;resetDirection(r);halt(v.id);r.message='범위를 적용했습니다. 재생을 눌러 시작하세요.';render();
+      r.range={first:firstValue-1,last:lastValue-1};r.rangeRevision++;resetDirection(r);halt(v.id);r.message=kinText("범위를 적용했습니다. 재생을 눌러 시작하세요.");render();
     });
     listen(document, 'click', e => {
       if (!e.target.closest?.('[data-cy="cine-player-play-pause"]')) return;
@@ -299,9 +301,9 @@ function kinCreateCine() {
       const v = viewport(grid.getActiveViewportId()); if (!eligible(v)) return;
       halt(v.id); const r = record(v), ticket = r.ticket = ++sequence, before = signature(v);
       if(v.type==='orthographic') {
-        try{const target=volumeTarget(v,true);if(!target)throw Error('대상 MPR 평면을 다시 확인하세요.');const frames=volumeFrames(v,target),bounds=playbackRange(r,frames.last+1);if(!bounds)throw Error('MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.');moveVolume(v,target,frames,end?bounds.last:bounds.first);r.message='MPR 범위 끝 위치로 이동했습니다.';}catch(error){r.message=error.message;}render();return;
+        try{const target=volumeTarget(v,true);if(!target)throw kinError("대상 MPR 평면을 다시 확인하세요.");const frames=volumeFrames(v,target),bounds=playbackRange(r,frames.last+1);if(!bounds)throw kinError("MPR 재생 범위가 바뀌었습니다. 다시 적용하세요.");moveVolume(v,target,frames,end?bounds.last:bounds.first);r.message=kinText("MPR 범위 끝 위치로 이동했습니다.");}catch(error){r.message=error.message;}render();return;
       }
-      const ids=v.getImageIds(),bounds=playbackRange(r,ids.length);if(!bounds){r.message='재생 범위가 바뀌었습니다. 다시 적용하세요.';render();return;}const index=end?bounds.last:bounds.first,imageId=ids[index];
+      const ids=v.getImageIds(),bounds=playbackRange(r,ids.length);if(!bounds){r.message=kinText("재생 범위가 바뀌었습니다. 다시 적용하세요.");render();return;}const index=end?bounds.last:bounds.first,imageId=ids[index];
       r.loading = true; r.message = ''; render();
       try {
         await core.imageLoader.loadAndCacheImage(imageId);
@@ -310,7 +312,7 @@ function kinCreateCine() {
         // image. Pixels are already cached; cancel any older deferred wheel load.
         clearTimeout(v.debouncedTimeout);
         await core.utilities.jumpToSlice(v.element, { imageIndex: index, debounceLoading: true });
-      } catch (_) { if (!ended && r.ticket === ticket) r.message = '프레임을 불러올 수 없습니다'; }
+      } catch (_) { if (!ended && r.ticket === ticket) r.message = kinText("프레임을 불러올 수 없습니다"); }
       finally { if (!ended && r.ticket === ticket) { r.loading = false; render(); } }
     }
     listen(first, 'click', () => jump(false)); listen(last, 'click', () => jump(true));

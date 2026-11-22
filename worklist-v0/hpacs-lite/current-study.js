@@ -18,9 +18,9 @@
         $('#copy-patient-status').textContent = '';
       }
       $('#copy-patient-id').disabled = !s || patientCopyBusy;
-      $('#copy-patient-context').textContent = s
-        ? `열람 대상 · ${s.institutionName} · ${s.name} (${s.id}) · ${s.date || '날짜 없음'}`
-        : '복사할 환자 ID가 있는 열람 검사를 선택하세요';
+      kinWrite($('#copy-patient-context'), s
+        ? kinSayEn('열람 대상 · {0} · {1} ({2}) · {3}', s.institutionName, s.name, s.id, s.date || kinSayEn('날짜 없음'))
+        : kinSayEn('복사할 환자 ID가 있는 열람 검사를 선택하세요'));
     }
     async function copyViewedPatientId() {
       renderPatientCopy();
@@ -28,11 +28,11 @@
       if (!s || patientCopyBusy) return;
       const epoch = patientCopyEpoch;
       if (!navigator.clipboard?.writeText) {
-        $('#copy-patient-status').textContent = '이 브라우저는 복사를 지원하지 않습니다. 표시된 ID를 직접 선택해 복사하세요.';
+        kinWrite($('#copy-patient-status'), kinSayEn("이 브라우저는 복사를 지원하지 않습니다. 표시된 ID를 직접 선택해 복사하세요."));
         return;
       }
       patientCopyBusy = true; renderPatientCopy();
-      $('#copy-patient-status').textContent = '환자 ID 복사 중…';
+      kinWrite($('#copy-patient-status'), kinSayEn("환자 ID 복사 중…"));
       const at = work.capture("document");
       try {
         // Keep the user gesture and its exact ID together. An OS clipboard write
@@ -40,12 +40,12 @@
         await navigator.clipboard.writeText(s.id);
         work.commit(at, () => {
           renderPatientCopy();
-          if (epoch === patientCopyEpoch) $('#copy-patient-status').textContent = '환자 ID를 복사했습니다.';
+          if (epoch === patientCopyEpoch) kinWrite($('#copy-patient-status'), kinSayEn("환자 ID를 복사했습니다."));
         });
       } catch (e) {
         work.commit(at, () => {
           renderPatientCopy();
-          if (epoch === patientCopyEpoch) $('#copy-patient-status').textContent = '복사가 허용되지 않았거나 실패했습니다. 표시된 ID를 직접 선택해 복사하거나 다시 시도하세요.';
+          if (epoch === patientCopyEpoch) kinWrite($('#copy-patient-status'), kinSayEn("복사가 허용되지 않았거나 실패했습니다. 표시된 ID를 직접 선택해 복사하거나 다시 시도하세요."));
         });
       } finally {
         // 이 복사가 건 대기 표시는 이 복사가 푼다. 다시 그리는 것은 문맥이 그대로일 때만 한다.
@@ -228,8 +228,8 @@
       // same-ID Retry; the Notice speaks for that operation (its own action), and no ordinary write is sent for its text.
       const related = relatedInsertPending(uid);
       if (related) return { status: related.state === "refused" ? "refused" : "unknown", reason: RELATED_PENDING_REASON };
-      const held = heldByOther(studies.find(s => s.uid === uid));
-      if (held) return { status: "refused", reason: `${displayActor(held)} 님이 판독 중입니다` };
+      const row = studies.find(s => s.uid === uid), held = heldByOther(row);
+      if (held) return { status: "refused", reason: `${writerName(row.holderName, held)} 님이 판독 중입니다` };
       return null;
     }
 

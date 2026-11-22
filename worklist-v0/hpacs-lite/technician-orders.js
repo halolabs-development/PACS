@@ -17,6 +17,9 @@
  */
 (function () {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const panes = new Map();
   /** technician-scheduled.js / technician-report.js register a pane: { label, show(host), hide?(), select?(uid), render?() }. */
   window.KinTechnicianPanes = Object.freeze({ register(key, pane) { if (!panes.has(key)) panes.set(key, pane); } });
@@ -129,7 +132,7 @@
     ].map(([label, open, title]) => ({ b: button(label, open, '', title), title }));
     function rights() {
       const may = technician();
-      for (const { b, title } of writes) { b.disabled = !may; b.title = may ? title : TECHNICIAN_REASON; }
+      for (const { b, title } of writes) { b.disabled = !may; kinWrite(b, may ? title : kinSayEn(TECHNICIAN_REASON), 'title'); }
     }
     actions.replaceChildren(
       button('Search Orders', () => toggleSearch(), '', 'Find orders by scheduled date, state, ward or requesting doctor.'),
@@ -222,7 +225,7 @@
     // ── Delete Order ──
     const selectedOrder = () => { const oid = ctx.orders.selected(); return oid ? ctx.orders.list().find(o => o.oid === oid) ?? null : null; };
     function deleteOrder() {
-      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
+      if (!technician()) { ctx.toast(kinSayEn(TECHNICIAN_REASON), 'info'); return; }
       const o = selectedOrder();
       if (!o) { ctx.toast('Select an order to delete in Order List first.', 'info'); return; }
       const w = openWindow('Delete Order', 'order-delete');
@@ -274,7 +277,7 @@
     const digits = value => String(value ?? '').replace(/\D/g, '');
     const ageText = (birth, date) => digits(birth).length === 8 && digits(date).length === 8 ? Math.floor((+digits(date) - +digits(birth)) / 10000) : null;
     function openMatch() {
-      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
+      if (!technician()) { ctx.toast(kinSayEn(TECHNICIAN_REASON), 'info'); return; }
       const uid = ctx.selectedUid(), s = uid ? ctx.study(uid) : null, o = selectedOrder();
       if (!s || !o) { ctx.toast('Select one study in Study List and one order in Order List first.', 'info'); return; }
       const w = openWindow('Match Study to Order', 'order-match');
@@ -325,7 +328,7 @@
 
     // ── Unmatch… ──
     function openUnmatch() {
-      if (!technician()) { ctx.toast(TECHNICIAN_REASON, 'info'); return; }
+      if (!technician()) { ctx.toast(kinSayEn(TECHNICIAN_REASON), 'info'); return; }
       const uid = ctx.selectedUid(), s = uid ? ctx.study(uid) : null;
       if (!s) { ctx.toast('Select a study to unlink in Study List.', 'info'); return; }
       const w = openWindow('Unmatch Study', 'order-unmatch');

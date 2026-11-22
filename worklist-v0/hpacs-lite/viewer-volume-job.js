@@ -1,10 +1,14 @@
 /* MPR Jobs keep volume references, never a fictitious reconstructed SOP/frame. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
-  const fail=()=>{throw Error('완전히 로드된 단일 일반 CT의 평면 배치(1·2·4분할 또는 3평면)에서 MPR 작업을 저장하세요.');};
+  const fail=()=>{throw kinError("완전히 로드된 단일 일반 CT의 평면 배치(1·2·4분할 또는 3평면)에서 MPR 작업을 저장하세요.");};
   // The ordinary stack cell of a mixed layout is captured, resolved and restored by the very
   // helpers viewer-jobs.js already uses for a version 2 Job; this module never grows a second
   // copy of that shape. Without them a mixed screen refuses instead of dropping a cell.
-  const stackTools=()=>{if(!stack?.cell||!stack.resolve||!stack.prepare)throw Error('일반 영상 칸이 있는 배치의 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요.');return stack;};
+  const stackTools=()=>{if(!stack?.cell||!stack.resolve||!stack.prepare)throw kinError("일반 영상 칸이 있는 배치의 저장 도구를 불러오지 못했습니다. 미저장 입력을 보존한 뒤 뷰어를 다시 여세요.");return stack;};
   const ordered=()=>[...grid.getState().viewports.values()].sort((a,b)=>a.y-b.y||a.x-b.x);
   // The Hanging Protocol whitelist (hanging-protocol-model.js:109) plus the three-plane
   // grids this Job already saved. A vacancy stays a cell, so a cell index is a viewport index.
@@ -66,25 +70,25 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     return {volume,reference:{study:first.StudyInstanceUID,series:first.SeriesInstanceUID,sops}};
   }
   function resolve(value) {
-    if(value.version===6&&!window.kinMprMarks)throw Error('MPR 3D 표식 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');
-    if(value.version===10&&!window.kinMprCurved)throw Error('곡면 MPR 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');
-    if(value.version===11&&!window.kinMprPath)throw Error('3D Path 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');
+    if(value.version===6&&!window.kinMprMarks)throw kinError("MPR 3D 표식 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");
+    if(value.version===10&&!window.kinMprCurved)throw kinError("곡면 MPR 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");
+    if(value.version===11&&!window.kinMprPath)throw kinError("3D Path 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");
     // A MIP Viewer Job is reopened by the MIP Viewer, so its tool and its computation are checked before any layout
     // change: an algorithm this viewer does not implement is refused (재현 불가), never reinterpreted.
     // Versions 14/15 are the same display under the manual's anatomical Orientation Presets (kin-mip-2); each version names
     // exactly one algorithm here too, so kin-mip-2 in a 12/13 body and kin-mip-1 in a 14/15 body are both refused.
     if([12,13,14,15].includes(value.version)){
-      if(!window.kinVolumeMipJob)throw Error('MIP Viewer 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.');
+      if(!window.kinVolumeMipJob)throw kinError("MIP Viewer 도구를 불러오지 못했습니다. 영상 창을 새로고침하세요.");
       const m=value.mip,algorithm=value.version===14||value.version===15?'kin-mip-2':'kin-mip-1';
-      if(!m||m.schema!==1||m.algorithm!==algorithm||m.coordinates!=='LPS_mm')throw Error('이 MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.');
+      if(!m||m.schema!==1||m.algorithm!==algorithm||m.coordinates!=='LPS_mm')throw kinError("이 MIP 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.");
       // Each version names one key set as well as one algorithm: a display version carrying a MIP Batch recipe is a malformed pair
       // and is refused here, before any layout change, rather than restored as a batch. The server input gate makes such a row
       // impossible to store, so this only closes a tampered response; the message is KinVolumeMipJob.messages.shape verbatim.
-      if((value.version===12||value.version===14)&&Object.prototype.hasOwnProperty.call(value,'mipBatch'))throw Error('저장한 MIP 작업의 형식을 확인할 수 없어 복원하지 않았습니다.');
+      if((value.version===12||value.version===14)&&Object.prototype.hasOwnProperty.call(value,'mipBatch'))throw kinError("저장한 MIP 작업의 형식을 확인할 수 없어 복원하지 않았습니다.");
       // Version 13/15 adds a MIP Batch recipe. Its model loads lazily with the MIP Viewer inside the restore, so only the ids are
       // checked here; a model that then fails to load throws into the Job rollback instead.
       const b=value.mipBatch;
-      if((value.version===13||value.version===15)&&(!b||b.schema!==1||b.algorithm!=='kin-mip-batch-1'))throw Error('MIP Batch 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.');
+      if((value.version===13||value.version===15)&&(!b||b.schema!==1||b.algorithm!=='kin-mip-batch-1'))throw kinError("MIP Batch 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.");
     }
     // Every stack cell of a mixed layout must find its own original series and frame before
     // the layout is touched, on exactly the rule the version 2 Job already applies.
@@ -93,7 +97,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     // just resolved above and there is nothing further to find.
     const ref=value.volume;if(!ref&&[9,16].includes(value.version))return null;
     const matches=ds.getActiveDisplaySets().filter(d=>d.StudyInstanceUID===ref.study&&d.SeriesInstanceUID===ref.series);
-    if(matches.length!==1||matches[0].images?.length!==ref.sops.length||new Set(matches[0].images.map(m=>m.SOPInstanceUID)).size!==ref.sops.length||matches[0].images.some(m=>!ref.sops.includes(m.SOPInstanceUID)||m.SOPClassUID!=='1.2.840.10008.5.1.4.1.1.2'))throw Error('저장한 MPR의 전체 원본 시리즈를 찾을 수 없습니다.');
+    if(matches.length!==1||matches[0].images?.length!==ref.sops.length||new Set(matches[0].images.map(m=>m.SOPInstanceUID)).size!==ref.sops.length||matches[0].images.some(m=>!ref.sops.includes(m.SOPInstanceUID)||m.SOPClassUID!=='1.2.840.10008.5.1.4.1.1.2'))throw kinError("저장한 MPR의 전체 원본 시리즈를 찾을 수 없습니다.");
     return matches[0].displaySetInstanceUID;
   }
   function capture(readOnly=false,includeBatch=true) {
@@ -106,7 +110,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     const split=!uniform&&!mergedRects?splitShape(rows,cols,views):null;
     // `merged`: the rectangles a merged (version 9) or split (version 16) screen stands in.
     const merged=mergedRects?mergedRects.map(([x,y,width,height])=>({x,y,width,height})):split;
-    if(!merged&&!uniform)throw Error('지원하지 않는 칸 배치입니다. Restore Grid로 격자를 되돌린 뒤 저장하세요.');
+    if(!merged&&!uniform)throw kinError("지원하지 않는 칸 배치입니다. Restore Grid로 격자를 되돌린 뒤 저장하세요.");
     if(!merged&&!GRIDS.some(([r,c])=>rows===r&&cols===c))fail();
     // What each cell actually is, decided once, before any shape is chosen: an empty cell is
     // a vacancy, a reconstructed viewport is a plane and anything else is an ordinary frame.
@@ -131,7 +135,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     // allowance the plane cells do, so the cap cannot be widened by mixing kinds.
     const measure=(width,height)=>{
       pixels+=width*height;
-      if(![width,height].every(n=>Number.isInteger(n)&&n>=1&&n<=8192)||width*height>16777216||pixels>33554432)throw Error('저장할 화면 크기를 줄인 뒤 다시 저장하세요.');
+      if(![width,height].every(n=>Number.isInteger(n)&&n>=1&&n<=8192)||width*height>16777216||pixels>33554432)throw kinError("저장할 화면 크기를 줄인 뒤 다시 저장하세요.");
     };
     const cells=views.map((g,i)=>{
       if(!merged&&(Math.abs(g.x-(i%cols)/cols)>1e-6||Math.abs(g.y-Math.floor(i/cols)/rows)>1e-6||Math.abs(g.width-1/cols)>1e-6||Math.abs(g.height-1/rows)>1e-6))fail();
@@ -141,7 +145,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       if(kinds[i]==='stack')return {kind:'stack',...stackTools().cell(g,canvas=>measure(canvas?.width,canvas?.height))};
       const v=cs.getCornerstoneViewport(g.viewportId),current=source(v);
       const orientation=legacy?null:planeOrientation(g,v);
-      if(!legacy&&!orientation)throw Error('평면 방향을 확인할 수 없는 화면입니다. MPR 평면 배치를 다시 적용한 뒤 저장하세요.');
+      if(!legacy&&!orientation)throw kinError("평면 방향을 확인할 수 없는 화면입니다. MPR 평면 배치를 다시 적용한 뒤 저장하세요.");
       if(reference&&(JSON.stringify(reference)!==JSON.stringify(current.reference)||loaded!==current.volume))fail();
       reference=current.reference;loaded=current.volume;
       if(resolve({volume:reference})!==sets[0])fail();
@@ -149,19 +153,19 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       const width=canvas.width,height=canvas.height;measure(width,height);
       // Native inversion labels its grayscale transfer function "X Ray".
       const color=properties.colormap?.name;
-      if(color&&color!=='Grayscale'&&!(color==='X Ray'&&properties.invert))throw Error('MPR 작업은 회색조 표시에서 저장할 수 있습니다.');
+      if(color&&color!=='Grayscale'&&!(color==='X Ray'&&properties.invert))throw kinError("MPR 작업은 회색조 표시에서 저장할 수 있습니다.");
       const opacity=v.getActors()[0].actor.getProperty().getScalarOpacity(0),count=opacity?.getSize?.();
       if(!Number.isInteger(count)||count<1||count>64||!opacity.getClamping())fail();
-      for(let n=0;n<count;n++){const node=[];opacity.getNodeValue(n,node);if(Math.abs(node[1]-1)>1e-6)throw Error('MPR 작업은 불투명한 일반 CT 표시에서 저장할 수 있습니다.');}
+      for(let n=0;n<count;n++){const node=[];opacity.getNodeValue(n,node);if(Math.abs(node[1]-1)>1e-6)throw kinError("MPR 작업은 불투명한 일반 CT 표시에서 저장할 수 있습니다.");}
       const blend=mapper.getBlendMode(),thickness=v.getSlabThickness()*2;
       if(![0,1,2,3].includes(blend)||!Number.isFinite(thickness)||thickness<.1||thickness>1000||blend===0&&thickness>.2)fail();
-      if(blend===3){const info=mapper.getScalarTexture?.()?.getVolumeInfo();if(!Number.isFinite(info?.dataComputedScale?.[0])||info.dataComputedScale[0]<=0)throw Error('평균 투영을 다시 적용한 뒤 저장하세요.');}
+      if(blend===3){const info=mapper.getScalarTexture?.()?.getVolumeInfo();if(!Number.isFinite(info?.dataComputedScale?.[0])||info.dataComputedScale[0]<=0)throw kinError("평균 투영을 다시 적용한 뒤 저장하세요.");}
       return {...(named?{kind:'plane'}:{}),study:reference.study,series:reference.series,...(legacy?{}:{orientation}),viewport:{width,height},projection:{blend,thickness},
         camera:{...Object.fromEntries(['focalPoint','position','viewUp','viewPlaneNormal','parallelScale','flipHorizontal','flipVertical'].map(k=>[k,camera[k]])),rotation:camera.rotation||0},
         properties:{voiRange:properties.voiRange,VOILUTFunction:properties.VOILUTFunction||'LINEAR',invert:!!properties.invert,interpolationType:properties.interpolationType??1}};
     });
     if(cells.every(c=>!c))fail();
-    const active=views.findIndex(v=>v.viewportId===state.activeViewportId);if(active<0)throw Error('활성 MPR 평면을 선택한 뒤 저장하세요.');
+    const active=views.findIndex(v=>v.viewportId===state.activeViewportId);if(active<0)throw kinError("활성 MPR 평면을 선택한 뒤 저장하세요.");
     const batch=includeBatch?window.kinVolumeBatchState?.capture(reference):null;
     // The marks tool binds to a three-plane target, so on a mixed layout it has none and
     // asking it to capture would fail on the missing target rather than report a state.
@@ -186,11 +190,11 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     // A batch recipe and 3D marks are three-plane features. Refusing them here keeps the
     // user's own state visible instead of writing a v7 snapshot that quietly lost it.
     if(!legacy){
-      if(batch)throw Error('단면 묶음은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. 묶음을 해제하거나 3평면 배치에서 저장하세요.');
-      if(annotated)throw Error('MPR 3D 표식은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. 표식을 지우거나 3평면 배치에서 저장하세요.');
-      if(curving)throw Error('곡면 MPR은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. Clear Curve로 곡선을 지우거나 3평면 배치에서 저장하세요.');
-      if(pathing)throw Error('3D Path는 3평면 1×3·3×1 배치에서 저장할 수 있습니다. Clear Path로 경로를 지우거나 3평면 배치에서 저장하세요.');
-      if(projecting)throw Error('MIP 작업은 3평면 1×3·3×1 MPR 배치에서 저장할 수 있습니다.');
+      if(batch)throw kinError("단면 묶음은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. 묶음을 해제하거나 3평면 배치에서 저장하세요.");
+      if(annotated)throw kinError("MPR 3D 표식은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. 표식을 지우거나 3평면 배치에서 저장하세요.");
+      if(curving)throw kinError("곡면 MPR은 3평면 1×3·3×1 배치에서 저장할 수 있습니다. Clear Curve로 곡선을 지우거나 3평면 배치에서 저장하세요.");
+      if(pathing)throw kinError("3D Path는 3평면 1×3·3×1 배치에서 저장할 수 있습니다. Clear Path로 경로를 지우거나 3평면 배치에서 저장하세요.");
+      if(projecting)throw kinError("MIP 작업은 3평면 1×3·3×1 MPR 배치에서 저장할 수 있습니다.");
       // A merged screen saves the rectangles it stands in, beside the cells that stand in
       // them. A vacancy keeps its rectangle, which is why geometry is not a cell field. The
       // cells the merge absorbed are not on screen and are not saved as anything.
@@ -201,12 +205,12 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     // takes its W/L and interpolation from it, so a display from another plane or with another W/L is refused rather than
     // saved as that plane's. It is one derived display beside no curve, path, batch or marks.
     if(mip){
-      if(curved||path)throw Error('MIP 작업은 곡면 MPR·3D Path와 함께 저장할 수 없습니다. Clear Curve·Clear Path로 지운 뒤 저장하세요.');
-      if(batch||annotated)throw Error('MIP 작업은 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.');
-      if(window.kinVolumeMipJob.viewport?.()!==views[active].viewportId)throw Error('MIP Viewer를 연 MPR 평면이 활성 평면이 아니어서 저장하지 않았습니다. MIP Viewer를 다시 연 뒤 저장하세요.');
+      if(curved||path)throw kinError("MIP 작업은 곡면 MPR·3D Path와 함께 저장할 수 없습니다. Clear Curve·Clear Path로 지운 뒤 저장하세요.");
+      if(batch||annotated)throw kinError("MIP 작업은 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.");
+      if(window.kinVolumeMipJob.viewport?.()!==views[active].viewportId)throw kinError("MIP Viewer를 연 MPR 평면이 활성 평면이 아니어서 저장하지 않았습니다. MIP Viewer를 다시 연 뒤 저장하세요.");
       const shown=cells[active].properties,d=mip.display;
       if(d?.voiRange?.lower!==shown.voiRange?.lower||d.voiRange.upper!==shown.voiRange.upper||d.interpolationType!==shown.interpolationType)
-        throw Error('MIP Viewer의 밝기 범위·보간이 활성 MPR 평면과 달라 저장하지 않았습니다. MIP Viewer를 닫고 다시 연 뒤 저장하세요.');
+        throw kinError("MIP Viewer의 밝기 범위·보간이 활성 MPR 평면과 달라 저장하지 않았습니다. MIP Viewer를 닫고 다시 연 뒤 저장하세요.");
       // Version 13 is exactly that snapshot plus the recipe of the MIP Batch preview shown with the display (conditions only).
       // The block's own algorithm names the version pair: an Axial/Coronal/Sagittal display stays kin-mip-1 in 12/13, and only
       // the manual's anatomical presets write kin-mip-2 in 14/15. The rule is inlined here, as the resolve() gate above inlines
@@ -218,14 +222,14 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     // Version 11 is the version 4 snapshot plus one 3D path, under the same rule as a curve; a
     // curve and a path are two reconstructions and one Job holds only one of them.
     if(path){
-      if(curved)throw Error('곡면 MPR과 3D Path는 한 작업에 하나만 저장할 수 있습니다. 하나를 지운 뒤 저장하세요.');
-      if(batch||annotated)throw Error('3D Path는 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.');
+      if(curved)throw kinError("곡면 MPR과 3D Path는 한 작업에 하나만 저장할 수 있습니다. 하나를 지운 뒤 저장하세요.");
+      if(batch||annotated)throw kinError("3D Path는 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.");
       return JSON.parse(JSON.stringify({version:11,studies,rows,cols,active,volume:reference,cells,path}));
     }
     // Version 10 is the version 4 snapshot plus the curve. It holds no batch and no marks, so
     // either one beside a curve is refused rather than silently left out of the Job.
     if(curved){
-      if(batch||annotated)throw Error('곡면 MPR은 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.');
+      if(batch||annotated)throw kinError("곡면 MPR은 단면 묶음·3D 표식과 함께 저장할 수 없습니다. 하나를 해제하거나 지운 뒤 저장하세요.");
       return JSON.parse(JSON.stringify({version:10,studies,rows,cols,active,volume:reference,cells,curved}));
     }
     return JSON.parse(JSON.stringify({version:annotated?6:batch?5:4,studies,rows,cols,active,volume:reference,cells,...(annotated?{marks,batch:batch||null}:batch?{batch}:{})}));
@@ -243,7 +247,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
     return {group,tool,release};
   }
   async function apply(value,current,changingLayout) {
-    if(JSON.stringify(value.studies)!==JSON.stringify(studies))throw Error('저장한 현재·비교 검사를 같은 순서로 먼저 여세요.');
+    if(JSON.stringify(value.studies)!==JSON.stringify(studies))throw kinError("저장한 현재·비교 검사를 같은 순서로 먼저 여세요.");
     const set=resolve(value),ids=value.cells.map(()=> 'kin-volume-job-'+crypto.randomUUID());
     // Every stack cell of a mixed layout names its own display set; a plane cell shares the
     // single volume display set. Both are resolved before the current screen is replaced.
@@ -275,16 +279,16 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       if(!value.cells[i]||frames[i])continue;
       const want=loaded.length+1;
       while(Date.now()<deadline){
-        if(!current())throw Error('화면이 변경되어 MPR 복원을 중단했습니다.');
+        if(!current())throw kinError("화면이 변경되어 MPR 복원을 중단했습니다.");
         const v=cs.getCornerstoneViewport(ids[i]);let original;try{original=source(v);}catch(_){}
         const canvas=v?.getCanvas(),ready=grid.getState().viewports.get(ids[i])?.isReady;
         if(original&&ready&&canvas?.clientWidth>1&&canvas?.clientHeight>1&&Math.abs(canvas.width-Math.floor(canvas.clientWidth*devicePixelRatio))<=1&&Math.abs(canvas.height-Math.floor(canvas.clientHeight*devicePixelRatio))<=1){
-          if(JSON.stringify(original.reference)!==JSON.stringify({study:value.volume.study,series:value.volume.series,sops:value.volume.sops}))throw Error('볼륨 원본의 순서나 구성이 달라 복원하지 않았습니다.');
+          if(JSON.stringify(original.reference)!==JSON.stringify({study:value.volume.study,series:value.volume.series,sops:value.volume.sops}))throw kinError("볼륨 원본의 순서나 구성이 달라 복원하지 않았습니다.");
           loaded.push({v,original,cell:value.cells[i]});break;
         }
         await new Promise(r=>setTimeout(r,100));
       }
-      if(loaded.length!==want)throw Error('MPR 원본 볼륨 로딩에 실패했습니다.');
+      if(loaded.length!==want)throw kinError("MPR 원본 볼륨 로딩에 실패했습니다.");
     }
     // The frame cells are restored by the same routine a version 2 Job uses, and then each
     // one is read back: a cell showing any other instance is a failed restore, not a restore.
@@ -294,34 +298,34 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       const cell=value.cells[i];
       const v=cs.getCornerstoneViewport(ids[i]),shown=v?.type==='stack'&&cornerstone.metaData.get('instance',v.getCurrentImageId?.());
       if(!shown||shown.StudyInstanceUID!==cell.study||shown.SeriesInstanceUID!==cell.series||shown.SOPInstanceUID!==cell.sop)
-        throw Error('저장한 원본 프레임을 복원하지 못했습니다.');
+        throw kinError("저장한 원본 프레임을 복원하지 못했습니다.");
     }
     const rendered=()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     await rendered();
-    if(!current())throw Error('화면이 변경되어 MPR 복원을 중단했습니다.');
+    if(!current())throw kinError("화면이 변경되어 MPR 복원을 중단했습니다.");
     for(let i=0;i<loaded.length;i++){
       const {v,original,cell}=loaded[i];
       // Volume opacity [] is an empty transfer function (black), unlike a stack.
       v.setProperties({invert:false,colormap:{name:'Grayscale',opacity:1}});v.setProperties(cell.properties);
-      if(cell.projection.blend===3){if(typeof window.kinPrepareVolumeAverage!=='function')throw Error('평균 투영 도구 로딩을 마친 뒤 다시 복원하세요.');window.kinPrepareVolumeAverage(v,original.volume);}
+      if(cell.projection.blend===3){if(typeof window.kinPrepareVolumeAverage!=='function')throw kinError("평균 투영 도구 로딩을 마친 뒤 다시 복원하세요.");window.kinPrepareVolumeAverage(v,original.volume);}
       v.setBlendMode(cell.projection.blend);
       if(Math.abs(v.getSlabThickness()*2-cell.projection.thickness)>1e-6)v.setSlabThickness(cell.projection.thickness/2);
-      if(v.getActors()[0].actor.getMapper().getBlendMode()!==cell.projection.blend||Math.abs(v.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw Error('저장한 MPR 모드나 두께를 복원하지 못했습니다.');
+      if(v.getActors()[0].actor.getMapper().getBlendMode()!==cell.projection.blend||Math.abs(v.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw kinError("저장한 MPR 모드나 두께를 복원하지 못했습니다.");
     }
     // Let the native initial slice and resize presentation finish before the
     // saved physical camera is assigned. A loaded volume alone is insufficient.
     await rendered();
-    if(!current())throw Error('화면이 변경되어 MPR 복원을 중단했습니다.');
+    if(!current())throw kinError("화면이 변경되어 MPR 복원을 중단했습니다.");
     const settled=async()=>{
       let signature='',since=Date.now();
       while(Date.now()<deadline){
-        if(!current())throw Error('화면이 변경되어 MPR 복원을 중단했습니다.');
+        if(!current())throw kinError("화면이 변경되어 MPR 복원을 중단했습니다.");
         const state=grid.getState(),ready=loaded.every(({v})=>cs.getCornerstoneViewport(v.id)===v&&state.viewports.get(v.id)?.isReady);
         const next=JSON.stringify(loaded.map(({v})=>{const c=v.getCanvas(),camera=v.getCamera();delete camera.rotation;return [c.width,c.height,c.clientWidth,c.clientHeight,camera];}));
         if(!ready||next!==signature){signature=next;since=Date.now();}else if(Date.now()-since>=600)return;
         await new Promise(r=>setTimeout(r,50));
       }
-      throw Error('MPR 화면 배치가 안정되지 않아 복원하지 못했습니다.');
+      throw kinError("MPR 화면 배치가 안정되지 않아 복원하지 못했습니다.");
     };
     let matched=false;
     for(let attempt=0;attempt<3&&!matched;attempt++){
@@ -334,7 +338,7 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       // exact current half thickness is re-applied from this camera: the 0.05 default is reset, because setting
       // it would clamp to 0.1 (the same idiom as viewer-volume-job-print.js:93).
       const half=v.getSlabThickness();if(Math.abs(half-.05)<1e-8)v.resetSlabThickness();else v.setSlabThickness(half);
-      if(v.getActors()[0].actor.getMapper().getBlendMode()!==cell.projection.blend||Math.abs(v.getSlabThickness()-half)>1e-9||Math.abs(v.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw Error('저장한 MPR 모드나 두께를 복원하지 못했습니다.');
+      if(v.getActors()[0].actor.getMapper().getBlendMode()!==cell.projection.blend||Math.abs(v.getSlabThickness()-half)>1e-9||Math.abs(v.getSlabThickness()*2-cell.projection.thickness)>1e-6)throw kinError("저장한 MPR 모드나 두께를 복원하지 못했습니다.");
       v.render();
     }
     await rendered();
@@ -355,14 +359,14 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
       }
     }
     }
-    if(!matched)throw Error('저장한 MPR 영상 위치를 확인하지 못했습니다. 이전 화면을 확인하세요.');
+    if(!matched)throw kinError("저장한 MPR 영상 위치를 확인하지 못했습니다. 이전 화면을 확인하세요.");
     // The achieved rectangles decide a merged restore, not the resolved setLayout promise: a
     // native grid that ignored layoutOptions would otherwise be reported as the saved screen.
     if([9,16].includes(value.version)){
       const now=ordered();
       if(now.length!==value.rects.length||now.some((g,i)=>!near(g.x,value.rects[i].x)||!near(g.y,value.rects[i].y)||
           !near(g.width,value.rects[i].width)||!near(g.height,value.rects[i].height)))
-        throw Error(value.version===16?'저장한 모니터별 칸 배치를 복원하지 못했습니다. 이전 화면을 확인하세요.':'저장한 병합 칸 배치를 복원하지 못했습니다. 이전 화면을 확인하세요.');
+        throw Error(value.version===16?kinText("저장한 모니터별 칸 배치를 복원하지 못했습니다. 이전 화면을 확인하세요."):kinText("저장한 병합 칸 배치를 복원하지 못했습니다. 이전 화면을 확인하세요."));
       if(value.version===16){
         window.kinViewerSplitRects=value.rects.map(r=>({x:r.x,y:r.y,width:r.width,height:r.height}));
         // The planes this restore built and verified (series, orientation), so a later Hanging Protocol apply can roll
@@ -370,9 +374,9 @@ window.kinCreateVolumeJob = function({grid,cs,ds,studies,stack}) {
         window.kinViewerSplitPlanes=Object.fromEntries(value.cells.map((cell,i)=>cell&&!frames[i]?[ids[i],{plane:{view:'mpr',orientation:cell.orientation},set}]:null).filter(Boolean));
       }
     }
-    if(!current())throw Error('화면이 변경되어 MPR 복원을 중단했습니다.');grid.setActiveViewportId(ids[value.active]);
+    if(!current())throw kinError("화면이 변경되어 MPR 복원을 중단했습니다.");grid.setActiveViewportId(ids[value.active]);
     if(value.version===5||value.version===6&&value.batch){
-      if(!window.kinVolumeBatchState)throw Error('단면 묶음 도구 로딩을 마친 뒤 다시 복원하세요.');
+      if(!window.kinVolumeBatchState)throw kinError("단면 묶음 도구 로딩을 마친 뒤 다시 복원하세요.");
       await rendered();await window.kinVolumeBatchState.restore(value.batch,current);
     }
     if(value.version===6)window.kinMprMarks.restore(value.marks);else window.kinMprMarks?.clearForJob();

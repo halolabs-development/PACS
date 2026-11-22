@@ -1,5 +1,7 @@
 
 function kinCreateImagesOnly() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -16,10 +18,10 @@ function kinCreateImagesOnly() {
     if (window.KinViewerImagesOnly) return Promise.resolve(window.KinViewerImagesOnly);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-images-only.js';
-      const timer = setTimeout(() => finish(new Error('Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerImagesOnly); }
-      script.onload = () => finish(window.KinViewerImagesOnly ? null : new Error('Images Only 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('Images Only 도구를 불러오지 못했습니다. 다시 시도하세요.'));
+      script.onload = () => finish(window.KinViewerImagesOnly ? null : kinError("Images Only 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("Images Only 도구를 불러오지 못했습니다. 다시 시도하세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -30,7 +32,7 @@ function kinCreateImagesOnly() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('Images Only 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("Images Only 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { kinToolRetry('kin-images-retry', error.message, () => extension.onModeEnter({ servicesManager })); } });
   }, onModeExit() { kinToolRetry('kin-images-retry'); epoch++; current?.stop(); current = null; } };

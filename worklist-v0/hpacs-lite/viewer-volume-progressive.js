@@ -1,3 +1,6 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.kinCreateVolumeProgressive=function({target,enabled,permitted,alive,notice=()=>{}}){
   let ended=false,bound=null,active=null,settleTimer=null,frame=0;
   const renderErrors=new Set();
@@ -17,9 +20,9 @@ window.kinCreateVolumeProgressive=function({target,enabled,permitted,alive,notic
         label.remove();
       }catch(_){failed.push(state);label.textContent='Refinement failed';if(view.element.isConnected)view.element.append(label);continue;}
       try{if(view.element.isConnected&&view.getActors().some(a=>a.actor.getMapper()===mapper))view.render();}
-      catch(_){label.textContent='Refresh failed';label.className='kin-mpr-render-error';view.element.append(label);renderErrors.add(label);notice('원래 표본 간격은 복구했지만 화면 갱신에 실패했습니다. 영상을 다시 조절해 확인하세요.');}
+      catch(_){label.textContent='Refresh failed';label.className='kin-mpr-render-error';view.element.append(label);renderErrors.add(label);notice(kinText("원래 표본 간격은 복구했지만 화면 갱신에 실패했습니다. 영상을 다시 조절해 확인하세요."));}
     }
-    if(failed.length){active=failed;notice('원래 렌더링 품질을 복구하지 못했습니다. 영상 표시를 확인하세요. 다시 복구를 시도합니다.');}
+    if(failed.length){active=failed;notice(kinText("원래 렌더링 품질을 복구하지 못했습니다. 영상 표시를 확인하세요. 다시 복구를 시도합니다."));}
     frame++;const mine=frame;requestAnimationFrame(()=>requestAnimationFrame(()=>{if(frame===mine)frame=0;}));
   }
   function begin(){
@@ -35,7 +38,7 @@ window.kinCreateVolumeProgressive=function({target,enabled,permitted,alive,notic
         states.push({view,mapper,before,coarse,label});mapper.setSampleDistance(coarse);view.element.append(label);view.render();
       }
       active=states.length?states:null;
-    }catch(_){active=states;settle();if(!active)notice('점진 렌더링을 적용하지 못해 원래 품질로 복귀합니다.');}
+    }catch(_){active=states;settle();if(!active)notice(kinText("점진 렌더링을 적용하지 못해 원래 품질로 복귀합니다."));}
   }
   const wheel=()=>{begin();clearTimeout(settleTimer);settleTimer=setTimeout(settle,150);};
   // An armed manual 3D point pick consumes its own press without moving the image. Previewing that press

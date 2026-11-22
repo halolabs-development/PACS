@@ -1,5 +1,8 @@
 (function(root){
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   function mount(options){
     const work=root.KinWorkContext,transport=root.KinSessionTransport.page();
     const button=options.button;if(!button)return;
@@ -10,9 +13,9 @@
     button.disabled=false;button.textContent='Study Access';
     function render(){
       button.textContent=!last?'Study Access: Unverified':!last.restricted?'Study Access':last.denied?'Study Access: Denied':'Study Access: Restricted';
-      button.title='현재 사용자에게 적용되는 검사 접근 조건 상태';
+      kinWrite(button, kinSayEn("현재 사용자에게 적용되는 검사 접근 조건 상태"), "title");
       if(dialog){
-        dialog.querySelector('[data-status]').textContent=!last?'접근 조건을 확인하지 못했습니다.':`Revision ${last.revision} · ${!last.restricted?'No Additional Restriction':last.denied?'Denied':'Restricted'}`;
+        kinWrite(dialog.querySelector('[data-status]'), !last ? kinSayEn("접근 조건을 확인하지 못했습니다.") : `Revision ${last.revision} · ${!last.restricted?'No Additional Restriction':last.denied?'Denied':'Restricted'}`);
         dialog.querySelector('[data-period]').textContent=last?.needsInstitutionReview?'기관이 변경되어 새 기관 관리자의 접근 설정이 필요합니다.':last?.restricted?`UTC ${last.startsAt||'Open Start'} → ${last.endsAt||'Open End'}`:'';
       }
     }

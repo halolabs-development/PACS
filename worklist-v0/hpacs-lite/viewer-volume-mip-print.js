@@ -3,9 +3,13 @@
    accepted only from its own rendered event after the projection state, the display, the linked shaders, the camera and its depth
    range read back. It never touches the OHIF engine, the MIP Viewer dialog, a preview or a saved-state object; the caller's finally
    destroys the engine and element and removes the private volume. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.kinRenderVolumeMipPrint=async function kinRenderVolumeMipPrint({core,engine,volume,element,pending,check,snapshot,corners,dimensions,spacing,direction,frameOfReference}){
   const output=window.KinVolumeMipOutput,model=window.KinVolumeMip;
-  if(!output||!model)throw Error('MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.');
+  if(!output||!model)throw kinError("MIP 출력 도구를 불러오지 못했습니다. 다시 확인하세요.");
   const {messages}=output,job=output.saved(snapshot),id=volume.volumeId,rendered=core.Enums?.Events?.IMAGE_RENDERED,size=output.size;
   const affine=model.affine(index=>volume.imageData.indexToWorld(index));
   const request=output.bind({saved:job,frameOfReference,volumeId:id,affine,corners});

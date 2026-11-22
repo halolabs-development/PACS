@@ -312,6 +312,8 @@ export const AUTH_END_CAUSES = freeze({
   'auth.session.expired': ['idle', 'refresh-failed', 'sweep'],
 } as const);
 export type AuthEndCause = typeof AUTH_END_CAUSES[keyof typeof AUTH_END_CAUSES][number];
+// 'admin-otp-required' is no longer written (no account is required to have OTP); it stays so the records written while
+// administrators were, still read.
 export const AUTH_FAILURE_CAUSES = freeze({
   refused: ['provider-error', 'state-mismatch', 'no-code', 'exchange-failed', 'token-invalid', 'idp-session-ended', 'member-isolated', 'rights-pending', 'admin-otp-required'],
   failed: ['session-failed', 'storage-failure'],

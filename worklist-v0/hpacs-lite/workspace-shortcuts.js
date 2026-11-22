@@ -3,7 +3,7 @@
 (function (root) {
   'use strict';
   // A sentence of the page built from its template and its parts ({t: words}); written so the screen language reads it.
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };  const defaults = Object.freeze({list:'Digit1',image:'Digit2',prior:'Digit3',report:'Digit4',context:'Digit5',note:'Digit6',tools:'Digit7',nativeTools:'Digit9',previous:'ArrowLeft',next:'ArrowRight'});
   const labels = {list:'Worklist',image:'Image',prior:'Related Report',report:'Report Editor',context:'Study Info & Templates',note:'Image Tech Note',tools:'Tool Panels',nativeTools:'Viewer Toolbar',previous:'Previous Study',next:'Next Study',finalize:'Finalize (Approve)',finalizeNext:'Finalize & Next (Approve & Next)'};
   // Finalize & Next (the Approve & Next button) has no key until the reader gives it one; a map saved before it existed has no entry.
@@ -24,7 +24,7 @@
       used.add(key); return true;
     });
   }
-  const unassigned = () => ({map:{version:2,...Object.fromEntries(ids.map(id=>[id,null]))},notices:['저장된 단축키를 확인할 수 없어 미배정으로 두었습니다. Shortcuts에서 확인하세요.']});
+  const unassigned = () => ({map:{version:2,...Object.fromEntries(ids.map(id=>[id,null]))},notices:[kinSayEn('저장된 단축키를 확인할 수 없어 미배정으로 두었습니다. Shortcuts에서 확인하세요.')]});
   const scope = id => ['image','note','tools','nativeTools'].includes(id)?'Viewer':'Worklist';
   function migrate(value) {
     if(value===null)return {map:{...defaultsV2},notices:[]};
@@ -37,12 +37,12 @@
       const key=source.version===2?raw:typeof raw==='string'?'Control+Alt+'+raw:null;
       map[id]=chord(key)&&!used.has(key)?key:null;
       if(map[id])used.set(key,id);
-      else if(raw!==null||source.version!==2)notices.push(labels[id]+': 알 수 없거나 중복된 키를 미배정으로 두었습니다. Shortcuts에서 지정하세요.');
+      else if(raw!==null||source.version!==2)notices.push(kinSayEn('{0}: 알 수 없거나 중복된 키를 미배정으로 두었습니다. Shortcuts에서 지정하세요.',labels[id]));
     }
     if(!Object.hasOwn(map,'finalize')){
       const key=defaultsV2.finalize;
       map.finalize=used.has(key)?null:key;
-      if(used.has(key))notices.push(display(key)+'는 이미 '+labels[used.get(key)]+'에 지정됨 — Shortcuts에서 지정하세요.');
+      if(used.has(key))notices.push(kinSayEn('{0}는 이미 {1}에 지정됨 — Shortcuts에서 지정하세요.',display(key),labels[used.get(key)]));
     }
     return {map,notices};
   }
@@ -58,6 +58,9 @@
     const storage=()=>{try{return root.localStorage;}catch(_){return undefined;}};
     const d = host.ownerDocument;
     const el = (tag, text, parent) => { const n = d.createElement(tag); kinWrite(n, text); parent?.append(n); return n; };
+    // Notices of a saved map: one sentence of the notices, a space between (as they were joined), so a later language choice
+    // repaints each of them.
+    const notices = (node, list) => kinWrite(node, list.length ? kinSayEn(list.map((_, i) => '{t' + i + '}').join(' '), ...list) : '');
     let map = {...defaultsV2}, currentOwner = null, ended = false, draftOwner = null, baseline = null;
     let accountRequest=null, accountEpoch=0, accountRevision=null, accountBusy=false;
     const edit = el('button','Edit Shortcuts',host); edit.type='button'; edit.className='chip'; edit.id='workspace-shortcuts-edit';
@@ -67,7 +70,7 @@
     // One look for every key field of the dialog (the work page's keys and the viewer's image tool keys).
     const fieldCss='box-sizing:border-box;width:100%;padding:6px;background:#0b1320;color:inherit;border:1px solid #718eaa;border-radius:4px';
     const title = el('h2','Workspace Shortcuts',dialog); title.id='workspace-shortcuts-title'; dialog.setAttribute('aria-labelledby',title.id);
-    el('p','이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer 창의 새 Ctrl+Alt 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.',dialog);
+    el('p',kinSayEn('이 브라우저의 현재 계정에 저장합니다. Ctrl+Alt 조합 또는 Ctrl+S를 지정하세요. Ctrl+Alt+C(환자 ID 복사), Ctrl+Alt+8(영상 배치)과 나머지 브라우저·입력 키는 예약되어 있습니다. Backspace/Delete로 미배정할 수 있습니다. Viewer 창의 새 Ctrl+Alt 키는 다음 열기부터 적용하며 열린 창은 현재 키를 유지합니다.'),dialog);
     const tabs=el('div','',dialog);tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','Shortcut scope');
     const panels={},tabButtons={};
     function showTab(name,focus=false){for(const key of Object.keys(panels)){const active=key===name;panels[key].hidden=!active;tabButtons[key].setAttribute('aria-selected',String(active));tabButtons[key].tabIndex=active?0:-1;}if(focus)tabButtons[name].focus();}
@@ -101,7 +104,7 @@
     let toolBase=null, toolRows=null, toolStatus=null;
     if(viewerKeys){
       const heading=el('h3','Image Tool Keys',panels.Viewer);heading.id='workspace-viewer-keys-title';heading.style.cssText='margin:16px 0 4px;font-size:15px';
-      el('p','별도 Viewer 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 Viewer 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다.',panels.Viewer);
+      el('p',kinSayEn('별도 Viewer 창에서 입력 칸 밖에서 누르는 영상 도구 키입니다(영문자·숫자 한 개 또는 Shift+영문자). 계정에 저장되어 다른 PC에도 적용되고, 저장하면 이 브라우저에 열린 Viewer 창에도 바로 적용됩니다. 판독 화면 안에 붙은 영상은 뷰어 기본 키를 씁니다.'),panels.Viewer);
       toolStatus=el('p','',panels.Viewer);toolStatus.id='workspace-viewer-keys-status';toolStatus.setAttribute('role','status');
       toolRows=el('div','',panels.Viewer);toolRows.id='workspace-viewer-keys';toolRows.setAttribute('role','group');toolRows.setAttribute('aria-labelledby',heading.id);
     }
@@ -156,7 +159,7 @@
     const fill=value=>{for(const id of ids){fields[id].dataset.code=value[id]||'';fields[id].value=display(value[id]);}};
     const close=()=>{cancelAccount();dialog.close();draftOwner=null;refreshTools();if(!ended)edit.focus();};
     const draft=()=>({version:2,...Object.fromEntries(ids.map(id=>[id,fields[id].dataset.code||null]))});
-    el('p','계정에서 불러오면 아래 입력란에 채워집니다. 계정 저장은 표시된 키를 보관하며, 현재 브라우저에는 Apply & Save로 적용하세요.',dialog);
+    el('p',kinSayEn('계정에서 불러오면 아래 입력란에 채워집니다. 계정 저장은 표시된 키를 보관하며, 현재 브라우저에는 Apply & Save로 적용하세요.'),dialog);
     const accountLoad=button(kinSay('Load from Account'),'workspace-shortcuts-account-load',()=>accountRun('load'));
     const accountSave=button(kinSay('Save to Account'),'workspace-shortcuts-account-save',()=>accountRun('save'));
     const accountStatus=el('p','',dialog);accountStatus.id='workspace-shortcuts-account-status';accountStatus.setAttribute('role','status');
@@ -173,7 +176,7 @@
       const snapshot=draft(), bound=draftOwner, ticket=++accountEpoch, tools=writes&&toolChanged();
       if(action==='save'&&!valid(snapshot)){
         const conflicts=ids.filter(id=>snapshot[id]&&ids.some(other=>other!==id&&snapshot[other]===snapshot[id]));
-        accountStatus.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
+        kinWrite(accountStatus, kinSayEn("중복 단축키: {0}. 서로 다른 키로 지정하세요.", conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')));return;
       }
       if(tools&&toolConflicts().length){kinWrite(accountStatus, kinSay('중복 영상 도구 키: {0}. 서로 다른 키로 지정하세요.',toolConflicts().map(toolName).join(', ')));return;}
       const viewerSettings=tools?viewerNext():null;
@@ -186,10 +189,10 @@
         const response=await transport.request('/api/workspace-shortcuts',{context:at,method:body?'PUT':'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
         if(!live())return;
 
-        if(!response.ok)throw Error(response.status===409?'다른 창에서 설정이 바뀌었습니다. 불러온 뒤 다시 저장하세요.':'계정 설정을 확인하지 못했습니다. 다시 불러오세요.');
+        if(!response.ok)throw Error(response.status===409?kinSayEn('다른 창에서 설정이 바뀌었습니다. 불러온 뒤 다시 저장하세요.'):kinSayEn('계정 설정을 확인하지 못했습니다. 다시 불러오세요.'));
         const data=response.body;if(!live())return;
         // bindings null is "no work-page keys saved" at any revision: a record may hold only the viewer settings (C05).
-        if(JSON.stringify(data.owner)!==bound||!Number.isInteger(data.revision)||data.revision<0||data.revision>2147483647||(data.revision===0?data.bindings!==null||data.invalid===true:data.bindings!==null&&!valid(data.bindings)))throw Error('계정 단축키 응답을 확인할 수 없습니다.');
+        if(JSON.stringify(data.owner)!==bound||!Number.isInteger(data.revision)||data.revision<0||data.revision>2147483647||(data.revision===0?data.bindings!==null||data.invalid===true:data.bindings!==null&&!valid(data.bindings)))throw Error(kinSayEn('계정 단축키 응답을 확인할 수 없습니다.'));
         work.commit(at,()=>{
         if(action==='load'&&JSON.stringify(snapshot)!==JSON.stringify(draft())){accountRevision=null;kinWrite(accountStatus, kinSay('입력이 바뀌어 불러온 설정을 적용하지 않았습니다.'));return;}
         accountRevision=data.revision;
@@ -198,7 +201,7 @@
         takeTools(data);
         if(action==='apply'){local(snapshot);return;}
         if(data.invalid===true){kinWrite(accountStatus, kinSay('저장된 단축키를 읽을 수 없습니다. 현재 입력으로 계정에 다시 저장할 수 있습니다.'));return;}
-        if(action==='load'&&data.bindings!==null){const migrated=migrate(data.bindings);fill(migrated.map);message.textContent=migrated.notices.join(' ');kinWrite(accountStatus, kinSay('계정 단축키를 입력란에 불러왔습니다. Apply & Save로 적용하세요.'));}
+        if(action==='load'&&data.bindings!==null){const migrated=migrate(data.bindings);fill(migrated.map);notices(message,migrated.notices);kinWrite(accountStatus, kinSay('계정 단축키를 입력란에 불러왔습니다. Apply & Save로 적용하세요.'));}
         else if(action==='save')kinWrite(accountStatus, JSON.stringify(snapshot)===JSON.stringify(draft())?kinSay('단축키를 계정에 저장했습니다.'):kinSay('요청 당시 단축키를 저장했습니다. 이후 입력 변경은 저장되지 않았습니다.'));
         else kinWrite(accountStatus, data.bindings===null?kinSay('계정에 저장된 단축키가 없습니다.'):kinSay('계정 설정이 있습니다. 불러오면 입력란에 표시합니다.'));
         });
@@ -229,7 +232,7 @@
       const next=draft();
       if(!valid(next)){
         const conflicts=ids.filter(id=>next[id]&&ids.some(other=>other!==id&&next[other]===next[id]));
-        message.textContent='중복 단축키: '+conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')+'. 서로 다른 키로 지정하세요.';return;
+        kinWrite(message, kinSayEn("중복 단축키: {0}. 서로 다른 키로 지정하세요.", conflicts.map(id=>labels[id]+' ('+scope(id)+')').join(', ')));return;
       }
       if(!toolChanged()){applyLocal(next,false);return;}
       if(accountBusy){kinWrite(message, kinSay('계정 단축키를 확인하는 중…'));return;}
@@ -248,7 +251,7 @@
       if(next===currentOwner)return;
       cancelAccount();currentOwner=next;map={...defaultsV2};status.textContent='';
       if(dialog.open)dialog.close();
-      if(next){const saved=readLocal(storage(),next);map=saved.map;status.textContent=saved.notices.join(' ');}
+      if(next){const saved=readLocal(storage(),next);map=saved.map;notices(status,saved.notices);}
       changed(map);
     }
     edit.onclick=()=>{
@@ -258,7 +261,7 @@
       const saved=readLocal(storage(),draftOwner);map=saved.map;changed(map);
       // The tool keys come with the account's answer below; until then (and if it fails) they cannot be changed.
       toolBase=null;fillTools(null);if(toolStatus)kinWrite(toolStatus, kinSay('계정의 영상 도구 키를 불러오는 중…'));
-      fill(map);kinWrite(message, saved.notices.join(' ')||kinSay('각 항목에서 사용할 조합을 누르세요.'));showTab('Worklist');dialog.showModal();fields.list.focus();refreshAccount();accountRun('inspect');
+      fill(map);if(saved.notices.length)notices(message,saved.notices);else kinWrite(message, kinSay('각 항목에서 사용할 조합을 누르세요.'));showTab('Worklist');dialog.showModal();fields.list.focus();refreshAccount();accountRun('inspect');
     };
     dialog.addEventListener('cancel',e=>{e.preventDefault();close();});
     dialog.addEventListener('keydown',e=>e.stopPropagation());

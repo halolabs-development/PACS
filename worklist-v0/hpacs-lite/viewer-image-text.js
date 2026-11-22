@@ -1,4 +1,8 @@
 /* Hide image text inside verified native stack panes without changing image geometry. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function (root) {
   'use strict';
   const uid = value => typeof value === 'string' && value.length <= 64 && /^\d+(?:\.\d+)+$/.test(value);
@@ -26,37 +30,37 @@
         source.map(value => [value.StudyInstanceUID, value.SeriesInstanceUID, value.PatientID, value.SOPInstanceUID])]);
     }
     function inspect() {
-      if (!live() || !doc?.defaultView) throw Error('현재 영상 창을 확인할 수 없습니다.');
-      const boundOwner = owner(); if (!boundOwner) throw Error('현재 영상 계정을 확인할 수 없습니다.');
-      if (doc.fullscreenElement) throw Error('Images Only를 종료한 뒤 다시 시도하세요.');
-      if (dialogs()) throw Error('열린 대화상자를 닫은 뒤 다시 시도하세요.');
-      if (busy()) throw Error('저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.');
+      if (!live() || !doc?.defaultView) throw kinError("현재 영상 창을 확인할 수 없습니다.");
+      const boundOwner = owner(); if (!boundOwner) throw kinError("현재 영상 계정을 확인할 수 없습니다.");
+      if (doc.fullscreenElement) throw kinError("Images Only를 종료한 뒤 다시 시도하세요.");
+      if (dialogs()) throw kinError("열린 대화상자를 닫은 뒤 다시 시도하세요.");
+      if (busy()) throw kinError("저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.");
       const state = services?.viewportGridService?.getState?.();
-      if (!state?.viewports?.size) throw Error('표시 중인 일반 영상 칸을 확인하세요.');
+      if (!state?.viewports?.size) throw kinError("표시 중인 일반 영상 칸을 확인하세요.");
       const panes = [], wrappers = new Set();
       for (const [viewportId, cell] of state.viewports) {
         const setIds = cell?.displaySetInstanceUIDs;
-        if (!Array.isArray(setIds) || setIds.length !== 1 || !setIds[0]) throw Error('모든 칸에 한 영상 묶음만 표시해야 합니다.');
+        if (!Array.isArray(setIds) || setIds.length !== 1 || !setIds[0]) throw kinError("모든 칸에 한 영상 묶음만 표시해야 합니다.");
         const viewport = services?.cornerstoneViewportService?.getCornerstoneViewport?.(viewportId);
         const displaySet = services?.displaySetService?.getDisplaySetByUID?.(setIds[0]);
-        if (!viewport || viewport.type !== 'stack' || viewport.viewportStatus !== rendered() || !viewport.element?.isConnected || !displaySet || displaySet.displaySetInstanceUID !== setIds[0]) throw Error('불러온 일반 영상 칸에서만 Image Text를 사용할 수 있습니다.');
+        if (!viewport || viewport.type !== 'stack' || viewport.viewportStatus !== rendered() || !viewport.element?.isConnected || !displaySet || displaySet.displaySetInstanceUID !== setIds[0]) throw kinError("불러온 일반 영상 칸에서만 Image Text를 사용할 수 있습니다.");
         const imageIds = viewport.getImageIds?.(), current = viewport.getCurrentImageId?.();
         const source = Array.isArray(displaySet.images) ? displaySet.images : Array.isArray(displaySet.instances) ? displaySet.instances : null;
-        if (!Array.isArray(imageIds) || !imageIds.length || imageIds.length > 2000 || new Set(imageIds).size !== imageIds.length || !imageIds.includes(current) || !source?.length || source.length > 2000 || !uid(displaySet.StudyInstanceUID) || !uid(displaySet.SeriesInstanceUID)) throw Error('영상 원본 목록을 확인할 수 없습니다.');
+        if (!Array.isArray(imageIds) || !imageIds.length || imageIds.length > 2000 || new Set(imageIds).size !== imageIds.length || !imageIds.includes(current) || !source?.length || source.length > 2000 || !uid(displaySet.StudyInstanceUID) || !uid(displaySet.SeriesInstanceUID)) throw kinError("영상 원본 목록을 확인할 수 없습니다.");
         const values = imageIds.map(metadata), patientId = values[0]?.PatientID;
-        if (!patient(patientId) || values.some(value => !value || value.StudyInstanceUID !== displaySet.StudyInstanceUID || value.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value.PatientID !== patientId || !uid(value.SOPInstanceUID)) || source.some(value => value?.StudyInstanceUID !== displaySet.StudyInstanceUID || value?.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value?.PatientID !== patientId || !uid(value?.SOPInstanceUID))) throw Error('영상의 환자 또는 원본 식별이 일치하지 않습니다.');
+        if (!patient(patientId) || values.some(value => !value || value.StudyInstanceUID !== displaySet.StudyInstanceUID || value.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value.PatientID !== patientId || !uid(value.SOPInstanceUID)) || source.some(value => value?.StudyInstanceUID !== displaySet.StudyInstanceUID || value?.SeriesInstanceUID !== displaySet.SeriesInstanceUID || value?.PatientID !== patientId || !uid(value?.SOPInstanceUID))) throw kinError("영상의 환자 또는 원본 식별이 일치하지 않습니다.");
         const imageSops = [...new Set(values.map(value => value.SOPInstanceUID))].sort(), rawSourceSops = source.map(value => value.SOPInstanceUID), sourceSops = [...new Set(rawSourceSops)].sort();
         // Each entry once: by SOP, or by SOP and frame for the frames of one multi-frame file split by time point.
         const sourceKeys = typeof win.kinSeriesSplitKey === 'function' ? source.map(value => win.kinSeriesSplitKey(value)) : rawSourceSops;
         const wrapper = viewport.element.closest?.('[data-cy="viewport-pane"]') || viewport.element.parentElement;
-        if (!same(imageSops, sourceSops) || new Set(sourceKeys).size !== sourceKeys.length || !wrapper?.isConnected || !wrapper.contains?.(viewport.element) || wrappers.has(wrapper) || !wrapper.querySelector(`.kin-viewer-identity[data-study="${displaySet.StudyInstanceUID}"]`)) throw Error('영상 식별 표시와 원본 목록을 확인하세요.');
+        if (!same(imageSops, sourceSops) || new Set(sourceKeys).size !== sourceKeys.length || !wrapper?.isConnected || !wrapper.contains?.(viewport.element) || wrappers.has(wrapper) || !wrapper.querySelector(`.kin-viewer-identity[data-study="${displaySet.StudyInstanceUID}"]`)) throw kinError("영상 식별 표시와 원본 목록을 확인하세요.");
         wrappers.add(wrapper);
         panes.push({ viewportId, cell, viewport, element: viewport.element, wrapper, displaySet, displaySetId: setIds[0], imageIds: [...imageIds], identity: sourceIdentity(displaySet, imageIds, values, source) });
       }
       return { owner: boundOwner, grid: gridSignature(state), panes, token: `kit-${++sequence}` };
     }
     function conceal(record) {
-      if (record.panes.some(item => item.wrapper.hasAttribute('data-kin-image-text-hidden'))) throw Error('Image Text 표시 소유권이 충돌했습니다.');
+      if (record.panes.some(item => item.wrapper.hasAttribute('data-kin-image-text-hidden'))) throw kinError("Image Text 표시 소유권이 충돌했습니다.");
       const style = doc.createElement('style'); style.setAttribute('data-kin-image-text-style', record.token);
       style.textContent = `[data-kin-image-text-hidden="${record.token}"] .viewport-overlay,[data-kin-image-text-hidden="${record.token}"] [data-cy^="viewport-overlay-"],[data-kin-image-text-hidden="${record.token}"] .kin-viewer-identity,[data-kin-image-text-hidden="${record.token}"] .orientation-marker{visibility:hidden!important}`;
       (doc.head || doc.body || doc.documentElement).append(style); record.style = style;
@@ -85,19 +89,19 @@
       if (toggle) { toggle.textContent = 'Hide Image Text'; toggle.disabled = false; }
       preserveStatus = true;
       refresh();
-      if (status && live()) status.textContent = message || 'Image Text를 표시했습니다.';
+      if (status && live()) status.textContent = message || kinText("Image Text를 표시했습니다.");
       Promise.resolve().then(() => { preserveStatus = false; });
     }
     function observe() {
       if (!hidden) { refresh(); return; }
-      if (!matches(hidden)) show('영상 구성이 바뀌어 Image Text를 표시했습니다.');
+      if (!matches(hidden)) show(kinText("영상 구성이 바뀌어 Image Text를 표시했습니다."));
       else return;
     }
     function refresh() {
       if (!toggle || hidden) return;
-      let reason = controller && controller !== api ? '다른 Image Text 작업을 먼저 종료하세요.' : '';
+      let reason = controller && controller !== api ? kinText("다른 Image Text 작업을 먼저 종료하세요.") : '';
       try { if (!reason) inspect(); } catch (error) { reason = error.message; }
-      toggle.disabled = ended || !!reason; toggle.title = reason || '현재 영상 칸의 문자 정보를 숨깁니다.';
+      toggle.disabled = ended || !!reason; toggle.title = reason || kinText("현재 영상 칸의 문자 정보를 숨깁니다.");
       if (reason && status && !preserveStatus) status.textContent = reason;
     }
     function toggleText() {
@@ -106,7 +110,7 @@
       let record = null;
       try {
         record = inspect(); conceal(record); hidden = record; controller = api;
-        toggle.textContent = 'Show Image Text'; status.textContent = 'Image Text를 숨겼습니다.';
+        toggle.textContent = 'Show Image Text'; status.textContent = kinText("Image Text를 숨겼습니다.");
       } catch (error) { restore(record); hidden = null; status.textContent = error.message; refresh(); }
     }
     function end() {
@@ -121,7 +125,7 @@
       if (ended || panel || !host?.isConnected) return false;
       panel = doc.createElement('section'); panel.id = 'kin-image-text';
       toggle = doc.createElement('button'); toggle.type = 'button'; toggle.id = 'kin-image-text-toggle'; toggle.textContent = 'Hide Image Text'; toggle.addEventListener('click', toggleText); panel.append(toggle);
-      status = doc.createElement('p'); status.id = 'kin-image-text-status'; status.setAttribute('role', 'status'); status.textContent = 'Image Text · 영상 정보가 표시됩니다.'; panel.append(status); host.append(panel);
+      status = doc.createElement('p'); status.id = 'kin-image-text-status'; status.setAttribute('role', 'status'); status.textContent = kinText("Image Text · 영상 정보가 표시됩니다."); panel.append(status); host.append(panel);
       listen(doc, 'fullscreenchange', observe); listen(win, 'pagehide', end);
 
       try { channel = window.kinViewerOnEnd(() => end()); } catch (_) {}

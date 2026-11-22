@@ -2,6 +2,9 @@
    The native grid already renders per-position fractional rectangles through
    setLayout({layoutOptions}); this module only decides which rectangles to ask for,
    records what was on screen first, and refuses whatever it cannot put back. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   'use strict';
   // 1x3 and 3x1 are the grids the app's own MPR button builds; 2x2 is the Hanging Protocol
@@ -64,8 +67,8 @@
     const mine = cells.slice().sort(byPlace), theirs = split.slice().sort(byPlace);
     return mine.every((cell, index) => sameBox(cell, theirs[index]));
   }
-  const CROSSES = '칸이 모니터 경계에 걸쳐 있어 그 모니터만 확대할 수 없습니다. 경계에 맞춘 배치(Span Displays 또는 Monitors in Hanging Protocol)에서 사용하세요.';
-  const ALONE = '이 칸은 이미 그 모니터의 한 화면입니다.';
+  const CROSSES = kinText("칸이 모니터 경계에 걸쳐 있어 그 모니터만 확대할 수 없습니다. 경계에 맞춘 배치(Span Displays 또는 Monitors in Hanging Protocol)에서 사용하세요.");
+  const ALONE = kinText("이 칸은 이미 그 모니터의 한 화면입니다.");
   function monitorArea(request) {
     const { rows, cols, cells, anchorId, edges, split } = request || {};
     if (!Array.isArray(cells) || !cells.every(finiteBox)) return null;
@@ -86,7 +89,7 @@
     if (!group.every(inside) || Math.abs(filled - area.width * area.height) > 1e-6 || cells.some(cell => !group.includes(cell) && meets(cell, area))) return { reason: CROSSES };
     if (uniform) {
       const partRows = new Set(group.map(cell => Math.round(cell.y * 1e6))).size, partCols = new Set(group.map(cell => Math.round(cell.x * 1e6))).size;
-      if (!BASES.some(([r, c]) => r === partRows && c === partCols)) return { reason: '1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.' };
+      if (!BASES.some(([r, c]) => r === partRows && c === partCols)) return { reason: kinText("1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.") };
     }
     return { area, group: group.map(cell => cell.viewportId) };
   }
@@ -94,11 +97,11 @@
   function planArea(request, found) {
     const { rows, cols, cells, anchorId } = request;
     if (cells.some(cell => !cell || typeof cell.viewportId !== 'string' || !cell.viewportId) || new Set(cells.map(cell => cell.viewportId)).size !== cells.length)
-      return { ok: false, reason: '화면 구성을 확인할 수 없습니다.' };
+      return { ok: false, reason: kinText("화면 구성을 확인할 수 없습니다.") };
     if (cells.some(cell => !['stack', 'empty', 'plane'].includes(cell?.kind)))
-      return { ok: false, reason: '3D·SR·PDF 화면이나 아직 불러오지 못한 칸이 있어 병합하지 않았습니다. 일반 CT 격자나 MPR 평면 배치에서 사용하세요.' };
+      return { ok: false, reason: kinText("3D·SR·PDF 화면이나 아직 불러오지 못한 칸이 있어 병합하지 않았습니다. 일반 CT 격자나 MPR 평면 배치에서 사용하세요.") };
     const anchor = cells.find(cell => cell.viewportId === anchorId);
-    if (!SHOWS_IMAGE.includes(anchor.kind)) return { ok: false, reason: '영상이 표시된 칸을 선택한 뒤 확대·병합하세요.' };
+    if (!SHOWS_IMAGE.includes(anchor.kind)) return { ok: false, reason: kinText("영상이 표시된 칸을 선택한 뒤 확대·병합하세요.") };
     const entries = cells.filter(cell => !found.group.includes(cell.viewportId)).map(cell => ({ cell, box: rect(cell.x, cell.y, cell.width, cell.height) }))
       .concat([{ cell: anchor, box: copy(found.area) }]).sort((a, b) => byPlace(a.box, b.box));
     return { ok: true, op: 'maximize', rows, cols, anchorId, merged: entries.findIndex(entry => entry.cell === anchor),
@@ -112,37 +115,37 @@
     if (found) return planArea(request, found);
     const { rows, cols, cells, anchorId, op } = request || {};
     if (!BASES.some(([r, c]) => r === rows && c === cols) || !Array.isArray(cells) || cells.length !== rows * cols)
-      return { ok: false, reason: '1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.' };
+      return { ok: false, reason: kinText("1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.") };
     for (let index = 0; index < cells.length; index++) {
       const cell = cells[index];
-      if (!cell || typeof cell.viewportId !== 'string' || !cell.viewportId) return { ok: false, reason: '화면 구성을 확인할 수 없습니다.' };
+      if (!cell || typeof cell.viewportId !== 'string' || !cell.viewportId) return { ok: false, reason: kinText("화면 구성을 확인할 수 없습니다.") };
       if (!near(cell.x, (index % cols) / cols) || !near(cell.y, Math.floor(index / cols) / rows) ||
           !near(cell.width, 1 / cols) || !near(cell.height, 1 / rows))
-        return { ok: false, reason: '이미 병합되었거나 특수한 배치입니다. 먼저 Restore Grid로 격자를 되돌리세요.' };
+        return { ok: false, reason: kinText("이미 병합되었거나 특수한 배치입니다. 먼저 Restore Grid로 격자를 되돌리세요.") };
       if (!['stack', 'empty', 'plane'].includes(cell.kind))
-        return { ok: false, reason: '3D·SR·PDF 화면이나 아직 불러오지 못한 칸이 있어 병합하지 않았습니다. 일반 CT 격자나 MPR 평면 배치에서 사용하세요.' };
+        return { ok: false, reason: kinText("3D·SR·PDF 화면이나 아직 불러오지 못한 칸이 있어 병합하지 않았습니다. 일반 CT 격자나 MPR 평면 배치에서 사용하세요.") };
     }
-    if (new Set(cells.map(cell => cell.viewportId)).size !== cells.length) return { ok: false, reason: '화면 구성을 확인할 수 없습니다.' };
+    if (new Set(cells.map(cell => cell.viewportId)).size !== cells.length) return { ok: false, reason: kinText("화면 구성을 확인할 수 없습니다.") };
     const anchorIndex = cells.findIndex(cell => cell.viewportId === anchorId);
-    if (anchorIndex < 0) return { ok: false, reason: '확대할 칸을 먼저 선택하세요.' };
-    if (!['maximize', 'merge-column', 'merge-row'].includes(op)) return { ok: false, reason: '지원하지 않는 병합입니다.' };
-    if (op !== 'maximize' && (rows !== 2 || cols !== 2)) return { ok: false, reason: '열·행 병합은 2×2 배치에서만 사용할 수 있습니다.' };
+    if (anchorIndex < 0) return { ok: false, reason: kinText("확대할 칸을 먼저 선택하세요.") };
+    if (!['maximize', 'merge-column', 'merge-row'].includes(op)) return { ok: false, reason: kinText("지원하지 않는 병합입니다.") };
+    if (op !== 'maximize' && (rows !== 2 || cols !== 2)) return { ok: false, reason: kinText("열·행 병합은 2×2 배치에서만 사용할 수 있습니다.") };
     // Maximize rebuilds each cell from its own recorded kind, so a grid holding both stacks
     // and planes is no harder than either alone. A row or column merge leaves several cells
     // of possibly different kinds side by side in new rectangles, which is a second shape of
     // the feature rather than the same one, so it keeps the narrower boundary.
     if (op !== 'maximize' && new Set(cells.filter(cell => cell.kind !== 'empty').map(cell => cell.kind)).size > 1)
-      return { ok: false, reason: 'MPR 평면과 일반 CT가 섞인 배치에서는 칸 확대만 사용할 수 있습니다.' };
+      return { ok: false, reason: kinText("MPR 평면과 일반 CT가 섞인 배치에서는 칸 확대만 사용할 수 있습니다.") };
     const column = anchorIndex % cols, row = Math.floor(anchorIndex / cols);
     const block = op === 'maximize' ? cells.slice()
       : cells.filter((_, index) => (op === 'merge-column' ? index % cols === column : Math.floor(index / cols) === row));
     // Only the cell that survives the merge has to carry an image; an empty cell in the
     // block is recorded as empty and comes back empty, which loses nothing.
     if (!SHOWS_IMAGE.includes(cells[anchorIndex].kind))
-      return { ok: false, reason: '영상이 표시된 칸을 선택한 뒤 확대·병합하세요.' };
+      return { ok: false, reason: kinText("영상이 표시된 칸을 선택한 뒤 확대·병합하세요.") };
     const { options, merged } = shape(op, op === 'maximize' ? 0 : op === 'merge-column' ? column : row);
     const survivors = cells.filter(cell => !block.includes(cell));
-    if (survivors.length !== options.length - 1) return { ok: false, reason: '화면 구성을 확인할 수 없습니다.' };
+    if (survivors.length !== options.length - 1) return { ok: false, reason: kinText("화면 구성을 확인할 수 없습니다.") };
     const slots = [];
     for (let index = 0, next = 0; index < options.length; index++)
       slots.push(index === merged ? cells[anchorIndex] : survivors[next++]);
@@ -265,7 +268,7 @@
     }
     // Restore Grid is disabled whenever there is no record, so pointing a user at it then
     // would be advice they cannot follow. The actual limit is stated instead.
-    const NO_RECORD = '저장된 병합 배치이거나 이 창에서 병합하지 않은 배치입니다. 병합 전 격자는 저장되지 않아 되돌릴 수 없으니 다른 배치를 적용하거나 저장된 배치 작업을 복원하세요.';
+    const NO_RECORD = kinText("저장된 병합 배치이거나 이 창에서 병합하지 않은 배치입니다. 병합 전 격자는 저장되지 않아 되돌릴 수 없으니 다른 배치를 적용하거나 저장된 배치 작업을 복원하세요.");
     const refusal = reason => !record && mergedLayout() ? NO_RECORD : reason;
 
     // Layout identity only: which sources sit in which rectangles. Scrolling, W/L and
@@ -279,15 +282,15 @@
     // Every reason the screen must not be rebuilt right now. All of them refuse before
     // any dispatch, so a refusal never changes what the user is looking at.
     function blocked() {
-      if (!live()) return '영상 세션이 변경되었습니다. 뷰어를 다시 여세요.';
-      if (quarantined) return '이전 배치 요청의 완료를 확인하지 못했습니다. 현재 영상을 확인하고 뷰어 창을 닫은 뒤 다시 열어 주세요.';
-      if (busy) return '이전 배치 요청이 끝난 뒤 다시 시도하세요.';
-      try { if (doc.fullscreenElement) return '전체 화면을 종료한 뒤 칸 배치를 바꾸세요.'; } catch (_) { }
-      try { if (doc.querySelector?.('dialog[open],[role="dialog"][aria-modal="true"],.modal.show')) return '열린 대화상자를 닫은 뒤 다시 시도하세요.'; } catch (_) { }
+      if (!live()) return kinText("영상 세션이 변경되었습니다. 뷰어를 다시 여세요.");
+      if (quarantined) return kinText("이전 배치 요청의 완료를 확인하지 못했습니다. 현재 영상을 확인하고 뷰어 창을 닫은 뒤 다시 열어 주세요.");
+      if (busy) return kinText("이전 배치 요청이 끝난 뒤 다시 시도하세요.");
+      try { if (doc.fullscreenElement) return kinText("전체 화면을 종료한 뒤 칸 배치를 바꾸세요."); } catch (_) { }
+      try { if (doc.querySelector?.('dialog[open],[role="dialog"][aria-modal="true"],.modal.show')) return kinText("열린 대화상자를 닫은 뒤 다시 시도하세요."); } catch (_) { }
       try {
         const cines = services?.cineService?.getState?.()?.cines || {};
-        if (Object.values(cines).some(value => value?.isPlaying)) return 'Cine 재생을 멈춘 뒤 칸 배치를 바꾸세요.';
-      } catch (_) { return '영상 재생 상태를 확인할 수 없습니다.'; }
+        if (Object.values(cines).some(value => value?.isPlaying)) return kinText("Cine 재생을 멈춘 뒤 칸 배치를 바꾸세요.");
+      } catch (_) { return kinText("영상 재생 상태를 확인할 수 없습니다."); }
       // Only work that is in flight blocks a merge. An unsaved measurement does NOT:
       // merge changes geometry, never removes an annotation and never replaces a source,
       // and reading with a drawn measurement on screen is exactly when a clinician
@@ -296,8 +299,8 @@
       for (const name of ['kinViewerJobWorkspaceState', 'kinViewerHistoryWorkspaceState']) {
         try {
           const value = typeof win[name] === 'function' ? win[name]() : null;
-          if (value?.busy) return '저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.';
-        } catch (_) { return '영상 작업 상태를 확인할 수 없습니다.'; }
+          if (value?.busy) return kinText("저장 또는 영상 작업이 끝난 뒤 다시 시도하세요.");
+        } catch (_) { return kinText("영상 작업 상태를 확인할 수 없습니다."); }
       }
       return null;
     }
@@ -394,7 +397,7 @@
     // same reason (viewer-volume-job.js:128). This module never reimplements the
     // preparation: it calls it, and where it cannot, the mode is left alone.
     const averageReady = () => typeof win.kinPrepareVolumeAverage === 'function';
-    const AVERAGE_MISSING = '평균 투영 도구 로딩을 마친 뒤 다시 시도하세요.';
+    const AVERAGE_MISSING = kinText("평균 투영 도구 로딩을 마친 뒤 다시 시도하세요.");
 
     // A plane takes its window, its projection mode and its slab back through the native
     // volume setters the saved MPR Job also uses (viewer-volume-job.js:127-131), in that
@@ -615,9 +618,9 @@
 
     function quarantine(message) {
       quarantined = true; record = null; refresh();
-      return note(message || '배치 요청 또는 복원 완료를 확인하지 못했습니다. 현재 영상을 확인하고 뷰어 창을 닫은 뒤 다시 열어 주세요.');
+      return note(message || kinText("배치 요청 또는 복원 완료를 확인하지 못했습니다. 현재 영상을 확인하고 뷰어 창을 닫은 뒤 다시 열어 주세요."));
     }
-    const FOREIGN = '병합을 확인하는 동안 다른 기능이 화면을 바꾸어, 이전 배치로 되돌리지 않고 지금 화면을 그대로 두었습니다. 화면을 확인한 뒤 뷰어 창을 닫고 다시 열어 주세요.';
+    const FOREIGN = kinText("병합을 확인하는 동안 다른 기능이 화면을 바꾸어, 이전 배치로 되돌리지 않고 지금 화면을 그대로 두었습니다. 화면을 확인한 뒤 뷰어 창을 닫고 다시 열어 주세요.");
 
     // `capture` reads the screen at the instant the first input arrives, in the capture
     // phase, before any tool has acted on it. A value that is identical in that reading and
@@ -700,14 +703,14 @@
         busy = true; refresh();
         try { edges = await displayEdges(); } finally { busy = false; refresh(); }
         // Unknown displays are not taken as one: the maximize could reach over a display edge.
-        const later = ended || !live() ? '' : blocked() ?? (layoutSignature() !== asked ? '모니터를 확인하는 사이 화면이 바뀌어 칸을 확대하지 않았습니다.'
-          : edges === null ? '모니터 정보를 확인하지 못해 칸을 확대하지 않았습니다. 다시 더블클릭하세요.' : null);
+        const later = ended || !live() ? '' : blocked() ?? (layoutSignature() !== asked ? kinText("모니터를 확인하는 사이 화면이 바뀌어 칸을 확대하지 않았습니다.")
+          : edges === null ? kinText("모니터 정보를 확인하지 못해 칸을 확대하지 않았습니다. 다시 더블클릭하세요.") : null);
         if (later !== null) { pendingToggle = false; return { ok: false, message: later && note(later) }; }
       }
       const base = snapshot();
       if (!base) return { ok: false, message: note(record
-        ? '이미 병합된 화면입니다. 먼저 Restore Grid로 격자를 되돌리세요.'
-        : refusal('1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다.')) };
+        ? kinText("이미 병합된 화면입니다. 먼저 Restore Grid로 격자를 되돌리세요.")
+        : refusal(kinText("1·2·4화면의 일반 CT 격자 또는 3평면 MPR 배치에서만 칸을 확대·병합할 수 있습니다."))) };
       const anchor = anchorId || base.active;
       const result = plan({ rows: base.rows, cols: base.cols, cells: base.cells, anchorId: anchor, op, edges, split: base.options });
       // A registered split is no saved merged layout: its refusal is said as it is.
@@ -741,7 +744,7 @@
       try {
         crosshair = holdCrosshairReset(planes);
         watch = watchInteraction(true);
-        busy = true; refresh(); note('칸 배치를 적용하는 중…');
+        busy = true; refresh(); note(kinText("칸 배치를 적용하는 중…"));
         const deadline = Date.now() + 4000;
         dispatched = true;
         try { await boundedNative(dispatch(base.rows, base.cols, result.layoutOptions, result.slots, anchor), 2000); } catch (_) { }
@@ -760,18 +763,17 @@
             record = { base, op, anchorId: anchor, after, input: watch.input(), marks, planes, signature: layoutSignature(), area: result.area || null };
             crosshair.center();
             return { ok: true, op, ...(result.area ? { area: copy(result.area) } : {}), message: note(op === 'maximize'
-              ? (result.area ? '선택한 칸을 그 모니터의 한 화면으로 확대했습니다. 다른 모니터의 칸은 그대로입니다. ' : '선택한 칸을 한 화면으로 확대했습니다. ') +
-                '다시 더블클릭하거나 Restore Grid로 이전 배치로 돌아갑니다.'
-              : '선택한 칸을 병합했습니다. Restore Grid로 이전 배치로 돌아가며, 이 병합 배치는 Save New Job으로 저장할 수 있습니다.') };
+              ? kinText("{t0}다시 더블클릭하거나 Restore Grid로 이전 배치로 돌아갑니다.", (result.area ? kinText("선택한 칸을 그 모니터의 한 화면으로 확대했습니다. 다른 모니터의 칸은 그대로입니다. ") : kinText("선택한 칸을 한 화면으로 확대했습니다. ")))
+              : kinText("선택한 칸을 병합했습니다. Restore Grid로 이전 배치로 돌아가며, 이 병합 배치는 Save New Job으로 저장할 수 있습니다.")) };
           }
         }
-        return await rollback('요청한 칸 배치를 확인하지 못해 이전 배치로 복구했습니다.');
+        return await rollback(kinText("요청한 칸 배치를 확인하지 못해 이전 배치로 복구했습니다."));
       } catch (_) {
         // A failure before the dispatch left the screen untouched, so it is answered as a
         // refusal rather than rolled back over a screen nobody changed - and never thrown
         // out of the operation, which would leave the caller with no answer at all.
-        if (!dispatched) return { ok: false, message: note('칸 배치를 시작하지 못했습니다. 잠시 후 다시 시도하세요.') };
-        return await rollback('칸 배치에 실패해 이전 배치로 복구했습니다.');
+        if (!dispatched) return { ok: false, message: note(kinText("칸 배치를 시작하지 못했습니다. 잠시 후 다시 시도하세요.")) };
+        return await rollback(kinText("칸 배치에 실패해 이전 배치로 복구했습니다."));
       } finally {
         crosshair?.release(); watch?.release(); busy = false; refresh();
         // The double click remembered while this operation settled is answered now, and
@@ -784,10 +786,10 @@
 
     async function unmerge() {
       const reason = blocked(); if (reason) return { ok: false, message: note(reason) };
-      if (!record) return { ok: false, message: note('되돌릴 병합 기록이 없습니다.') };
+      if (!record) return { ok: false, message: note(kinText("되돌릴 병합 기록이 없습니다.")) };
       if (layoutSignature() !== record.signature) {
         record = null; refresh();
-        return { ok: false, message: note('화면 또는 원본이 변경되어 병합 기록을 지웠습니다. 현재 화면은 유지됩니다.') };
+        return { ok: false, message: note(kinText("화면 또는 원본이 변경되어 병합 기록을 지웠습니다. 현재 화면은 유지됩니다.")) };
       }
       const target = unmergeTarget(record.base, record.after, record.input);
       const before = record.marks, planes = !!record.planes;
@@ -797,7 +799,7 @@
       try {
         crosshair = holdCrosshairReset(planes);
         watch = watchInteraction();
-        busy = true; refresh(); note('이전 배치로 되돌리는 중…');
+        busy = true; refresh(); note(kinText("이전 배치로 되돌리는 중…"));
         started = true;
         const back = await rebuild(target, () => watch.owned() && ours(target));
         if (ended || !live()) return { ok: false, message: '' };
@@ -809,19 +811,19 @@
           // unreadable mark state are two different gaps, and a restore that has neither
           // is the only one that claims the whole screen came back.
           const notes = [];
-          if (target.ambiguous) notes.push('병합 중 조작한 영상 상태는 확인되지 않아 되돌리지 않고 그대로 두었습니다.');
+          if (target.ambiguous) notes.push(kinText("병합 중 조작한 영상 상태는 확인되지 않아 되돌리지 않고 그대로 두었습니다."));
           if (planes && (before === undefined || after === undefined || before !== after))
-            notes.push('MPR 3D 표식 상태는 확인하지 못했습니다.');
+            notes.push(kinText("MPR 3D 표식 상태는 확인하지 못했습니다."));
           return { ok: true, message: note(notes.length
-            ? '이전 칸 배치로 되돌렸습니다. ' + notes.join(' ')
-            : '이전 칸 배치와 영상 상태로 되돌렸습니다.') };
+            ? kinText("이전 칸 배치로 되돌렸습니다. {0}", notes.join(' '))
+            : kinText("이전 칸 배치와 영상 상태로 되돌렸습니다.")) };
         }
         return { ok: false, message: quarantine() };
       } catch (_) {
         // Nothing was rebuilt yet: the merged screen is still exactly what it was, so the
         // record is kept and the user is told to try again instead of a restore being
         // claimed or the merge record being dropped.
-        if (!started) return { ok: false, message: note('되돌리기를 시작하지 못했습니다. 잠시 후 다시 시도하세요.') };
+        if (!started) return { ok: false, message: note(kinText("되돌리기를 시작하지 못했습니다. 잠시 후 다시 시도하세요.")) };
         return { ok: false, message: quarantine() };
       } finally {
         crosshair?.release(); watch?.release(); busy = false; refresh();
@@ -865,17 +867,17 @@
 
     function refresh() {
       if (!panel) return;
-      const reason = ended ? '세션이 종료되었습니다.' : quarantined ? '뷰어 창을 다시 열어 주세요.' : busy ? '요청 처리 중입니다.' : '';
+      const reason = ended ? kinText("세션이 종료되었습니다.") : quarantined ? kinText("뷰어 창을 다시 열어 주세요.") : busy ? kinText("요청 처리 중입니다.") : '';
       panel.querySelectorAll('button[data-cell-merge]').forEach(button => {
         const restore = button.dataset.cellMerge === 'restore';
         button.disabled = !!reason || (restore ? !record : !!record);
-        button.title = reason || (restore ? '병합 전 격자와 영상 상태로 되돌립니다.' : '선택한 칸을 확대하거나 인접한 칸과 병합합니다.');
+        button.title = reason || (restore ? kinText("병합 전 격자와 영상 상태로 되돌립니다.") : kinText("선택한 칸을 확대하거나 인접한 칸과 병합합니다."));
       });
       if (hint) hint.textContent = record?.area
-        ? '현재 그 모니터만 확대한 상태입니다. 다시 더블클릭하거나 Restore Grid로 이전 배치와 영상 상태로 돌아갑니다. 한 모니터만 확대한 배치는 Job으로 저장되지 않습니다.'
+        ? kinText("현재 그 모니터만 확대한 상태입니다. 다시 더블클릭하거나 Restore Grid로 이전 배치와 영상 상태로 돌아갑니다. 한 모니터만 확대한 배치는 Job으로 저장되지 않습니다.")
         : record
-        ? '현재 병합 상태입니다. Save New Job으로 이 배치를 저장할 수 있고, Restore Grid로 병합 전 배치와 영상 상태로 돌아갑니다.'
-        : '영상 칸을 더블클릭하면 그 칸이 한 화면이 되고, 다시 더블클릭하면 이전 배치로 돌아갑니다. 두 모니터에 걸친 창에서는 그 칸이 있는 모니터만 채웁니다.';
+        ? kinText("현재 병합 상태입니다. Save New Job으로 이 배치를 저장할 수 있고, Restore Grid로 병합 전 배치와 영상 상태로 돌아갑니다.")
+        : kinText("영상 칸을 더블클릭하면 그 칸이 한 화면이 되고, 다시 더블클릭하면 이전 배치로 돌아갑니다. 두 모니터에 걸친 창에서는 그 칸이 있는 모니터만 채웁니다.");
     }
 
     // Any layout or source change this module did not make invalidates the record, so a
@@ -884,7 +886,7 @@
       if (ended || busy || !record) return;
       let current = null; try { current = layoutSignature(); } catch (_) { current = null; }
       if (current !== record.signature) {
-        record = null; note('화면 또는 원본이 변경되어 병합 기록을 지웠습니다. 현재 화면은 유지됩니다.'); refresh();
+        record = null; note(kinText("화면 또는 원본이 변경되어 병합 기록을 지웠습니다. 현재 화면은 유지됩니다.")); refresh();
       }
     }
 
@@ -904,13 +906,7 @@
       if (ended || panel || !host) return false;
       panel = doc.createElement('section'); panel.id = 'kin-cell-merge';
       panel.style.cssText = 'border-top:1px solid #657c9f;margin-top:8px;padding-top:8px';
-      panel.innerHTML = '<strong>Cell Merge</strong>' +
-        '<p>칸을 확대하거나 인접한 칸을 하나로 묶습니다. 일반 CT 칸과 MPR 평면 칸에서 쓸 수 있으며, 이 뷰어 격자만 바뀌고 브라우저 전체 화면(Images Only)과는 다릅니다.</p>' +
-        '<div><button type="button" data-cell-merge="maximize">Maximize Cell</button> ' +
-        '<button type="button" data-cell-merge="merge-column">Merge Column</button> ' +
-        '<button type="button" data-cell-merge="merge-row">Merge Row</button> ' +
-        '<button type="button" data-cell-merge="restore">Restore Grid</button></div>' +
-        '<p data-cell-merge-hint></p><p role="status"></p>';
+      panel.innerHTML = kinHtml("<strong>Cell Merge</strong><p>칸을 확대하거나 인접한 칸을 하나로 묶습니다. 일반 CT 칸과 MPR 평면 칸에서 쓸 수 있으며, 이 뷰어 격자만 바뀌고 브라우저 전체 화면(Images Only)과는 다릅니다.</p><div><button type=\"button\" data-cell-merge=\"maximize\">Maximize Cell</button> <button type=\"button\" data-cell-merge=\"merge-column\">Merge Column</button> <button type=\"button\" data-cell-merge=\"merge-row\">Merge Row</button> <button type=\"button\" data-cell-merge=\"restore\">Restore Grid</button></div><p data-cell-merge-hint></p><p role=\"status\"></p>");
       status = panel.querySelector('[role=status]'); hint = panel.querySelector('[data-cell-merge-hint]');
       host.append(panel);
       panel.querySelectorAll('button[data-cell-merge]').forEach(button => {
@@ -930,7 +926,7 @@
          win.addEventListener?.('pagehide', stop);
         try { channel = window.kinViewerOnEnd(() => stop()); } catch (_) { }
       }
-      refresh(); note('칸을 선택한 뒤 확대·병합하거나 영상 칸을 더블클릭하세요.');
+      refresh(); note(kinText("칸을 선택한 뒤 확대·병합하거나 영상 칸을 더블클릭하세요."));
       return true;
     }
 

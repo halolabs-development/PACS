@@ -10,7 +10,7 @@
     const $ = s => document.querySelector(s) ?? (window.KinReportPopout?.find(s) ?? null);
     // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
     // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
-    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
     function kinWrite(el, value, name) { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; }
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
@@ -23,6 +23,14 @@
     function displayActor(value) {
       const raw = String(value ?? "");
       return actorNames.get(raw) || actorNames.get(raw.split("@")[0]) || raw;
+    }
+    /**
+     * Who saved, holds or wrote something, as the server names that person for this reader (<field>Name: by the record's account -
+     * api/src/account-identity.ts writerShown): as is, never looked up again by a login (a login that moved to another member would
+     * name them). An answer without the name shows the login as is.
+     */
+    function writerName(name, login) {
+      return typeof name === "string" && name ? name : String(login ?? "");
     }
     /**
      * Who signed a report version: the member name the server sent with it (authorName, the name it was signed under), else
@@ -47,7 +55,7 @@
       if (!a?.prelimHidden) return "";
       if (a.bodyLock === "destroyed") return kinSay("보존 기간이 끝나 판독문을 파기한 검사입니다");
       if (a.bodyLock === "in-progress")
-        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", displayActor(a.savedBy) || kinSay("다른 판독의"));
+        return kinSay("{0} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다", writerName(a.savedByName, a.savedBy) || kinSay("다른 판독의"));
       return kinSay("다른 판독의의 예비 판독(RS: P)입니다");
     }
     function tagv(st, key) {
@@ -199,7 +207,7 @@
         const j = answer.body || {};
         if (answer.status === 409 && j.code === "REPORT_HELD") {
           const uid = decodeURIComponent(path.split("/")[2]);
-          work.commit(at, () => noteHeld(uid, j.holder));
+          work.commit(at, () => noteHeld(uid, j.holder, j.holderName ?? null));
         }
         // 본문을 버리지 않는다. 거절이 "무엇을 확인해야 하는가"를 함께 보낼 때
         // (승인본 판 번호와 그 본문 같은 것) 메시지 한 줄만 남기면 화면은 사용자에게

@@ -6,6 +6,9 @@
 // not known: then lengths are in pixels and angles are of the pixel grid. Every value is calculated on the patient plane
 // (x = column × column spacing, y = row × row spacing), so pixels that are not square do not bend an angle. "Horizontal" and
 // "vertical" are the image's row and column directions (an upright radiograph as stored), whatever the screen shows.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api; else root.KinMeasureOrthoModel = api;
@@ -20,8 +23,11 @@
   const BASES = Object.freeze(['pixel', 'detector', 'ermf', 'dbt', 'px']);
   const SIDES = Object.freeze(['right', 'left']);
   // The words for a spacing basis, shown with the values (as the Findings value text names them).
-  const BASIS_LABELS = Object.freeze({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정',
+  // BASIS_WORDS as written (the output paper prints them so in every screen language), BASIS_LABELS as the screen says them.
+  const BASIS_WORDS = Object.freeze({ pixel: 'PixelSpacing', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정',
     dbt: 'DBT PixelSpacing', px: '픽셀 기준(간격 미확인)' });
+  const BASIS_LABELS = Object.freeze(Object.fromEntries(Object.entries(BASIS_WORDS).map(([key, words]) => [key, kinText(words)])));
+  const screenText = kinText, asWrittenText = (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   // Pixels are only for an original that holds no spacing at all: one whose spacing tags are there but cannot be used
   // (an orientation that does not hold, a calibration) is refused, not measured in pixels.
   const SPACING_TAGS = Object.freeze(['PixelSpacing', 'ImagerPixelSpacing', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence']);
@@ -46,9 +52,9 @@
   const fail = reason => { const error = new Error(reason); error.measure = true; throw error; };
   function physical(points, spacing, count) {
     if (!Array.isArray(points) || points.length !== count || !points.every(p => Array.isArray(p) && p.length >= 2 && finite(p[0]) && finite(p[1])))
-      fail('점 ' + count + '개가 필요합니다');
+      fail(kinText("점 {n0}개가 필요합니다", count));
     const [row, column] = spacing == null ? [1, 1] : spacing;
-    if (!finite(row) || !finite(column) || row <= 0 || column <= 0) fail('간격이 올바르지 않습니다');
+    if (!finite(row) || !finite(column) || row <= 0 || column <= 0) fail(kinText("간격이 올바르지 않습니다"));
     return points.map(([x, y]) => [x * column, -y * row]);
   }
   const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -60,7 +66,7 @@
   // The distinct-points check of a line; scale: the size of the drawing, so a line of a hair's width is refused.
   function line(a, b, what, scale) {
     const u = sub(b, a);
-    if (len(u) <= Math.max(EPS, scale * 1e-6)) fail(what + '의 두 점을 떼어 찍으세요');
+    if (len(u) <= Math.max(EPS, scale * 1e-6)) fail(kinText("{0}의 두 점을 떼어 찍으세요", what));
     return u;
   }
   const size = points => Math.max(...points.map(p => len(sub(p, points[0]))), 1);
@@ -71,12 +77,12 @@
   // line less the pelvic one's, so a tilted pelvis is taken out). The sides pair by their place on the image, not by order.
   // values: [image-left side, image-right side, |left − right|].
   function limbLength(P) {
-    const s = size(P), base = line(P[0], P[1], '기준선', s), n = [-base[1] / len(base), base[0] / len(base)];
+    const s = size(P), base = line(P[0], P[1], kinText("기준선"), s), n = [-base[1] / len(base), base[0] / len(base)];
     const across = p => dot(sub(p, P[0]), n);
     const [pl, pr] = P[2][0] <= P[3][0] ? [P[2], P[3]] : [P[3], P[2]];
     const [fl, fr] = P[4][0] <= P[5][0] ? [P[4], P[5]] : [P[5], P[4]];
-    if (len(sub(pl, pr)) <= s * 1e-6) fail('좌우 골반 표지를 따로 찍으세요');
-    if (len(sub(fl, fr)) <= s * 1e-6) fail('좌우 대퇴 표지를 따로 찍으세요');
+    if (len(sub(pl, pr)) <= s * 1e-6) fail(kinText("좌우 골반 표지를 따로 찍으세요"));
+    if (len(sub(fl, fr)) <= s * 1e-6) fail(kinText("좌우 대퇴 표지를 따로 찍으세요"));
     const left = Math.abs(across(fl) - across(pl)), right = Math.abs(across(fr) - across(pr));
     return [left, right, Math.abs(left - right)];
   }
@@ -84,7 +90,7 @@
   // two sides. At each end of A: the acute angle between A and that side's line (its supplement is 180° less it). The two
   // lines take the side their middle is on, so the order of the two lines does not matter. values: [image-left, image-right].
   function acetabular(P) {
-    const s = size(P), a = line(P[0], P[1], '기준선 A', s), one = line(P[2], P[3], '③④ 비구 선', s), two = line(P[4], P[5], '⑤⑥ 비구 선', s);
+    const s = size(P), a = line(P[0], P[1], kinText("기준선 A"), s), one = line(P[2], P[3], kinText("③④ 비구 선"), s), two = line(P[4], P[5], kinText("⑤⑥ 비구 선"), s);
     const [left, right] = mid(P[2], P[3])[0] <= mid(P[4], P[5])[0] ? [one, two] : [two, one];
     return [lineAngle(a, left), lineAngle(a, right)];
   }
@@ -93,9 +99,9 @@
   // the middle of ⑤⑥: their horizontal distance. values: [signed distance, + when the vertebra is to the image's right].
   function spineBalance(P) {
     const s = size(P);
-    line(P[4], P[5], '⑤⑥ 골반 선', s);
+    line(P[4], P[5], kinText("⑤⑥ 골반 선"), s);
     const corners = P.slice(0, 4), centre = [corners.reduce((sum, p) => sum + p[0], 0) / 4, 0];
-    if (Math.max(...corners.map(p => p[0])) - Math.min(...corners.map(p => p[0])) <= s * 1e-6) fail('①–④ 척추체의 네 모서리를 찍으세요');
+    if (Math.max(...corners.map(p => p[0])) - Math.min(...corners.map(p => p[0])) <= s * 1e-6) fail(kinText("①–④ 척추체의 네 모서리를 찍으세요"));
     return [centre[0] - mid(P[4], P[5])[0]];
   }
   // Spine Cobb Angle on a lateral image: ①② one endplate line, ③④ the other, then where the back is (on the image). With both
@@ -104,9 +110,9 @@
   // two lines does not matter). Lines whose middles are at the same height have no upper one: the value is null ("—").
   // values: [signed angle, −180° to 180°, or null].
   function spineCobb(P, backSide) {
-    if (!SIDES.includes(backSide)) fail('등의 위치를 고르세요');
+    if (!SIDES.includes(backSide)) fail(kinText("등의 위치를 고르세요"));
     const s = size(P), b = backSide === 'right' ? 1 : -1;
-    const lines = [[P[0], P[1]], [P[2], P[3]]].map(([p, q], i) => ({ u: line(p, q, i ? '③④ 종판 선' : '①② 종판 선', s), m: mid(p, q) }));
+    const lines = [[P[0], P[1]], [P[2], P[3]]].map(([p, q], i) => ({ u: line(p, q, i ? kinText("③④ 종판 선") : kinText("①② 종판 선"), s), m: mid(p, q) }));
     if (Math.abs(lines[1].m[1] - lines[0].m[1]) <= s * 1e-6) return [null];
     const [upper, lower] = lines[1].m[1] > lines[0].m[1] ? [lines[1], lines[0]] : lines;
     // In a frame where the back is +x: each line pointed to the back has an angle in (−90°, 90°].
@@ -121,18 +127,18 @@
   // SS: the endplate against the horizontal (+ when its back end is higher). PT: the line H→M against the vertical
   // (+ when H is in front of M). PI = PT + SS, which is the angle between the endplate's perpendicular and M→H.
   // values: [PI, PT, SS].
-  const ORDER = '점 순서·원본 영상 방향을 확인하세요';
+  const ORDER = kinText("점 순서·원본 영상 방향을 확인하세요");
   function pelvicIncidence(P) {
     const s = size(P), front = P[2], back = P[3];
-    line(front, back, '③④ S1 종판', s);
+    line(front, back, kinText("③④ S1 종판"), s);
     const a = Math.sign(front[0] - back[0]);
-    if (!a) fail('③ 종판의 앞 끝, ④ 뒤 끝을 찍으세요(두 점이 세로로 놓였습니다)');
+    if (!a) fail(kinText("③ 종판의 앞 끝, ④ 뒤 끝을 찍으세요(두 점이 세로로 놓였습니다)"));
     const H = mid(P[0], P[1]), M = mid(front, back);
-    if (H[1] >= M[1] - s * 1e-6) fail(ORDER + ' (①② 대퇴골두 중심이 ③④ 종판보다 아래에 있어야 합니다)');
+    if (H[1] >= M[1] - s * 1e-6) fail(kinText("{0} (①② 대퇴골두 중심이 ③④ 종판보다 아래에 있어야 합니다)", ORDER));
     const ss = Math.atan2(back[1] - front[1], a * (front[0] - back[0])) * DEG;
     const pt = Math.atan2(a * (H[0] - M[0]), M[1] - H[1]) * DEG;
     const pi = pt + ss;
-    if (pi < 0) fail(ORDER + ' (③ S1 종판의 앞 끝, ④ 뒤 끝)');
+    if (pi < 0) fail(kinText("{0} (③ S1 종판의 앞 끝, ④ 뒤 끝)", ORDER));
     return [pi, pt, ss];
   }
   // The angle between the endplate's perpendicular (pointing down) and M→H: the PI the definition names, for the tests.
@@ -148,10 +154,10 @@
   const nullable = (kind, index) => kind === 'spineCobb' && index === 0;
   // { values } or { reason }. options.backSide: 'right' | 'left' for the Cobb angle.
   function compute(kind, points, spacing, options = {}) {
-    if (!KINDS.includes(kind)) return { reason: '측정 종류를 확인할 수 없습니다' };
+    if (!KINDS.includes(kind)) return { reason: kinText("측정 종류를 확인할 수 없습니다") };
     try {
       const values = TOOLS[kind](physical(points, spacing, POINTS[kind]), options.backSide);
-      if (values.length !== VALUES[kind] || !values.every((n, i) => finite(n) || nullable(kind, i) && n === null)) return { reason: '값을 계산할 수 없습니다' };
+      if (values.length !== VALUES[kind] || !values.every((n, i) => finite(n) || nullable(kind, i) && n === null)) return { reason: kinText("값을 계산할 수 없습니다") };
       return { values };
     } catch (error) {
       if (error.measure) return { reason: error.message };
@@ -180,10 +186,12 @@
   const one = n => (Math.round(n * 10) / 10).toFixed(1);
   const signed = n => (n > 0 ? '+' : n < 0 ? '−' : '') + one(Math.abs(n));
   // The lines shown in the panel, beside the mark and in the Job print. basis: the calculator's spacing basis, which sets
-  // the unit (px: pixels) and adds its words; without it, unit says 'mm' or 'px'. sides: sideNames().
-  function lines(kind, values, { basis, unit = basis === 'px' ? 'px' : 'mm', sides = sideNames(null), backSide } = {}) {
-    if (!KINDS.includes(kind) || !Array.isArray(values) || values.length !== VALUES[kind] || !values.every((n, i) => finite(n) || nullable(kind, i) && n === null)) return ['재확인 필요: 값을 확인할 수 없습니다'];
-    const u = ' ' + unit, grid = unit === 'px' ? [BASIS_LABELS.px] : basis && BASIS_LABELS[basis] ? [BASIS_LABELS[basis]] : [];
+  // the unit (px: pixels) and adds its words; without it, unit says 'mm' or 'px'. sides: sideNames(). asWritten: the words as
+  // written whatever the screen language (the output paper).
+  function lines(kind, values, { basis, unit = basis === 'px' ? 'px' : 'mm', sides = sideNames(null), backSide, asWritten = false } = {}) {
+    const kinText = asWritten ? asWrittenText : screenText, BASIS_LABELS_ = asWritten ? BASIS_WORDS : BASIS_LABELS;
+    if (!KINDS.includes(kind) || !Array.isArray(values) || values.length !== VALUES[kind] || !values.every((n, i) => finite(n) || nullable(kind, i) && n === null)) return [kinText("재확인 필요: 값을 확인할 수 없습니다")];
+    const u = ' ' + unit, grid = unit === 'px' ? [BASIS_LABELS_.px] : basis && BASIS_LABELS_[basis] ? [BASIS_LABELS_[basis]] : [];
     if (kind === 'limbLength') {
       const [left, right, diff] = values, longer = Math.abs(left - right) < 0.05 ? '' : ' (' + (left > right ? sides.left : sides.right) + ' longer)';
       return [sides.right + ' ' + one(right) + u + ' · ' + sides.left + ' ' + one(left) + u, 'Difference ' + one(diff) + u + longer, ...grid];
@@ -198,7 +206,7 @@
     }
     if (kind === 'spineCobb') {
       const a = values[0], name = a === null ? 'Cobb' : a < 0 ? 'Lordosis' : a > 0 ? 'Kyphosis' : 'Cobb';
-      const value = a === null ? ' — (위·아래 선을 가릴 수 없습니다: 두 선의 가운데가 같은 높이)' : ' @' + signed(a) + '°(' + one(360 - Math.abs(a)) + '°)';
+      const value = a === null ? kinText(" — (위·아래 선을 가릴 수 없습니다: 두 선의 가운데가 같은 높이)") : ' @' + signed(a) + '°(' + one(360 - Math.abs(a)) + '°)';
       return [name + value, ...(backSide ? ['Back: image ' + backSide] : []), ...grid];
     }
     const [pi, pt, ss] = values;

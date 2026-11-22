@@ -3,6 +3,9 @@
 // registry when it mounts and detaches it when it ends; a feature never edits the toolbar or its dialog itself.
 // Every action runs through run(id), which keeps the toolbar's own guards (ended session, empty viewer,
 // patient switch, a History or Job workspace being restored).
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerFeatures = (() => {
   const MENUS = ['MG', 'Navigate', 'Display', 'Compare', 'Measure'];
   const modules = [];
@@ -214,10 +217,10 @@ window.KinViewerFeatures = (() => {
       window.kinViewerImageWork?.();
       try {
         const result = action.run({ viewportId, current, signal: controller.signal });
-        Promise.resolve(result).catch(error => { if (current()) report(error?.message || action.label + '을(를) 실행하지 못했습니다.'); })
+        Promise.resolve(result).catch(error => { if (current()) report(error?.message || kinText("{0}을(를) 실행하지 못했습니다.", action.label)); })
           .finally(() => runs.delete(entry));
         return true;
-      } catch (error) { runs.delete(entry); report(error?.message || action.label + '을(를) 실행하지 못했습니다.'); return false; }
+      } catch (error) { runs.delete(entry); report(error?.message || kinText("{0}을(를) 실행하지 못했습니다.", action.label)); return false; }
     }
     // ── runInCell(entry, viewportId, still): the one way a control that belongs to a cell acts there ──
     // A cell's own controls (the compact tools on each cell's information row), the Context Toolbar and a feature's
@@ -369,7 +372,7 @@ window.KinViewerFeatures = (() => {
           return new Promise((resolve, reject) => {
             list.reduce((previous, name) => previous.then(() => script(name)), Promise.resolve()).then(
               () => { if (live()) resolve(); },
-              error => { if (!live()) return; report(entry.name + ': ' + error.message + '을(를) 불러오지 못했습니다.'); reject(error); });
+              error => { if (!live()) return; report(kinText("{0}: {e1}을(를) 불러오지 못했습니다.", entry.name, error.message)); reject(error); });
           });
         },
         // The toolbar's guards (ended session, empty viewer, patient switch, a History or Job workspace being restored), for a
@@ -427,7 +430,7 @@ window.KinViewerFeatures = (() => {
         console.error(error);
         if (owned.dispose) try { owned.dispose(); } catch (_) {}
         remove();
-        report('뷰어 기능 ' + entry.name + '을(를) 설치하지 못했습니다.');
+        report(kinText("뷰어 기능 {0}을(를) 설치하지 못했습니다.", entry.name));
       };
       entry.installed = { remove: () => { if (!owned.alive) return; try { owned.dispose?.(); } catch (error) { console.error(error); } remove(); } };
       const settle = result => {

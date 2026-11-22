@@ -62,13 +62,6 @@ AUTH_TIME_MAPPER = {
     "config": {"user.session.note": "AUTH_TIME", "claim.name": "auth_time", "jsonType.label": "long",
                "access.token.claim": "true", "id.token.claim": "true"},
 }
-# The authentication methods Keycloak recorded for the login (kin-bff's mapper in kin-realm.json): an administrator's token
-# carries "otp" only after the realm's administrator OTP step, and the API admits administrators only with it.
-AMR_MAPPER = {
-    "name": "kin-authentication-methods", "protocol": "openid-connect", "consentRequired": False,
-    "protocolMapper": "oidc-amr-mapper",
-    "config": {"id.token.claim": "false", "access.token.claim": "true", "introspection.token.claim": "true"},
-}
 
 
 def load_local_env() -> None:
@@ -678,7 +671,6 @@ class LiveStack:
         self.test_client_uuid = str(created.body)
         mappers = (
             AUTH_TIME_MAPPER,
-            AMR_MAPPER,
             {
                 "name": "kin-api-audience", "protocol": "openid-connect",
                 "protocolMapper": "oidc-audience-mapper", "consentRequired": False,
@@ -869,7 +861,7 @@ class LiveStack:
     # one product session per institution: hallym's imported realm administrator (jmryu); every other institution its
     # own administrator, made once with the operator command api/prisma/designate-first-admin.cjs (keycloak/README.md
     # "기관 첫 관리자 지정") — kin-center's fixed one (made once per stack, reused), a run's own institutions a synthetic
-    # one owned by the run. Each signs in with a real credential and the synthetic OTP, as every administrator must.
+    # one owned by the run. Each signs in with a real credential - its password only: no account is required to have OTP.
     FIXED_INSTITUTION_ADMINS = {"kin-center": "kin-center-admin"}
     _INSTITUTION = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
@@ -895,7 +887,7 @@ class LiveStack:
         return institution or None, suspended == "true", [role for role in roles.split(",") if role]
 
     def _admin_bff_session(self, username: str, password: str, sub: str) -> tuple:
-        """A real credential login (with the administrator OTP) on the public origin: an auth_time-bearing BFF session."""
+        """A real credential login (the password; no OTP is required) on the public origin: an auth_time-bearing BFF session."""
         public = urlparse(self.proxy)
         jar = http.cookiejar.CookieJar()
         trace = []
@@ -925,7 +917,7 @@ class LiveStack:
                           headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
         with opener.open(request, timeout=30) as response:
             page, url = response.read().decode("utf-8", "replace"), response.geturl()
-        # Every administrator answers the synthetic OTP (admin_otp.seed / live_admin_credential).
+        # No OTP is required of an administrator; an account that has one is asked it (admin_otp answers the synthetic one).
         landed = urlparse(admin_otp.answer_http(opener, page, url, username)[1])
         if not any(path == "/api/auth/callback" for path, _, _ in trace) or landed.path != "/worklist/hpacs-lite/main.html":
             # Audit causes are allowlisted classifications, never the audit body or credentials.
@@ -997,7 +989,6 @@ class LiveStack:
                 raise RuntimeError(f"First administrator designation failed ({institution}): {designated.stdout}{designated.stderr}")
             row = self._member_rights_row(sub)
         self._await_roster(sub, institution, row[2])
-        admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), sub)
         time.sleep(1.05)  # A login after the designation's re-login boundary.
         return username, password, sub
 
@@ -1058,9 +1049,6 @@ class LiveStack:
         self.__dict__.setdefault("member_rights", {})[user_id] = result
         if "institution" in changes or "roles" in changes:
             self._await_roster(user_id, result["institution"], result["roles"])
-            if "admin" in result["roles"]:
-                # Administrators sign in with OTP (keycloak/README.md): the test identity gets the synthetic one.
-                admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.kc_admin(method, path, body)), user_id)
         for logical, sub in self.user_ids.items():
             if sub == user_id:
                 self.tokens.pop(logical, None)
@@ -1355,6 +1343,7 @@ class LiveStack:
         self.token(user)
         return self.actors[user]
 
+
     def require_stack(self) -> None:
         health = self.request("GET", "/health")
         if health.status != 200 or not health.body.get("ok"):
@@ -1595,6 +1584,13 @@ def u5_snapshot(uid: str, floor: int | None) -> dict[str, Any]:
         f"'state', (SELECT to_jsonb(s) FROM \"StudyState\" s WHERE s.uid='{uid}'))::text;"
     )
     return json.loads("\n".join(rows))
+
+
+def shown_name(stack: Any, user: str) -> str:
+    """The person the server names for this user's records to another radiologist: its name in GET colleagues."""
+    viewer = "doctor" if user != "doctor" else "doctor2"
+    peers = stack.request("GET", "/colleagues", viewer)
+    return next(peer["name"] for peer in peers.body if peer.get("id") == stack.actor(user))
 
 
 def u5_post(stack: LiveStack, uid: str, body: bytes, headers: dict[str, str], *,
@@ -1988,7 +1984,7 @@ class BffInvariantTests(unittest.TestCase):
         # The operator command api/prisma/replace-sole-admin.cjs (keycloak/README.md): an institution's sole administrator
         # left while their rights are live; the hospital names a successor. On a run-owned institution: the predecessor's
         # open session and a new login are refused, the successor's earlier (waiting-room) session ends, a colleague's
-        # session lives, and the successor signs in again with the administrator OTP to manage that institution only.
+        # session lives, and the successor signs in again (its password only) to manage that institution only.
         tag = uuid.uuid4().hex[:8]
         institution = "kin-test-replace-" + tag
         created = self.stack.kc_admin("POST", "/groups", {"name": institution})
@@ -2037,9 +2033,8 @@ class BffInvariantTests(unittest.TestCase):
             self.assertEqual(self.proxy(waiting_opener, "GET", "/api/me").status, 401)
             self.assertEqual(self.stack.request("GET", "/me", successor).status, 401, "an authentication from before the replacement")
             self.assertEqual(self.proxy(colleague_opener, "GET", "/api/me").status, 200)
-            # The successor signs in again (administrator OTP) and manages this institution only.
+            # The successor signs in again (its password only) and manages this institution only.
             self.stack._await_roster(successor_id, institution, ["admin"])
-            admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.stack.kc_admin(method, path, body)), successor_id)
             time.sleep(1.05)  # A login after the replacement's re-login boundary.
             opener, session = self.stack._admin_bff_session(self.stack.usernames[successor], self.stack.passwords[successor], successor_id)
             rows, page, pages = {}, 1, 1
@@ -3196,7 +3191,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(blocked.body.get("code"), "REPORT_HELD")
             self.assertEqual(blocked.body.get("holder"), self.stack.actor("doctor"))
             conflict = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                             "mine": False, "conflict": True})
             self.assertEqual(self.audit_count(fixture, "report.hold"), 1)
 
             saved = self.commit(fixture, "doctor", "save", 0)
@@ -3358,13 +3354,15 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertIsNone(self.state(fixture, "doctor2")["holder"], "만료된 점유가 화면에 자물쇠로 나갑니다")
             self.assert_status(self.stack.request("PUT", path + "/report", "doctor2", {"findings": "x"}), 200)
             taken = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(taken.body, {"holder": self.stack.actor("doctor2"), "mine": True, "conflict": False})
+            self.assertEqual(taken.body, {"holder": self.stack.actor("doctor2"), "holderName": shown_name(self.stack, "doctor2"),
+                                          "mine": True, "conflict": False})
             self.assertEqual(self.audit_count(fixture, "report.hold"), 2, "만료 뒤 재점유는 새 점유 세션이다")
             blocked = self.stack.request("PUT", path + "/report", "doctor", {"findings": "late"})
             self.assert_status(blocked, 409)
             self.assertEqual(blocked.body.get("holder"), self.stack.actor("doctor2"))
             stale = self.stack.request("POST", path + "/hold", "doctor")
-            self.assertEqual(stale.body, {"holder": self.stack.actor("doctor2"), "mine": False, "conflict": True})
+            self.assertEqual(stale.body, {"holder": self.stack.actor("doctor2"), "holderName": shown_name(self.stack, "doctor2"),
+                                          "mine": False, "conflict": True})
 
     def test_hold_release_clears_only_own_and_each_reacquisition_is_audited_once(self) -> None:
         with self.stack.fixture() as fixture:
@@ -3397,7 +3395,8 @@ class LiveInvariantTests(unittest.TestCase):
             before_row = self.hold_row(fixture.uid)
             self.assertTrue(before_row.startswith(self.stack.actor("doctor") + "|"), before_row)
             conflict = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                             "mine": False, "conflict": True})
             self.assertEqual(self.hold_row(fixture.uid), before_row, "남의 점유에 대한 hold가 DB를 건드렸습니다")
             holds = [row for row in self.audit_rows(fixture) if row["action"] == "report.hold"]
             self.assertEqual([row["actor"] for row in holds], [self.stack.actor("doctor")])
@@ -3421,12 +3420,12 @@ class LiveInvariantTests(unittest.TestCase):
                                                                 "qcRevision": seen["qc"]["revision"], "epoch": seen["draftEpoch"]})
             self.assert_status(marked, 200)
             self.assertEqual((marked.body["qc"]["reason"], marked.body["qc"]["revision"]), ("SYN motion artefact", 1))
-            self.assertEqual(self.state(fixture, "kdoctor")["qc"], {**marked.body["qc"], "by": None})
+            self.assertEqual(self.state(fixture, "kdoctor")["qc"], {**marked.body["qc"], "by": None, "byName": None})
             refused = self.stack.request("PATCH", path, "ktech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
             self.assert_status(refused, 403)
             cleared = self.stack.request("PATCH", path, "tech", {"qc": None, "qcRevision": 1, "epoch": seen["draftEpoch"]})
             self.assert_status(cleared, 200)
-            self.assertEqual(cleared.body["qc"], {"reason": None, "by": None, "at": None, "revision": 2})
+            self.assertEqual(cleared.body["qc"], {"reason": None, "by": None, "byName": None, "at": None, "revision": 2})
             for user, qc_rows in [("doctor", 2), ("kdoctor", 0)]:
                 for audit_path in [f"/audit?uid={quote(fixture.uid)}&take=500", "/audit?take=500"]:
                     audited = self.stack.request("GET", audit_path, user)
@@ -3914,7 +3913,8 @@ class LiveInvariantTests(unittest.TestCase):
                     self.assert_status(result, 409)
                     self.assertEqual(result.body.get("code"), "REPORT_HELD")
                     self.assertEqual(result.body.get("holder"), actor)
-                    self.assertEqual(result.body.get("message"), f"{actor} 님이 판독 중입니다")
+                    self.assertEqual(result.body.get("holderName"), shown_name(self.stack, "doctor"))
+                    self.assertEqual(result.body.get("message"), f"{shown_name(self.stack, 'doctor')} 님이 판독 중입니다")
             self.assert_snapshot_unchanged(fixture, "doctor2", before)
             # FC-040: Reset to Unread is the one commit another reader may send on a reading in progress (W, T, H). It
             # releases the hold and names the reader whose hold it was.
@@ -3941,7 +3941,7 @@ class LiveInvariantTests(unittest.TestCase):
             ), 200)
             result = self.stack.request("POST", path + "/release/force", "jmryu")
             self.assert_status(result, 200)
-            self.assertEqual(result.body, {"ok": True, "released": self.stack.actor("doctor")})
+            self.assertEqual(result.body, {"ok": True, "released": self.stack.actor("doctor"), "releasedName": shown_name(self.stack, "doctor")})
             audits = self.stack.request("GET", f"/audit?uid={quote(fixture.uid)}", "jmryu")
             self.assert_status(audits, 200)
             rows = [r for r in audits.body if r["action"] == "hold.force-release"]
@@ -3969,7 +3969,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assert_status(self.stack.request("POST", path + "/release/force", "doctor2"), 403)
             result = self.stack.request("POST", path + "/hold", "doctor2")
             self.assert_status(result, 201)
-            self.assertEqual(result.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(result.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                           "mine": False, "conflict": True})
 
     def test_filming_non_emergency_blocks_all_report_writes_but_allows_reads(self) -> None:
         with self.stack.fixture() as fixture:
@@ -5024,6 +5025,7 @@ class LiveInvariantTests(unittest.TestCase):
             uid, wave = fixture.uid, u5.wav()
             context = u5_context(self.stack, fixture, pin, ("doctor", "doctor2"))
             context["holder"] = self.stack.actor("doctor")
+            context["holder_name"] = shown_name(self.stack, "doctor")
             doctor, doctor2 = self.stack.token("doctor"), self.stack.token("doctor2")
             try:
                 self.assert_status(self.stack.request("POST", f"/studies/{quote(uid)}/hold", "doctor"), 201)
@@ -5049,6 +5051,7 @@ class LiveInvariantTests(unittest.TestCase):
                 state = self.state(fixture, "doctor")
                 context["pre_reviewer"] = state.get("preReviewer") if state else None
                 self.assertEqual(context["pre_reviewer"], self.stack.actor("jmryu"), "지정 상급 판독의가 다릅니다")
+                context["pre_reviewer_name"] = shown_name(self.stack, "jmryu")
                 self.assert_status(self.stack.request("GET", "/bootstrap", "doctor2"), 200)   # 제3자 토큰은 살아 있다
                 u5_call(records, "R-PRELIM", uid, u5_bearer(
                     self.stack, uid, self.stack.token("doctor2"), wave, "audio/wav"))

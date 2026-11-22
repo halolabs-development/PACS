@@ -274,8 +274,10 @@
         const cell=tr.querySelector('td.acc');if(!cell)continue;cell.querySelector('.exam-merged')?.remove();
         const row=ctx.study(tr.dataset.uid),lost=scopes.unavailable(row);
         // A merged or split exam whose originals cannot all be read now is not shown as an ordinary row.
-        if(lost?.kind){cell.append(' ',el('span',{className:'exam-merged exam-merged-unavailable',text:kinSay(lost.kind==='split'?'Split · original unavailable':'Merged · original unavailable'),
-          title:lost.message,'data-kin-keep':'title'}));continue;}
+        if(lost?.kind){const badge=el('span',{className:'exam-merged exam-merged-unavailable',text:kinSay(lost.kind==='split'?'Split · original unavailable':'Merged · original unavailable'),'data-kin-keep':'title'});
+          // The reason in the list's language (English only; otherwise as written).
+          kinWrite(badge,window.KinLanguage?.sayEnglish?window.KinLanguage.sayEnglish(lost.words):lost.words,'title');
+          cell.append(' ',badge);continue;}
         const scope=scopes.read(row);if(!scope?.groupId)continue;
         const label=scope.kind==='split'?`Split ${(scope.part??0)+1}/2`:`Merged ×${scope.sources.length} · ${count(row.count)} img`;
         cell.append(' ',el('span',{className:'exam-merged',text:label,title:scopes.metadata(row).map(s=>text(s.acc??s.uid)).join(' + '),'data-kin-keep':'title'}));

@@ -1,5 +1,8 @@
 (function(root){
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const examScopes=root.KinExamScope||(typeof module==='object'&&module.exports?require('./exam-scope.js'):null);
   function create(){
     // generation: the number of changes of the selected set. A selection-scoped action (W9 Open Selected Studies) binds the
@@ -49,7 +52,7 @@
     // D1890 / Minhoon P0 item 1: Preload queues encrypted reading-PC copies (preload-queue.js).
     const preloadQueue=root.KinPreloadQueue?.available()?root.KinPreloadQueue:null;
     const preload=preloadQueue?element('button','Preload',host):null;
-    if(preload){preload.type='button';preload.id='multi-selection-preload';preload.title='선택한 검사의 영상을 암호화해 보관하고, 받은 뒤나 마지막으로 본 뒤 72시간 이내에 지웁니다. 열 때 서버의 권한 확인과 열람 기록을 거칩니다.';
+    if(preload){preload.type='button';preload.id='multi-selection-preload';kinWrite(preload,kinSayEn('선택한 검사의 영상을 암호화해 보관하고, 받은 뒤나 마지막으로 본 뒤 72시간 이내에 지웁니다. 열 때 서버의 권한 확인과 열람 기록을 거칩니다.'),'title');
       preload.onclick=()=>{const list=rows();if(!live()||!list.length)return;preloadQueue.add(list.map(s=>({uid:s.uid,...(s.examScope?{examScope:s.examScope}:{}),...(s.examUnavailable?{examUnavailable:true,examUnavailableKind:s.examUnavailableKind??null}:{}),label:[s.id,s.name,s.date,s.modality].filter(Boolean).join(' · ')})),root.KinWorkContext?.session?.());};}
     // FC-028 Batch Reading (options.batchRead): one of my Reading Templates saved to the selected studies. Shown only where the
     // page offers it (Radiology, a radiologist, the server); it moves no Reading Target either.
@@ -65,7 +68,7 @@
     // left for it, Selection Details carries the same sentence.
     const HINT='Ctrl/⌘ 클릭 · Shift 범위 · Space 선택. 작성 대상은 유지합니다.';
     const hint=element('span',HINT,host);
-    hint.title=hint.textContent;hint.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    kinWrite(hint,kinSayEn(HINT));kinWrite(hint,kinSayEn(HINT),'title');hint.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     // FC-073: the bar also stays shown while the Preload panel has rows (Auto Preload queues with nothing selected).
     let queueShown=false,selectedCount=0;
     const preloadPanel=preloadQueue?preloadQueue.mount(host,{shown:visible=>{queueShown=visible;if(!ended)host.hidden=!selectedCount&&!queueShown;}}):null;
@@ -89,7 +92,7 @@
       dialog.querySelector('[data-summary]').textContent=`Selected: ${list.length}`;
       dialog.querySelector('[data-compare]').disabled=!comparison(list);
       const set=dialog.querySelector('[data-open-set]');
-      if(set){const why=setBlock(list);set.disabled=!!why;set.title=why||'';}
+      if(set){const why=setBlock(list);set.disabled=!!why;kinWrite(set,why?kinSayEn(why):'','title');}
       for(const s of list){
         const tr=element('tr','',body);
         for(const value of [s.id,s.name,s.date,s.modality,s.desc])element('td',String(value??''),tr);
@@ -102,7 +105,7 @@
       const selected=rows();count.textContent=`Selected: ${selected.length}`;
       selectedCount=selected.length;host.hidden=!selected.length&&!queueShown;
       clear.disabled=inspect.disabled=!selected.length;if(preload)preload.disabled=!selected.length;page.disabled=!tbody.querySelector('tr[data-uid]');
-      if(openSet){const why=setBlock(selected);openSet.disabled=!!why;openSet.title=why||'';}
+      if(openSet){const why=setBlock(selected);openSet.disabled=!!why;kinWrite(openSet,why?kinSayEn(why):'','title');}
       if(batchRead){const offered=!!options.batchRead.shown?.(),why=offered&&selected.length?options.batchRead.blocked?.()||null:null;
         batchRead.hidden=!offered;batchRead.disabled=!offered||!selected.length||!!why;batchRead.title=why||'';}
       if(batchApprove){const offered=!!options.batchApprove.shown?.(),why=offered&&selected.length?options.batchApprove.blocked?.()||null:null;
@@ -137,7 +140,7 @@
           const set=element('button','Open Selected Studies',document.createDocumentFragment());set.type='button';set.dataset.openSet='';
           dialog.querySelector('[data-compare]').after(' ',set);set.onclick=runOpenSet;
         }
-        dialog.querySelector('[data-hint]').textContent=HINT;
+        kinWrite(dialog.querySelector('[data-hint]'),kinSayEn(HINT));
         dialog.querySelector('[data-close]').onclick=()=>dialog.close();
         dialog.querySelector('[data-compare]').onclick=()=>{const pair=comparison(rows(),options.current());if(!pair)return;dialog.close();options.compare(...pair);};
         dialog.addEventListener('close',()=>{if(live())inspect.focus();});document.body.append(dialog);

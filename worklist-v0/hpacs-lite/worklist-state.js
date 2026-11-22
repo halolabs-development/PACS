@@ -57,7 +57,9 @@
       kinWrite($('#related-parts-status'), relatedParts.note() || (s?kinSay("{t0}부위 확인 {1}/{n2} · 미조회·실패는 Unverified", relatedParts.busy()?kinSay('조회 중 · '):'', known, relatedCandidates().length) : ''));
       const modality = $("#related-modality");
       const tokens = [...new Set(rel.flatMap(relatedModalities))].sort();
-      const options = [new Option("All Modalities", ""), new Option("Unspecified", JSON.stringify("")),
+      // The two choices the page names follow the screen language; a Modality value is shown as it is.
+      const named = new Map([["", kinSay("All Modalities")], [JSON.stringify(""), kinSay("Unspecified")]]);
+      const options = [...[...named].map(([value, words]) => kinWrite(new Option("", value), words)),
         ...tokens.map(token => new Option(token, JSON.stringify(token)))];
       // 마지막 일치 항목이 사라져도 사용자가 고른 조건을 몰래 전체로 넓히지 않는다.
       if (relatedModality && !options.some(option => option.value === relatedModality))
@@ -65,7 +67,7 @@
       modality.replaceChildren(...options);
       modality.value = relatedModality;
       modality.disabled = !s;
-      modality.title = modality.selectedOptions[0]?.textContent || "";
+      kinWrite(modality, named.get(modality.value) ?? (modality.selectedOptions[0]?.textContent || ""), "title");
       if (relatedModality) {
         const token = JSON.parse(relatedModality);
         rel = rel.filter(x => token ? relatedModalities(x).includes(token) : !relatedModalities(x).length);
@@ -94,6 +96,16 @@
             </tr>`;
           }).join("") || '<tr><td class="empty" colspan="7"></td></tr>')
         : '<tr><td class="empty" colspan="7"></td></tr>';
+      // The words of each row's first cell title and of its interval mark go through the screen language; the dates stay data.
+      for (const x of s ? rel.slice(relatedPage * 50, (relatedPage + 1) * 50) : []) {
+        const row = $("#relrows").querySelector(`tr[data-uid="${CSS.escape(String(x.uid))}"]`);
+        if (!row) continue;
+        const showing = x.uid === relatedUid || (x.uid === s.uid && !relatedUid);
+        kinWrite(row.cells[0], kinSayEn("{0} · {t1}", x.uid === s.uid ? kinSayEn("지금 판독하는 검사") : kinSayEn(relatedDateTitle(x)),
+          { t: showing ? kinSayEn("Showing: 지금 Related Report에 보이는 검사") : kinSayEn("Compare: 눌러서 비교해 볼 수 있는 검사") }), "title");
+        const interval = row.querySelector(".rel-interval");
+        if (interval) kinWrite(interval, kinSayEn("판독 대상 검사 날짜와의 간격"), "title");
+      }
       const emptyCell = $("#relrows td.empty");
       if (emptyCell) kinWrite(emptyCell, !s ? kinSay("검사를 선택하세요") :
         relatedModality || relatedBodyPart ? kinSay("조건에 맞는 관련 검사 없음") : kinSay("관련 검사 없음"));

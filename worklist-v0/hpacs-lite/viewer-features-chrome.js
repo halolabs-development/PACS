@@ -2,6 +2,9 @@
 // any edge of the image area, and either can hide until the pointer reaches its edge. The choice is saved to the account
 // (viewerSettings.features.chrome) and applied by the viewer shell (viewer-ux-shell.js), which owns the rows' place.
 // The pure part below (KinViewerChromePosition) checks a stored value and turns it into the image column's layout.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   const SIDES = ['top', 'bottom', 'left', 'right'];
   const DEFAULT = Object.freeze({ toolbar: 'top', toolbarAutoHide: false, thumbs: 'top', thumbsAutoHide: false });
@@ -152,7 +155,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('chrome', ({ st
     const handle = ui.panel({ id: 'chromePosition', title: 'Toolbar & Thumbnail Position' });
     if (!handle || handle.body.childElementCount) return handle;
     handle.element.classList.add('kin-chrome-panel');
-    element('p', { text: '도구 줄과 썸네일(시리즈) 줄을 모니터에 맞춰 위·아래·왼쪽·오른쪽에 둡니다. Auto-hide를 켜면 줄을 접어 두고, 마우스를 그 가장자리로 가져가면 나타납니다. Apply로 계정에 저장하고 이 창에 바로 적용합니다.' }, handle.body);
+    element('p', { text: kinText("도구 줄과 썸네일(시리즈) 줄을 모니터에 맞춰 위·아래·왼쪽·오른쪽에 둡니다. Auto-hide를 켜면 줄을 접어 두고, 마우스를 그 가장자리로 가져가면 나타납니다. Apply로 계정에 저장하고 이 창에 바로 적용합니다.") }, handle.body);
     const draft = { ...current };
     const controls = {};
     for (const [row, name] of [['toolbar', 'Toolbar'], ['thumbs', 'Thumbnails']]) {
@@ -184,15 +187,15 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('chrome', ({ st
     }
     applyButton.addEventListener('click', async () => {
       if (saving) return;
-      saving = true; applyButton.disabled = true; status.textContent = '저장 중입니다…';
+      saving = true; applyButton.disabled = true; status.textContent = kinText("저장 중입니다…");
       const value = model.normalize(draft);
       const saved = await store.set('chrome', value, { revision });
       if (!live) return;
       saving = false; applyButton.disabled = false;
       if (saved) revision = store.revision();
       show();
-      status.textContent = saved ? (store.writable() ? '계정에 저장하고 이 창에 적용했습니다.' : '이 창에만 적용했습니다.')
-        : '저장하지 못해 저장된 배치로 되돌렸습니다. 도구 줄의 상태 문구를 확인하세요.';
+      status.textContent = saved ? (store.writable() ? kinText("계정에 저장하고 이 창에 적용했습니다.") : kinText("이 창에만 적용했습니다."))
+        : kinText("저장하지 못해 저장된 배치로 되돌렸습니다. 도구 줄의 상태 문구를 확인하세요.");
     });
     panel = { show };
     handle.onClose(() => { live = false; if (panel?.show === show) panel = null; });

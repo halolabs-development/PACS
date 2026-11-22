@@ -137,7 +137,7 @@ LOGOUT_BLOCK = slice_between(MAIN, "    // ② 로그아웃", "    // 다른 사
 # redraws the editor on arrival; a harness that only bumped the counter could not see any of that.
 SELECT_BLOCK = slice_between(MAIN, "    function select(uid, {", "    function renderClinical()")
 API_FN = "\n".join((ROOT / "worklist-v0/hpacs-lite" / name).read_text(encoding="utf-8")
-                         for name in ("worklist-language-terms.js", "worklist-language.js")) + "\nconst kinSay=KinLanguage.say;\n" + extract_function(MAIN, "kinWrite") + "\n" + extract_function(MAIN, "api")
+                         for name in ("worklist-language-terms.js", "worklist-language.js")) + "\nconst kinSay=KinLanguage.say,kinSayEn=KinLanguage.sayEnglish;\n" + extract_function(MAIN, "kinWrite") + "\n" + extract_function(MAIN, "api")
 WRITE_BLOCK_FN = extract_function(MAIN, "reportWriteBlock")
 # The one gate the template path and the citation path share, taken from the product.
 EDITOR_BLOCK_FN = extract_function(MAIN, "reportEditorBlock")
@@ -200,6 +200,8 @@ function startPolling() {}
 function closeSR() {}
 function endPatientCopy() {}
 const displayActor = value => String(value ?? "").split("@")[0];
+// page-core.js: who saved or holds, as the server names that person (shown as is).
+const writerName = (name, login) => typeof name === "string" && name ? name : String(login ?? "");
 // The signed-in reader as the page holds it (the logout capture reads the role from it).
 const sess = { state: "approved", institution: "SYN-INST", sub: "SYN-READER", actor: "doctor@kin", roles: ["radiologist"] };
 function cur() { return studies.find(s => s.uid === selectedUid); }

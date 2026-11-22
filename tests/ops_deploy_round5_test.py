@@ -657,22 +657,6 @@ class PolicyContracts(unittest.TestCase):
             with self.subTest(change=index), self.assertRaises(release.SmokeRefusal):
                 release.smoke_policy_valid(altered)
 
-    def test_the_administrator_otp_branch_never_meets_the_smoke_member(self):
-        """keycloak/README.md 관리자 OTP 필수: the smoke member is never admin (plan check), so a branch gated on the admin
-        role is off for it like one gated on a configured credential; a gate on another role, or a negated one, is not."""
-        import ops_deploy_preflight as pre
-        realm = json.loads(pre.REALM_FILE.read_text(encoding="utf-8"))
-        policy = {**self.policy(), "organizationsEnabled": False, "passwordPolicy": realm["passwordPolicy"],
-                  "browserFlow": realm["browserFlow"], "executions": pre.realm_flow_rows(realm, realm["browserFlow"])}
-        succeeds(self, release.smoke_policy_valid, policy)
-        gate = next(i for i, row in enumerate(policy["executions"]) if row.get("config") == {"condUserRole": "admin", "negate": "false"})
-        for config in ({"condUserRole": "radiologist", "negate": "false"}, {"condUserRole": "admin", "negate": "true"},
-                       {"condUserRole": "admin", "negate": "false", "extra": "x"}):
-            altered = copy.deepcopy(policy)
-            altered["executions"][gate]["config"] = config
-            with self.subTest(config=config), self.assertRaises(release.SmokeRefusal):
-                release.smoke_policy_valid(altered)
-
 
 class SupervisorContracts(unittest.TestCase):
     def test_supervisor_failure_keeps_browser_unknown_profile_and_next_launch_blocked(self):

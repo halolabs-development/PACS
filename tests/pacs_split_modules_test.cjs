@@ -509,7 +509,7 @@ test('SPLIT-04 a study is reachable by its owner and its tele receiver only; adm
   await refused(() => w.evidence.versions(own.uid, ADMIN_B), 404);
   await refused(() => w.audit.audits(own.uid, 10, ADMIN_B), 404);
   await refused(() => w.hold.forceRelease(own.uid, ADMIN_B), 404);
-  assert.deepEqual(await w.hold.hold(tele.uid, RAD_B), { holder: RAD_B.actor, mine: true, conflict: false });
+  assert.deepEqual(await w.hold.hold(tele.uid, RAD_B), { holder: RAD_B.actor, holderName: RAD_B.actor, mine: true, conflict: false });
 });
 
 // ── SPLIT-05 the write gate re-checks inside the transaction (M03) ──
@@ -693,7 +693,7 @@ test('report state table: another radiologist sees In Progress by the writer, ne
   await refused(() => w.hold.hold(s.uid, RAD_A2), 403, 'REPORT_IN_PROGRESS');
   assert.deepEqual(w.db.rows('reportVersion').map(v => [v.action, v.findings]), [['save', 'SYN SAVED TEXT']]);
   // the writer keeps writing; the hold and the heartbeat stay theirs
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, mine: true, conflict: false });
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: true, conflict: false });
   await w.hold.release(s.uid, RAD_A);
   // Reset of an in-progress report (no reason) is still open to the other radiologist: the text goes to its writer's draft
   const reset = await w.commit.commitReport(s.uid, commitBody(RAD_A2, 'reset', epoch, 0, 1), RAD_A2, null);
@@ -1110,17 +1110,17 @@ test('SPLIT-11 a live hold of another reader is reported, never overwritten; an 
   const w = world();
   const s = w.study();
   const row = () => w.db.rows('studyState').find(r => r.uid === s.uid);
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, mine: true, conflict: false });
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, mine: true, conflict: false }, 'heartbeat');
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: true, conflict: false });
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: true, conflict: false }, 'heartbeat');
   assert.equal(w.audits('report.hold').length, 1, 'a heartbeat of a live hold is not a new hold');
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A.actor, mine: false, conflict: true });
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: false, conflict: true });
   assert.equal(row().holder, RAD_A.actor);
   // the commit of the other reader is refused while the hold lives
   await refused(() => w.commit.commitReport(s.uid, commitBody(RAD_A2, 'save', s.draftEpoch, 0, 0, { findings: 'x' }), RAD_A2, null), 409, 'REPORT_HELD');
   w.db.tables.studyState.find(r => r.uid === s.uid).heldAt = new Date(Date.now() - (4 * 60_000 + 50_000));
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A.actor, mine: false, conflict: true }, 'still alive just under five minutes');
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: false, conflict: true }, 'still alive just under five minutes');
   w.db.tables.studyState.find(r => r.uid === s.uid).heldAt = new Date(Date.now() - (5 * 60_000 + 1_000));
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A2.actor, mine: true, conflict: false });
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: RAD_A2.actor, holderName: RAD_A2.actor, mine: true, conflict: false });
   assert.equal(w.audits('report.hold').length, 2);
   await refused(() => w.hold.hold(s.uid, TECH_A), 403);
   // release: only the holder's own hold is released
@@ -1128,7 +1128,7 @@ test('SPLIT-11 a live hold of another reader is reported, never overwritten; an 
   assert.equal(row().holder, RAD_A2.actor);
   // forced release: administrator only, one audit row in the same transaction
   await refused(() => w.hold.forceRelease(s.uid, RAD_A), 403);
-  assert.deepEqual(await w.hold.forceRelease(s.uid, ADMIN_A), { ok: true, released: RAD_A2.actor });
+  assert.deepEqual(await w.hold.forceRelease(s.uid, ADMIN_A), { ok: true, released: RAD_A2.actor, releasedName: RAD_A2.actor });
   assert.equal(row().holder, null);
   const forcedRows = w.audits('hold.force-release');
   assert.equal(forcedRows.length, 1, 'a forced release leaves one audit row');
@@ -1156,7 +1156,7 @@ for (const [writer, peer, stranger, admin] of [
     assert.equal(list.studies[0].state.holder, expected);
     assert.equal(boot.states[s.uid].holder, expected);
     assert.deepEqual(await w.hold.hold(s.uid, caller),
-      { holder: expected, mine: caller.actor === writer.actor, conflict: caller.actor !== writer.actor });
+      { holder: expected, holderName: expected, mine: caller.actor === writer.actor, conflict: caller.actor !== writer.actor });
     if (caller.actor !== writer.actor) {
       const draft = await refused(() => w.draft.putReport(s.uid,
         draftBody(caller, s.draftEpoch, 0, { findings: 'SYN unchanged' }), caller, null), 409, 'REPORT_HELD');
@@ -1176,7 +1176,7 @@ for (const [writer, peer, stranger, admin] of [
   assert.equal(w.db.rows('reportDraft').length, 0);
   await w.hold.release(s.uid, stranger);
   assert.equal((await w.worklist.bootstrap(stranger)).states[s.uid].holder, '다른 기관');
-  assert.deepEqual(await w.hold.forceRelease(s.uid, admin), { ok: true, released: '다른 기관' });
+  assert.deepEqual(await w.hold.forceRelease(s.uid, admin), { ok: true, released: '다른 기관', releasedName: '다른 기관' });
   assert.equal((await w.worklist.bootstrap(stranger)).states[s.uid].holder, null);
   assert.equal(JSON.parse(w.audits('hold.force-release')[0].detail).holder, writer.actor, 'audit keeps the real owner');
 });
@@ -1187,7 +1187,7 @@ test('writer privacy: legacy holds hide unknown institutions until the writer re
   const state = () => w.db.rows('studyState')[0];
   assert.equal(values.toClient(state(), null, RAD_A2).holder, '작성자 비공개');
   assert.equal(values.toClient(state(), null, RAD_A).holder, RAD_A.actor);
-  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: '작성자 비공개', mine: false, conflict: true });
+  assert.deepEqual(await w.hold.hold(s.uid, RAD_A2), { holder: '작성자 비공개', holderName: '작성자 비공개', mine: false, conflict: true });
   const held = await refused(() => w.draft.putReport(s.uid,
     draftBody(RAD_A2, s.draftEpoch, 0, { findings: 'SYN unchanged' }), RAD_A2, null), 409, 'REPORT_HELD');
   assert.equal(held.holder, '작성자 비공개');
@@ -1936,7 +1936,7 @@ test('SPLIT-22 the facade starts its institutions concern and each public call a
   const s = w.study();
   w.orthanc.rows = [qido(s.uid, 'SYN A HOSPITAL')];
   assert.deepEqual((await facade.listStudies(RAD_A)).studies.map(r => [r.uid, r.institutionName]), [[s.uid, 'SYN A']]);
-  assert.deepEqual(await facade.hold(s.uid, RAD_A), { holder: RAD_A.actor, mine: true, conflict: false });
+  assert.deepEqual(await facade.hold(s.uid, RAD_A), { holder: RAD_A.actor, holderName: RAD_A.actor, mine: true, conflict: false });
   const saved = await facade.commitReport(s.uid, commitBody(RAD_A, 'save', s.draftEpoch, 0, 0, { findings: 'via facade' }), RAD_A, null);
   assert.deepEqual([saved.state.rs, saved.state.holder], ['T', null], 'a commit releases the hold');
   assert.deepEqual(JSON.parse((await facade.versions(s.uid, RAD_A)).json).map(v => [v.version, v.action, v.findings]), [[1, 'save', 'via facade']]);
@@ -2047,7 +2047,7 @@ test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusal
   const changed = await w.studyState.patchState(s.uid, cmd({ reason: 'SYN repeat requested' }), ADMIN_A);
   assert.deepEqual([changed.qc.reason, changed.qc.by, changed.qc.revision], ['SYN repeat requested', ADMIN_A.actor, 2]);
   const cleared = await w.studyState.patchState(s.uid, cmd(null), TECH_A);
-  assert.deepEqual(cleared.qc, { reason: null, by: null, at: null, revision: 3 });
+  assert.deepEqual(cleared.qc, { reason: null, by: null, byName: null, at: null, revision: 3 });
   assert.deepEqual([row().qcReason, row().qcBy, row().qcAt, row().qcRevision], [null, null, null, 3]);
   // every change is one state.patch row holding the revision it stored; the other study fields stay as they were
   assert.deepEqual(w.audits('state.patch').map(a => JSON.parse(a.detail)), [
@@ -2105,11 +2105,11 @@ test('SPLIT-28 QC Flag marks, changes and clears with a rising revision; refusal
   // the tele receiver sees the mark and its reason, not who made it
   await w.studyState.patchState(tele.uid, teleCmd, TECH_A);
   const view = values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_B, null);
-  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.revision], ['SYN', null, 1]);
+  assert.deepEqual([view.qc.reason, view.qc.by, view.qc.byName, view.qc.revision], ['SYN', null, null, 1]);
   assert.equal(values.toClient(w.db.rows('studyState').find(r => r.uid === tele.uid), null, RAD_A, null).qc.by, TECH_A.actor);
   // a row the server has never marked answers the one shape, revision 0
   assert.deepEqual(values.toClient(w.db.rows('studyState').find(r => r.uid === other.uid), null, RAD_A, null).qc,
-    { reason: null, by: null, at: null, revision: 0 });
+    { reason: null, by: null, byName: null, at: null, revision: 0 });
 
   // a study whose mark was ever set keeps its row (and its revision): deletion is refused, cleared or not
   await refused(() => w.studyState.removeState(s.uid, TECH_A), 409, 'STUDY_HAS_QC_HISTORY');
@@ -2146,7 +2146,7 @@ test('OWNER-01 after its email changes the same account keeps its draft, its sav
     'the saved text of the account that had the email is not theirs, and its old email is not shown as theirs');
   const hidden = readBody(await w.evidence.versions(saved.uid, Y))[0];
   assert.deepEqual([hidden.findings, hidden.mine], ['', false]);
-  assert.deepEqual(await w.hold.hold(held.uid, Y), { holder: '작성자 비공개', mine: false, conflict: true });
+  assert.deepEqual(await w.hold.hold(held.uid, Y), { holder: '작성자 비공개', holderName: '작성자 비공개', mine: false, conflict: true });
   await refused(() => w.commit.commitReport(held.uid, commitBody(Y, 'save', held.draftEpoch, 0, 0, { findings: 'over it' }), Y, null), 409, 'REPORT_HELD');
   // their own first draft on a study the other account drafted is a row of their own
   await w.draft.putReport(beside.uid, draftBody(Y, beside.draftEpoch, 0, { findings: 'SYN Y DRAFT' }), Y, null);
@@ -2170,7 +2170,7 @@ test('OWNER-01 after its email changes the same account keeps its draft, its sav
   assert.deepEqual([mineSaved.findings, mineSaved.bodyLock, mineSaved.savedBy], ['SYN X SAVED', null, NEW_EMAIL]);
   const ownVersion = readBody(await w.evidence.versions(saved.uid, X2))[0];
   assert.deepEqual([ownVersion.findings, ownVersion.mine], ['SYN X SAVED', true]);
-  assert.deepEqual(await w.hold.hold(held.uid, X2), { holder: NEW_EMAIL, mine: true, conflict: false });
+  assert.deepEqual(await w.hold.hold(held.uid, X2), { holder: NEW_EMAIL, holderName: NEW_EMAIL, mine: true, conflict: false });
   // its commit ends its own draft; its next Save is its own text again
   const done = await w.commit.commitReport(drafted.uid, commitBody(X2, 'save', drafted.draftEpoch, 2, 0, { findings: 'SYN X DRAFT 2' }), X2, null);
   assert.deepEqual([done.state.draft, done.state.savedBy, done.state.bodyLock], [null, NEW_EMAIL, null]);
@@ -2213,6 +2213,115 @@ test('OWNER-03 saved searches, the default, folders and reading templates follow
   assert.deepEqual((await w.preferences.prefs(X2)).filters.map(f => [f.name, f.isDefault]), [['SYN mine', false]]);
   assert.deepEqual((await w.preferences.deleteTemplate(template.id, X2)), { ok: true });
   assert.equal((await w.filters.readFilterFolders(Y)).revision, 0, 'the other account has no folder collection of the old email');
+});
+
+test('OWNER-05 another reader is shown who saved, holds or is designated by the account that did it: after its old email went to another member, never that member', async () => {
+  const w = world();
+  await w.boot();
+  const X = RAD_A, X2 = renamedAs(RAD_A, NEW_EMAIL), Z = tookOldEmail(), R = RAD_A2, Q = member('rad-q', INST_A, ['radiologist']);
+  const saved = w.study(), held = w.study(), plain = w.study(), legacy = w.study();
+  const prelim = w.study({ rs: 'P', preDoc: X.actor, preDocSub: X.sub, preReviewer: R.actor, preReviewerSub: R.sub });
+  w.orthanc.rows = [saved, held, plain, legacy, prelim].map(s => qido(s.uid, 'SYN A HOSPITAL'));
+  // X saves and holds under its old email
+  await w.commit.commitReport(saved.uid, commitBody(X, 'save', saved.draftEpoch, 0, 0, { findings: 'SYN X SAVED' }), X, null);
+  await w.hold.hold(held.uid, X);
+  // the administrator's change: X's email is now NEW_EMAIL and X's old email is Z's (the member table as it is now)
+  const rights = (c, email, name, roles = c.roles) => w.db.seed('memberRights', { sub: c.sub, username: email.split('@')[0], email, name,
+    emailVerified: true, approved: true, suspended: false, institution: c.institution, roles, version: 1 });
+  rights(X, NEW_EMAIL, 'SYN Kim Writer'); rights(Z, X.actor, 'SYN Lee Other'); rights(R, R.actor, 'SYN Park Third');
+  rights(TECH_A, TECH_A.actor, 'SYN Tech Shown');
+  // Z (an ordinary account under its email now) saves another study
+  await w.commit.commitReport(plain.uid, commitBody(Z, 'save', plain.draftEpoch, 0, 0, { findings: 'SYN Z SAVED' }), Z, null);
+  // an older hold that recorded no account, under the login that is Z's now
+  w.db.rows('studyState').find(r => r.uid === legacy.uid).holder = X.actor;
+  Object.assign(w.db.rows('studyState').find(r => r.uid === legacy.uid), { holderSub: null, holderInstitutionId: INST_A, heldAt: new Date(), rs: 'W' });
+  const stateOf = async (c, s) => (await w.worklist.bootstrap(c)).states[s.uid];
+
+  for (const reader of [R, Z]) {
+    const theirs = await stateOf(reader, saved);
+    assert.deepEqual([theirs.bodyLock, theirs.findings, theirs.savedByMine, theirs.savedByName], ['in-progress', '', false, 'SYN Kim Writer'],
+      `${reader.sub}: the Save is X's - named X, its text and ownership stay X's`);
+    const hold = await stateOf(reader, held);
+    assert.deepEqual([hold.holderMine, hold.holderName], [false, 'SYN Kim Writer'], `${reader.sub}: the hold is X's`);
+    const answer = await w.hold.hold(held.uid, reader);
+    assert.deepEqual([answer.mine, answer.conflict, answer.holderName], [false, true, 'SYN Kim Writer']);
+    const heldRefusal = await refused(() => w.commit.commitReport(held.uid, commitBody(reader, 'save', held.draftEpoch, 0, 0, { findings: 'over it' }), reader, null), 409, 'REPORT_HELD');
+    assert.equal(heldRefusal.holderName, 'SYN Kim Writer');
+    assert.ok(heldRefusal.message.includes('SYN Kim Writer') && !heldRefusal.message.includes('SYN Lee Other'), heldRefusal.message);
+  }
+  // the login fields keep their contract (the stored login, withheld from the account that has it now)
+  assert.equal((await stateOf(R, saved)).savedBy, X.actor);
+  assert.equal((await stateOf(Z, saved)).savedBy, '작성자 비공개');
+  // a Preliminary names its author and its designated reader by their accounts; a refusal names the designated reader
+  const p = await stateOf(R, prelim);
+  assert.deepEqual([p.preDoc, p.preDocName, p.preReviewerName], [X.actor, 'SYN Kim Writer', 'SYN Park Third']);
+  const prelimRefusal = await refused(() => w.commit.commitReport(prelim.uid, commitBody(Q, 'save', prelim.draftEpoch, 0, 0, { findings: 'x' }), Q, null), 403);
+  assert.ok(String(prelimRefusal.message ?? prelimRefusal).includes('SYN Park Third'), JSON.stringify(prelimRefusal));
+  // an ordinary account whose email did not change is named as before; its own reader sees its own name
+  assert.equal((await stateOf(R, plain)).savedByName, 'SYN Lee Other');
+  const own = await stateOf(X2, saved);
+  assert.deepEqual([own.findings, own.savedByMine, own.savedByName, own.savedBy], ['SYN X SAVED', true, 'SYN Kim Writer', NEW_EMAIL]);
+  // an older hold with no account whose login is a member's now names nobody
+  assert.equal((await stateOf(R, legacy)).holderName, '작성자 비공개');
+  // a reader who is not shown colleagues' names (a technician) sees the account's login now, never the old one
+  assert.equal((await stateOf(TECH_A, held)).holderName, NEW_EMAIL);
+  // a colleague with no registered name (the member import fills it with the username) is shown by login, as before
+  const U = member('rad-unnamed', INST_A, ['radiologist']), unnamed = w.study();
+  w.orthanc.rows.push(qido(unnamed.uid, 'SYN A HOSPITAL'));
+  rights(U, U.actor, U.actor.split('@')[0]);
+  await w.commit.commitReport(unnamed.uid, commitBody(U, 'save', unnamed.draftEpoch, 0, 0, { findings: 'SYN U SAVED' }), U, null);
+  assert.equal((await stateOf(R, unnamed)).savedByName, U.actor);
+
+  // a critical result's source version: a signed one by the name it was signed under, else by the login it stored (never a
+  // name read now); an unsigned one by its writer's account
+  const { sourceWriterShown } = require('/app/dist/critical-result-policy');
+  const { withWriters } = require('/app/dist/member-rights');
+  const reader = await withWriters(w.db.root, { ...R });
+  assert.equal(sourceWriterShown({ action: 'approve', author: X.actor, authorSub: X.sub, authorName: null }, reader), X.actor);
+  assert.equal(sourceWriterShown({ action: 'addendum', author: X.actor, authorSub: X.sub, authorName: 'SYN Kim Then' }, reader), 'SYN Kim Then');
+  assert.equal(sourceWriterShown({ action: 'save', author: X.actor, authorSub: X.sub }, reader), 'SYN Kim Writer');
+});
+
+test('OWNER-06 who put a QC Flag is named to every member of the study institution by the member whose login it is, never as the login; the tele receiver is told nobody', async () => {
+  const w = world();
+  await w.boot();
+  const T2 = member('tech-a2', INST_A, ['technician']), U = member('tech-unnamed', INST_A, ['technician']);
+  const rights = (c, name) => w.db.seed('memberRights', { sub: c.sub, username: c.actor.split('@')[0], email: c.actor, name,
+    emailVerified: true, approved: true, suspended: false, institution: c.institution, roles: c.roles, version: 1 });
+  rights(TECH_A, 'SYN Tech Shown'); rights(T2, 'SYN Tech Second'); rights(RAD_A, 'SYN Kim Reader'); rights(ADMIN_A, 'SYN Admin Shown');
+  rights(U, U.actor.split('@')[0]);
+  const s = w.study(), byAdmin = w.study(), unnamed = w.study(), legacy = w.study(), tele = w.study({ teleInstitutionId: INST_B, ts: 'sent' });
+  w.orthanc.rows = [s, byAdmin, unnamed, legacy].map(x => qido(x.uid, 'SYN A HOSPITAL'));
+  const rowOf = x => w.db.rows('studyState').find(r => r.uid === x.uid);
+  const mark = (x, c, reason) => w.studyState.patchState(x.uid, { qc: { reason }, qcRevision: rowOf(x).qcRevision ?? 0, epoch: rowOf(x).draftEpoch }, c);
+  const qcOf = async (c, x) => (await w.worklist.bootstrap(c)).states[x.uid].qc;
+
+  // the technician's own answer names itself; the stored mark keeps the login, as before
+  const own = await mark(s, TECH_A, 'SYN motion on series 2');
+  assert.deepEqual([own.qc.by, own.qc.byName], [TECH_A.actor, 'SYN Tech Shown']);
+  assert.equal(rowOf(s).qcBy, TECH_A.actor);
+  // the institution's radiologist, another technician and the administrator see the technician's name, never the login
+  for (const reader of [RAD_A, T2, ADMIN_A, TECH_A]) {
+    const qc = await qcOf(reader, s);
+    assert.deepEqual([qc.reason, qc.by, qc.byName], ['SYN motion on series 2', TECH_A.actor, 'SYN Tech Shown'], reader.sub);
+  }
+  // an administrator's mark is named by the administrator's name
+  await mark(byAdmin, ADMIN_A, 'SYN repeat requested');
+  assert.equal((await qcOf(RAD_A, byAdmin)).byName, 'SYN Admin Shown');
+  // a member with no registered name (the import fills it with the username) is shown by its login now, as a saver is
+  await mark(unnamed, U, 'SYN blur');
+  assert.equal((await qcOf(RAD_A, unnamed)).byName, U.actor);
+  // an older mark whose login no member has now is shown as it was stored
+  Object.assign(rowOf(legacy), { qcReason: 'SYN older mark', qcBy: 'syn-gone@synthetic.test', qcAt: new Date(), qcRevision: 1 });
+  assert.equal((await qcOf(RAD_A, legacy)).byName, 'syn-gone@synthetic.test');
+  // the tele-reading receiver sees the mark and reason, not who
+  await mark(tele, TECH_A, 'SYN tele mark');
+  const { withWriters } = require('/app/dist/member-rights');
+  const theirs = values.toClient(rowOf(tele), null, await withWriters(w.db.root, { ...RAD_B }), null).qc;
+  assert.deepEqual([theirs.reason, theirs.by, theirs.byName], ['SYN tele mark', null, null]);
+  // a cleared mark names nobody
+  const cleared = await w.studyState.patchState(s.uid, { qc: null, qcRevision: rowOf(s).qcRevision, epoch: rowOf(s).draftEpoch }, TECH_A);
+  assert.deepEqual([cleared.qc.by, cleared.qc.byName], [null, null]);
 });
 
 test('OWNER-04 a draft record id is never issued to another account: a study deleted and arriving again under its UID keeps the emptied row', async () => {

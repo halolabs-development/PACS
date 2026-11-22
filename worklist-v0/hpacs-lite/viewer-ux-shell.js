@@ -1,3 +1,6 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerUXShell = (() => {
   // Minhoon 2026-10-27 item 4: the stock Studies and Measurement panels take image width. They open as the
   // stock mode declares until the reader opens or closes one with its own controls; that choice is then kept
@@ -58,11 +61,11 @@ window.KinViewerUXShell = (() => {
     group.setAttribute('role', 'group'); group.setAttribute('aria-label', 'Panels');
     const TRACKED = '[data-cy="trackedMeasurements-panel"]';
     const entries = [
-      { key: 'studies', label: 'Studies', side: 'left', title: '검사·시리즈 목록을 열거나 닫습니다.' },
+      { key: 'studies', label: 'Studies', side: 'left', title: kinText("검사·시리즈 목록을 열거나 닫습니다.") },
       { key: 'measurements', label: 'Measurements', side: 'right', tab: '[data-cy="trackedMeasurements-btn"]',
-        title: '추적을 수락한 측정 목록(CSV·SR 내보내기)을 열거나 닫습니다.' },
+        title: kinText("추적을 수락한 측정 목록(CSV·SR 내보내기)을 열거나 닫습니다.") },
       { key: 'segmentation', label: 'Segmentation', side: 'right', tab: '[data-cy$="-btn"][data-cy*="segmentation" i]',
-        title: '분할 목록을 열거나 닫습니다.' },
+        title: kinText("분할 목록을 열거나 닫습니다.") },
     ];
     for (const entry of entries) {
       const node = entry.node = document.createElement('button'); node.type = 'button'; node.textContent = entry.label;

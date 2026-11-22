@@ -65,17 +65,25 @@ VIEWER_THEME = r'''() => {
   const where = e => { const a = []; for (let n = e; n && n !== document.body && a.length < 3; n = n.parentElement) a.unshift(name(n)); return a.join(' > '); };
   const ownText = e => [...e.childNodes].some(n => n.nodeType === 3 && n.nodeValue.trim());
   const IMAGE_TEXT = '[data-cy^="viewport-overlay-"], .kin-viewer-identity';
+  // The product's own labels on the images (MPR Zoom, scale, Sample and projection labels, the MIP label): written by the
+  // viewer's scripts on the element, never a reader's choice, so they are judged - their text as image text, their
+  // background and edge as the five colours - and not set apart as chosen.
+  const PRODUCT_LABEL = '.kin-mpr-zoom, .kin-mpr-scale, .kin-mpr-sample, .kin-volume-projection-label, .kin-mip-label';
   const onImage = e => e.closest('[data-cy="viewport-pane"]') && !e.closest('.kin-viewer-info-bar, [role=toolbar], [role=menu], [role=dialog]');
   const out = {off: [], low: [], overlay: [], chosen: [], report: []};
   for (const e of document.body.querySelectorAll('*')) {
     if (e.closest('svg, canvas, img, video, iframe, option, script, style') || !shown(e)) continue;
     const cs = getComputedStyle(e), own = e.getAttribute('style') || '';
-    // The black around and under the images (the image area, its holders, a thumbnail's picture) is the image's own.
-    const imageWell = !!e.closest('[data-cy="viewport-grid"], .kin-series-preview, [data-cy^="study-browser-thumbnail"] img');
+    // The black around and under the images (the image area, its holders, a thumbnail's picture, the MIP and VR windows'
+    // image panes) is the image's own.
+    const imageWell = !!e.closest('[data-cy="viewport-grid"], .kin-series-preview, [data-cy^="study-browser-thumbnail"] img, .kin-mip-canvas-pane, .kin-vr-canvas-pane');
     if (e.closest(IMAGE_TEXT)) { if (ownText(e)) out.overlay.push([e.textContent.trim().slice(0, 30), cs.color, where(e)]); continue; }
-    if (/(^|;)\s*(color|border(-\w+)*-color|border|outline|background(-color)?)\s*:/.test(own) && onImage(e)) { out.chosen.push(where(e) + ' ' + own.slice(0, 80)); continue; }
+    const label = !!e.closest(PRODUCT_LABEL);
+    if (label && ownText(e)) out.overlay.push([e.textContent.trim().slice(0, 30), cs.color, where(e)]);
+    if (!label && /(^|;)\s*(color|border(-\w+)*-color|border|outline|background(-color)?)\s*:/.test(own) && onImage(e)) { out.chosen.push(where(e) + ' ' + own.slice(0, 80)); continue; }
     const check = (prop, value, neutralBlack) => { if (off(value, neutralBlack).length) out.off.push(where(e) + ' ' + prop + ' ' + value + ' {' + String(e.className).slice(0, 160) + '}'); };
-    if (!(imageWell && /^rgba?\(0, 0, 0[,)]/.test(cs.backgroundColor))) check('background', cs.backgroundColor);
+    // A check box or radio button is drawn by the browser (its background value is not painted).
+    if (!(imageWell && /^rgba?\(0, 0, 0[,)]/.test(cs.backgroundColor)) && !e.matches('input:is([type=checkbox], [type=radio])')) check('background', cs.backgroundColor);
     const control = e.matches('input:not([type=range], [type=checkbox], [type=radio]), select, textarea, button');
     if (control || ownText(e)) check('color', cs.color);
     for (const side of ['Top', 'Right', 'Bottom', 'Left'])
@@ -90,6 +98,14 @@ VIEWER_THEME = r'''() => {
         if (r < (icon ? 3 : 4.5)) out.low.push(where(e) + ' "' + (e.value || e.textContent).trim().slice(0, 24) + '" ' + cs.color + ' on rgb(' + bg.slice(0, 3).map(Math.round) + ') ' + r.toFixed(2)); }
     }
   }
+  // The MPR cells' orientation cube is drawn in SVG (left out above): its backing, edges and letters, as drawn.
+  for (const cube of document.querySelectorAll('.kin-mpr-cube')) {
+    if (!shown(cube)) continue;
+    for (const [part, prop, value] of [[cube, 'background', getComputedStyle(cube).backgroundColor],
+        ...[...cube.querySelectorAll('line')].map(n => [n, 'stroke', getComputedStyle(n).stroke]),
+        ...[...cube.querySelectorAll('text')].map(n => [n, 'fill', getComputedStyle(n).fill])])
+      if (off(value).length) out.off.push(where(part) + ' ' + prop + ' ' + value);
+  }
   for (const t of document.querySelectorAll('#kin-viewer-report textarea')) {
     const cs = getComputedStyle(t), around = bgOf(t.parentElement), edge = parse(cs.borderTopColor)[0];
     out.report.push({id: t.id, background: cs.backgroundColor, border: cs.borderTopColor + ' ' + cs.borderTopStyle, around: 'rgb(' + around.slice(0, 3).map(Math.round) + ')',
@@ -99,6 +115,21 @@ VIEWER_THEME = r'''() => {
   out.frames = grid ? [...grid.querySelectorAll(':scope > * > *')].map(f => name(f) + ' ' + getComputedStyle(f).borderTopColor + ' active=' + !!f.querySelector('.kin-viewer-info-bar')) : [];
   out.vars = ['--background', '--muted', '--muted-foreground', '--primary', '--input', '--border'].map(v => v + ':' + getComputedStyle(document.body).getPropertyValue(v));
   return out; }'''
+# The product's own labels on the volume screens, shown now, with their exact colours: text #E3E3E3; a backing that was
+# there is the background colour at its alpha (#212121CC), the scale and Sample keep no backing; the scale's rule and the
+# orientation cube's edges and letters #E3E3E3. 'wrong' lists what differs.
+PRODUCT_LABELS = r'''() => {
+  const TEXT = 'rgb(227, 227, 227)', BACKED = 'rgba(33, 33, 33, 0.8)', NONE = 'rgba(0, 0, 0, 0)';
+  const kinds = ['kin-mpr-zoom', 'kin-mpr-scale', 'kin-mpr-sample', 'kin-volume-projection-label', 'kin-mip-label', 'kin-mpr-cube'];
+  return [...document.querySelectorAll(kinds.map(k => '.' + k).join(', '))].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')
+    .map(e => { const cs = getComputedStyle(e), kind = kinds.find(k => e.classList.contains(k)), wrong = [];
+      const want = (what, got, expected) => { if (got !== expected) wrong.push(what + ' ' + got); };
+      if (kind !== 'kin-mpr-cube') want('text', cs.color, TEXT);
+      want('backing', cs.backgroundColor, ['kin-mpr-scale', 'kin-mpr-sample'].includes(kind) ? NONE : BACKED);
+      if (kind === 'kin-mpr-scale') want('rule', cs.borderBottomColor, TEXT);
+      for (const n of e.querySelectorAll('line')) want('edge', getComputedStyle(n).stroke, TEXT);
+      for (const n of e.querySelectorAll('text')) want('letter', getComputedStyle(n).fill, TEXT);
+      return {kind, text: e.textContent.trim().slice(0, 30), wrong}; }); }'''
 CELL = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), p = v.getProperties();
   return {voi: p.voiRange && [p.voiRange.lower, p.voiRange.upper], invert: !!p.invert, scale: v.getCamera().parallelScale,
     flip: !!v.getCamera().flipHorizontal}; }'''
@@ -344,7 +375,15 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
         if tab.get_attribute('aria-expanded') != 'true':
             tab.click()
         expect(page.locator('#kin-viewer-layout')).to_be_visible()
+        # Cell Merge joins the tools tab once its script has loaded (asynchronously): the tab is measured with it there,
+        # then once more with the panel scrolled into the window (the check leaves out what is below the window).
+        cell_merge = page.locator('#kin-cell-merge')
+        expect(cell_merge).to_be_visible(timeout=15000)
         measure('tools tab')
+        cell_merge.scroll_into_view_if_needed()
+        page.wait_for_function('() => { const r = document.querySelector("#kin-cell-merge").getBoundingClientRect(); '
+                               'return r.top >= 0 && r.top < innerHeight; }')
+        measure('Cell Merge panel')
         # Edit Toolbar's button is there only while the viewer's toolbar is the stock one (its own cases open it).
         try:
             expect(page.locator('#kin-native-toolbar-edit')).to_be_visible(timeout=10000)
@@ -370,6 +409,107 @@ class ViewerSpaceE2E(ViewerLayoutE2E):
                 self.assertEqual(field['background'], 'rgb(45, 45, 45)', field)
                 self.assertGreaterEqual(field['edge'], 3, field)
                 self.assertTrue(field['readOnly'], field)
+
+    @staticmethod
+    def unfold(details):
+        # A window's folded section (its source identifiers) opened by its summary, as a reader opens it.
+        if not details.evaluate('d => d.open'):
+            details.locator(':scope > summary').click()
+        expect(details).to_have_attribute('open', '')
+
+    def test_space_07_mpr_mip_and_volume_rendering_use_the_theme(self):
+        """FA-153 (one theme in the viewer), the volume screens: the MPR cells' own labels (Zoom, the scale, Sample, the
+        projection label, the orientation cube) and the inside of the MIP and Volume Rendering windows use the five colours;
+        the labels on the images are the primary text #E3E3E3 on the background colour at the alpha their backing had
+        (#212121CC), the scale's rule is #E3E3E3 and the cover shown while VR checks its source is the panel. States: MPR as
+        opened, a cell zoomed, a projection applied, MIP final, the VR cover, VR showing its source. A reader's own colours
+        are not judged here (their cases keep them)."""
+        from test_volume_projection import phantom
+        page = self.viewer(self.login(), phantom(self.stack))
+        page.locator('[data-cy=Layout]').click()
+        page.locator('#react-portal').get_by_text('MPR', exact=True).click()
+        page.wait_for_function('''() => { const g = services.viewportGridService.getState();
+          return g.viewports.size === 3 && [...g.viewports.keys()].every(id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+            return v?.type === 'orthographic' && cornerstone.cache.getVolume(v.getVolumeId())?.loadStatus.loaded; }); }''', timeout=90000)
+        for label in ('.kin-mpr-zoom', '.kin-mpr-scale', '.kin-mpr-sample', '.kin-volume-projection-label', '.kin-mpr-cube'):
+            expect(page.locator(label).first).to_be_visible(timeout=30000)
+        seen, labels = {}, {}
+
+        def measure(state):
+            page.mouse.move(5, 5)
+            page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
+            seen[state], labels[state] = page.evaluate(VIEWER_THEME), page.evaluate(PRODUCT_LABELS)
+            print('VIEWER THEME ' + json.dumps({state: seen[state], 'labels': labels[state]}), flush=True)
+        measure('MPR')
+        # One cell zoomed with the Zoom tool (its camera changes and the labels are written again).
+        cell = page.locator('[data-cy=viewport-grid] > div').first.locator('canvas').first
+        box = cell.bounding_box()
+        page.mouse.click(box['x'] + box['width'] * .5, box['y'] + box['height'] * .3)
+        zoom = page.locator('.kin-mpr-zoom').first.text_content()
+        select_image_tool(page, 'Zoom')
+        x, y = box['x'] + box['width'] * .5, box['y'] + box['height'] * .5
+        page.mouse.move(x, y)
+        page.mouse.down()
+        page.mouse.move(x, y + 35, steps=12)
+        page.mouse.up()
+        expect(page.locator('.kin-mpr-zoom').first).not_to_have_text(zoom)
+        measure('cell zoomed')
+        # A projection applied to the active plane (the projection label's text changes), from the tools tab.
+        tab = page.locator('#kin-workspace-dock nav button[aria-controls="kin-viewer-layout"]')
+        if tab.get_attribute('aria-expanded') != 'true':
+            tab.click()
+        expect(page.locator('#kin-volume-projection button').first).to_be_enabled(timeout=30000)
+        before = page.locator('.kin-volume-projection-label').first.text_content()
+        page.get_by_label('Projection Mode', exact=True).select_option('1')
+        page.get_by_label('Total Thickness (mm)', exact=True).fill('10')
+        page.get_by_role('button', name='Apply to Active Plane', exact=True).click()
+        expect(page.locator('#kin-volume-projection [role=status]')).to_contain_text('적용했습니다')
+        expect(page.locator('.kin-volume-projection-label').first).not_to_have_text(before)
+        measure('projection applied')
+        # MIP, final, its source identifiers unfolded.
+        expect(page.get_by_role('button', name='Open MIP Viewer', exact=True)).to_be_enabled(timeout=30000)
+        page.get_by_role('button', name='Open MIP Viewer', exact=True).click()
+        mip = page.locator('#kin-volume-mip')
+        expect(mip).to_have_attribute('data-kin-mip-state', 'final', timeout=45000)
+        expect(mip.locator('.kin-mip-label')).to_be_visible()
+        self.unfold(mip.locator('details').first)
+        measure('MIP')
+        mip.get_by_role('button', name='Close MIP Viewer', exact=True).click()
+        expect(mip).not_to_be_visible()
+        # VR: the cover while its source is checked (that request held, as the VR cases hold it), then the source shown.
+        page.evaluate("""() => { const f = window.fetch; window.fetch = async (...args) => { if (String(args[0]).includes('/viewer-jobs')) {
+          window.vrWaiting = true; await new Promise(r => window.releaseVR = r); } return f(...args); }; window.restoreVRFetch = () => window.fetch = f; }""")
+        page.get_by_role('button', name='Open Volume Rendering', exact=True).click()
+        page.wait_for_function('() => window.vrWaiting')
+        vr = page.locator('#kin-volume-rendering')
+        expect(vr.locator('.kin-vr-cover')).to_be_visible()
+        measure('VR cover')
+        cover = vr.locator('.kin-vr-cover').evaluate('e => getComputedStyle(e).backgroundColor')
+        page.evaluate('() => { window.restoreVRFetch(); window.releaseVR(); }')
+        expect(vr.locator('[role=status]')).to_contain_text('VR 원본을 표시했습니다', timeout=45000)
+        self.unfold(vr.locator('details').first)
+        measure('VR')
+        self.record(page, 'space-07-volume-theme')
+        vr.get_by_role('button', name='Close VR', exact=True).click()
+        expect(vr).not_to_be_visible()
+        for state, found in seen.items():
+            with self.subTest(contract='five colours on the volume screens', state=state):
+                self.assertEqual([], found['off'])
+            with self.subTest(contract='text reads at 4.5:1 or more', state=state):
+                self.assertEqual([], found['low'])
+            with self.subTest(contract='the labels on the images are the primary text', state=state):
+                self.assertTrue(found['overlay'])
+                self.assertEqual([], [t for t in found['overlay'] if t[1] != 'rgb(227, 227, 227)'])
+            with self.subTest(contract='the product labels are judged, not set apart as chosen', state=state):
+                self.assertEqual([], [c for c in found['chosen'] if re.search(r'kin-(mpr|mip|volume-projection)', c)])
+            with self.subTest(contract='the label colours', state=state):
+                self.assertTrue(labels[state], state)
+                self.assertEqual([], [label for label in labels[state] if label['wrong']])
+        with self.subTest(contract='each label kind seen'):
+            kinds = {label['kind'] for state in labels for label in labels[state]}
+            self.assertEqual({'kin-mpr-zoom', 'kin-mpr-scale', 'kin-mpr-sample', 'kin-volume-projection-label', 'kin-mip-label', 'kin-mpr-cube'}, kinds)
+        with self.subTest(contract='the VR cover is the panel'):
+            self.assertEqual('rgb(45, 45, 45)', cover)
 
     def test_space_04_tools_that_do_not_fit_keep_a_visible_control(self):
         fixture = self.multiple('VSPACE-' + uuid.uuid4().hex[:12], 'current', '20260801')

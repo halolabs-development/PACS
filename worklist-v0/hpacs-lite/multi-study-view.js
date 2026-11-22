@@ -4,6 +4,9 @@
  */
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const memberCodes = new Set(['W9_MEMBER_UNAVAILABLE', 'W9_SCOPE_EXCLUDED',
     'W9_IDENTITY_UNAVAILABLE', 'STUDY_IDENTITY_UNRESOLVED', 'W9_LOAD_FAILED']);
   const metadataFields = ['patientId', 'patientName', 'institutionName', 'studyDate', 'description', 'accession'];
@@ -265,7 +268,7 @@
     const summary = $('#multi-study-summary'), status = $('#multi-study-status'), identity = $('#multi-study-identity');
     const candidateStatus = $('#multi-study-candidate');
     const originalsNote=document.createElement('p');
-    originalsNote.textContent='Viewing Set은 원본 검사 단위로 엽니다. Split의 다른 부분도 표시됩니다.';
+    kinWrite(originalsNote,kinSayEn('Viewing Set은 원본 검사 단위로 엽니다. Split의 다른 부분도 표시됩니다.'));
     identity.after(originalsNote);
     const list = $('#multi-study-members'), title = $('#multi-study-title');
     const previous = $('#multi-study-prev'), next = $('#multi-study-next'), compare = $('#multi-study-compare');
@@ -584,7 +587,7 @@
             const pick = document.createElement('label'); const box = document.createElement('input'); box.type = 'checkbox';
             box.checked = picks.includes(value); box.disabled = busy || blocked || !ready; box.dataset.action = 'pick';
             box.onchange = () => { picks = box.checked ? [...picks.filter(x => x !== value), value].slice(-2) : picks.filter(x => x !== value); render(); };
-            pick.append(box, ' Compare'); pick.title = '두 검사를 고른 뒤 Compare Two를 누르세요. 먼저 고른 검사가 왼쪽입니다.';
+            pick.append(box, ' Compare'); kinWrite(pick, kinSayEn("두 검사를 고른 뒤 Compare Two를 누르세요. 먼저 고른 검사가 왼쪽입니다."), "title");
             const viewButton = button('View Study', () => view(value), busy || blocked || !ready);
             viewButton.dataset.action = 'view';
             const reportButton = button('Select for Reporting', () => selectForReporting(value), busy || blocked || !ready || value === target || !!why, why || '');

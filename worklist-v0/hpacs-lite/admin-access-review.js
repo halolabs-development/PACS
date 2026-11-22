@@ -1,5 +1,13 @@
 (() => {
   'use strict';
+  // The page's write path (worklist-language.js): its own words read in English on an English screen and stay as written
+  // otherwise; data is written as it is.
+  const kinSayEn = globalThis.KinLanguage?.sayEnglish || ((phrase, ...parts) =>
+    phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
+  const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
+    if (name) node.setAttribute(name, value); else node.textContent = value;
+    return node;
+  });
   const el = name => document.getElementById(`access-review-${name}`);
   let sequence = 0, next = null, selection = null, count = 0, ready = false, pending = false;
   const fact = value => {
@@ -9,7 +17,7 @@
   };
   const value = item => item == null ? 'not recorded' : typeof item === 'string' ? item : JSON.stringify(item);
   const message = (text, failed = false) => {
-    el('message').textContent = text;
+    kinWrite(el('message'), text);
     el('message').className = failed ? 'message show' : 'audit-hint';
   };
   function controls() {
@@ -53,7 +61,7 @@
         selection = { report: 'access', from: new Date(`${el('from').value}Z`).toISOString(),
           until: new Date(`${el('until').value}Z`).toISOString(), downloads: el('filter').value };
         if (selection.from >= selection.until) throw new Error();
-      } catch { message('시작보다 뒤인 종료 시각을 지정하세요.', true); return; }
+      } catch { message(kinSayEn('시작보다 뒤인 종료 시각을 지정하세요.'), true); return; }
     }
     const current = ++sequence, selected = selection, context = KinWorkContext.capture('document');
     const query = new URLSearchParams(selected);
@@ -72,10 +80,10 @@
       body.rows.forEach(item => fragment.append(row(item)));
       el('rows').append(fragment); count += body.rows.length; next = body.next;
       el('wrap').hidden = !count; el('wrap').classList.remove('stale');
-      el('scope').textContent = `${body.institutionId} · ${body.from} ≤ 발생 시각 < ${body.until} · 표시 사건 ${count}건`;
+      kinWrite(el('scope'), kinSayEn('{0} · {1} ≤ 발생 시각 < {2} · 표시 사건 {n3}건', body.institutionId, body.from, body.until, count));
       el('state').textContent = next ? 'Partial' : count ? 'Loaded' : 'No Events';
-      message(next ? '아직 일부 기록만 조회했습니다. Load More로 이어서 확인하세요.' :
-        count ? '선택 범위의 조회를 마쳤습니다. 업무 대조와 사유 확인은 담당자가 수행해야 합니다.' : '선택한 기간·조건에 표시할 접속기록이 없습니다.');
+      message(next ? kinSayEn('아직 일부 기록만 조회했습니다. Load More로 이어서 확인하세요.') :
+        count ? kinSayEn('선택 범위의 조회를 마쳤습니다. 업무 대조와 사유 확인은 담당자가 수행해야 합니다.') : kinSayEn('선택한 기간·조건에 표시할 접속기록이 없습니다.'));
     } catch (error) {
       if (current !== sequence || KinConsoleSession.ended()) return;
       if (error.status === 401 || error.status === 403) {
@@ -83,7 +91,7 @@
         document.dispatchEvent(new CustomEvent('kin-access-ledger-refused', { detail: 'access-review' }));
       }
       el('state').textContent = 'Query Failed'; el('wrap').classList.add('stale');
-      message(count ? '이어보기에 실패했습니다. 표시된 기록은 이전에 조회한 일부입니다. 다시 조회하세요.' : '접속기록 조회에 실패했습니다. 기간과 권한을 확인하고 다시 조회하세요.', true);
+      message(count ? kinSayEn('이어보기에 실패했습니다. 표시된 기록은 이전에 조회한 일부입니다. 다시 조회하세요.') : kinSayEn('접속기록 조회에 실패했습니다. 기간과 권한을 확인하고 다시 조회하세요.'), true);
     } finally {
       if (current === sequence) { pending = false; controls(); }
     }

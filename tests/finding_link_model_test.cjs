@@ -986,7 +986,9 @@ function consumers(win) {
     KinViewerOpening: { PREFIX: 'p:', key: () => 'p:["hospital","doctor"]' }, KinAuth: { session: () => ({}) },
     ohifScope: href => /^https:\/\/pacs\.test\/ohif\/viewer\?/.test(href) ? { studies: ['1.1'], series: null } : null };
   vm.createContext(box);
-  vm.runInContext(text[0] + '\n' + text[1] + '\n' + text[2] + '\nthis.mergeRefusal = function () {' + text[3] + '};', box);
+  // The cut viewer functions write their words through the viewer write path (its plain form, as in a viewer without English).
+  const words = shippedFile('viewer-language.js').split('\n').filter(line => /^function kin(Text|Html|Error)\(/.test(line)).join('\n');
+  vm.runInContext(words + '\n' + text[0] + '\n' + text[1] + '\n' + text[2] + '\nthis.mergeRefusal = function () {' + text[3] + '};', box);
   return () => {
     const popup = plain(box.ohifPopupState(win));
     return { nextStudy: plain(box.viewerState()), windowReuse: { ready: popup.ready, busy: popup.busy, dirty: popup.dirty },
@@ -1051,7 +1053,9 @@ test('mounted guard: the Job panel keeps its mark-only guard; only a document-re
   for(const [sameExam, otherStudy, refuses] of [[true,false,false],[true,true,true],[false,false,true]]) {
     const context={sameExam,job:{snapshot:{studies:otherStudy?[B]:[A]}},studies:[A],located:null,title:{value:''},description:{value:''},
       ctx:{},window:{kinViewerFindingsState:()=>({dirty:true})}};
-    const run=()=>vm.runInNewContext(`(async()=>{ if(${navigation.expression.getText(tree)}) { ${statements.join('\n')} } })()`,context);
+    // The cut statements write their words through the viewer write path (its plain form, as in a viewer without English).
+    const words = shippedFile('viewer-language.js').split('\n').filter(line => /^function kin(Text|Html|Error)\(/.test(line)).join('\n');
+    const run=()=>vm.runInNewContext(`${words}\n(async()=>{ if(${navigation.expression.getText(tree)}) { ${statements.join('\n')} } })()`,context);
     if(refuses) {await assert.rejects(run,/저장하지 않은 소견/);assert.equal(context.ctx.refused,'findings-unsaved');}
     else await assert.doesNotReject(run);
   }

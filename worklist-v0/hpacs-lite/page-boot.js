@@ -64,12 +64,12 @@
        "#b-clear", "#b-paste"].forEach(s => {
         const el = $(s); if (!el) return;
         el.disabled = !rad;
-        if (!rad) el.title = "판독의(radiologist) 권한이 필요합니다";
+        if (!rad) kinWrite(el, kinSayEn("판독의(radiologist) 권한이 필요합니다"), "title");
       });
       ["#findings", "#conclusion", "#recommendation"].forEach(s => $(s).readOnly = !rad);
       ["#t-verify", "#t-unverify", "#t-modify", "#t-qc-flag"].forEach(s => {
         const el = $(s); el.disabled = !tec;
-        if (!tec) el.title = TECHNICIAN_WORK_REASON;
+        if (!tec) kinWrite(el, kinSayEn(TECHNICIAN_WORK_REASON), "title");
       });
       const r = sess.demo ? "데모" : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || "권한 없음");
       $("#roles").textContent = r;
@@ -121,8 +121,9 @@
       mountWorklistFolders();
       void reloadFolderSearches();
       renderChips(); renderTemplates();
-      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> DB Connected`;
-      $("#dbstat").title = `상태·판독문이 서버(${API})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다`;
+      $("#dbstat").innerHTML = `<span style="color:#4ac06a">●</span> `;
+      $("#dbstat").append(kinWrite(document.createTextNode(""), kinSay("DB Connected")));
+      kinWrite($("#dbstat"), kinSay("상태·판독문이 서버({0})에 저장됩니다 — 브라우저를 바꿔도 유지됩니다", API), "title");
       // 어느 기관으로 로그인했는지 항상 보이게. 두 기관을 오가며 시험할 때
       // "지금 누구로 보고 있는지"를 모르면 필터가 되는지 안 되는지도 알 수 없다.
       // `roleText`를 기준으로 다시 쓴다 — 재연결마다 앞에 덧붙으면 줄이 길어진다.
@@ -176,9 +177,7 @@
       queryRetrieve?.sync();
       clearInterval(poll); poll = null; ++pollGeneration;
       $("#dbstat").innerHTML = `<span style="color:#ff6b6b">●</span> 서버 연결 끊김 — 저장 불가 (클릭: 재시도)`;
-      $("#dbstat").title = `API에 연결하지 못했습니다 (${e?.message ?? ""}).\n` +
-        `이 상태에서는 아무것도 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.\n` +
-        `docker compose up -d 로 API를 띄우면 자동으로 다시 붙습니다.`;
+      kinWrite($("#dbstat"), kinSayEn("API에 연결하지 못했습니다 ({e0}).\n이 상태에서는 아무것도 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.\ndocker compose up -d 로 API를 띄우면 자동으로 다시 붙습니다.", e?.message ?? ""), "title");
       $("#dbstat").style.cursor = "pointer";
       toast("서버 연결이 끊겼습니다 — 지금부터 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.", "err");
       startReconnect();
@@ -299,7 +298,8 @@
 
     function showMembershipState(state) {
       const pending = state === "pending";
-      document.title = pending ? "관리자 승인 대기 — HALO PACS" : "계정 설정 확인 — HALO PACS";
+      // The tab title is a property of the document, not an attribute: written once, in the language of this moment.
+      document.title = String(pending ? kinSayEn("관리자 승인 대기 — HALO PACS") : kinSayEn("계정 설정 확인 — HALO PACS"));
       const panel = document.createElement("main");
       panel.style.cssText = "min-height:100vh;display:grid;place-items:center;background:#212121;color:#e3e3e3;font-family:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR','Malgun Gothic',sans-serif;padding:24px";
       const card = document.createElement("section");
@@ -308,15 +308,13 @@
       brand.textContent = "HALO PACS";
       brand.style.cssText = "font-size:12px;letter-spacing:.18em;color:#b4b4b4;margin-bottom:18px";
       const title = document.createElement("h1");
-      title.textContent = pending ? "관리자 승인 대기" : "계정 설정 확인 필요";
+      kinWrite(title, pending ? kinSayEn("관리자 승인 대기") : kinSayEn("계정 설정 확인 필요"));
       title.style.cssText = "font-size:24px;margin:0 0 14px";
       const message = document.createElement("p");
-      message.textContent = pending
-        ? "가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요."
-        : "기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요.";
+      kinWrite(message, pending ? kinSayEn("가입 신청이 접수되었습니다. 관리자가 기관과 역할을 확인한 뒤 사용할 수 있습니다. 오래 걸리면 가입을 안내한 기관의 HALO PACS 관리자 또는 HALO PACS 운영 담당자에게 문의해 주세요.") : kinSayEn("기관 또는 업무 역할 설정이 올바르지 않습니다. 관리자에게 문의해 주세요."));
       message.style.cssText = "line-height:1.7;color:#e3e3e3;margin:0 0 24px";
       const logout = document.createElement("button");
-      logout.textContent = "로그아웃";
+      kinWrite(logout, kinSayEn("로그아웃"));
       logout.style.cssText = "border:1px solid #858585;border-radius:8px;background:#2d2d2d;color:#e3e3e3;padding:11px 20px;cursor:pointer";
       logout.addEventListener("click", () => KinAuth.logout());
       card.append(brand, title, message, logout);
@@ -328,7 +326,7 @@
       try {
         await KinAuth.init({ retry: true, onRetry: () => {
           work.commit(work.capture("lifecycle"), () => {
-            $("#err").textContent = "세션을 다시 확인하고 있습니다. 확인되면 자동으로 들어갑니다…";
+            kinWrite($("#err"), kinSayEn("세션을 다시 확인하고 있습니다. 확인되면 자동으로 들어갑니다…"));
           });
         }, onHold: text => {
           // 다른 창의 로그아웃 준비가 살아 있는 동안 이 탭은 그 결과를 기다린다(A017) — 그동안의 안내 한 줄.
@@ -338,7 +336,7 @@
       }
       catch {
         work.commit(work.capture("lifecycle"), () => {
-          $("#err").textContent = "세션을 확인하지 못했습니다. 잠시 뒤 다시 확인해 주세요. ";
+          kinWrite($("#err"), kinSayEn("세션을 확인하지 못했습니다. 잠시 뒤 다시 확인해 주세요. "));
           const retry = document.createElement("button");
           retry.textContent = "Retry Session Check";
           retry.addEventListener("click", () => { retry.disabled = true; boot(); });
@@ -461,7 +459,7 @@
           endpoint:API+'/reading-appearance',sessionEndpoint:API+'/me'});
       } catch (_) {
         $('#reading-appearance-open').disabled=true;
-        $('#reading-appearance-open').title='글자 크기 설정을 불러오지 못했습니다. 판독 작업은 계속할 수 있습니다.';
+        kinWrite($('#reading-appearance-open'), kinSayEn("글자 크기 설정을 불러오지 못했습니다. 판독 작업은 계속할 수 있습니다."), "title");
       }
       KinReadingPreferences({ ...readingWorkspace.preferences,
         owner: workspaceOwner ? [sess.institution, sess.sub] : null,
@@ -488,7 +486,7 @@
           const saved = KinWorkspaceLayout.write(workspaceStorage, workspaceOwner, state);
           if (saved) rememberStudyPanelSession();
           workspaceLocalKept = !!saved;
-          $("#layout-status").textContent = saved ? "배치 복원됨 · 이 브라우저" : "배치 · 이 창에서만 유지";
+          kinWrite($("#layout-status"), saved ? kinSayEn("배치 복원됨 · 이 브라우저") : kinSayEn("배치 · 이 창에서만 유지"));
           return saved;
         },
       });
@@ -497,7 +495,7 @@
         serverMode = false; offline = false;
         Object.assign(appState, legacyAppState);
         $("#dbstat").innerHTML = `<span style="color:#7f8899">●</span> 데모 모드`;
-        $("#dbstat").title = "로그인하지 않은 둘러보기 모드 — 변경 내용은 이 브라우저에만 남습니다";
+        kinWrite($("#dbstat"), kinSayEn("로그인하지 않은 둘러보기 모드 — 변경 내용은 이 브라우저에만 남습니다"), "title");
         await load();
         return;
       }

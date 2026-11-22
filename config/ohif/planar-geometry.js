@@ -22,7 +22,9 @@ function kinViewerPlaneImage(tags) {
 
 // Physical lengths, angles and areas on a specified original frame; no non-CT HU inference.
 function kinPlanarGeometry(tags, frame) {
-  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
+  const fail = () => { throw kinError("원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
   const numbers = (v, n) => {
     const a = typeof v === 'string' ? v.split('\\') : v;
     if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();
@@ -87,6 +89,8 @@ function kinPlanarGeometry(tags, frame) {
     if (kind !== 'ellipse' || Math.abs(cosine) > 1e-4 || size(p[0].map((n, i) => (n + p[1][i] - p[2][i] - p[3][i]) / 2)) > .001) return fail();
     return Math.PI * size(a) * size(b) / 4;
   };
+  // The basis name is a value of the measurement (the exported report carries it): kept as written, never in the screen's
+  // language. Where it is drawn is the panel's and the marks' business (history.js).
   const label = mg?.label || { pixel: 'PixelSpacing · 원본 기준면', detector: 'ImagerPixelSpacing · 검출기 기준', ermf: 'ImagerPixelSpacing / ERMF · 추정 보정' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, measure, label, frameOfReferenceUid: tags.FrameOfReferenceUID || null,
     calculator: 'kin-planar-manual-v1:' + basis, viewerPlane };
@@ -97,6 +101,8 @@ function kinPlanarGeometry(tags, frame) {
 // image pixel coordinates [column, row]; all points of one measurement must lie in the same region, or there is no spacing.
 // Used by the Measure menu's tools only; the existing Length, Angle and Ellipse keep their own rules.
 function kinUsRegionGeometry(tags) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const regions = tags?.SequenceOfUltrasoundRegions;
   if (tags?.Modality !== 'US' || !Array.isArray(regions) || !regions.length) return null;
   const number = value => {
@@ -120,7 +126,7 @@ function kinUsRegionGeometry(tags) {
   // Every region that holds every point; the first of them, or null.
   const holding = points => usable.filter(r => points.every(p => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]) && inside(r, p)));
   const region = points => holding(points)[0] || null;
-  const spacing = points => { const r = region(points); if (!r) throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); return r.spacing; };
+  const spacing = points => { const r = region(points); if (!r) throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); return r.spacing; };
   const length = (a, b) => { const s = spacing([a, b]); return Math.hypot((b[0] - a[0]) * s[1], (b[1] - a[1]) * s[0]); };
   return { regions: usable, holding, region, spacing, length, label: 'US Region Calibration', basis: 'us' };
 }
@@ -135,8 +141,8 @@ function kinManualGeometry(tags, frame, kind) {
   const own = ['PixelSpacing', 'ImagerPixelSpacing', 'ImageOrientationPatient', 'SharedFunctionalGroupsSequence', 'PerFrameFunctionalGroupsSequence'];
   const us = kind === 'length' && tags?.Modality === 'US' && own.every(key => tags[key] === undefined) ? kinUsRegionGeometry(tags) : null;
   if (!us) return kinPlanarGeometry(tags, frame);
-  const fail = () => { throw new Error('원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
-  const outside = () => { throw new Error('초음파 보정 영역 안에서만 mm로 잴 수 있습니다'); };
+  const fail = () => { throw kinError("원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
+  const outside = () => { throw kinError("초음파 보정 영역 안에서만 mm로 잴 수 있습니다"); };
   const numbers = (v, n) => {
     const a = typeof v === 'string' ? v.split('\\') : v;
     if (!Array.isArray(a) || a.length !== n || a.some(x => !(typeof x === 'number' || typeof x === 'string' && x.trim()) || !Number.isFinite(Number(x)))) return fail();

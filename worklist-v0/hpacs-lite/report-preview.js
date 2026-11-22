@@ -1,6 +1,9 @@
 /* Read-only report output. Every asynchronous result belongs to one open dialog. */
 (function () {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const fields = ['findings', 'conclusion', 'recommendation'];
   const paperCss = `body{margin:0;color:#18212b;background:#fff;font:14px/1.55 "Malgun Gothic",sans-serif}
     main{max-width:190mm;margin:0 auto;padding:10mm}h1{font-size:21px;margin:0 0 8px}h2{font-size:15px;margin:18px 0 5px}
@@ -208,21 +211,27 @@
     const footer = el('div', undefined, dialog); footer.style.cssText = 'display:flex;gap:12px;align-items:center;padding:12px';
     const status = el('span', '', footer); status.setAttribute('role', 'status'); status.style.cssText = 'flex:1;white-space:pre-wrap';
     // An error the page shows as it came: marked as an error, so one with no text in the screen language still says it failed.
-    const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', ''); shown.textContent = text; status.replaceChildren(shown); };
+    // An error place (worklist-language.js error): a known sentence reads in English on an English screen; any other message
+    // stays as written, after the general English sentence. Korean or no choice: as written.
+    const showError = text => { const shown = document.createElement('span'); shown.setAttribute('data-kin-error', '');
+      if (globalThis.KinLanguage?.error) kinWrite(shown, globalThis.KinLanguage.error(text)); else shown.textContent = text; status.replaceChildren(shown); };
     const printButton = control('button', '인쇄 / PDF', footer); printButton.disabled = true;
     document.body.append(dialog);
+    // A dialog with no screen of its own: opened from the reading screen it reads in that screen's language, its captions
+    // and the status written later alike (worklist-language.js markup).
+    globalThis.KinLanguage?.markup?.(dialog);
     let epoch = 0, session = null, request = null, urls = [], rendered = null, printWindow = null, focusBefore = null;
     let edits = new Map(), geometryDirty = false;
     const originalGeometry = () => ({ zoom: 100, x: 0, y: 0 });
     function syncGeometry() {
       const previous = targetKey.value, keys = session?.data ? selectedKeys() : [];
-      targetKey.replaceChildren(); const all = el('option', '체크한 키 이미지 전체', targetKey); all.value = 'all';
-      for (const key of keys) { const option = el('option', key.item.title || '(제목 없음)', targetKey); option.value = key.id; if (key.item.title) option.translate = false; }
+      targetKey.replaceChildren(); const all = kinWrite(el('option', undefined, targetKey), kinSayEn("체크한 키 이미지 전체")); all.value = 'all';
+      for (const key of keys) { const option = key.item.title ? el('option', key.item.title, targetKey) : kinWrite(el('option', undefined, targetKey), kinSayEn("(제목 없음)")); option.value = key.id; if (key.item.title) option.translate = false; }
       targetKey.value = keys.some(key => key.id === previous) ? previous : 'all';
       const values = keys.filter(key => targetKey.value === 'all' || targetKey.value === key.id).map(key => edits.get(key.id) || originalGeometry());
       const mixed = values.some(value => !same(value, values[0])); const value = mixed ? originalGeometry() : values[0] || originalGeometry();
       for (const key of Object.keys(geometryInputs)) geometryInputs[key].value = value[key];
-      geometryHint.textContent = (mixed ? '여러 조절값이 있습니다. 적용하면 표시한 값으로 통일합니다. ' : '') + '출력 프레임 중심 확대 · 이동은 프레임 폭/높이 비율 · 최근접 화소 · 바깥은 검정/범위 밖은 잘림 · 실제 크기 아님';
+      kinWrite(geometryHint, kinSayEn("{t0}출력 프레임 중심 확대 · 이동은 프레임 폭/높이 비율 · 최근접 화소 · 바깥은 검정/범위 밖은 잘림 · 실제 크기 아님", (mixed ? kinSayEn('여러 조절값이 있습니다. 적용하면 표시한 값으로 통일합니다. ') : '')));
       geometry.disabled = !keys.length; targetKey.disabled = false;
     }
     const check = s => {
@@ -489,8 +498,8 @@
     async function prepare() {
       const at = work.capture('study'), ownedUrls = [];
       const s = session; if (!s?.data || !work.admits(at)) return;
-      request?.abort(); releaseImages(); status.textContent = '출력할 내용을 확인하고 있습니다…';
-      const keys = selectedKeys(), selection = keys.map(k => k.id); count.textContent = `${keys.length}장 선택`;
+      request?.abort(); releaseImages(); kinWrite(status, kinSayEn("출력할 내용을 확인하고 있습니다…"));
+      const keys = selectedKeys(), selection = keys.map(k => k.id); kinWrite(count, kinSayEn("{n0}장 선택", keys.length));
       const selectionEpoch = ++s.selectionEpoch;
       try {
         if (geometryDirty) throw new Error('키 확대·이동 입력을 적용하거나 원래 범위로 되돌리세요.');
@@ -523,20 +532,19 @@
           rendered = { html: html(documentBody(s, images, windowing, citations, drawings)), images, selection, source: source.value, selectionEpoch, citations,
             drawingIds: drawings.map(d => d.id) };
           paper.srcdoc = rendered.html; printButton.disabled = !supportsPageIdentity();
-          status.textContent = printButton.disabled ? '이 브라우저는 페이지별 식별정보 출력을 지원하지 않습니다. 최신 Chrome 또는 Edge에서 여세요.' :
-            '미리보기 내용을 확인하세요. A4 · 기본 여백으로 출력하며, 인쇄 대화상자에서 페이지 나눔과 식별정보를 확인하세요.';
+          kinWrite(status, printButton.disabled ? kinSayEn("이 브라우저는 페이지별 식별정보 출력을 지원하지 않습니다. 최신 Chrome 또는 Edge에서 여세요.") : kinSayEn("미리보기 내용을 확인하세요. A4 · 기본 여백으로 출력하며, 인쇄 대화상자에서 페이지 나눔과 식별정보를 확인하세요."));
           });
         });
       } catch (error) {
         if (session !== s || selectionEpoch !== s.selectionEpoch) return;
-        work.commit(at, () => { releaseImages(); if (error.name === 'AbortError') status.textContent = '불러오기가 지연됐습니다. 다시 확인을 누르세요.'; else showError(error.message); });
+        work.commit(at, () => { releaseImages(); if (error.name === 'AbortError') kinWrite(status, kinSayEn("불러오기가 지연됐습니다. 다시 확인을 누르세요.")); else showError(error.message); });
       } finally { ownedUrls.forEach(URL.revokeObjectURL); }
     }
     async function reload() {
       const at = work.capture('study');
       const s = session; if (!s || !work.admits(at)) return;
       edits = new Map(); geometryDirty = false; geometry.disabled = true;
-      s.selectionEpoch++; releaseImages(); choices.replaceChildren(); status.textContent = '저장본과 키 이미지를 불러오는 중…'; source.disabled = true; layout.disabled = true; windowControls.disabled = true;
+      s.selectionEpoch++; releaseImages(); choices.replaceChildren(); kinWrite(status, kinSayEn("저장본과 키 이미지를 불러오는 중…")); source.disabled = true; layout.disabled = true; windowControls.disabled = true;
       try {
         const data = await bounded(signal => snapshot(s, signal, at));
         work.commit(at, () => {
@@ -545,13 +553,15 @@
         if (!s.data.canPreviewEditor) source.value = 'saved'; source.disabled = false; layout.disabled = false; windowControls.disabled = false;
         for (const key of s.data.keys) {
           const label = el('label', undefined, choices); label.style.cssText = 'display:block;padding:8px 0;border-bottom:1px solid #465362;overflow-wrap:anywhere';
-          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; input.setAttribute('aria-label', key.item.title || '제목 없는 키 이미지'); if (key.item.title) input.setAttribute('data-kin-keep', 'aria-label');
-          el('span', ` ${key.item.title || '(제목 없음)'} · 프레임 ${key.item.frame}`, label); input.onchange = prepare;
+          const input = el('input', undefined, label); input.type = 'checkbox'; input.value = key.id; if (key.item.title) { input.setAttribute('aria-label', key.item.title); input.setAttribute('data-kin-keep', 'aria-label'); }
+          else kinWrite(input, kinSayEn("제목 없는 키 이미지"), 'aria-label');
+          // The key image's title is the author's words (as written); the words around it are the dialog's.
+          kinWrite(el('span', undefined, label), kinSayEn(" {0} · 프레임 {1}", key.item.title || kinSayEn("(제목 없음)"), key.item.frame)); input.onchange = prepare;
         }
-        if (!s.data.keys.length) el('p', '저장한 키 이미지가 없습니다.', choices);
+        if (!s.data.keys.length) kinWrite(el('p', undefined, choices), kinSayEn("저장한 키 이미지가 없습니다."));
         void prepare();
         });
-      } catch (error) { work.commit(at, () => { if (session === s) { releaseImages(); if (error.name === 'AbortError') status.textContent = '조회가 지연됐습니다. 다시 확인을 누르세요.'; else showError(error.message); } }); }
+      } catch (error) { work.commit(at, () => { if (session === s) { releaseImages(); if (error.name === 'AbortError') kinWrite(status, kinSayEn("조회가 지연됐습니다. 다시 확인을 누르세요.")); else showError(error.message); } }); }
     }
     async function print() {
       const at = work.capture('study');
@@ -559,8 +569,8 @@
       if (!supportsPageIdentity()) return;
       if (printWindow && !printWindow.closed) printWindow.close();
       printWindow = window.open('', '_blank');
-      if (!printWindow) { toast('인쇄 창을 열 수 없습니다. 팝업 허용 여부를 확인하세요.', 'err'); return; }
-      const target = printWindow; printButton.disabled = true; status.textContent = '출력 직전 상태를 다시 확인하고 있습니다…';
+      if (!printWindow) { toast(kinSayEn("인쇄 창을 열 수 없습니다. 팝업 허용 여부를 확인하세요."), 'err'); return; }
+      const target = printWindow; printButton.disabled = true; kinWrite(status, kinSayEn("출력 직전 상태를 다시 확인하고 있습니다…"));
       try {
         await bounded(async signal => {
           let next = 0;
@@ -586,7 +596,7 @@
           if (target.closed || ready !== rendered) throw new Error('인쇄 창이 닫혔거나 출력 내용이 변경되었습니다');
           work.commit(at, () => {
           target.focus(); target.print();
-          if (session === s) status.textContent = '인쇄 대화상자에서 인쇄하거나 PDF로 저장하세요. 취소해도 원본은 바뀌지 않습니다.';
+          if (session === s) kinWrite(status, kinSayEn("인쇄 대화상자에서 인쇄하거나 PDF로 저장하세요. 취소해도 원본은 바뀌지 않습니다."));
           });
         });
       } catch (error) {
@@ -600,14 +610,14 @@
     const invalidateWindow = () => {
       if (!session) return;
       session.selectionEpoch++; request?.abort(); releaseImages();
-      status.textContent = '출력 W/L을 바꿨습니다. 밝기 적용을 누르세요.';
+      kinWrite(status, kinSayEn("출력 W/L을 바꿨습니다. 밝기 적용을 누르세요."));
     };
     brightness.onchange = () => { windowFields.style.display = brightness.value === 'manual' ? 'block' : 'none'; if (brightness.value === 'manual') invalidateWindow(); else void prepare(); };
     windowWidth.oninput = invalidateWindow; windowCenter.oninput = invalidateWindow; applyWindow.onclick = prepare;
     for (const input of Object.values(geometryInputs)) input.oninput = () => {
       if (!session) return; geometryDirty = true; targetKey.disabled = true;
       session.selectionEpoch++; request?.abort(); releaseImages();
-      status.textContent = '키 확대·이동 입력을 적용하거나 원래 범위로 되돌리세요.';
+      kinWrite(status, kinSayEn("키 확대·이동 입력을 적용하거나 원래 범위로 되돌리세요."));
     };
     targetKey.onchange = syncGeometry;
     function changeGeometry(reset) {
@@ -634,7 +644,7 @@
     return { close, open() {
       if (work.state() !== 'active') return;
       close(); const current = context();
-      if (!current.uid || !current.online) { toast('검사를 선택하고 서버 연결을 확인하세요.', 'err'); return; }
+      if (!current.uid || !current.online) { toast(kinSayEn("검사를 선택하고 서버 연결을 확인하세요."), 'err'); return; }
       focusBefore = document.activeElement; source.value = 'saved'; layout.value = 'single'; session = { uid: current.uid, epoch, selectionEpoch: 0 };
       brightness.value = 'auto'; windowFields.style.display = 'none'; windowWidth.value = '400'; windowCenter.value = '40';
       dialog.showModal(); void reload();

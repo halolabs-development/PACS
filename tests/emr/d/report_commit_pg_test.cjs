@@ -253,7 +253,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     assert.equal(releasedHold.status, 201, JSON.stringify(releasedHold.body));
     assert.equal(releasedHold.body.state.rs, 'W');
     assert.equal(releasedHold.body.state.holder, null);
-    assert.deepEqual(releasedHold.body.released, { holder: second.author, holderDraft: true, savedBy: null, savedKept: false });
+    assert.deepEqual(releasedHold.body.released, { holder: second.author, holderDraft: true, savedBy: null, savedKept: false,
+      holderName: 'Synthetic', savedByName: null });
     assert.equal((await witness.studyState.findUnique({ where: { uid: held.uid } })).holder, null);
     const heldReset = await witness.reportVersion.findFirst({ where: { uid: held.uid, action: 'reset' } });
     assert.equal(heldReset.reason, `진행 중 판독 되돌림 (점유: ${second.author}, 저장 글: 없음)`);
@@ -281,7 +282,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     const deferredReset = await resetByFirst(deferred.uid);
     assert.equal(deferredReset.status, 201, JSON.stringify(deferredReset.body));
     assert.equal(deferredReset.body.state.rs, 'W');
-    assert.deepEqual(deferredReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false });
+    assert.deepEqual(deferredReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false,
+      holderName: 'Synthetic', savedByName: null });
 
     // (다) the resetting reader has a draft of their own (their hold went, another reader took the study): the Reset releases
     // that hold as before, and my draft stays mine - text, work unit, no purpose end - standing on the version it made.
@@ -294,7 +296,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
       expectedRevision: mineEpoch + ':' + myBefore.revision, baseVersion: 0, findings: '합성 내 초안', conclusion: '합성 내 결론',
       recommendation: '', citationIds: [], structureIds: [], action: 'reset' });
     assert.equal(mineReset.status, 201, JSON.stringify(mineReset.body));
-    assert.deepEqual(mineReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false });
+    assert.deepEqual(mineReset.body.released, { holder: second.author, holderDraft: false, savedBy: null, savedKept: false,
+      holderName: 'Synthetic', savedByName: null });
     assert.equal(mineReset.body.state.holder, null);
     assert.equal(mineReset.body.present, true, 'the answer carries my kept draft');
     const myAfter = await draftOf(mineStudy.uid, sub);
@@ -325,7 +328,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     const before = await draftOf(saved.uid, second.sub);
     const movedReset = await resetByFirst(saved.uid);
     assert.equal(movedReset.status, 201, JSON.stringify(movedReset.body));
-    assert.deepEqual(movedReset.body.released, { holder: null, holderDraft: false, savedBy: second.author, savedKept: true });
+    assert.deepEqual(movedReset.body.released, { holder: null, holderDraft: false, savedBy: second.author, savedKept: true,
+      holderName: null, savedByName: 'Synthetic' });
     assert.ok(movedReset.body.signature, 'the reset of a saved version is signed as before');
     const savedVersions = await witness.reportVersion.findMany({ where: { uid: saved.uid }, orderBy: { version: 'asc' } });
     assert.deepEqual(savedVersions.map(v => v.action), ['save', 'discarded', 'reset']);
@@ -364,7 +368,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     const liveDraft = await draftOf(kept.uid, second.sub);
     const keptReset = await resetByFirst(kept.uid);
     assert.equal(keptReset.status, 201, JSON.stringify(keptReset.body));
-    assert.deepEqual(keptReset.body.released, { holder: null, holderDraft: false, savedBy: second.author, savedKept: false });
+    assert.deepEqual(keptReset.body.released, { holder: null, holderDraft: false, savedBy: second.author, savedKept: false,
+      holderName: null, savedByName: 'Synthetic' });
     const stillLive = await draftOf(kept.uid, second.sub);
     assert.deepEqual([stillLive.present, stillLive.revision, stillLive.findings, stillLive.baseVersion, stillLive.workUnit],
       [true, liveDraft.revision, '합성 새 초안', keptHead.state.version, liveDraft.workUnit]);
@@ -377,7 +382,8 @@ test('actual HTTP report approval/reset and ledger failure preserve exact versio
     assert.equal((await hold(split.uid, second)).code, 'REPORT_IN_PROGRESS');
     const splitReset = await resetByFirst(split.uid);
     assert.equal(splitReset.status, 201, JSON.stringify(splitReset.body));
-    assert.deepEqual(splitReset.body.released, { holder: null, holderDraft: false, savedBy: third.author, savedKept: true });
+    assert.deepEqual(splitReset.body.released, { holder: null, holderDraft: false, savedBy: third.author, savedKept: true,
+      holderName: null, savedByName: 'Synthetic' });
     assert.equal((await draftOf(split.uid, third.sub)).present, true);
     assert.equal(await draftOf(split.uid, second.sub), null, 'the refused reader had no draft and gets none');
     assert.equal((await witness.reportVersion.findFirst({ where: { uid: split.uid, action: 'reset' } })).reason,

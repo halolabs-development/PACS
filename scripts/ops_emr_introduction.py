@@ -2601,13 +2601,6 @@ def smoke_password():
     return "Aa0!" + token_source.token_urlsafe(32)
 
 
-def administrator_only(row):
-    """A role condition that holds only for the admin realm role (keycloak/kin-realm.json "kin browser administrator")."""
-    config = row.get("config")
-    return (row.get("providerId") == "conditional-user-role" and type(config) is dict and config.get("condUserRole") == "admin"
-            and config.get("negate", "false") == "false" and set(config) <= {"condUserRole", "negate"})
-
-
 def smoke_policy_valid(policy):
     require_smoke(type(policy) is dict and type(policy.get("browserFlow")) is str and policy["browserFlow"]
                   and type(policy.get("requiredActions")) is list and type(policy.get("executions")) is list
@@ -2636,10 +2629,8 @@ def smoke_policy_valid(policy):
                     if child.get("level", -1) <= level:
                         break
                     children.append(child)
-                # The branch is off for the fresh smoke member when it needs a configured credential (the member has
-                # none) or the admin role (the plan's smoke roles never include admin): its steps cannot meet the smoke.
-                require_smoke(any(child.get("level") == level + 1 and child.get("requirement") == "REQUIRED"
-                                  and (child.get("providerId") == "conditional-user-configured" or administrator_only(child))
+                require_smoke(any(child.get("level") == level + 1 and child.get("providerId") == "conditional-user-configured"
+                                  and child.get("requirement") == "REQUIRED"
                                   for child in children), "조건부 인증을 새 smoke 계정에 적용하지 않음을 증명할 수 없습니다")
                 conditional[level] = "unconfigured"
             continue
@@ -2652,12 +2643,6 @@ def smoke_policy_valid(policy):
             # condition is false for the fresh member. Its config may only narrow that already-disabled branch.
             require_smoke("unconfigured" in conditional.values() and row["requirement"] == "REQUIRED",
                           "credential 조건이 새 smoke 계정에 적용되지 않음을 증명할 수 없습니다")
-            continue
-        if row.get("providerId") == "conditional-user-role":
-            # Like the credential condition: inside a branch already off for the fresh member, another AND condition
-            # (the admin gate itself, or "not admin" beside the member's own OTP) only narrows it.
-            require_smoke("unconfigured" in conditional.values() and row["requirement"] == "REQUIRED",
-                          "역할 조건이 새 smoke 계정에 적용되지 않음을 증명할 수 없습니다")
             continue
         require_smoke(row.get("providerId") in allowed and not row.get("authenticationConfig"), "지원하지 않는 browser 인증 정책입니다")
         if row.get("providerId") == "auth-username-password-form":
@@ -2710,21 +2695,10 @@ const get=(url,options={})=>fetch(url,{...options,signal:AbortSignal.timeout(150
    if(r.status!==200)throw new Error('smoke policy');return r.json();};
  const realm=await read('');
  const requiredActions=await read('/authentication/required-actions');
- // A step's config (role conditions name their role) is read beside it: the admin OTP check compares it (check_admin_mfa).
- const flow=async alias=>{const rows=await read('/authentication/flows/'+encodeURIComponent(alias)+'/executions');
-  for(const row of rows){if(row.authenticationConfig)row.config=(await read('/authentication/config/'+encodeURIComponent(row.authenticationConfig))).config||{};}
-  return rows;};
- const executions=await flow(realm.browserFlow);
- const resetExecutions=await flow(realm.resetCredentialsFlow);
- // A client bound to its own browser flow would not meet the realm's administrator OTP.
- const clients=await read('/clients?max=1000');
- const browserOverrides=clients.filter(c=>c.authenticationFlowBindingOverrides&&c.authenticationFlowBindingOverrides.browser).map(c=>c.clientId);
- // kin-bff's token mappers: the administrator's OTP reaches the API only through its AMR mapper.
- const bff=clients.find(c=>c.clientId==='kin-bff');
- const bffMappers=bff?(await read('/clients/'+encodeURIComponent(bff.id)+'/protocol-mappers/models')).map(m=>({protocolMapper:m.protocolMapper,config:m.config||{}})):[];
+ const executions=await read('/authentication/flows/'+encodeURIComponent(realm.browserFlow)+'/executions');
  process.stdout.write('KIN_RESULT '+JSON.stringify({useCaches:caches===undefined?null:String(caches),persistentUserSessions:persistent?persistent.enabled===true:null,
    smokePolicy:{browserFlow:realm.browserFlow,passwordPolicy:realm.passwordPolicy||'',organizationsEnabled:realm.organizationsEnabled,requiredActions,executions,
-   resetFlow:realm.resetCredentialsFlow,resetExecutions,browserOverrides,bffMappers}})+'\n');
+   resetFlow:realm.resetCredentialsFlow}})+'\n');
 })().catch(e=>{process.stderr.write(String((e&&e.message)||e).slice(0,80)+'\n');process.exitCode=1;});
 """
 STATE_VOLUME_SCRIPT = r"""
@@ -5046,8 +5020,9 @@ class HostOps:
         # L-08a reads the Keycloak server options with the target's administrator. Prove that credential now, read-only,
         # so that a wrong administrator name or password stops here instead of after the first database change.
         keycloak = self.keycloak_selected(intro)
-        # Administrators sign in with OTP: an existing realm gets it by hand (keycloak/README.md), refused here until then.
-        pre.check_admin_mfa(keycloak.get("smokePolicy"))
+        # No account is required to have OTP: an existing realm is bound back to the built-in login flows by hand
+        # (keycloak/README.md), refused here until then.
+        pre.check_login_flows(keycloak.get("smokePolicy"))
         if self.unattended:
             smoke_policy_valid(keycloak.get("smokePolicy"))
         # D01/D02: what the unattended smoke will need after the migration is proved before the fence - the plan's smoke

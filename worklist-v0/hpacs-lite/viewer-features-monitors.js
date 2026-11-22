@@ -6,6 +6,9 @@
 // the display edge: each monitor's part gets its own cells and its own rows. The worklist window is asked to come to its
 // monitor (viewer-windows.js placeWorklist: a popup or app window moves; a tab offers to open the worklist window there).
 // The pure part below (KinViewerMonitorPlan) turns a rule, the displays and the window into that split.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function (root) {
   const THICKNESS = { toolbar: { across: 36, upright: 108 }, thumbs: { across: 66, upright: 156 } };
   const MIN_REGION = 200;
@@ -364,7 +367,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (preparing || placedAt() === state.at) return;
       show(null);
       // The reader was asked to lay the window over the rule's monitors (awaitMonitors): the rule comes back once it does.
-      if (!reaching) ui.toast('창 크기나 위치가 바뀌어 모니터별 도구 줄·썸네일 배치를 해제했습니다. 영상 칸은 그대로입니다. 다시 맞추려면 Hanging Protocols에서 Apply 하세요.');
+      if (!reaching) ui.toast(kinText("창 크기나 위치가 바뀌어 모니터별 도구 줄·썸네일 배치를 해제했습니다. 영상 칸은 그대로입니다. 다시 맞추려면 Hanging Protocols에서 Apply 하세요."));
     };
     const observer = new ResizeObserver(() => requestAnimationFrame(check));
     const node = column(); if (node) observer.observe(node);
@@ -436,7 +439,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       const info = await screensInfo();
       check();
       if (!info) {
-        notes.push('화면 정보를 확인할 수 없어 모니터별 배치를 적용하지 않았습니다. 창 관리 권한을 허용하면 적용됩니다(Viewer Windows › Detect Displays).');
+        notes.push(kinText("화면 정보를 확인할 수 없어 모니터별 배치를 적용하지 않았습니다. 창 관리 권한을 허용하면 적용됩니다(Viewer Windows › Detect Displays)."));
         return answer(null);
       }
       const monitors = rule.monitors, aim = plan.target(monitors, info.screens);
@@ -453,8 +456,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         // and once it stands over those monitors the rule is applied again (reach, after this apply stands). The monitors
         // are those of the displays as they are now (displays): numbers mean nothing once a display comes or goes.
         if (!result.reached && info.granted) reach = { monitors: [...aim.monitors], displays: displaysOf(info) };
-        if (!result.reached) notes.push(info.granted ? '브라우저가 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. 걸쳐 놓으면 이 규칙을 다시 적용합니다.'
-          : '창 관리 권한이 없어 영상 창을 ' + aim.monitors.map(name).join('·') + '(으)로 옮기지 못했습니다.');
+        if (!result.reached) notes.push(info.granted ? kinText("브라우저가 영상 창을 {0}(으)로 옮기지 않았습니다. 영상 창의 가장자리를 끌어 그 화면에 걸쳐 놓으세요. 걸쳐 놓으면 이 규칙을 다시 적용합니다.", aim.monitors.map(name).join('·'))
+          : kinText("창 관리 권한이 없어 영상 창을 {0}(으)로 옮기지 못했습니다.", aim.monitors.map(name).join('·')));
         await frames(2);
         check();
       }
@@ -465,23 +468,23 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       const columnBox = box(), gridBox = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
       const covered = columnBox ? laidOn(aim.monitors, plan.regions(info.screens, geometry(), info.zoom, columnBox)) : [];
       const split = columnBox && gridBox ? plan.split(window.KinHangingProtocolModel, rule, covered, columnBox, gridBox) : null;
-      for (const skipped of aim.skipped) notes.push(name(skipped.monitor) + ': ' + (skipped.reason === 'no-display' ? '이 화면 구성에 없어 적용하지 않았습니다.' : '한 영상 창은 이웃한 두 화면까지만 덮어 적용하지 않았습니다.'));
+      for (const skipped of aim.skipped) notes.push(name(skipped.monitor) + ': ' + (skipped.reason === 'no-display' ? kinText("이 화면 구성에 없어 적용하지 않았습니다.") : kinText("한 영상 창은 이웃한 두 화면까지만 덮어 적용하지 않았습니다.")));
       // Rectangles inside the screen, none over another and none squeezed by the bands, or nothing at all.
       if (!split || !plan.validRects(split.rects)) {
         undo();
-        notes.push(split ? '모니터 영역에 영상 칸을 나눌 수 없어 모니터별 배치를 적용하지 않았습니다.' : '영상 창이 영상 모니터 위에 있지 않아 모니터별 배치를 적용하지 않았습니다.');
+        notes.push(split ? kinText("모니터 영역에 영상 칸을 나눌 수 없어 모니터별 배치를 적용하지 않았습니다.") : kinText("영상 창이 영상 모니터 위에 있지 않아 모니터별 배치를 적용하지 않았습니다."));
         return answer(null, moved);
       }
-      for (const monitor of aim.monitors) if (!split.applied.includes(monitor)) notes.push(name(monitor) + ': 영상 창이 그 화면을 덮지 않아 적용하지 않았습니다.');
-      if (split.hidden.length) notes.push('규칙의 칸 ' + split.hidden.map(index => index + 1).join(', ') + '은(는) 모니터 칸 수가 모자라 보이지 않습니다.');
-      if (split.toolbarKept) notes.push('도구 줄을 둘 모니터가 적용되지 않아 도구 줄을 ' + name(split.applied[0]) + ' 위에 둡니다.');
+      for (const monitor of aim.monitors) if (!split.applied.includes(monitor)) notes.push(kinText("{0}: 영상 창이 그 화면을 덮지 않아 적용하지 않았습니다.", name(monitor)));
+      if (split.hidden.length) notes.push(kinText("규칙의 칸 {0}은(는) 모니터 칸 수가 모자라 보이지 않습니다.", split.hidden.map(index => index + 1).join(', ')));
+      if (split.toolbarKept) notes.push(kinText("도구 줄을 둘 모니터가 적용되지 않아 도구 줄을 {0} 위에 둡니다.", name(split.applied[0])));
       const { toolbar, thumbs } = split.rows;
       const copy = band => band ? { css: plan.place(band), side: band.side, upright: band.side === 'left' || band.side === 'right' } : null;
       const css = [toolbar.original && declare(COLUMN + ' > .kin-ux-toolbar-slot', plan.place(toolbar.original)),
         thumbs.original && declare(COLUMN + ' > .kin-viewer-series-strip', plan.place(thumbs.original))].filter(Boolean).join('\n');
       place({ chrome: { toolbar: toolbar.original?.side || 'top', toolbarAutoHide: true, thumbs: thumbs.original?.side || 'top', thumbsAutoHide: true },
         css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) } });
-      notes.unshift('적용 ' + split.applied.map(name).join('·') + '.');
+      notes.unshift(kinText("적용 {0}.", split.applied.map(name).join('·')));
       // The worklist window: where it stands is read from it now for the note; once the rule stands (commit) the list
       // document is told the worklist's monitor (settleWorklist) - also when it is there already, so that an offer made
       // for an earlier rule does not stay. A rule with no Worklist Show (or its monitor not here) takes that offer back.
@@ -492,9 +495,9 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
         check();
         const at = rect ? plan.monitorOf(info.screens, rect) : -1;
         if (info.screens[listed]) { const s = info.screens[listed]; worklist = { monitor: listed, rect: { left: s.left, top: s.top, width: s.width, height: s.height } }; }
-        notes.push(!rect || at < 0 ? 'Worklist: 목록 창 위치를 확인할 수 없습니다.' : at === listed ? 'Worklist: 목록 창이 ' + name(listed) + '에 있습니다.'
-          : !info.screens[listed] ? 'Worklist: ' + name(listed) + '이(가) 이 화면 구성에 없어 목록 창을 옮기지 않았습니다(' + name(at) + ').'
-          : 'Worklist: 목록 창이 ' + name(listed) + '에 있지 않아(' + name(at) + ') ' + name(listed) + '(으)로 옮깁니다.');
+        notes.push(!rect || at < 0 ? kinText("Worklist: 목록 창 위치를 확인할 수 없습니다.") : at === listed ? kinText("Worklist: 목록 창이 {0}에 있습니다.", name(listed))
+          : !info.screens[listed] ? kinText("Worklist: {0}이(가) 이 화면 구성에 없어 목록 창을 옮기지 않았습니다({1}).", name(listed), name(at))
+          : kinText("Worklist: 목록 창이 {0}에 있지 않아({1}) {2}(으)로 옮깁니다.", name(listed), name(at), name(listed)));
       }
       return answer(split, moved);
     }
@@ -512,10 +515,10 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     Promise.resolve(ask(want)).then(answer => {
       if (!owns()) return;
       const result = answer?.result;
-      const text = !answer ? 'Worklist: 목록 창이 답하지 않아 ' + n + '(으)로 옮기지 못했습니다.'
-        : result === 'moved' ? 'Worklist: 목록 창을 ' + n + '(으)로 옮겼습니다.'
-        : result === 'offered' ? 'Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 "Open Worklist on ' + n + '" 단추를 띄웠습니다.'
-        : result === 'here' || result === 'superseded' ? null : 'Worklist: 목록 창을 ' + n + '(으)로 옮기지 못했습니다.';
+      const text = !answer ? kinText("Worklist: 목록 창이 답하지 않아 {n0}(으)로 옮기지 못했습니다.", n)
+        : result === 'moved' ? kinText("Worklist: 목록 창을 {n0}(으)로 옮겼습니다.", n)
+        : result === 'offered' ? kinText("Worklist: 목록 창은 브라우저 탭이라 옮길 수 없어, 목록 화면에 \"Open Worklist on {n0}\" 단추를 띄웠습니다.", n)
+        : result === 'here' || result === 'superseded' ? null : kinText("Worklist: 목록 창을 {n0}(으)로 옮기지 못했습니다.", n);
       if (text) ui.toast(text);
     }, () => {});
   }
@@ -604,21 +607,19 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     element('figcaption', { text: name(index) }, figure);
     return figure;
   }
-  const NO_RULE = '아직 Hanging Protocol 규칙이 없습니다. Hanging Protocols에서 먼저 만드세요.';
+  const NO_RULE = kinText("아직 Hanging Protocol 규칙이 없습니다. Hanging Protocols에서 먼저 만드세요.");
   const REFUSED = {
-    busy: 'Hanging Protocols가 다른 작업 중입니다. 잠시 뒤 다시 저장하세요.', scope: 'Hanging Protocols가 Site 규칙을 보이고 있습니다. Personal로 바꾼 뒤 다시 저장하세요.',
-    missing: '그 Hanging Protocol이 내 규칙에 더 이상 없습니다.', invalid: '이 모니터 설정은 이 Hanging Protocol에 저장할 수 없습니다.',
-    storage: '이 브라우저에 Hanging Protocols 초안을 저장하지 못했습니다.', error: '저장하지 못했습니다.',
+    busy: kinText("Hanging Protocols가 다른 작업 중입니다. 잠시 뒤 다시 저장하세요."), scope: kinText("Hanging Protocols가 Site 규칙을 보이고 있습니다. Personal로 바꾼 뒤 다시 저장하세요."),
+    missing: kinText("그 Hanging Protocol이 내 규칙에 더 이상 없습니다."), invalid: kinText("이 모니터 설정은 이 Hanging Protocol에 저장할 수 없습니다."),
+    storage: kinText("이 브라우저에 Hanging Protocols 초안을 저장하지 못했습니다."), error: kinText("저장하지 못했습니다."),
   };
   function open() {
     const handle = ui.panel({ id: 'monitors', title: 'Monitors in Hanging Protocol' });
     if (!handle || handle.body.childElementCount) return handle;
     const hp = window.KinViewerHangingProtocol?.current?.(), model = window.KinHangingProtocolModel;
-    element('p', { text: 'Hanging Protocol의 모니터마다 영상 배치, 목록 창 자리, 썸네일·도구 줄 위치를 정합니다. Monitor 1은 가장 왼쪽 화면입니다. '
-      + 'Save는 그 Hanging Protocol에 저장만 하고, Hanging Protocols에서 Apply 할 때마다 적용됩니다. '
-      + 'Apply 때 목록 창(Worklist Show)이 다른 모니터에 있으면 그 모니터로 옮기고, 브라우저가 옮기지 않는 탭이면 목록 화면에 그 모니터에 목록 창을 여는 단추를 띄웁니다.' }, handle.body);
+    element('p', { text: kinText("Hanging Protocol의 모니터마다 영상 배치, 목록 창 자리, 썸네일·도구 줄 위치를 정합니다. Monitor 1은 가장 왼쪽 화면입니다. Save는 그 Hanging Protocol에 저장만 하고, Hanging Protocols에서 Apply 할 때마다 적용됩니다. Apply 때 목록 창(Worklist Show)이 다른 모니터에 있으면 그 모니터로 옮기고, 브라우저가 옮기지 않는 탭이면 목록 화면에 그 모니터에 목록 창을 여는 단추를 띄웁니다.") }, handle.body);
     const status = element('p', { role: 'status' });
-    if (!hp || !model) { handle.body.append(status); status.textContent = '이 뷰어에서 Hanging Protocols를 사용할 수 없습니다.'; return handle; }
+    if (!hp || !model) { handle.body.append(status); status.textContent = kinText("이 뷰어에서 Hanging Protocols를 사용할 수 없습니다."); return handle; }
     const top = element('div', { className: 'kin-chrome-row' }, handle.body);
     const ruleField = element('label', { className: 'kin-chrome-field' }, top); element('span', { text: 'Hanging Protocol' }, ruleField);
     const ruleSelect = element('select', { 'aria-label': 'Hanging Protocol' }, ruleField);
@@ -686,20 +687,20 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       if (saving || !rule()) return;
       const value = { count: draft.count, list: draft.list.slice(0, draft.count).map(monitor => ({ ...monitor })) };
       if (!model.monitorsRule(value)) {
-        status.textContent = value.list.filter(m => m.worklist === 'show').length > 1 ? '목록 창(Worklist Show)은 한 모니터에만 둘 수 있습니다.'
-          : 'Viewer Settings에 돌아갈 수 있도록, 영상을 보이는 모니터 하나에는 도구 줄(Toolbar)이 있어야 합니다.';
+        status.textContent = value.list.filter(m => m.worklist === 'show').length > 1 ? kinText("목록 창(Worklist Show)은 한 모니터에만 둘 수 있습니다.")
+          : kinText("Viewer Settings에 돌아갈 수 있도록, 영상을 보이는 모니터 하나에는 도구 줄(Toolbar)이 있어야 합니다.");
         return;
       }
-      saving = true; save.disabled = true; status.textContent = '저장 중입니다…';
+      saving = true; save.disabled = true; status.textContent = kinText("저장 중입니다…");
       let result;
       try { result = await hp.saveMonitors(draft.ruleId, value); } catch (error) { console.error(error); result = { ok: false, reason: 'error' }; }
       if (!live) return;
       saving = false;
       const named = '"' + (rule()?.name || '') + '"';
       status.textContent = !result?.ok ? (REFUSED[result?.reason] || REFUSED.error)
-        : result.account === 'saved' ? 'Hanging Protocol ' + named + '에 이 브라우저와 계정 모두 저장했습니다. Hanging Protocols에서 Apply 하면 적용됩니다.'
-        : result.account === 'failed' ? 'Hanging Protocol ' + named + '에 이 브라우저에는 저장했지만 계정 저장은 실패했습니다. 까닭은 Hanging Protocols에 표시됩니다.'
-        : 'Hanging Protocol ' + named + '에 이 브라우저의 초안으로 저장했습니다. 이 창의 Hanging Protocols가 계정을 불러오지 않아 계정에는 저장하지 않았습니다(Load from Account 뒤 Save to Account).';
+        : result.account === 'saved' ? kinText("Hanging Protocol {0}에 이 브라우저와 계정 모두 저장했습니다. Hanging Protocols에서 Apply 하면 적용됩니다.", named)
+        : result.account === 'failed' ? kinText("Hanging Protocol {0}에 이 브라우저에는 저장했지만 계정 저장은 실패했습니다. 까닭은 Hanging Protocols에 표시됩니다.", named)
+        : kinText("Hanging Protocol {0}에 이 브라우저의 초안으로 저장했습니다. 이 창의 Hanging Protocols가 계정을 불러오지 않아 계정에는 저장하지 않았습니다(Load from Account 뒤 Save to Account).", named);
       paint();
     });
     handle.onClose(() => { live = false; });

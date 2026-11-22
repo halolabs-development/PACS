@@ -7,6 +7,9 @@
 //   F.Leader (A1 04-6): a key panel — an area letter, then a function letter runs that function as its menu or button does.
 
 // Pure parts, also read by the tests.
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerInputModel = (() => {
   // Keys of the functions in an area: a–z, then 1–9, in menu order; more functions than that continue on further pages
   // of the same keys, turned with Tab.
@@ -55,8 +58,8 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
     const node = document.createElement(tag); if (text) node.textContent = text; if (className) node.className = className; parent?.append(node); return node;
   };
   const button = (text, parent, click, className) => { const node = element('button', text, parent, className); node.type = 'button'; node.onclick = click; return node; };
-  const saved = () => store.writable() ? '계정에 저장했습니다.' : '이 창에만 적용했습니다. 계정에는 저장하지 않습니다.';
-  const unsaved = '저장하지 못했습니다. 도구 줄의 상태 문구를 확인한 뒤 다시 시도하세요.';
+  const saved = () => store.writable() ? kinText("계정에 저장했습니다.") : kinText("이 창에만 적용했습니다. 계정에는 저장하지 않습니다.");
+  const unsaved = kinText("저장하지 못했습니다. 도구 줄의 상태 문구를 확인한 뒤 다시 시도하세요.");
   const style = element('style', `
 .kin-ux-context-bar { position: fixed; z-index: 1000; display: flex; flex-wrap: wrap; gap: 2px; max-width: 90vw; padding: 3px; background: var(--kin-panel, #1b2230); border: 1px solid var(--kin-ux-secondary, #556); border-radius: 4px; box-shadow: 0 2px 8px #0008; }
 .kin-ux-context-bar button { font: inherit; font-size: 12px; color: var(--kin-ux-text, #eee); background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 3px 7px; cursor: pointer; white-space: nowrap; }
@@ -85,7 +88,7 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
     if (!panel || panel.body.childElementCount) return;
     const current = window.kinMouseSettings(store.get('mouse')), { choices } = mouseModel;
     const names = { StackScroll: 'Stack Scroll', WindowLevel: 'W/L', Pan: 'Pan', Zoom: 'Zoom', Pointer: 'Pointer', None: 'None' };
-    element('p', '마우스 단추마다 쓸 도구, 휠 한 칸에 넘길 영상 수와 끝에서 돌아가기, Ctrl+휠 확대 비율, 기본 도구를 정합니다. Left button은 지금 왼쪽 단추의 도구이고, Default tool은 뷰어를 열 때와 선택한 도구를 끌 때 왼쪽 단추로 돌아오는 도구입니다. Apply를 누르면 열린 영상에 바로 적용하고 계정에 저장합니다.', panel.body);
+    element('p', kinText("마우스 단추마다 쓸 도구, 휠 한 칸에 넘길 영상 수와 끝에서 돌아가기, Ctrl+휠 확대 비율, 기본 도구를 정합니다. Left button은 지금 왼쪽 단추의 도구이고, Default tool은 뷰어를 열 때와 선택한 도구를 끌 때 왼쪽 단추로 돌아오는 도구입니다. Apply를 누르면 열린 영상에 바로 적용하고 계정에 저장합니다."), panel.body);
     const form = element('div', '', panel.body, 'kin-ux-input-form');
     const field = (label, options, value) => {
       const row = element('label', '', form); element('span', label, row);
@@ -109,14 +112,14 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
     const apply = button('Apply', panel.body, async () => {
       const value = { middle: middle.value, right: right.value, both: both.value, defaultTool: fallback.value,
         wheelStep: Number(step.value), wrap: wrap.checked, ctrlZoom: Number(zoom.value) };
-      apply.disabled = true; status.textContent = '저장 중…';
+      apply.disabled = true; status.textContent = kinText("저장 중…");
       const ok = await store.set('mouse', value, { revision: panel.revision });
       if (!panel.element.isConnected) return;
       apply.disabled = false;
       if (!ok) { status.textContent = unsaved; return; }
       panel.revision = store.revision();
       window.kinViewerStackMouse?.configure(value, { left: left.value });
-      status.textContent = '적용했습니다. ' + saved();
+      status.textContent = kinText("적용했습니다. {0}", saved());
     });
     const status = element('p', '', panel.body); status.setAttribute('role', 'status');
     left.focus();
@@ -180,7 +183,7 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
   function openContext() {
     const panel = ui.panel({ id: 'context', title: 'Context Toolbar' });
     if (!panel || panel.body.childElementCount) return;
-    element('p', '영상 위에서 마우스를 움직이지 않고 오른쪽 단추를 누르면 그 자리에 도구 막대를 엽니다. 막대에 올릴 도구와 순서를 정합니다. 끄면 오른쪽 단추는 지금처럼 동작합니다. 바꾸면 바로 계정에 저장합니다.', panel.body);
+    element('p', kinText("영상 위에서 마우스를 움직이지 않고 오른쪽 단추를 누르면 그 자리에 도구 막대를 엽니다. 막대에 올릴 도구와 순서를 정합니다. 끄면 오른쪽 단추는 지금처럼 동작합니다. 바꾸면 바로 계정에 저장합니다."), panel.body);
     const onRow = element('label', '', panel.body, 'kin-ux-setting-row'), on = element('input', '', onRow); on.type = 'checkbox';
     on.setAttribute('aria-label', 'Right-click opens the Context Toolbar'); element('span', 'Right-click opens the Context Toolbar', onRow);
     const table = element('table', '', panel.body, 'kin-ux-context-list'); table.setAttribute('aria-label', 'Context Toolbar Tools');
@@ -220,7 +223,7 @@ window.KinViewerFeatures?.module('input', ({ services, store, ui }) => {
     async function change(next) {
       if (saving) return;
       const keep = document.activeElement?.dataset?.contextControl;
-      saving = true; value = next; status.textContent = '저장 중…'; paint(keep);
+      saving = true; value = next; status.textContent = kinText("저장 중…"); paint(keep);
       const ok = await store.set('contextToolbar', next, { revision: panel.revision });
       saving = false;
       if (!panel.element.isConnected) return;

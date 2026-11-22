@@ -1,6 +1,8 @@
 
 // The recent display layout is retained; transient display-set IDs never leave this session.
 const kinViewerLayoutModel = (() => {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const PREFIX = 'kin-viewer-layout-v1:';
   const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)*$/.test(s);
   const exact = (x, keys) => x && typeof x === 'object' && !Array.isArray(x) && Object.keys(x).sort().join('|') === [...keys].sort().join('|');
@@ -39,16 +41,16 @@ const kinViewerLayoutModel = (() => {
   }
 
   function read(storage, key) {
-    if (!key) throw new Error('계정 정보를 확인할 수 없습니다.');
+    if (!key) throw kinError("계정 정보를 확인할 수 없습니다.");
     const raw = storage.getItem(key);
     if (raw === null) return null;
     const value = typeof raw === 'string' ? normalize(JSON.parse(raw)) : null;
-    if (!value) throw new Error('저장한 배치가 손상되었거나 지원하지 않는 형식입니다.');
+    if (!value) throw kinError("저장한 배치가 손상되었거나 지원하지 않는 형식입니다.");
     return value;
   }
   function write(storage, key, value) {
     const clean = normalize(value);
-    if (!key || !clean) throw new Error('이 배치는 저장할 수 없습니다.');
+    if (!key || !clean) throw kinError("이 배치는 저장할 수 없습니다.");
     storage.setItem(key, JSON.stringify(clean));
   }
   return { PREFIX, uid, scope, owner, normalize, read, write };

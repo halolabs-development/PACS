@@ -1,3 +1,6 @@
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.KinViewerInfoBar = (() => {
   const renderedImages = new WeakMap();
   const text = value => typeof value === 'object' && value !== null
@@ -137,7 +140,7 @@ window.KinViewerInfoBar = (() => {
           const label = document.createElement('span'); label.className = 'kin-viewer-info-identity';
           const mode = document.createElement('span'); mode.className = 'kin-viewer-info-mode';
           const study = document.createElement('button'); study.type = 'button'; study.textContent = 'Study ▾';
-          study.disabled = true; study.title = '이전 검사 연결은 다음 단계에서 제공됩니다.';
+          study.disabled = true; study.title = kinText("이전 검사 연결은 다음 단계에서 제공됩니다.");
           study.onclick = () => studyActions?.open(id, study);
           // The cell's own compact tools, at the row's end: the image toolbar fills them (cellTools) and they act in this cell.
           const tools = document.createElement('span'); tools.className = 'kin-viewer-cell-tools'; tools.hidden = true;
@@ -153,7 +156,7 @@ window.KinViewerInfoBar = (() => {
       for (const { id, current, bar } of cells) {
         bar.children[2].hidden = !!studyActions?.hidden?.();
         bar.children[2].disabled = !current.instance || !studyActions?.available();
-        bar.children[2].title = studyActions?.available() ? '이 셀의 이전 검사 목록을 엽니다.' : '이전 검사 연결은 다음 단계에서 제공됩니다.';
+        bar.children[2].title = studyActions?.available() ? kinText("이 셀의 이전 검사 목록을 엽니다.") : kinText("이전 검사 연결은 다음 단계에서 제공됩니다.");
         const previous = labels.get(id);
         const viewportStatus = window.cornerstone.Enums.ViewportStatus;
         // Without a rendered identity: a cell given no images, or whose viewer has no data, has no image; a cell whose
@@ -186,7 +189,7 @@ window.KinViewerInfoBar = (() => {
         if (bar.children[0].textContent !== label) bar.children[0].textContent = label;
         bar.children[0].title = labels.has(id) ? label : '';
         if (bar.children[1].textContent !== status) bar.children[1].textContent = status;
-        bar.children[1].title = '영상 모드는 이 셀, 배치는 전체 뷰어에 적용됩니다.';
+        bar.children[1].title = kinText("영상 모드는 이 셀, 배치는 전체 뷰어에 적용됩니다.");
         const fill = cellTools?.();
         // A cell given images keeps its tools while its next image loads (every scroll and cine frame): only an empty
         // cell, or one whose viewer has no data, has none.

@@ -234,7 +234,8 @@
     if (data.orderingPhysician !== undefined && !INBOX_STATES.includes(data.orderingPhysician)) return null;
     const s = data.source;
     const source = isObject(s) && Number.isSafeInteger(s.version) && s.version >= 1 && own(ACTIONS, s.action) && text(s.author)
-      && at(s.at) && typeof s.final === 'boolean' ? { version: s.version, action: s.action, author: s.author, at: s.at } : null;
+      && at(s.at) && typeof s.final === 'boolean' ? { version: s.version, action: s.action, author: s.author,
+        authorName: typeof s.authorName === 'string' && s.authorName ? s.authorName : null, at: s.at } : null;
     if (data.sendable ? data.reason !== null || !source || !recipients.some(r => selectable(data, r)) : data.reason === null) return null;
     return { sendable: data.sendable, reason: data.reason, source, inbox: data.inbox === undefined ? null : data.inbox,
       orderingPhysician: data.orderingPhysician,
@@ -417,7 +418,10 @@
       const name = row ? row.name : fallback && fallback.name, id = row ? row.id : fallback && fallback.id;
       return name || id ? `${name || '—'} (${id || '—'})` : uid;
     };
-    const sourceText = source => `Source: v${source.version} · ${ACTIONS[source.action] || source.action} · ${actorName(source.author)} · ${time(source.at)}`;
+    // The writer of that version as the server names it for this reader (authorName: by its account or the name it was signed under) -
+    // never its stored login looked up again (a login that moved to another member would name them); without it, the login as is.
+    const sourceWriter = source => typeof source.authorName === 'string' && source.authorName ? source.authorName : String(source.author ?? '');
+    const sourceText = source => `Source: v${source.version} · ${ACTIONS[source.action] || source.action} · ${sourceWriter(source)} · ${time(source.at)}`;
     const unsettled = attempt => ['sending', 'checking', 'unknown', 'not-sent'].includes(attempt.state);
     // The open dialog's requests in send order. The dialog takes a new Send only when it has none or every one was refused.
     const shown = () => dialogAttempts.map(id => attempts.get(id)).filter(Boolean);
@@ -1242,10 +1246,10 @@
       else if (!online()) line = TEXT.list.offline;
       else if (listPhase === 'failed') line = kinSay(TEXT.list.failed);
       else if (pending === null) line = listPhase === 'loading' ? TEXT.list.loading : '';
-      else line = `Pending ACK ${pending}${unknownCount ? ` · ${TEXT.list.unknownCount(unknownCount)}` : ''}`;
+      else line = kinSay('{t0}{t1}', { t: kinSay('Pending ACK {n0}', pending) }, { t: unknownCount ? kinSay(' · {0}', TEXT.list.unknownCount(unknownCount)) : '' });
       panel.dataset.state = lock !== null ? 'locked' : listPhase;
-      summary.textContent = line;
-      summary.title = line;
+      kinWrite(summary, line);
+      kinWrite(summary, line, 'title');
       kinWrite(toggle, paneOpen ? kinSay('Hide Sent') : kinSay('Show Sent'));
       // 연 목록 칸은 잠겨도·연결이 끊겨도 연 채로 둔다(닫히면 판독 칸이 커져 단추 줄이 움직인다). 안에 그 까닭을 쓴다.
       toggle.setAttribute('aria-expanded', String(paneOpen));

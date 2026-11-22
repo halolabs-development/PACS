@@ -7,7 +7,13 @@
    A series export (Save Series JPEG, Save Video) moves its cell through the series: image k of its file is image k of
    the series as it stood at the start, drawn on the cell, or no file is written; and it never moves a cell again after
    the reader did (claim()). */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 window.KinViewerExport = (() => {
+  // The errors this file raises are its own messages (marked kinWords), whatever language their words are in.
+  const ownError = message => Object.assign(new Error(message), { kinWords: true });
   // Text inside controls, menus and hidden parts of a cell is not image text.
   const NOT_IMAGE_TEXT = 'button,[role="button"],[role="menu"],[role="menuitem"],[role="dialog"],input,select,textarea,dialog,svg,canvas,[aria-hidden="true"],[hidden]';
   const visible = element => {
@@ -137,7 +143,7 @@ window.KinViewerExport = (() => {
         (engine && window.kinViewerContextLoss?.usable?.(engine) === false)) return null;
     return canvas;
   }
-  const HIDDEN = '영상 칸이 보이지 않아 내보내지 못했습니다. 다시 시도하세요.';
+  const HIDDEN = kinText("영상 칸이 보이지 않아 내보내지 못했습니다. 다시 시도하세요.");
   // One canvas for the given cells, at the image canvases' own pixel density. A cell that has no image to show
   // (folded away, hidden, its image canvas gone or hidden) is not drawn as a black picture: nothing is made.
   // `verify` runs in the same moment the pixels are copied (nothing is awaited between them) and stops the copy by throwing.
@@ -146,7 +152,7 @@ window.KinViewerExport = (() => {
   async function render(cells, verify, only) {
     const rects = cells.map(cell => cell.pane.getBoundingClientRect());
     if (cells.some((cell, index) => !rects[index].width || !rects[index].height || !visible(cell.pane) || !imageCanvas(cell, rects[index])))
-      throw new Error(HIDDEN);
+      throw ownError(HIDDEN);
     verify?.();
     const region = { left: Math.min(...rects.map(r => r.left)), top: Math.min(...rects.map(r => r.top)) };
     region.width = Math.max(...rects.map(r => r.right)) - region.left; region.height = Math.max(...rects.map(r => r.bottom)) - region.top;
@@ -186,27 +192,27 @@ window.KinViewerExport = (() => {
     return output;
   }
   const blob = (canvas, type, quality) => new Promise((resolve, reject) =>
-    canvas.toBlob(value => value ? resolve(value) : reject(new Error('영상을 그림 파일로 만들지 못했습니다.')), type, quality));
+    canvas.toBlob(value => value ? resolve(value) : reject(kinError("영상을 그림 파일로 만들지 못했습니다.")), type, quality));
   function tell(services, message, type = 'info') {
     services?.uiNotificationService?.show?.({ title: 'Image Export', message, type });
   }
   const failure = error => error instanceof Stopped ? error.message
-    : error?.constructor === Error && /[가-힣]/.test(error.message) ? error.message : '영상을 내보내지 못했습니다. 다시 시도하세요.';
-  const changed = () => new Stopped('영상이나 화면이 바뀌어 내보내기를 멈췄습니다. 다시 시도하세요.');
+    : error?.constructor === Error && (error.kinWords || /[가-힣]/.test(error.message)) ? error.message : kinText("영상을 내보내지 못했습니다. 다시 시도하세요.");
+  const changed = () => new Stopped(kinText("영상이나 화면이 바뀌어 내보내기를 멈췄습니다. 다시 시도하세요."));
 
   // Copy: the clipboard takes images as PNG only, so there is no format choice. The write starts in the
   // reader's click or key press and receives the image once it is drawn and encoded; a cell or viewer that
   // changed by then fails the write, so the clipboard keeps what it had.
   function copy(services, scope, live) {
     if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function') {
-      tell(services, '이 브라우저에서는 영상을 클립보드에 복사할 수 없습니다.', 'error'); return Promise.resolve(false);
+      tell(services, kinText("이 브라우저에서는 영상을 클립보드에 복사할 수 없습니다."), 'error'); return Promise.resolve(false);
     }
     const target = pin(services, scope, live);
-    if (!target) { tell(services, '복사할 영상 칸이 없습니다.', 'warning'); return Promise.resolve(false); }
+    if (!target) { tell(services, kinText("복사할 영상 칸이 없습니다."), 'warning'); return Promise.resolve(false); }
     const image = render(target.cells).then(canvas => { if (!target.same()) throw changed(); return blob(canvas, 'image/png'); })
       .then(file => { if (!target.same()) throw changed(); return file; });
     return navigator.clipboard.write([new ClipboardItem({ 'image/png': image })])
-      .then(() => { tell(services, scope === 'screen' ? '화면의 영상 칸을 클립보드에 복사했습니다.' : '영상 칸을 클립보드에 복사했습니다.', 'success'); return true; })
+      .then(() => { tell(services, scope === 'screen' ? kinText("화면의 영상 칸을 클립보드에 복사했습니다.") : kinText("영상 칸을 클립보드에 복사했습니다."), 'success'); return true; })
       .catch(error => image.catch(reason => reason).then(reason => { tell(services, failure(reason instanceof Error ? reason : error), 'error'); return false; }))
       .finally(target.release);
   }
@@ -232,13 +238,13 @@ window.KinViewerExport = (() => {
     return table; })();
   const crc32 = bytes => { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
   function zip(files) {
-    if (files.length > 0xFFFF) throw new Error('한 번에 저장할 수 있는 영상 수를 넘었습니다.');
+    if (files.length > 0xFFFF) throw kinError("한 번에 저장할 수 있는 영상 수를 넘었습니다.");
     const now = new Date(), parts = [], central = []; let offset = 0;
     const time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
     const date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
     for (const { name, data } of files) {
       const title = new TextEncoder().encode(name), crc = crc32(data);
-      if (offset + 30 + title.length + data.length > 0xFFFFFFFF) throw new Error('저장할 파일이 너무 큽니다.');
+      if (offset + 30 + title.length + data.length > 0xFFFFFFFF) throw kinError("저장할 파일이 너무 큽니다.");
       const local = new DataView(new ArrayBuffer(30)), entry = new DataView(new ArrayBuffer(46));
       for (const [view, at, fields] of [[local, 4, [20, 0x0800, 0, time, date]], [entry, 6, [20, 0x0800, 0, time, date]]])
         fields.forEach((value, i) => view.setUint16(at + i * 2, value, true));
@@ -257,13 +263,13 @@ window.KinViewerExport = (() => {
 
   const options = { loadTimeout: 30000 };
   const frames = count => new Promise(resolve => { const step = left => left ? requestAnimationFrame(() => step(left - 1)) : resolve(); step(count); });
-  const NOT_LOADED = '영상을 불러오지 못해 내보내기를 멈췄습니다.';
-  const NOT_BACK = '원래 보던 영상으로 돌아가지 못해 저장하지 않았습니다.';
-  const UNSURE = '영상 칸의 시리즈를 확인하지 못해 내보내지 못했습니다. 영상이 모두 표시된 뒤 다시 시도하세요.';
-  const STOPPED = '내보내기를 멈췄습니다.';
-  const TILED = 'Tile 보기에서는 시리즈를 내보낼 수 없습니다. Stack 보기에서 내보내세요.';
-  const UNFOLDED = 'Unfolded 보기에서는 시리즈를 내보낼 수 없습니다. Folded (Cine) 보기에서 내보내세요.';
-  const SLABBED = 'Slab을 보는 동안에는 시리즈를 내보낼 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 내보내세요.';
+  const NOT_LOADED = kinText("영상을 불러오지 못해 내보내기를 멈췄습니다.");
+  const NOT_BACK = kinText("원래 보던 영상으로 돌아가지 못해 저장하지 않았습니다.");
+  const UNSURE = kinText("영상 칸의 시리즈를 확인하지 못해 내보내지 못했습니다. 영상이 모두 표시된 뒤 다시 시도하세요.");
+  const STOPPED = kinText("내보내기를 멈췄습니다.");
+  const TILED = kinText("Tile 보기에서는 시리즈를 내보낼 수 없습니다. Stack 보기에서 내보내세요.");
+  const UNFOLDED = kinText("Unfolded 보기에서는 시리즈를 내보낼 수 없습니다. Folded (Cine) 보기에서 내보내세요.");
+  const SLABBED = kinText("Slab을 보는 동안에는 시리즈를 내보낼 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 내보내세요.");
   // The image the viewport holds for its canvas. The image number moves before its image arrives, and a failed load can
   // leave the previous image on the canvas at the new number, so the number alone never says what a cell shows.
   const heldImage = viewport => typeof viewport.getCornerstoneImage === 'function' ? viewport.getCornerstoneImage()?.imageId : undefined;
@@ -417,7 +423,7 @@ window.KinViewerExport = (() => {
         const later = (run, ms) => { const timer = setTimeout(() => { timers.delete(timer); if (!over) run(); }, ms); timers.add(timer); };
         const seeing = () => { if (over) return; if (stopped?.()) finish(new Stopped(STOPPED)); else if (state() !== 'own') finish(changed()); else look(it); };
         const it = { finish, later, going: () => !over, again: seeing };
-        later(() => finish(new Error(NOT_LOADED)), options.loadTimeout);
+        later(() => finish(ownError(NOT_LOADED)), options.loadTimeout);
         wake = seeing; seeing();
       });
     }
@@ -504,10 +510,10 @@ window.KinViewerExport = (() => {
     function show(k, stopped) {
       let begun = false;
       return wait(stopped, it => {
-        if (drawn(k)) { const why = hidden(); it.finish(why ? new Error(why) : undefined); return; }
+        if (drawn(k)) { const why = hidden(); it.finish(why ? ownError(why) : undefined); return; }
         if (begun) return;
         begun = true;
-        const failed = error => it.finish(error?.constructor === Error && /[가-힣]/.test(error.message) ? error : new Error(NOT_LOADED));
+        const failed = error => it.finish(error?.constructor === Error && (error.kinWords || /[가-힣]/.test(error.message)) ? error : ownError(NOT_LOADED));
         try {
           if (viewport.getCurrentImageIdIndex() === k && heldImage(viewport) === ids[k] && whole(viewport.getCornerstoneImage())) { viewport.render?.(); return; }
           if (k === start) { if (!home()) failed(); return; }
@@ -538,13 +544,13 @@ window.KinViewerExport = (() => {
   // the way; `after` runs inside the same export, under the same checks.
   let job = null;
   async function walk(services, live, say, verb, each, after) {
-    if (job) { tell(services, '다른 내보내기가 진행 중입니다. 끝난 뒤 다시 시도하세요.', 'warning'); return false; }
+    if (job) { tell(services, kinText("다른 내보내기가 진행 중입니다. 끝난 뒤 다시 시도하세요."), 'warning'); return false; }
     const hold = claim(services, live);
-    if (!hold) { tell(services, '저장할 영상 칸이 없습니다.', 'warning'); return false; }
+    if (!hold) { tell(services, kinText("저장할 영상 칸이 없습니다."), 'warning'); return false; }
     const { cell, ids } = hold, viewport = cell.viewport;
     const refuse = message => { hold.release(); tell(services, message, 'warning'); return false; };
-    if (viewport.type !== 'stack' || typeof viewport.setImageIdIndex !== 'function' || !ids.length) return refuse('시리즈 저장은 일반(2D) 영상 칸에서 할 수 있습니다.');
-    if (services.cineService?.getState?.()?.cines?.[cell.id]?.isPlaying) return refuse('Cine 재생을 멈춘 뒤 다시 시도하세요.');
+    if (viewport.type !== 'stack' || typeof viewport.setImageIdIndex !== 'function' || !ids.length) return refuse(kinText("시리즈 저장은 일반(2D) 영상 칸에서 할 수 있습니다."));
+    if (services.cineService?.getState?.()?.cines?.[cell.id]?.isPlaying) return refuse(kinText("Cine 재생을 멈춘 뒤 다시 시도하세요."));
     const view = otherView(cell.id);
     if (view) return refuse(view);
     // away: the cell shows an image this export put there on its way, until it is back on the reader's image and shows it.
@@ -561,29 +567,29 @@ window.KinViewerExport = (() => {
       try {
         // Before anything moves: the list is the series the grid names for the cell, whole and once; the reader's last
         // move has ended; and the cell shows the image it ended on.
-        say?.(verb + ' 1/' + ids.length + ' · Esc로 멈춤');
-        if (!covers(services, cell.id, ids)) throw new Error(UNSURE);
+        say?.(kinText("{0} 1/{n1} · Esc로 멈춤", verb, ids.length));
+        if (!covers(services, cell.id, ids)) throw ownError(UNSURE);
         start = await hold.settle(stopped); check();
         await hold.show(start, stopped); check();
         // The viewer's slice number follows the requests made of the cell, so the first image of the file is asked for
         // like every other: a cell that starts on it goes to the next image first.
         if (start === 0 && ids.length > 1) { run.away = true; await hold.show(1, stopped); check(); }
         for (let index = 0; index < ids.length; index++) {
-          check(); say?.(verb + ' ' + (index + 1) + '/' + ids.length + ' · Esc로 멈춤');
+          check(); say?.(kinText("{0} {n1}/{n2} · Esc로 멈춤", verb, (index + 1), ids.length));
           if (viewport.getCurrentImageIdIndex() !== index) run.away = true;
           // Two more frames pass after the draw, so the measurement layer and the image text follow the image.
           await hold.show(index, stopped); await frames(2);
           // Every exported image is the series image it stands for, seen on a cell that is still this export's, as its pixels are copied.
-          const canvas = await render(hold.cells, () => { check(); if (!hold.shows(index)) throw new Error(hold.hidden() || NOT_LOADED); }, seriesLayer); check();
+          const canvas = await render(hold.cells, () => { check(); if (!hold.shows(index)) throw ownError(hold.hidden() || NOT_LOADED); }, seriesLayer); check();
           await each(canvas, index, ids.length); check();
         }
       } catch (error) { failed = error; }
       // Back to the image the reader was on, shown by the same rule (also when the image number is already that image's).
       // A cell that is not this export's any more is not touched.
       if (run.away && hold.state() === 'own') {
-        say?.('원래 보던 영상으로 돌아가는 중입니다.');
+        say?.(kinText("원래 보던 영상으로 돌아가는 중입니다."));
         try { await hold.show(start); }
-        catch (_) { if (hold.state() === 'own') failed = new Error(hold.hidden() || NOT_BACK); }
+        catch (_) { if (hold.state() === 'own') failed = ownError(hold.hidden() || NOT_BACK); }
       }
       if (hold.state() !== 'own') throw failed || changed();
       run.away = false;
@@ -602,18 +608,18 @@ window.KinViewerExport = (() => {
   // Save JPEG: one image. Save Series JPEG: every image of the selected series as JPEG in one ZIP.
   async function saveImage(services, live) {
     const target = pin(services, 'image', live);
-    if (!target) { tell(services, '저장할 영상 칸이 없습니다.', 'warning'); return false; }
+    if (!target) { tell(services, kinText("저장할 영상 칸이 없습니다."), 'warning'); return false; }
     try {
       const file = await blob(await render(target.cells), 'image/jpeg', 0.92);
       if (!target.same()) throw changed();
-      download(file, 'image-' + stamp() + '.jpg'); tell(services, 'JPEG 파일을 만들어 내려받기를 시작했습니다.', 'success'); return true;
+      download(file, 'image-' + stamp() + '.jpg'); tell(services, kinText("JPEG 파일을 만들어 내려받기를 시작했습니다."), 'success'); return true;
     } catch (error) { tell(services, failure(error), 'error'); return false; }
     finally { target.release(); }
   }
   async function saveSeries(services, live, say) {
     const files = [];
     try {
-      const target = await walk(services, live, say, 'JPEG 만드는 중', async (canvas, index, total) => {
+      const target = await walk(services, live, say, kinText("JPEG 만드는 중"), async (canvas, index, total) => {
         const data = new Uint8Array(await (await blob(canvas, 'image/jpeg', 0.92)).arrayBuffer());
         files.push({ name: 'image-' + String(index + 1).padStart(Math.max(4, String(total).length), '0') + '.jpg', data });
       }, (target, unchanged) => {
@@ -621,7 +627,7 @@ window.KinViewerExport = (() => {
         download(file, seriesName(target.cells[0].viewport) + '-' + stamp() + '.zip'); return true;
       });
       if (!target) return false;
-      tell(services, '시리즈 영상 ' + files.length + '장을 JPEG 파일로 만들어 내려받기를 시작했습니다.', 'success'); return true;
+      tell(services, kinText("시리즈 영상 {n0}장을 JPEG 파일로 만들어 내려받기를 시작했습니다.", files.length), 'success'); return true;
     } catch (error) { tell(services, failure(error), error instanceof Stopped ? 'warning' : 'error'); return false; }
   }
 
@@ -632,9 +638,9 @@ window.KinViewerExport = (() => {
   // frame per image, in order and at its time; a short, empty or failed encoding writes nothing and says so.
   // H.264 in MP4 where this browser encodes it, else VP9 or VP8 in WebM.
   const CODECS = [['avc1.640034', 'mp4'], ['avc1.4d0034', 'mp4'], ['avc1.42e034', 'mp4'], ['vp09.00.51.08', 'webm'], ['vp8', 'webm']];
-  const NO_VIDEO = '이 브라우저에서는 동영상을 저장할 수 없습니다.';
-  const SHORT = '동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.';
-  const UNMADE = '동영상을 만들지 못해 저장하지 않았습니다. 다시 시도하세요.';
+  const NO_VIDEO = kinText("이 브라우저에서는 동영상을 저장할 수 없습니다.");
+  const SHORT = kinText("동영상에 시리즈의 모든 영상이 담기지 않아 저장하지 않았습니다. 다시 시도하세요.");
+  const UNMADE = kinText("동영상을 만들지 못해 저장하지 않았습니다. 다시 시도하세요.");
   const videoReady = () => typeof window.VideoEncoder === 'function' && typeof window.VideoFrame === 'function';
   // A frame's time in microseconds, the unit of the encoder and of the MP4 written here.
   const frameTime = (index, fps) => Math.round(index * 1000000 / fps);
@@ -653,7 +659,7 @@ window.KinViewerExport = (() => {
       // Another codec is tried after a failed or short encoding; the file is still whole or not written.
       catch (error) { if (error instanceof Stopped) throw error; last = error; }
     }
-    throw last?.message === SHORT ? last : new Error(tried ? UNMADE : NO_VIDEO);
+    throw last?.message === SHORT ? last : ownError(tried ? UNMADE : NO_VIDEO);
   }
   async function encodeWith(config, container, images, fps, check, say) {
     // The decoder setup the encoder gives with its first frame; one that is empty (H.264) or changes later cannot be
@@ -671,14 +677,14 @@ window.KinViewerExport = (() => {
         if (!setup) setup = next;
         else if (next.codec !== setup.codec || !same(next.description || [], setup.description || [])) unsteady = true;
       },
-      error: error => { failed = error || new Error(UNMADE); } });
+      error: error => { failed = error || ownError(UNMADE); } });
     const canvas = document.createElement('canvas'); canvas.width = config.width; canvas.height = config.height;
     const context = canvas.getContext('2d'), every = Math.max(1, Math.round(fps));
     const healthy = () => { check(); if (failed) throw failed; };
     try {
       encoder.configure(config);
       for (let index = 0; index < images.length; index++) {
-        healthy(); say?.('동영상 파일 만드는 중 ' + (index + 1) + '/' + images.length + ' · Esc로 멈춤');
+        healthy(); say?.(kinText("동영상 파일 만드는 중 {n0}/{n1} · Esc로 멈춤", (index + 1), images.length));
         const bitmap = await createImageBitmap(images[index]); healthy();
         try { context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); } finally { bitmap.close(); }
         const frame = new window.VideoFrame(canvas, { timestamp: frameTime(index, fps), duration: frameTime(index + 1, fps) - frameTime(index, fps) });
@@ -691,11 +697,11 @@ window.KinViewerExport = (() => {
     // One frame per image, the first a key frame, each at its own time and not empty, under one setup.
     const whole = chunks.length === images.length && chunks[0].key && setup && !unsteady && (container !== 'mp4' || setup.description?.length) &&
       chunks.every((chunk, index) => chunk.time === frameTime(index, fps) && chunk.data.length > 0);
-    if (!whole) throw new Error(SHORT);
+    if (!whole) throw ownError(SHORT);
     // The frames are decoded back with that setup: the file is written only if every frame decodes, in order.
-    say?.('동영상 파일 확인 중 · Esc로 멈춤');
+    say?.(kinText("동영상 파일 확인 중 · Esc로 멈춤"));
     if (!await decodes(chunks, { codec: setup.codec, codedWidth: setup.codedWidth || config.width, codedHeight: setup.codedHeight || config.height,
-      ...(setup.description?.length ? { description: setup.description } : {}) }, check)) throw new Error(SHORT);
+      ...(setup.description?.length ? { description: setup.description } : {}) }, check)) throw ownError(SHORT);
     check();
     const duration = frameTime(images.length, fps);
     return container === 'mp4' ? mp4(chunks, setup.description, config.width, config.height, fps, duration) : webm(chunks, config.codec, config.width, config.height, fps, duration);
@@ -733,7 +739,7 @@ window.KinViewerExport = (() => {
     const box = (type, ...parts) => { const body = join(parts); return join([be(body.length + 8, 4), ascii(type), body]); };
     const full = (type, flags, ...parts) => box(type, be(flags, 4), ...parts);
     const size = chunks.reduce((sum, chunk) => sum + chunk.data.length, 0);
-    if (size > 0xFFFFFFF0 || duration > 0xFFFFFFFF) throw new Error('저장할 파일이 너무 큽니다.');
+    if (size > 0xFFFFFFF0 || duration > 0xFFFFFFFF) throw kinError("저장할 파일이 너무 큽니다.");
     const scale = 1000000, matrix = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].map(value => be(value, 4));
     const deltas = [];
     chunks.forEach((chunk, index) => {
@@ -793,7 +799,7 @@ window.KinViewerExport = (() => {
     try {
       // Every image is drawn at one size; a cell resized part way through is a changed screen, not a stretched frame.
       let size = null;
-      const done = await walk(services, live, say, '동영상 영상 만드는 중', async canvas => {
+      const done = await walk(services, live, say, kinText("동영상 영상 만드는 중"), async canvas => {
         if (size && size !== canvas.width + 'x' + canvas.height) throw changed();
         size = canvas.width + 'x' + canvas.height; images.push(await blob(canvas, 'image/jpeg', 0.95)); },
         async (target, check) => {
@@ -804,7 +810,7 @@ window.KinViewerExport = (() => {
           return fps;
         });
       if (!done) return false;
-      tell(services, '시리즈 영상 ' + images.length + '장을 ' + done + ' fps 동영상 파일로 만들어 내려받기를 시작했습니다.', 'success'); return true;
+      tell(services, kinText("시리즈 영상 {n0}장을 {n1} fps 동영상 파일로 만들어 내려받기를 시작했습니다.", images.length, done), 'success'); return true;
     } catch (error) { tell(services, failure(error), error instanceof Stopped ? 'warning' : 'error'); return false; }
   }
 
@@ -826,15 +832,15 @@ window.KinViewerExport = (() => {
     const refresh = () => {
       title.textContent = 'Captures (' + items.length + ')';
       list.replaceChildren();
-      if (!items.length) element('li', '캡처가 없습니다. Add Image 또는 Add Screen으로 모읍니다.', list);
+      if (!items.length) element('li', kinText("캡처가 없습니다. Add Image 또는 Add Screen으로 모읍니다."), list);
       items.forEach((item, index) => {
         const row = element('li', '', list); row.style.cssText = 'margin:0 0 8px';
         const image = element('img', '', row); image.src = item.url; image.alt = item.label; image.style.cssText = 'display:block;max-width:100%;border:1px solid #657c9f';
         element('div', item.label, row);
         control('Copy', row, () => {
-          if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function') { tell(view.services, '이 브라우저에서는 영상을 클립보드에 복사할 수 없습니다.', 'error'); return; }
+          if (!navigator.clipboard?.write || typeof ClipboardItem !== 'function') { tell(view.services, kinText("이 브라우저에서는 영상을 클립보드에 복사할 수 없습니다."), 'error'); return; }
           navigator.clipboard.write([new ClipboardItem({ 'image/png': item.blob })])
-            .then(() => tell(view.services, item.label + '을(를) 클립보드에 복사했습니다.', 'success'), error => tell(view.services, failure(error), 'error'));
+            .then(() => tell(view.services, kinText("{0}을(를) 클립보드에 복사했습니다.", item.label), 'success'), error => tell(view.services, failure(error), 'error'));
         }).setAttribute('aria-label', 'Copy ' + item.label);
         control('Save', row, () => download(item.blob, item.name)).setAttribute('aria-label', 'Save ' + item.label);
         control('Remove', row, () => { URL.revokeObjectURL(item.url); items.splice(items.indexOf(item), 1); refresh(); }).setAttribute('aria-label', 'Remove ' + item.label);
@@ -861,10 +867,10 @@ window.KinViewerExport = (() => {
     const body = document.body.classList;
     if (body.contains('kin-viewer-empty') || body.contains('kin-patient-switching') ||
         [window.kinViewerHistoryWorkspaceState?.(), window.kinViewerJobWorkspaceState?.()].some(state => state?.busy)) {
-      tell(services, '영상 작업을 불러오는 중입니다. 완료 후 다시 시도하세요.', 'info'); return false;
+      tell(services, kinText("영상 작업을 불러오는 중입니다. 완료 후 다시 시도하세요."), 'info'); return false;
     }
     const target = pin(services, scope, live);
-    if (!target) { tell(services, '모을 영상 칸이 없습니다.', 'warning'); return false; }
+    if (!target) { tell(services, kinText("모을 영상 칸이 없습니다."), 'warning'); return false; }
     try {
       const file = await blob(await render(target.cells), 'image/png');
       if (ticket !== generation || shelf !== view) return false;
@@ -884,21 +890,21 @@ window.KinViewerExport = (() => {
     shelf.items.splice(0).forEach(item => URL.revokeObjectURL(item.url)); shelf.aside.remove(); shelf = null;
   }
 
-  const WARNING = '식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.';
+  const WARNING = kinText("식별정보가 포함될 수 있습니다. Image Text/Images Only는 익명화가 아닙니다.");
   const actions = [
-    { id: 'CopyImage', label: 'Copy Image', description: '선택한 영상 칸을 보이는 그대로(영상·표식·영상 글자) 클립보드에 PNG로 복사 · ' + WARNING,
+    { id: 'CopyImage', label: 'Copy Image', description: kinText("선택한 영상 칸을 보이는 그대로(영상·표식·영상 글자) 클립보드에 PNG로 복사 · {0}", WARNING),
       run: (services, { live } = {}) => copy(services, 'image', live) },
-    { id: 'CopyScreen', label: 'Copy Screen', description: '이 창의 모든 영상 칸을 보이는 그대로 한 장으로 클립보드에 PNG로 복사 · ' + WARNING,
+    { id: 'CopyScreen', label: 'Copy Screen', description: kinText("이 창의 모든 영상 칸을 보이는 그대로 한 장으로 클립보드에 PNG로 복사 · {0}", WARNING),
       run: (services, { live } = {}) => copy(services, 'screen', live) },
-    { id: 'SaveJPEG', label: 'Save JPEG', description: '선택한 영상 칸을 보이는 그대로 JPEG 파일로 저장 · ' + WARNING,
+    { id: 'SaveJPEG', label: 'Save JPEG', description: kinText("선택한 영상 칸을 보이는 그대로 JPEG 파일로 저장 · {0}", WARNING),
       run: (services, { live } = {}) => saveImage(services, live) },
-    { id: 'SaveSeriesJPEG', label: 'Save Series JPEG', description: '선택한 영상 칸 시리즈의 모든 영상을 처음부터 끝까지 보이는 그대로 JPEG로 만들어 ZIP 하나로 저장 · Esc로 멈춤 · ' + WARNING,
+    { id: 'SaveSeriesJPEG', label: 'Save Series JPEG', description: kinText("선택한 영상 칸 시리즈의 모든 영상을 처음부터 끝까지 보이는 그대로 JPEG로 만들어 ZIP 하나로 저장 · Esc로 멈춤 · {0}", WARNING),
       run: (services, { live, say } = {}) => saveSeries(services, live, say) },
-    { id: 'SaveVideo', label: 'Save Video', description: '선택한 영상 칸 시리즈의 모든 영상을 처음부터 끝까지 보이는 그대로 동영상(MP4, 안 되는 브라우저는 WebM)으로 저장 · 속도는 이 칸의 Cine 속도(없으면 10 fps) · Esc로 멈춤 · ' + WARNING,
+    { id: 'SaveVideo', label: 'Save Video', description: kinText("선택한 영상 칸 시리즈의 모든 영상을 처음부터 끝까지 보이는 그대로 동영상(MP4, 안 되는 브라우저는 WebM)으로 저장 · 속도는 이 칸의 Cine 속도(없으면 10 fps) · Esc로 멈춤 · {0}", WARNING),
       run: (services, { live, say } = {}) => saveVideo(services, live, say) },
-    { id: 'AddToCaptures', label: 'Add to Captures', description: '선택한 영상 칸을 보이는 그대로 이 창의 Captures 패널에 모으고 패널을 엽니다(이 창에만 있고 검사를 떠나면 비워짐) · ' + WARNING,
+    { id: 'AddToCaptures', label: 'Add to Captures', description: kinText("선택한 영상 칸을 보이는 그대로 이 창의 Captures 패널에 모으고 패널을 엽니다(이 창에만 있고 검사를 떠나면 비워짐) · {0}", WARNING),
       run: (services, { live } = {}) => collect(services, 'image', live) },
-    { id: 'Captures', label: 'Captures', description: 'Captures 패널 열기/닫기: 모은 캡처를 복사·저장(PNG)·지우기, 모두 ZIP으로 저장',
+    { id: 'Captures', label: 'Captures', description: kinText("Captures 패널 열기/닫기: 모은 캡처를 복사·저장(PNG)·지우기, 모두 ZIP으로 저장"),
       run: (services, { live } = {}) => { if (shelf && !shelf.aside.hidden) shelf.aside.hidden = true; else openShelf(services, live); } },
   ];
   return { actions, options, pin, render, copy, saveImage, saveSeries, saveVideo, zip, end, moving };

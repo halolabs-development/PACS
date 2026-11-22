@@ -1,5 +1,8 @@
 (function (root) {
   'use strict';
+  // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const MODES = ['Radiology', 'Technician'], REQUIRED = ['id', 'name'];
   const PREFIX = 'kin-worklist-columns:v1:';
   const object = v => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -115,6 +118,7 @@
       <footer><button type="button" id="wc-reset">Reset Current Mode</button><button type="button" id="wc-reload">Reload Browser Settings</button>
       <button type="button" id="wc-memory">Apply for This Window</button><button type="button" id="wc-save">Apply &amp; Save in Browser</button></footer>`;
     document.body.append(dialog);
+    window.KinLanguage?.markup?.(dialog);
     const $ = id => dialog.querySelector('#wc-' + id);
     const status = text => { $('status').textContent = text; };
     const dirty = () => JSON.stringify(draft) !== baseline;
@@ -165,7 +169,7 @@
         // Drag by the grip only: a draggable row would take presses meant for the checkbox and width field.
         // Up/Down stay the keyboard path; a drop changes the draft like they do.
         const grip = document.createElement('span'); grip.className = 'wc-grip'; grip.draggable = true;
-        grip.textContent = '≡'; grip.title = '끌어서 열 순서를 바꿉니다. 키보드는 Up·Down 단추를 사용하세요.';
+        grip.textContent = '≡'; kinWrite(grip, kinSayEn("끌어서 열 순서를 바꿉니다. 키보드는 Up·Down 단추를 사용하세요."), "title");
         grip.setAttribute('aria-hidden', 'true');
         grip.addEventListener('dragstart', event => {
           dragged = key; row.classList.add('wc-dragging');
@@ -239,7 +243,7 @@
         } catch (_) { status('저장하지 못했습니다. 편집 내용은 유지했습니다. 이번 창에만 적용할 수 있습니다.'); return; }
       }
       generation++; state = next; stateRaw = lastRaw; baseline = JSON.stringify(draft); changed(); dialog.close();
-      document.querySelector('#columnsettings').title = persist ? '열 설정 저장됨 · 이 브라우저·계정별' : '열 설정 · 이번 창에만 적용됨';
+      kinWrite(document.querySelector('#columnsettings'), persist ? kinSayEn("열 설정 저장됨 · 이 브라우저·계정별") : kinSayEn("열 설정 · 이번 창에만 적용됨"), "title");
     }
     $('save').addEventListener('click', () => apply(true));
     $('memory').addEventListener('click', () => apply(false));
@@ -263,8 +267,8 @@
       if (action === 'load' && !mayLeave()) return;
       if (action === 'clear' && !confirm('계정에 저장된 열 설정만 지울까요? 현재 목록과 브라우저 저장값은 유지합니다.')) return;
       const before = generation, snapshot = action === 'save' ? normalize(draft, columns) : null;
-      if (action === 'save' && !snapshot) { $('server-status').textContent = '편집 중인 열 설정 형식이 잘못되었습니다. 다시 불러오거나 기본값으로 설정하세요.'; return; }
-      interruptedAction = action; serverBusy = true; refreshServer(); $('server-status').textContent = '계정 설정 확인 중…';
+      if (action === 'save' && !snapshot) { kinWrite($('server-status'), kinSayEn("편집 중인 열 설정 형식이 잘못되었습니다. 다시 불러오거나 기본값으로 설정하세요.")); return; }
+      interruptedAction = action; serverBusy = true; refreshServer(); kinWrite($('server-status'), kinSayEn("계정 설정 확인 중…"));
       const local = request = new AbortController(); const signal = local.signal, timer = setTimeout(() => local.abort(), 10000);
       const active = () => !ended && dialog.open && !signal.aborted;
       try {
@@ -284,16 +288,16 @@
             (data.columns !== null && !normalize(data.columns, columns))) throw new Error('format');
         work.commit(at,()=>{
         if (action === 'load' && generation !== before) {
-          $('server-status').textContent = '응답을 기다리는 동안 편집값이 바뀌어 불러오지 않았습니다. 다시 불러오세요.'; return;
+          kinWrite($('server-status'), kinSayEn("응답을 기다리는 동안 편집값이 바뀌어 불러오지 않았습니다. 다시 불러오세요.")); return;
         }
         serverRevision = data.revision;
         if (action === 'load' && data.columns) {
           generation++; draft = normalize(data.columns, columns); renderEditor();
-          $('server-status').textContent = '계정 설정을 편집창에 불러왔습니다. 아래 적용 버튼으로 목록에 반영하세요.';
+          kinWrite($('server-status'), kinSayEn("계정 설정을 편집창에 불러왔습니다. 아래 적용 버튼으로 목록에 반영하세요."));
         } else if (action === 'save') {
-          $('server-status').textContent = generation === before ? '편집값을 계정에 저장했습니다. 목록 반영은 아래 적용 버튼을 누르세요.' : '요청 당시 편집값을 계정에 저장했습니다. 이후 편집은 아직 저장되지 않았습니다.';
-        } else if (action === 'clear') $('server-status').textContent = '계정 저장값을 지웠습니다. 현재 목록·편집값·브라우저 저장값은 유지합니다.';
-        else $('server-status').textContent = data.columns ? '계정에 저장된 열 설정이 있습니다.' : '계정에 저장된 열 설정이 없습니다. 현재 편집값은 유지합니다.';
+          kinWrite($('server-status'), generation === before ? kinSayEn("편집값을 계정에 저장했습니다. 목록 반영은 아래 적용 버튼을 누르세요.") : kinSayEn("요청 당시 편집값을 계정에 저장했습니다. 이후 편집은 아직 저장되지 않았습니다."));
+        } else if (action === 'clear') kinWrite($('server-status'), kinSayEn("계정 저장값을 지웠습니다. 현재 목록·편집값·브라우저 저장값은 유지합니다."));
+        else kinWrite($('server-status'), data.columns ? kinSayEn("계정에 저장된 열 설정이 있습니다.") : kinSayEn("계정에 저장된 열 설정이 없습니다. 현재 편집값은 유지합니다."));
         });
       } catch (error) {
         work.commit(at,()=>{serverRevision = null;
@@ -324,7 +328,7 @@
       draft = copy(saved.raw !== stateRaw ? saved.state : state); lastRaw = saved.raw;
       baseline = JSON.stringify(draft); $('title').textContent = 'Worklist Columns · ' + openedMode;
       $('save').disabled = !owner; renderEditor(); status(saved.message); dialog.showModal(); $('close').focus(); refreshServer();
-      $('server-status').textContent = '계정 저장 상태를 확인하거나 불러오세요.';
+      kinWrite($('server-status'), kinSayEn("계정 저장 상태를 확인하거나 불러오세요."));
     });
     // True while a column-edge drag shows widths that are not saved yet.
     let preview = false;

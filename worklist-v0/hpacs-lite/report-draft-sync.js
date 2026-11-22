@@ -83,13 +83,16 @@
     }
     /**
      * QC Flag (the server's rule: api/src/pacs/qc-flag.ts), kept beside the state merge that keeps it. The mark a state answer carries, read here only: `{reason, by,
-     * at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * byName, at, revision}` (reason null = not flagged), or null when the answer has no readable mark (Unknown - never None).
+     * `byName` is who marked as the server names that person for this reader (account-identity.ts markerShown): a screen
+     * shows it as is and never looks the login up again.
      */
     function qcMark(value) {
       const qc = value?.qc;
       if (!qc || typeof qc !== "object" || !Number.isSafeInteger(qc.revision) || qc.revision < 0
         || !(qc.reason === null || typeof qc.reason === "string" && qc.reason)) return null;
-      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null, at: typeof qc.at === "string" ? qc.at : null,
+      return { reason: qc.reason, by: typeof qc.by === "string" ? qc.by : null,
+        byName: typeof qc.byName === "string" && qc.byName ? qc.byName : null, at: typeof qc.at === "string" ? qc.at : null,
         revision: qc.revision };
     }
     /**
@@ -602,14 +605,15 @@
       onWrite: uid => reportConverge.add(uid) });
 
     /** 점유 거절(REPORT_HELD): 누가 잡고 있는지 화면에 반영하고 그 검사에 한 번만 알린다. */
-    function noteHeld(uid, holder) {
-      appState[uid] = { ...appState[uid], holder, holderMine: false };
+    function noteHeld(uid, holder, holderName = null) {
+      appState[uid] = { ...appState[uid], holder, holderName, holderMine: false };
       syncStudy(uid);
       if (uid === selectedUid) { updateReportButtons(); loadReport(); }
       if (warnedFor !== uid) {
         warnedFor = uid;
-        const writer = holder === '다른 기관' ? '다른 기관 판독의가'
-          : holder === '작성자 비공개' ? '비공개 작성자가' : `${displayActor(holder)} 님이`;
+        const named = writerName(holderName, holder);
+        const writer = named === '다른 기관' ? '다른 기관 판독의가'
+          : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
         toast(`${writer} 판독 중입니다 — 저장되지 않았습니다`, "err");
       }
     }
@@ -636,7 +640,7 @@
       work.commit(at, () => {
         if (converge) reportConverge.add(uid);
         if (result.outcome === "conflict") { openDraftConflict(uid); return; }
-        if (result.code === "REPORT_HELD") { noteHeld(uid, result.answer?.body?.holder); return; }
+        if (result.code === "REPORT_HELD") { noteHeld(uid, result.answer?.body?.holder, result.answer?.body?.holderName ?? null); return; }
         if (uid === selectedUid) renderDraftBar();
         if (quiet) return;
         // 버리기의 실패는 저장의 실패가 아니다 — 무엇이 되지 않았는지를 그대로 말한다. 화면의 글은 어느 쪽이든 그대로다.

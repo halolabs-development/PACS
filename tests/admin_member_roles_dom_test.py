@@ -68,6 +68,8 @@ ADMIN_HTML = lf_text(HPACS / "admin.html")
 ORIGIN = "https://members.test"
 PAGE_PATH = "/worklist/hpacs-lite/admin.html"
 SCRIPTS = {
+    "/worklist/hpacs-lite/worklist-language-terms.js": lf_text(HPACS / "worklist-language-terms.js"),
+    "/worklist/hpacs-lite/worklist-language.js": lf_text(HPACS / "worklist-language.js"),
     "/worklist/hpacs-lite/auth.js": lf_text(HPACS / "auth.js"),
     "/worklist/hpacs-lite/work-context.js": lf_text(HPACS / "work-context.js"),
     "/worklist/hpacs-lite/session-transport.js": lf_text(HPACS / "session-transport.js"),
@@ -1179,6 +1181,14 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.page.locator("#patient-consent-id").fill(pid)
         self.page.locator("#patient-consent-load").click()
 
+    def consent_said(self, text, failed):
+        # A failure is an alert in the error box; a success is a status line in the page's hint style (as Access Review).
+        box = self.page.locator("#patient-consent-message")
+        expect(box).to_have_text(text)
+        expect(box).to_be_visible()
+        expect(box).to_have_attribute("role", "alert" if failed else "status")
+        expect(box).to_have_class("message show" if failed else "audit-hint")
+
     def test_patient_consent_section_records_reads_again_retries_and_withdraws(self):
         state = self.consent_server()
         self.load()
@@ -1196,7 +1206,7 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         form.locator("[name=reference]").fill("SYN-FORM-0001 <paper>")
         form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
         self.page.locator("#patient-consent-record").click()
-        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 저장했습니다.")
+        self.consent_said("동의 기록을 저장했습니다.", failed=False)
         posted = [b for p, b in state["calls"] if p == "/api/admin/patient-consent"]
         self.assertEqual(1, len(posted))
         self.assertEqual({"patientId", "purpose", "reference", "obtainedAt", "requestId"}, set(posted[0]))
@@ -1217,6 +1227,8 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         state["lose_next"] = True
         self.page.locator("#patient-consent-record").click()
         expect(self.page.locator("#patient-consent-message")).to_contain_text("저장되었는지 확인하지 못했습니다")
+        # The failure after a success is an alert again; the success sentence does not stay.
+        self.consent_said(re.compile("^저장되었는지 확인하지 못했습니다"), failed=True)
         expect(self.page.locator("#patient-consent-retry")).to_be_visible()
         expect(rows).to_have_count(2)
         # Until that result is known only the same request can be sent: Record Consent and the fields are locked.
@@ -1224,7 +1236,7 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(form.locator("[name=purpose]")).to_be_disabled()
         expect(self.page.locator("#patient-consent-retry")).to_be_enabled()
         self.page.locator("#patient-consent-retry").click()
-        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 저장했습니다.")
+        self.consent_said("동의 기록을 저장했습니다.", failed=False)
         expect(self.page.locator("#patient-consent-retry")).to_be_hidden()
         posted = [b for p, b in state["calls"] if p == "/api/admin/patient-consent"]
         self.assertEqual(posted[1], posted[2], "Retry Same Request sends the same request")
@@ -1235,13 +1247,21 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#patient-consent-withdraw-target")).to_have_text("SYN research registry")
         self.page.locator("#patient-consent-reason").fill("SYN withdrew by phone")
         self.page.locator("#patient-consent-withdraw-confirm").click()
-        expect(self.page.locator("#patient-consent-message")).to_have_text("동의 기록을 철회했습니다.")
+        self.consent_said("동의 기록을 철회했습니다.", failed=False)
         expect(rows.nth(1).locator("td").nth(4)).to_have_text("Withdrawn")
         expect(rows.nth(1).get_by_role("button", name="Withdraw")).to_have_count(0)
         expect(rows.nth(1).locator("td").nth(6)).to_contain_text("SYN withdrew by phone")
         withdrawn = [(p, b) for p, b in state["calls"] if p.endswith("/withdraw")]
         self.assertEqual([("/api/admin/patient-consent/00000000-0000-4000-8000-000000000001/withdraw",
                            {"patientId": "P1", "reason": "SYN withdrew by phone"})], withdrawn)
+        # Editing the ID clears the success line too: no sentence and no box stay.
+        self.page.locator("#patient-consent-id").press("End")
+        self.page.locator("#patient-consent-id").type("0")
+        box = self.page.locator("#patient-consent-message")
+        expect(box).to_have_text("")
+        expect(box).to_be_hidden()
+        expect(box).to_have_class("message")
+        expect(box).to_have_attribute("role", "alert")
 
     def test_patient_consent_section_shows_only_the_patient_in_the_box(self):
         state = self.consent_server()
@@ -1261,14 +1281,14 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#patient-consent-state")).to_have_text("Not Loaded")
         # Another institution's patient or an unknown ID: the server's sentence, nothing drawn.
         self.consent_load("P404")
-        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        self.consent_said("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", failed=True)
         expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
         expect(self.page.locator("#patient-consent-form")).to_be_hidden()
         # An answer naming another patient, or another account, is not drawn.
         for flag in ("wrong_patient", "wrong_owner"):
             state[flag] = True
             self.consent_load("P1")
-            expect(self.page.locator("#patient-consent-message")).to_have_text("불러온 기록을 확인하지 못했습니다.")
+            self.consent_said("불러온 기록을 확인하지 못했습니다.", failed=True)
             expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
             expect(self.page.locator("#patient-consent-form")).to_be_hidden()
             state[flag] = False
@@ -1277,13 +1297,13 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(self.page.locator("#patient-consent-rows tr")).to_have_count(1)
         self.page.route("**/api/admin/patient-consent/lookup", lambda route: route.fulfill(status=403, json={"statusCode": 403}))
         self.consent_load("P1")
-        expect(self.page.locator("#patient-consent-message")).to_have_text("이 계정으로는 환자 동의 기록을 다룰 수 없습니다.")
+        self.consent_said("이 계정으로는 환자 동의 기록을 다룰 수 없습니다.", failed=True)
         expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
         expect(self.page.locator("#patient-consent-form")).to_be_hidden()
         # Leading or trailing spaces are another ID: nothing is asked.
         before = len(state["calls"])
         self.consent_load(" P1")
-        expect(self.page.locator("#patient-consent-message")).to_have_text("Original Patient ID를 앞뒤 공백 없이 입력하세요.")
+        self.consent_said("Original Patient ID를 앞뒤 공백 없이 입력하세요.", failed=True)
         self.assertEqual(before, len(state["calls"]))
 
     def test_patient_consent_section_clears_the_patient_when_a_write_or_its_reread_is_refused(self):
@@ -1306,7 +1326,7 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         self.page.locator("#patient-consent-reason").fill("SYN reason")
         self.page.route("**/api/admin/patient-consent/*/withdraw", refused)
         self.page.locator("#patient-consent-withdraw-confirm").click()
-        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        self.consent_said("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", failed=True)
         expect(self.page.locator("#patient-consent-rows tr")).to_have_count(0)
         expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
         expect(form).to_be_hidden()
@@ -1319,7 +1339,7 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         form.locator("[name=obtained]").fill("2026-11-20T09:30:15")
         self.page.route("**/api/admin/patient-consent/lookup", refused)
         self.page.locator("#patient-consent-record").click()
-        expect(self.page.locator("#patient-consent-message")).to_have_text("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다")
+        self.consent_said("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", failed=True)
         expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
         expect(form).to_be_hidden()
     def test_patient_consent_section_is_reachable_in_a_narrow_window(self):

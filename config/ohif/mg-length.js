@@ -2,11 +2,13 @@
 // MG coordinates stay in the source image plane. Projection fallbacks are image-local,
 // never a claimed patient Frame of Reference; the SOP/frame still identifies the image.
 function kinMgGeometry(tags, frame) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   const dbt = '1.2.840.10008.5.1.4.1.1.13.1.3';
   const enhanced = [dbt, '1.2.840.10008.5.1.4.1.1.13.1.4', '1.2.840.10008.5.1.4.1.1.13.1.5'];
   const classic = ['1.2.840.10008.5.1.4.1.1.1.2', '1.2.840.10008.5.1.4.1.1.1.2.1'];
   if (tags?.Modality !== 'MG' || ![...enhanced, ...classic].includes(tags.SOPClassUID)) return null;
-  const fail = () => { throw new Error('MG 원본 프레임의 좌표·간격·보정을 확인할 수 없습니다'); };
+  const fail = () => { throw kinError("MG 원본 프레임의 좌표·간격·보정을 확인할 수 없습니다"); };
   const numbers = (value, count) => {
     const fields = typeof value === 'string' ? value.split('\\') : Array.isArray(value) ? value : [value];
     if (fields.length !== count || fields.some(n => !(typeof n === 'number' || typeof n === 'string' && n.trim()) || !Number.isFinite(Number(n)))) return fail();
@@ -62,6 +64,8 @@ function kinMgGeometry(tags, frame) {
     const a = imagePoint(points[0]), b = imagePoint(points[1]);
     return Math.hypot((b[0] - a[0]) * spacing[1], (b[1] - a[1]) * spacing[0]);
   };
+  // The basis name is a value of the measurement (the exported report carries it): kept as written, never in the screen's
+  // language. The panel and the marks translate it where they draw it (history.js).
   const label = { dbt: 'DBT PixelSpacing', pixel: 'PixelSpacing · 원본 기준면',
     ermf: 'ImagerPixelSpacing / ERMF · 추정 보정', detector: 'ImagerPixelSpacing · 검출기 기준' }[basis];
   return { origin, orientation, spacing, normal, imagePoint, length, basis, label,

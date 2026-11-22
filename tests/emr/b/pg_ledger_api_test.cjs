@@ -1008,7 +1008,7 @@ async function rightsReplace() {
   const { createRequestIngress } = require(path.join(build, 'emr-runtime/request-ingress.js'));
   const { IncomingMessage, ServerResponse } = require('node:http'), { Socket } = require('node:net');
   // The product's own recheck of the admitted request's authorization (AuthService.bindCurrentAuthorization, as
-  // AuthGuard binds it): a Bearer with the administrator OTP, its rights read at admission.
+  // AuthGuard binds it): an administrator's Bearer, its rights read at admission.
   const { AuthService } = require(path.join(build, 'auth.service.js'));
   const auth=new AuthService(db,null,null,null,null);
   const admit=async adminSub=>{const row=await witness.memberRights.findUnique({where:{sub:adminSub}});

@@ -1,5 +1,7 @@
 
 function kinCreateDisplayScope() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let ready, current, epoch = 0, ended = false, listening = false, channel;
   function endSession() {
     if (ended) return; ended = true; epoch++; current?.stop(); current = null;
@@ -16,10 +18,10 @@ function kinCreateDisplayScope() {
     if (window.KinViewerDisplayScope) return Promise.resolve(window.KinViewerDisplayScope);
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-display-scope.js';
-      const timer = setTimeout(() => finish(new Error('표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.')), 10000);
+      const timer = setTimeout(() => finish(kinError("표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.")), 10000);
       function finish(error) { clearTimeout(timer); script.onload = script.onerror = null; if (error) { script.remove(); reject(error); } else resolve(window.KinViewerDisplayScope); }
-      script.onload = () => finish(window.KinViewerDisplayScope ? null : new Error('표시 범위 모듈을 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요.'));
+      script.onload = () => finish(window.KinViewerDisplayScope ? null : kinError("표시 범위 모듈을 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("표시 범위 도구를 불러오지 못했습니다. 뷰어를 다시 여세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -30,7 +32,7 @@ function kinCreateDisplayScope() {
     prepare().then(module => {
       if (ticket !== epoch) return;
       const connected = module.create(servicesManager.services);
-      if (!connected.mount()) { connected.stop(); throw new Error('표시 범위 패널을 연결하지 못했습니다.'); }
+      if (!connected.mount()) { connected.stop(); throw kinError("표시 범위 패널을 연결하지 못했습니다."); }
       current = connected;
     }).catch(error => { if (ticket === epoch) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = error.message; } });
   }, onModeExit() { epoch++; current?.stop(); current = null; } };

@@ -1,20 +1,24 @@
 /* Read-only link to the reading workspace's unsaved report editor.
  * The viewer never stores, relays or persists the editor body: it is asked for
  * on every check, verified against one owner/session/target, and kept in memory. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function (root) {
   'use strict';
   const FIELDS = ['findings', 'conclusion', 'recommendation'];
   const MAX = 200000;
   const REFUSALS = ['session', 'context', 'modal', 'unavailable', 'denied'];
   const REASONS = {
-    session: '판독 화면의 세션이 바뀌었습니다. 다시 연결하세요.',
-    context: '판독 화면의 편집 대상이 이 검사가 아닙니다.',
-    modal: '판독 화면의 대화상자를 닫은 뒤 다시 확인하세요.',
-    unavailable: '판독문 입력란을 확인할 수 없습니다.',
-    denied: '편집문 출력 권한이 없습니다.',
-    invalid: '편집문 응답을 확인할 수 없습니다.',
-    timeout: '판독 화면의 응답이 없습니다. 목록 창에서 영상 창을 다시 연결하세요.',
-    missing: '연결된 판독 화면이 없습니다. 판독 화면에서 연 영상 창에서만 편집문을 출력할 수 있습니다.',
+    session: kinText("판독 화면의 세션이 바뀌었습니다. 다시 연결하세요."),
+    context: kinText("판독 화면의 편집 대상이 이 검사가 아닙니다."),
+    modal: kinText("판독 화면의 대화상자를 닫은 뒤 다시 확인하세요."),
+    unavailable: kinText("판독문 입력란을 확인할 수 없습니다."),
+    denied: kinText("편집문 출력 권한이 없습니다."),
+    invalid: kinText("편집문 응답을 확인할 수 없습니다."),
+    timeout: kinText("판독 화면의 응답이 없습니다. 목록 창에서 영상 창을 다시 연결하세요."),
+    missing: kinText("연결된 판독 화면이 없습니다. 판독 화면에서 연 영상 창에서만 편집문을 출력할 수 있습니다."),
   };
   function reasonText(reason) { return REASONS[reason] || REASONS.invalid; }
   const refusal = reason => ({ ok: false, reason });
@@ -147,7 +151,7 @@ globalThis.kinViewerEditorLink = function (options) {
         signal?.removeEventListener('abort', onAbort);
         if (error) reject(error); else resolve(value);
       }
-      function onAbort() { finish(null, new Error('출력 확인이 취소되었습니다.')); }
+      function onAbort() { finish(null, kinError("출력 확인이 취소되었습니다.")); }
       function onRelink() { finish({ ok: false, reason: 'missing' }); }
       // Only the bound window of this same origin can answer; every other
       // message on this window is ignored rather than refused. On the channel,

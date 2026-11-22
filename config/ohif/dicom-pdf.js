@@ -1,5 +1,7 @@
 
 function kinDicomPdfViewportGuard(extensionManager, options) {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   options = options || {};
   const entryId = '@ohif/extension-dicom-pdf.viewportModule.dicom-pdf';
   const handlerId = '@ohif/extension-dicom-pdf.sopClassHandlerModule.dicom-pdf';
@@ -32,12 +34,12 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
     const current = sourceOf({ displaySets: [source.value] });
     return !!current && current.key === source.key && current.pdfUrl === source.pdfUrl;
   }
-  async function json(result) { try { return await result.json(); } catch (_) { throw new Error('원본 PDF 확인 응답이 올바르지 않습니다.'); } }
+  async function json(result) { try { return await result.json(); } catch (_) { throw kinError("원본 PDF 확인 응답이 올바르지 않습니다."); } }
   function requireReply(reply, message) {
     if (reply?.ok) return reply;
     const error = window.KinSessionTransport.responseError(reply,
-      reply?.status === 404 ? '원본 PDF를 찾을 수 없습니다.' : message,
-      '원본 PDF 접근이 거절되었습니다. 검사 접근 권한을 확인하세요.');
+      reply?.status === 404 ? kinText("원본 PDF를 찾을 수 없습니다.") : message,
+      kinText("원본 PDF 접근이 거절되었습니다. 검사 접근 권한을 확인하세요."));
     throw error;
   }
   function ownerOf(value) {
@@ -46,32 +48,32 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
   }
   function sameOwner(a, b) { return !!a && !!b && a.institution === b.institution && a.sub === b.sub; }
   function assertLive(source, ticket, controller) {
-    if (!active || ticket !== epoch || controller.signal.aborted || !matches(source)) throw new Error('선택한 원본 문서가 변경되었습니다.');
+    if (!active || ticket !== epoch || controller.signal.aborted || !matches(source)) throw kinError("선택한 원본 문서가 변경되었습니다.");
   }
   function waitForActivation(ticket, controller) {
     if (active && ticket === epoch) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const waiter = { ticket, resolve, reject }; activationWaiters.add(waiter);
-      controller.signal.addEventListener('abort', () => { activationWaiters.delete(waiter); reject(new Error('원본 PDF 준비가 중단되었습니다.')); }, { once: true });
+      controller.signal.addEventListener('abort', () => { activationWaiters.delete(waiter); reject(kinError("원본 PDF 준비가 중단되었습니다.")); }, { once: true });
     });
   }
   async function resolveAttempt(source, ticket, controller) {
       const raw = await source.pdfUrl; assertLive(source, ticket, controller);
-      if (typeof raw !== 'string') throw new Error('원본 PDF 경로를 확인할 수 없습니다.');
+      if (typeof raw !== 'string') throw kinError("원본 PDF 경로를 확인할 수 없습니다.");
       const root = globalThis.location, parsed = new URL(raw, root.href);
       const rendered = '/dicom-web/studies/' + source.value.StudyInstanceUID + '/series/' + source.value.SeriesInstanceUID + '/instances/' + source.value.SOPInstanceUID + '/rendered';
-      if (parsed.origin !== root.origin || parsed.pathname !== rendered || parsed.search || parsed.hash || parsed.username || parsed.password) throw new Error('원본 PDF 경로를 확인할 수 없습니다.');
+      if (parsed.origin !== root.origin || parsed.pathname !== rendered || parsed.search || parsed.hash || parsed.username || parsed.password) throw kinError("원본 PDF 경로를 확인할 수 없습니다.");
       const init = (method = 'GET', body) => ({ method, credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
-      const firstReply = requireReply(await fetch('/api/me', init()), '로그인 세션을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      const firstReply = requireReply(await fetch('/api/me', init()), kinText("로그인 세션을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const first = ownerOf(await json(firstReply)); assertLive(source, ticket, controller);
-      if (!first) throw new Error('로그인 세션을 확인할 수 없습니다.');
-      const lookupReply = requireReply(await fetch('/api/dicom/lookup', init('POST', { studyUid: source.value.StudyInstanceUID, sopUid: source.value.SOPInstanceUID })), '원본 PDF 식별을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      if (!first) throw kinError("로그인 세션을 확인할 수 없습니다.");
+      const lookupReply = requireReply(await fetch('/api/dicom/lookup', init('POST', { studyUid: source.value.StudyInstanceUID, sopUid: source.value.SOPInstanceUID })), kinText("원본 PDF 식별을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const lookup = await json(lookupReply); assertLive(source, ticket, controller);
-      if (!lookup || Object.keys(lookup).length !== 1 || typeof lookup.id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(lookup.id)) throw new Error('원본 PDF 식별을 확인할 수 없습니다.');
-      const lastReply = requireReply(await fetch('/api/me', init()), '로그인 세션을 확인할 수 없습니다.'); assertLive(source, ticket, controller);
+      if (!lookup || Object.keys(lookup).length !== 1 || typeof lookup.id !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(lookup.id)) throw kinError("원본 PDF 식별을 확인할 수 없습니다.");
+      const lastReply = requireReply(await fetch('/api/me', init()), kinText("로그인 세션을 확인할 수 없습니다.")); assertLive(source, ticket, controller);
       const last = ownerOf(await json(lastReply)); assertLive(source, ticket, controller);
-      if (!sameOwner(first, last)) throw new Error('계정이 변경되어 원본 PDF를 표시하지 않았습니다.');
+      if (!sameOwner(first, last)) throw kinError("계정이 변경되어 원본 PDF를 표시하지 않았습니다.");
       const url = await window.KinViewerResource.read(root.origin + '/instances/' + lookup.id + '/pdf', { signal: controller.signal, type: 'application/pdf' });
       try { assertLive(source, ticket, controller); } catch (error) { window.KinViewerResource.release(url); throw error; }
       urls.add(url); return url;
@@ -79,7 +81,7 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
   async function resolve(source, ticket, controller) {
     await waitForActivation(ticket, controller); assertLive(source, ticket, controller);
     let timer;
-    const deadline = new Promise((_, reject) => { timer = setTimeout(() => { const error = new Error('원본 PDF 확인 시간이 지났습니다. 다시 시도하세요.'); error.retryable = true; reject(error); controller.abort(); }, timeoutMs); });
+    const deadline = new Promise((_, reject) => { timer = setTimeout(() => { const error = kinError("원본 PDF 확인 시간이 지났습니다. 다시 시도하세요."); error.retryable = true; reject(error); controller.abort(); }, timeoutMs); });
     try { return await Promise.race([resolveAttempt(source, ticket, controller), deadline]); }
     catch (error) { if (error?.name === 'TypeError') error.retryable = true; throw error; }
     finally { clearTimeout(timer); pending.delete(controller); }
@@ -97,7 +99,7 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
     let record = cache.get(source.value);
     if (record?.key === source.key && record.original === source.pdfUrl && (!record.url || window.KinViewerResource.has(record.url))) return record;
     if (record?.url) { window.KinViewerResource.release(record.url); urls.delete(record.url); }
-    if (record && !record.settled) { record.controller?.abort(); record.settled = true; records.delete(record); record.reject(new Error('선택한 원본 문서가 변경되었습니다.')); }
+    if (record && !record.settled) { record.controller?.abort(); record.settled = true; records.delete(record); record.reject(kinError("선택한 원본 문서가 변경되었습니다.")); }
     let fulfill, reject; const promise = new Promise((resolve, fail) => { fulfill = resolve; reject = fail; }); promise.catch(() => {});
     record = { key: source.key, original: source.pdfUrl, source, ticket: epoch, promise, resolve: fulfill, reject, failed: false, settled: false, controller: null };
     cache.set(source.value, record); records.add(record); start(record); return record;
@@ -122,19 +124,21 @@ function kinDicomPdfViewportGuard(extensionManager, options) {
 
   function listen() { if (listening) return; listening = true;  try { sessionChannel = kinViewerOnEnd(() => sessionEnded()); } catch (_) {} }
   function unlisten() { if (!listening) return; listening = false;  sessionChannel?.close(); sessionChannel = null; }
-  function activate() { active = true; listen(); for (const waiter of [...activationWaiters]) { if (waiter.ticket === epoch) waiter.resolve(); else waiter.reject(new Error('원본 PDF 준비가 중단되었습니다.')); activationWaiters.delete(waiter); } }
+  function activate() { active = true; listen(); for (const waiter of [...activationWaiters]) { if (waiter.ticket === epoch) waiter.resolve(); else waiter.reject(kinError("원본 PDF 준비가 중단되었습니다.")); activationWaiters.delete(waiter); } }
   function retry(value, pdfUrl) { for (const record of records) if (record.failed && !record.settled && record.ticket === epoch && matches(record.source) && (!value || record.source.value === value && record.original === pdfUrl)) start(record); }
   function deactivate() {
     active = false; epoch++; unlisten(); cache = new WeakMap(); for (const item of pending) item.abort(); pending.clear();
     for (const url of urls) window.KinViewerResource.release(url); urls.clear();
-    for (const waiter of activationWaiters) waiter.reject(new Error('원본 PDF 준비가 중단되었습니다.')); activationWaiters.clear();
-    for (const record of records) if (!record.settled) { record.settled = true; record.reject(new Error('원본 PDF 준비가 중단되었습니다.')); } records.clear();
+    for (const waiter of activationWaiters) waiter.reject(kinError("원본 PDF 준비가 중단되었습니다.")); activationWaiters.clear();
+    for (const record of records) if (!record.settled) { record.settled = true; record.reject(kinError("원본 PDF 준비가 중단되었습니다.")); } records.clear();
   }
   function dispose() { deactivate(); if (patch && patch.entry.component === patch.wrapper) patch.entry.component = patch.original; patch = null; }
   return { install, ownsWrapper, activate, deactivate, retry, dispose };
 }
 
 function kinCreateDicomPdf() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, ready, current, viewportGuard, nativeErrors = new WeakMap(), epoch = 0;
   function retire() { epoch++; nativeErrors = new WeakMap(); current?.stop(); current = null; }
   function prepare() {
@@ -142,9 +146,9 @@ function kinCreateDicomPdf() {
     if (!ready) ready = new Promise((resolve, reject) => {
       const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/viewer-dicom-pdf.js';
       const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(window.KinDicomPdf); };
-      const timer = setTimeout(() => finish(new Error('원본 PDF 도구 연결 시간이 지났습니다. 다시 시도하세요.')), 10000);
-      script.onload = () => finish(window.KinDicomPdf?.create ? null : new Error('원본 PDF 도구를 확인할 수 없습니다.'));
-      script.onerror = () => finish(new Error('원본 PDF 도구를 불러오지 못했습니다. 다시 시도하세요.'));
+      const timer = setTimeout(() => finish(kinError("원본 PDF 도구 연결 시간이 지났습니다. 다시 시도하세요.")), 10000);
+      script.onload = () => finish(window.KinDicomPdf?.create ? null : kinError("원본 PDF 도구를 확인할 수 없습니다."));
+      script.onerror = () => finish(kinError("원본 PDF 도구를 불러오지 못했습니다. 다시 시도하세요."));
       document.head.append(script);
     }).catch(error => { ready = null; throw error; });
     return ready;
@@ -154,11 +158,11 @@ function kinCreateDicomPdf() {
     if (extensionManager) { viewportGuard = kinDicomPdfViewportGuard(extensionManager, { onSessionEnd: retire,
       onFailure: (error, value, pdfUrl) => { nativeErrors.set(value, { pdfUrl, error }); current?.nativeFailure?.(error, value, pdfUrl); },
       onSuccess: (value, pdfUrl) => { if (nativeErrors.has(value)) nativeErrors.delete(value); current?.nativeReady?.(value, pdfUrl); }
-    }); if (!viewportGuard.install()) throw new Error('원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요.'); }
+    }); if (!viewportGuard.install()) throw kinError("원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요."); }
   },
     onModeEnter() {
       kinToolRetry('kin-pdf-retry');
-      if (viewportGuard && !viewportGuard.ownsWrapper() && !viewportGuard.install()) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = '원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요.'; return; }
+      if (viewportGuard && !viewportGuard.ownsWrapper() && !viewportGuard.install()) { const status = document.querySelector('#kin-viewer-layout-status'); if (status) status.textContent = kinText("원본 PDF 화면을 안전하게 연결하지 못했습니다. 뷰어를 다시 여세요."); return; }
       viewportGuard?.activate();
       const ticket = ++epoch; current?.stop(); current = null;
       prepare().then(module => { if (ticket === epoch) { current = module.create(services, {

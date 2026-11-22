@@ -1,5 +1,7 @@
 
 function kinCreateViewerLayout() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, stop;
   function mount() {
     stop?.();
@@ -9,7 +11,7 @@ function kinCreateViewerLayout() {
     const panel = document.createElement('details'); panel.id = 'kin-viewer-layout'; panel.open = true;
     panel.style.cssText = 'position:fixed;left:8px;bottom:30px;z-index:41;width:360px;max-width:calc(100vw - 16px);max-height:calc(100vh - 48px);overflow:auto;box-sizing:border-box;background:#101e32;color:#e1ecfc;border:1px solid #657c9f;border-radius:8px;padding:8px;font:13px sans-serif';
     const summary = document.createElement('summary'); summary.textContent = 'Recent Layout'; panel.append(summary);
-    const note = document.createElement('p'); note.textContent = '최근 1건만 저장합니다. 영상 위치·확대·주석은 포함하지 않습니다.'; panel.append(note);
+    const note = document.createElement('p'); note.textContent = kinText("최근 1건만 저장합니다. 영상 위치·확대·주석은 포함하지 않습니다."); panel.append(note);
     const status = document.createElement('p'); status.id = 'kin-viewer-layout-status'; status.setAttribute('role', 'status'); panel.append(status);
     const controls = document.createElement('div'); panel.append(controls); document.body.append(panel);
     let ended = false, busy = false, key = null, channel, hpOwner = null, hp = null, hpHost = null;
@@ -17,7 +19,7 @@ function kinCreateViewerLayout() {
     const buttons = [];
     const live = () => !ended && location.search === search;
     const refresh = () => buttons.forEach(b => { b.disabled = ended || busy || !key || !studies; });
-    function end() { if (ended) return; ended = true; controller.abort(); hp?.end(); key = null; status.textContent = '세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요.'; refresh(); }
+    function end() { if (ended) return; ended = true; controller.abort(); hp?.end(); key = null; status.textContent = kinText("세션이 변경되었습니다. 다시 로그인한 뒤 뷰어를 여세요."); refresh(); }
     // Session termination is owned by the page transport and gate.
     function sessionEnded(reason) { kinViewerSession.refuse(reason); end(); }
     async function get(path, signal) {
@@ -31,19 +33,19 @@ function kinCreateViewerLayout() {
         if (!live()) {
           // Session termination is owned by the page transport and gate.
           if (path === '/api/me' && response.ok) kinViewerSession.sameAccount(await response.json().catch(() => null));
-          throw new Error('화면이 변경되어 배치를 적용하지 않았습니다.');
+          throw kinError("화면이 변경되어 배치를 적용하지 않았습니다.");
         }
         if (window.KinSessionTransport.refusal(response)) throw window.KinSessionTransport.responseError(response);
-        if (!response.ok) throw new Error('서버 연결을 확인한 뒤 다시 시도하세요.');
+        if (!response.ok) throw kinError("서버 연결을 확인한 뒤 다시 시도하세요.");
         return await response.json();
       } finally { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); signal?.removeEventListener('abort', abort); }
     }
     async function authenticate(signal) {
       const me = await get('/api/me', signal), next = model.owner(me);
       // Validate the owner before adopting layout data; a rejected response cannot end the session.
-      if (kinViewerSession.sameAccount(me) !== true) throw new Error('계정 응답이 일치하지 않습니다.');
+      if (kinViewerSession.sameAccount(me) !== true) throw kinError("계정 응답이 일치하지 않습니다.");
       kinViewerSession.note(me);
-      if (!live() || !next) { end(); throw new Error('계정이 변경되어 배치를 적용하지 않았습니다.'); }
+      if (!live() || !next) { end(); throw kinError("계정이 변경되어 배치를 적용하지 않았습니다."); }
       const exam=window.KinViewerExamScope?.snapshot();
       key = next+(exam?'|'+JSON.stringify([exam.key,exam.prior&&window.KinExamScope.key(exam.prior)]):'');
       hpOwner = { institution: me.institution, subject: me.sub };
@@ -53,16 +55,16 @@ function kinCreateViewerLayout() {
     function readOnlyPanel() {
       for (const b of buttons.splice(0)) b.remove();
       hp?.end(); hp = null; hpHost?.remove(); hpHost = null;
-      summary.textContent = 'Viewer Status'; note.textContent = '읽기 전용 화면입니다. 배치 저장·복원과 Hanging Protocol은 제공하지 않습니다. 화면 배치는 뷰어의 기본 레이아웃 도구로 바꿀 수 있습니다.';
+      summary.textContent = 'Viewer Status'; note.textContent = kinText("읽기 전용 화면입니다. 배치 저장·복원과 Hanging Protocol은 제공하지 않습니다. 화면 배치는 뷰어의 기본 레이아웃 도구로 바꿀 수 있습니다.");
     }
     async function mountProtocols() {
       const load = (name, global) => window[global] ? Promise.resolve() : new Promise((resolve, reject) => {
         const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
         const finish = error => { clearTimeout(timer); controller.signal.removeEventListener('abort', abort); script.onload = script.onerror = null; script.remove(); error ? reject(error) : resolve(); };
-        const abort = () => finish(new Error('Hanging Protocol 연결이 중단되었습니다.'));
+        const abort = () => finish(kinError("Hanging Protocol 연결이 중단되었습니다."));
         const timer = setTimeout(abort, 10000);
-        script.onload = () => finish(window[global] ? null : new Error('Hanging Protocol 모듈을 확인할 수 없습니다.'));
-        script.onerror = () => finish(new Error('Hanging Protocol 화면을 불러오지 못했습니다.'));
+        script.onload = () => finish(window[global] ? null : kinError("Hanging Protocol 모듈을 확인할 수 없습니다."));
+        script.onerror = () => finish(kinError("Hanging Protocol 화면을 불러오지 못했습니다."));
         controller.signal.addEventListener('abort', abort, { once: true }); document.head.append(script);
       });
       await load('hanging-protocol-model.js', 'KinHangingProtocolModel');
@@ -78,9 +80,9 @@ function kinCreateViewerLayout() {
           const uids = new URLSearchParams(search).get('StudyInstanceUIDs').split(',');
           const exam=await window.KinViewerExamScope?.ensure(true);
           const rows = exam?window.KinExamScope.roleRows(exam,data.studies||[],ds.getActiveDisplaySets()):uids.map(uid => data.studies?.find(row => row.uid === uid));
-          if (rows.some(row => !row)) throw new Error('현재 검사 접근 권한을 확인할 수 없습니다.');
+          if (rows.some(row => !row)) throw kinError("현재 검사 접근 권한을 확인할 수 없습니다.");
           await authenticate(signal);
-          if (signal.aborted) throw new Error('Hanging Protocol 확인이 중단되었습니다.');
+          if (signal.aborted) throw kinError("Hanging Protocol 확인이 중단되었습니다.");
           return { studies: rows, displaySets: kinHangingProtocolDisplaySets(ds.getActiveDisplaySets()) };
         } });
     }
@@ -104,7 +106,7 @@ function kinCreateViewerLayout() {
       if (!cell) return null;
       const matches = ds.getActiveDisplaySets().filter(d => d.StudyInstanceUID === cell.study && d.SeriesInstanceUID === cell.series &&
         (!cell.sops || JSON.stringify(reference(d)) === JSON.stringify(cell)));
-      if (matches.length !== 1) throw new Error('저장한 영상 구성을 찾을 수 없습니다. 현재 배치를 유지합니다.');
+      if (matches.length !== 1) throw kinError("저장한 영상 구성을 찾을 수 없습니다. 현재 배치를 유지합니다.");
       return matches[0].displaySetInstanceUID;
     }
     function capture() {
@@ -112,9 +114,9 @@ function kinCreateViewerLayout() {
       const cells = views.map(v => {
         const refs = (v.displaySetInstanceUIDs || []).map(id => {
           const d = ds.getDisplaySetByUID(id);
-          if (!d || !studies.includes(d.StudyInstanceUID)) throw new Error('영상 로딩이 끝난 뒤 다시 저장하세요.');
+          if (!d || !studies.includes(d.StudyInstanceUID)) throw kinError("영상 로딩이 끝난 뒤 다시 저장하세요.");
           const ref = reference(d);
-          if (resolve(ref) !== id) throw new Error('표시 영상의 구성을 확인할 수 없습니다.');
+          if (resolve(ref) !== id) throw kinError("표시 영상의 구성을 확인할 수 없습니다.");
           return ref;
         });
         const { viewportId, ...viewportOptions } = v.viewportOptions || {};
@@ -122,27 +124,27 @@ function kinCreateViewerLayout() {
           viewportOptions, displaySetOptions: v.displaySetOptions || refs.map(() => ({})) };
       });
       const value = model.normalize({ version: 2, studies, rows, cols, active: views.findIndex(v => v.viewportId === state.activeViewportId), cells });
-      if (!value) throw new Error('현재 화면의 배치를 확인할 수 없습니다.');
+      if (!value) throw kinError("현재 화면의 배치를 확인할 수 없습니다.");
       return value;
     }
     async function run(action) {
       if (kinViewerSession.ended() || busy || !live() || !key || !studies || kinViewerSession.readOnly()) return;
-      busy = true; refresh(); status.textContent = '계정과 검사 접근 확인 중…'; const before = signature();
+      busy = true; refresh(); status.textContent = kinText("계정과 검사 접근 확인 중…"); const before = signature();
       try {
         await authenticate();
         const exam=window.KinViewerExamScope?.snapshot();
         if(exam)await window.KinViewerExamScope.ensure(true);
         const data = await get('/api/studies');
         const rows = exam ? window.KinExamScope.roleRows(exam,data.studies||[]) : studies.map(uid => data.studies?.find(s => s.uid === uid));
-        if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw new Error('현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.');
+        if (rows.some(s => !s) || (rows.length > 1 && (!rows[0].sourcePatientKey || rows.some(s => s.sourcePatientKey !== rows[0].sourcePatientKey)))) throw kinError("현재 검사의 접근 권한과 같은 환자 여부를 확인할 수 없습니다.");
         // A delayed permission response must not overwrite a newer manual layout or selection.
-        if (!live() || before !== signature()) throw new Error('화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.');
-        if (action === 'save') { model.write(localStorage, key, capture()); status.textContent = '최근 배치를 이 브라우저에 저장했습니다.'; }
-        else if (action === 'remove') { localStorage.removeItem(key); status.textContent = '이 계정의 최근 배치를 삭제했습니다. 현재 화면은 유지됩니다.'; }
+        if (!live() || before !== signature()) throw kinError("화면 배치가 변경되어 작업을 적용하지 않았습니다. 다시 시도하세요.");
+        if (action === 'save') { model.write(localStorage, key, capture()); status.textContent = kinText("최근 배치를 이 브라우저에 저장했습니다."); }
+        else if (action === 'remove') { localStorage.removeItem(key); status.textContent = kinText("이 계정의 최근 배치를 삭제했습니다. 현재 화면은 유지됩니다."); }
         else {
           const value = model.read(localStorage, key);
-          if (!value) throw new Error('이 계정에서 저장한 최근 배치가 없습니다.');
-          if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw new Error('다른 검사의 배치입니다. 저장한 검사를 먼저 여세요.');
+          if (!value) throw kinError("이 계정에서 저장한 최근 배치가 없습니다.");
+          if (JSON.stringify(value.studies) !== JSON.stringify(studies)) throw kinError("다른 검사의 배치입니다. 저장한 검사를 먼저 여세요.");
           const cells = value.version === 2 ? value.cells : value.cells.map((ref, i) => ({
             x: i % value.cols / value.cols, y: Math.floor(i / value.cols) / value.rows, width: 1 / value.cols, height: 1 / value.rows,
             sets: ref ? [ref] : [], viewportOptions: { viewportType: 'stack', toolGroupId: 'default' }, displaySetOptions: [{}] }));
@@ -151,10 +153,10 @@ function kinCreateViewerLayout() {
             layoutOptions: cells.map(({ x, y, width, height }) => ({ x, y, width, height })),
             findOrCreateViewport: index => ({ displaySetInstanceUIDs: sets[index], displaySetOptions: cells[index].displaySetOptions,
               viewportOptions: { ...cells[index].viewportOptions, viewportId: ids[index], allowUnmatchedView: true } }) });
-          if (live()) status.textContent = '저장한 시리즈 배치를 적용했습니다. 영상 로딩 상태를 확인하세요.';
+          if (live()) status.textContent = kinText("저장한 시리즈 배치를 적용했습니다. 영상 로딩 상태를 확인하세요.");
         }
       } catch (error) {
-        if (live()) status.textContent = error?.name === 'QuotaExceededError' || error?.name === 'SecurityError' ? '브라우저 저장소를 사용할 수 없습니다. 현재 화면은 유지됩니다.' : error instanceof SyntaxError ? '저장한 배치가 손상되었습니다. 현재 화면은 유지됩니다.' : error?.message || '배치 작업에 실패했습니다.';
+        if (live()) status.textContent = error?.name === 'QuotaExceededError' || error?.name === 'SecurityError' ? kinText("브라우저 저장소를 사용할 수 없습니다. 현재 화면은 유지됩니다.") : error instanceof SyntaxError ? kinText("저장한 배치가 손상되었습니다. 현재 화면은 유지됩니다.") : error?.message || kinText("배치 작업에 실패했습니다.");
       } finally { busy = false; refresh(); }
     }
     for (const [label, action] of [['Save Recent Layout', 'save'], ['Restore Recent Layout', 'restore'], ['Delete Recent Layout', 'remove']]) {
@@ -178,9 +180,9 @@ function kinCreateViewerLayout() {
     else if (studies) authenticate().then(async () => {
       if (!live()) return;
       if (kinViewerSession.readOnly()) { readOnlyPanel(); return; }
-      status.textContent = '현재 검사의 배치를 직접 저장하거나 복원하세요.'; await mountProtocols();
-    }).catch(error => { if (live()) status.textContent = error?.message || '계정 정보를 확인할 수 없습니다. 뷰어를 다시 여세요.'; }).finally(refresh);
-    else status.textContent = '현재 검사의 식별 정보를 확인할 수 없습니다.';
+      status.textContent = kinText("현재 검사의 배치를 직접 저장하거나 복원하세요."); await mountProtocols();
+    }).catch(error => { if (live()) status.textContent = error?.message || kinText("계정 정보를 확인할 수 없습니다. 뷰어를 다시 여세요."); }).finally(refresh);
+    else status.textContent = kinText("현재 검사의 식별 정보를 확인할 수 없습니다.");
     stop = () => { unwatch(); unwatchEnd(); end();  channel?.close(); panel.remove(); };
   }
   return { id: 'kin.viewer-layout', preRegistration({ servicesManager }) { services = servicesManager.services; }, onModeEnter: mount, onModeExit() { stop?.(); stop = null; } };

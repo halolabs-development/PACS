@@ -18,7 +18,7 @@ window.KinStudyTransferLocal = function (app) {
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
-  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const work = window.KinWorkContext;
   const root = document.getElementById('study-transfer');
   const toolbarButton = document.getElementById('t-import');
@@ -1357,7 +1357,7 @@ window.KinStudyTransferLocal = function (app) {
     const opInput = node('input'); opInput.name = 'operationId'; opInput.autocomplete = 'off'; opInput.spellcheck = false;
     const indexInput = node('input'); indexInput.name = 'index'; indexInput.type = 'number'; indexInput.min = '0'; indexInput.max = '99';
     const basis = node('select'); basis.name = 'basis';
-    for (const [value, text] of BASES) { const o = node('option', null, text); o.value = value; basis.append(o); }
+    for (const [value, text] of BASES) { const o = node('option'); kinWrite(o, kinSayEn(text)); o.value = value; basis.append(o); }
     const checked = node('input'); checked.name = 'checkedAt'; checked.type = 'datetime-local'; checked.step = '1';
     const submit = node('button', null, 'Resolve'); submit.type = 'submit';
     const result = node('p', 'study-transfer-resolve-result'); result.lang = 'ko'; result.setAttribute('role', 'status');

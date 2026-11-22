@@ -1,15 +1,19 @@
 /* A viewer scope is admitted by the server before any source metadata reaches OHIF.
  * Original UIDs stay on images; the compact reference identifies the reporting exam. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), { kinWords: true }); }
 (function(root) {
   'use strict';
   const model = root.KinExamScope;
   const route = href => {
     const url = new URL(href, root.location.origin);
-    if (url.origin !== root.location.origin || url.pathname !== '/ohif/viewer') throw Error('영상 주소를 확인하세요.');
+    if (url.origin !== root.location.origin || url.pathname !== '/ohif/viewer') throw kinError("영상 주소를 확인하세요.");
     const value = url.searchParams.get('kinExamScopes');
     if (!value) return null;
-    let ref; try { ref = JSON.parse(value); } catch (_) { throw Error('검사 범위 참조를 확인하세요.'); }
-    if (!ref?.current || !Object.hasOwn(ref, 'prior')) throw Error('검사 범위 참조를 확인하세요.');
+    let ref; try { ref = JSON.parse(value); } catch (_) { throw kinError("검사 범위 참조를 확인하세요."); }
+    if (!ref?.current || !Object.hasOwn(ref, 'prior')) throw kinError("검사 범위 참조를 확인하세요.");
     return {url, ref, key:url.pathname+url.search};
   };
   let admitted = null, pending = null, epoch = 0, stopped = false, timer, channel, notice;
@@ -34,7 +38,7 @@
       if (version != null) query.set('version',String(version));
       const response = await root.fetch('/api/studies/'+encodeURIComponent(reference.reportUid)+'/exam-scope?'+query,
         {credentials:'same-origin',signal});
-      if (!response.ok) throw Error('검사 범위나 원본 접근이 바뀌었습니다. 목록에서 검사를 다시 여세요.');
+      if (!response.ok) throw kinError("검사 범위나 원본 접근이 바뀌었습니다. 목록에서 검사를 다시 여세요.");
       return model.read(await response.json());
     };
     const current = await read(entry.ref.current,entry.ref.version), prior = await read(entry.ref.prior,entry.ref.priorVersion);
@@ -43,9 +47,9 @@
     if (entry.ref.purpose) input.purpose = entry.ref.purpose;
     // A copied or edited address cannot add an original or start at an excluded series.
     const requested = (entry.url.searchParams.get('StudyInstanceUIDs') || '').split(',');
-    if (JSON.stringify(requested) !== JSON.stringify(input.studyUids)) throw Error('영상 주소의 원본 목록이 검사 범위와 다릅니다. 목록에서 다시 여세요.');
+    if (JSON.stringify(requested) !== JSON.stringify(input.studyUids)) throw kinError("영상 주소의 원본 목록이 검사 범위와 다릅니다. 목록에서 다시 여세요.");
     const series = entry.url.searchParams.get('initialSeriesInstanceUID');
-    if (series && !input.studyUids.some(uid=>allows(input,uid,series))) throw Error('이 검사에 속하지 않는 시리즈입니다.');
+    if (series && !input.studyUids.some(uid=>allows(input,uid,series))) throw kinError("이 검사에 속하지 않는 시리즈입니다.");
     return input;
   }
   function block(error) {
@@ -63,12 +67,12 @@
     const entry = active();
     if (!entry) return null;
     if (entry.error) { block(entry.error); throw entry.error; }
-    if (stopped) throw Error('영상 작업이 종료되었습니다.');
+    if (stopped) throw kinError("영상 작업이 종료되었습니다.");
     if (!force && admitted?.key === entry.key) return admitted.input;
     if (pending?.key === entry.key) return pending.promise;
     const ticket = epoch, key = entry.key;
     const promise = resolve(root.location.href).then(input => {
-      if (stopped || ticket !== epoch || key !== active()?.key) throw Error('영상 범위 확인 중 화면이 바뀌었습니다.');
+      if (stopped || ticket !== epoch || key !== active()?.key) throw kinError("영상 범위 확인 중 화면이 바뀌었습니다.");
       admitted={key,input}; notice?.remove(); notice=null;
       root.document?.documentElement?.classList.remove('kin-exam-unverified');
       return input;
@@ -84,7 +88,7 @@
   function invalidate() {
     if (!active()) return;
     epoch++;pending=null;admitted=null;
-    block(Error('검사 묶음이 바뀌었습니다. 쓰던 내용은 유지됩니다. 목록에서 영상을 다시 여세요.'));
+    block(kinError("검사 묶음이 바뀌었습니다. 쓰던 내용은 유지됩니다. 목록에서 영상을 다시 여세요."));
   }
   // Compare › Related Studies › Series lists the series of a related exam before it is opened. That one read names
   // itself with this header and is exactly a GET of one study's series list (QIDO-RS series level) — never metadata or
@@ -105,13 +109,13 @@
     if (!match || !active()) return native(url,init);
     const key=active().key,ticket=epoch,input=await ensure(),list=listOnly(url,init,target);
     if(!list&&!allows(input,decodeURIComponent(match[1]),match[2]&&decodeURIComponent(match[2])))
-      throw Error('이 검사 범위에 없는 영상입니다.');
+      throw kinError("이 검사 범위에 없는 영상입니다.");
     const response=await native(url,init);
-    if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw Error('영상 범위가 바뀌었습니다.'); }
+    if(ticket!==epoch||key!==active()?.key) { response.body?.cancel().catch(()=>{}); throw kinError("영상 범위가 바뀌었습니다."); }
     if(list||!response.ok||!/(?:\/metadata|\/series|\/instances)$/.test(target.pathname))return response;
     const rows=await response.json();
-    if(ticket!==epoch||key!==active()?.key)throw Error('영상 범위가 바뀌었습니다.');
-    if(!Array.isArray(rows))throw Error('원본 영상 목록을 확인할 수 없습니다.');
+    if(ticket!==epoch||key!==active()?.key)throw kinError("영상 범위가 바뀌었습니다.");
+    if(!Array.isArray(rows))throw kinError("원본 영상 목록을 확인할 수 없습니다.");
     const filtered=rows.filter(row=>allows(input,row['0020000D']?.Value?.[0]||decodeURIComponent(match[1]),row['0020000E']?.Value?.[0]));
     const headers=new root.Headers(response.headers);headers.delete('content-length');headers.delete('content-encoding');
     return new root.Response(JSON.stringify(filtered),{status:response.status,statusText:response.statusText,headers});
@@ -150,12 +154,12 @@
     const sets=services?.displaySetService;
     if(!sets||installed.has(sets))return;
     const make=sets.makeDisplaySets;
-    if(typeof make!=='function')throw Error('영상 범위 공급을 연결하지 못했습니다.');
+    if(typeof make!=='function')throw kinError("영상 범위 공급을 연결하지 못했습니다.");
     sets.makeDisplaySets=function(instances,...args) {
       // What this window's reader just saved (madeInClient) is held to the scope too, as it is when the window opens again.
       if(!active()||!Array.isArray(instances))return make.apply(this,[instances,...args]);
       const input=snapshot();
-      if(!input)throw Error('검사 범위를 확인한 뒤 영상을 표시할 수 있습니다.');
+      if(!input)throw kinError("검사 범위를 확인한 뒤 영상을 표시할 수 있습니다.");
       const keep=list=>list.filter(instance=>allows(input,instance?.StudyInstanceUID,instance?.SeriesInstanceUID));
       // {batch:true}: one list of instances per series; each list keeps only the scope's images, an emptied list goes.
       const selected=args[0]?.batch===true?instances.map(list=>Array.isArray(list)?keep(list):[]).filter(list=>list.length):keep(instances);

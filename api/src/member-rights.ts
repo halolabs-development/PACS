@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { APP_ROLES } from './clinician-policy';
 import type { AccessEventV1, ImmutableIdentity } from './emr-contract/access-event';
+import { loginAliases, type WriterDirectory, type WriterMember } from './account-identity';
 
 /** The controller's server-observed request context, never request-body fields. */
 export interface RightsRequestFacts {
@@ -75,6 +76,38 @@ export async function memberNames(db: any, subs: readonly (string | null | undef
  */
 export function versionWriterName(row: { authorName?: unknown } | null | undefined): string | undefined {
   return typeof row?.authorName === 'string' && row.authorName.trim() ? row.authorName.trim() : undefined;
+}
+
+/**
+ * The caller's institution's members as a writer of a record is shown to this caller (account-identity.ts writerShown), read
+ * once at the start of a request that answers who saved, holds or wrote something. The member table is the authority the
+ * administrator's commands write (memberUser); a caller of no institution reads none.
+ * Colleagues' names are shown as GET colleagues shows them: to a radiologist or an administrator, for an approved, active
+ * radiologist of the institution, as the name the member row keeps (its username, else its login, when it has none).
+ * The table is put on the caller object itself, read again at every entry: the request's other per-caller state (StudyAccessService
+ * keeps its preparations by the caller object) stays with the same object, and an object used again never keeps an older table.
+ */
+export async function withWriters<C extends { roles?: readonly string[] | null; institution?: string | null; writers?: WriterDirectory }>(
+  db: any, c: C): Promise<C> {
+  // A store without the member table (a test's partial store) has no members to name; the product store always has it.
+  const rows: any[] = c.institution && typeof db?.memberRights?.findMany === 'function' ? await db.memberRights.findMany({ where: { institution: c.institution },
+    select: { sub: true, username: true, email: true, name: true, approved: true, suspended: true, institution: true, roles: true } }) : [];
+  const bySub = new Map<string, WriterMember>(), taken = new Set<string>(), byLogin = new Map<string, string>(), shared = new Set<string>();
+  for (const row of rows) {
+    const login = typeof row.email === 'string' && row.email ? row.email : typeof row.username === 'string' ? row.username : '';
+    if (!row.sub || !login) continue;
+    const name = typeof row.name === 'string' ? row.name.trim() : '', username = typeof row.username === 'string' ? row.username : '';
+    // The member import fills a missing name with the username: that is no registered name (others see the login, as before).
+    bySub.set(row.sub, { login, named: name && name !== username && name !== login ? name : null, own: name || username || login,
+      colleague: rightsAllow(row) && row.roles.includes('radiologist') });
+    for (const alias of [...loginAliases(row.email), ...loginAliases(row.username)]) taken.add(alias);
+    for (const exact of new Set([row.email, row.username].filter(v => typeof v === 'string' && v)))
+      if (byLogin.has(exact) && byLogin.get(exact) !== row.sub) shared.add(exact); else byLogin.set(exact, row.sub);
+  }
+  for (const exact of shared) byLogin.delete(exact);
+  const roles = Array.isArray(c.roles) ? c.roles : [];
+  c.writers = { names: roles.includes('radiologist') || roles.includes('admin'), bySub, taken, byLogin };
+  return c;
 }
 
 export function rightsAllow(row: any): boolean {

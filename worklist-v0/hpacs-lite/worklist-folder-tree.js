@@ -7,6 +7,10 @@
   'use strict';
   const BASE = ['CT', 'MR', 'CR', 'US', 'SC'];
   let nextMountId = 0;
+  // The tree's own words follow the screen language when the page's translator is loaded; names people give stay as written.
+  const language = () => (typeof window === 'object' ? window.KinLanguage : null) || null;
+  const say = (phrase, ...parts) => language()?.say(phrase, ...parts) ?? phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] === undefined ? slot : String(parts[i]));
+  const write = (node, value, name) => { const words = language(); if (words && typeof value === 'object') words.write(node, value, name); else if (name) node.setAttribute(name, value); else node.textContent = value; return node; };
   const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
   const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 400 && !/[\r\n]/.test(value);
   const tokens = value => typeof value === 'string'
@@ -53,7 +57,7 @@
     const sectionPrefix = 'worklist-folders-' + ++nextMountId;
     let state, selected = ['all'], applied = [{ id: 'all', name: 'All Studies', kind: 'all' }], appliedSearch, ended = false, narrowed = false;
     const nav = doc.createElement('nav');
-    nav.className = 'worklist-folder-tree'; nav.setAttribute('aria-label', 'Folders');
+    nav.className = 'worklist-folder-tree'; write(nav, say('Folders'), 'aria-label');
     const controls = new Map(), collapsed = new Set(), counts = new Map();
     function validate(next) {
       if (!Array.isArray(next.rows) || next.rows.some(row => !object(row))
@@ -225,7 +229,7 @@
       const next = [...state.shortcuts], [item] = next.splice(at, 1); next.splice(to, 0, item); change(next);
     }
     function element(tag, label) {
-      const node = doc.createElement(tag); if (label !== undefined) node.textContent = label; return node;
+      const node = doc.createElement(tag); if (label !== undefined) write(node, label); return node;
     }
     function remember(node, key) { controls.set(key, node); return node; }
     function button(label, action, key) {
@@ -249,7 +253,8 @@
       controls.clear();
       const list = element('ul');
       function itemRow(item, parent) {
-        const li = element('li'), label = item.name + ' (' + count(item) + ')' + (item.unavailable ? ' · Unavailable' : '');
+        const li = element('li'), label = item.kind === 'all' ? say('All Studies ({0})', count(item))
+          : item.name + ' (' + count(item) + ')' + (item.unavailable ? ' · Unavailable' : '');
         const control = button(label, () => attempt(() => item.kind === 'modality'
           ? toggleModality(item.id) : choose(item.id, 'user')), item.id);
         if (item.kind === 'modality') control.setAttribute('aria-pressed', String(selected.includes(item.id)));
@@ -263,9 +268,9 @@
         const group = element('li'), children = element('ul'); children.hidden = collapsed.has(kind);
         // With a menu handler, the My Shortcuts title opens the exam-filter popup instead of folding the list.
         const opensMenu = kind === 'shortcut' && typeof onShortcutsMenu === 'function';
-        const toggle = button(title, opensMenu ? () => onShortcutsMenu(toggle)
+        const toggle = button(say(title), opensMenu ? () => onShortcutsMenu(toggle)
           : () => { collapsed.has(kind) ? collapsed.delete(kind) : collapsed.add(kind); render(); }, 'section:' + kind);
-        if (opensMenu) { children.hidden = false; toggle.setAttribute('aria-haspopup', 'dialog'); toggle.title = '검사 필터 창을 엽니다.'; }
+        if (opensMenu) { children.hidden = false; toggle.setAttribute('aria-haspopup', 'dialog'); write(toggle, say('검사 필터 창을 엽니다.'), 'title'); }
         toggle.setAttribute('id', sectionPrefix + '-' + kind);
         children.setAttribute('aria-labelledby', toggle.getAttribute('id'));
         toggle.setAttribute('aria-expanded', String(!children.hidden)); group.append(toggle, children); list.append(group);

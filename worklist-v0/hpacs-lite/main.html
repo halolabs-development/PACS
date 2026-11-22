@@ -103,8 +103,8 @@
     .filters input, .filters select { width: 100%; min-width: 30px; background: #14181f; border: 1px solid #3a4356; color: #cdd3dc; padding: 1px 3px; font-size: 11px; }
     tbody tr:hover td { background: #2b3547; }
     tbody tr.sel td { background: #34455f; }
-    tr.unv td { opacity: .55; }
-    tr.unv.sel td { opacity: .8; }
+    /* A study still being acquired (Unverified) is set in italics; its text keeps its colour and contrast. */
+    #rows tr.unv td { font-style: italic; }
     td.num { text-align: right; }
     .empty { text-align: center; color: #667; padding: 30px !important; }
     .rs { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; font-weight: bold; cursor: pointer; }

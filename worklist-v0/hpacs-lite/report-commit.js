@@ -86,16 +86,16 @@
       const parts = [];
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
       if (r.holder && r.holderDraft && !r.sameWriter) {
-        const who = displayActor(r.holder);
+        const who = writerName(r.holderName, r.holder);
         parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
       }
       if (r.savedBy) {
-        const who = displayActor(r.savedBy);
+        const who = writerName(r.savedByName, r.savedBy);
         parts.push(r.savedKept ? `${who} 선생님이 저장해 둔 글은 ${who} 선생님의 개인 임시글로 옮겼습니다.`
           : `${who} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.`);
       }
       return parts.length ? parts.join(" ") + " 판독 상태를 Unread로 되돌렸습니다."
-        : `${displayActor(r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
+        : `${writerName(r.holderName, r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
     }
 
     /** 받아들여진 확정의 완료 안내. `lateText`는 그 확정이 싣지 않은, 누른 뒤에 친 글이 남았다는 뜻이다. */
@@ -391,7 +391,7 @@
             }
             // 작성자 대조의 거절을 포함해, 서버가 이유를 대고 받지 않은 확정이다. 아무것도 바뀌지 않았다.
             const refused = result.answer?.body || {};
-            if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder);
+            if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder, refused.holderName ?? null);
             throw Object.assign(new Error(draftFailureText(result)), { code: result.code ?? refused.code, status: result.answer?.status, body: refused });
           }
           heldUid = null; clearInterval(heartbeat); heartbeat = null;   // 확정하면 서버가 점유를 푼다
@@ -651,7 +651,7 @@
         designated: a.rs === "P" && !a.prelimHidden,
         texts: Object.fromEntries(RFIELDS.map(k => [k, String(a[k] ?? "")])),
         draft: !a.prelimHidden && !!a.draft,
-        holder: holder ? (holder === "다른 기관" || holder === "작성자 비공개" ? holder : displayActor(holder)) : null,
+        holder: holder ? writerName(a.holderName, holder) : null,
         // 이 문서에 서버가 확인하지 않은 글·나가 있는 초안 명령·결과를 모르는 확정·확정되지 않은 Related 삽입이 있다.
         unconfirmed: reportConverge.has(uid) || draftClient.busy(uid) || draftClient.uncertain(uid) || !!draftClient.conflict(uid)
           || reportUnknownCommits.has(uid) || relatedInsertPending(uid) || (uid === selectedUid && reportDirty()),
@@ -726,7 +726,7 @@
       if (result.outcome === "unknown") return { status: "unknown", sentAt, seq };
       if (result.outcome === "unsent" || result.outcome === "auth") return { status: "stopped" };
       const refused = result.answer?.body || {};
-      if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder);
+      if (refused.code === "REPORT_HELD") noteHeld(uid, refused.holder, refused.holderName ?? null);
       return { status: "failed", reason: draftFailureText(result), code: result.code ?? refused.code ?? null };
     }
     /**
@@ -952,10 +952,10 @@
       const s = studies.find(x => x.uid === uid);
       const a = appState[uid];
       if (!s || !a) return;
-      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderMine", "version", "repDoc", "confirm",
-                        "preDoc", "preReviewer", "prelimHidden", "holdReason"])
+      for (const k of ["rs", "ss", "em", "ts", "matched", "holder", "holderName", "holderMine", "version", "repDoc", "confirm",
+                        "preDoc", "preReviewer", "preDocName", "preReviewerName", "prelimHidden", "holdReason"])
         if (a[k] !== undefined) s[k] = a[k];
-      if (a.holder === null || a.holder === undefined) s.holder = a.holder;
+      if (a.holder === null || a.holder === undefined) { s.holder = a.holder; s.holderName = a.holderName ?? null; }
       // Read Req: an approved row has no open reading request - the approval closed it in its own commit and a request is
       // never made on an approved report (api/src/pacs/reading-request.ts) - so the mark leaves with the approval, at once.
       if (s.rs === "A") Object.assign(s, { readReq: "", readReqBy: "" });

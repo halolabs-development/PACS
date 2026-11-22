@@ -12,7 +12,7 @@ const NUMBERS = new Set(['length', 'size', 'count', 'total', 'images', 'number',
   'selected', 'checked', 'skipped', 'added', 'removed', 'moved', 'width', 'height', 'frames', 'series', 'studies', 'rows', 'seconds', 'minutes', 'percent']);
 // Calls and properties through which a literal reaches the screen.
 const UI_PROPS = new Set(['textContent', 'innerText', 'innerHTML', 'outerHTML', 'title', 'placeholder', 'label', 'ariaLabel', 'alt']);
-const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'kinSay', 'kinWrite', 'note', 'show', 'announce', 'tell', 'setStatus',
+const UI_CALLS = new Set(['toast', 'alert', 'confirm', 'prompt', 'setCustomValidity', 'say', 'kinSay', 'kinSayEn', 'kinWrite', 'note', 'show', 'announce', 'tell', 'setStatus',
   'status', 'append', 'prepend', 'replaceChildren', 'insertAdjacentText', 'insertAdjacentHTML', 'createTextNode', 'element', 'el', 'make', 'node',
   'button', 'btn', 'chip', 'h', 'tag', 'create', 'option', 'plain', 'primary', 'cancel', 'labelled', 'add', 'line', 'row', 'cell', 'heading',
   'field', 'section', 'group', 'link', 'item', 'tab', 'action', 'menuItem', 'choice', 'pick', 'toggle', 'radio', 'check', 'checkbox', 'fail', 'fill', 'message', 'reason', 'finish']);
@@ -87,6 +87,44 @@ function ui(n) {
   return false;
 }
 
+// Whether a piece reaches the screen through the screen-language write path: it is the template of kinSay / kinSayEn / kinText /
+// kinHtml / kinError / KinLanguage.say|sayEnglish|text|html (or the value of kinWrite / KinLanguage.write), through choices and
+// wrappers only.
+const SAY = new Set(['kinSay', 'kinSayEn', 'say', 'sayEnglish', 'kinText', 'kinHtml', 'kinError', 'text', 'html']), WRITE = new Set(['kinWrite', 'write']);
+function rise(n) {
+  let child = n, p = n.parent;
+  while (p && (ts.isParenthesizedExpression(p) || ts.isConditionalExpression(p) && child !== p.condition ||
+    ts.isBinaryExpression(p) && [ts.SyntaxKind.BarBarToken, ts.SyntaxKind.QuestionQuestionToken, ts.SyntaxKind.AmpersandAmpersandToken].includes(p.operatorToken.kind))) { child = p; p = p.parent; }
+  return { child, p };
+}
+function through(n) {
+  const { child, p } = rise(n);
+  if (!p || !ts.isCallExpression(p) || child === p.expression) return false;
+  const callee = p.expression;
+  const name = ts.isIdentifier(callee) ? (/^kin(Say|SayEn|Text|Html|Error|Write)$/.test(callee.text) ? callee.text : '')
+    : ts.isPropertyAccessExpression(callee) && /(?:^|\.)(KinLanguage|language)$/.test(callee.expression.getText()) ? callee.name.text : '';
+  if (SAY.has(name)) return p.arguments[0] === child;
+  if (WRITE.has(name)) return p.arguments[1] === child;
+  return false;
+}
+// Words the code reads back rather than writes: compared, matched, a key, a case label, a log line.
+const READ_CALLS = new Set(['includes', 'startsWith', 'endsWith', 'indexOf', 'lastIndexOf', 'match', 'matchAll', 'test', 'exec', 'replace', 'replaceAll',
+  'split', 'search', 'localeCompare', 'get', 'has', 'delete', 'querySelector', 'querySelectorAll', 'closest', 'matches', 'getItem', 'setItem', 'removeItem']);
+function reads(n) {
+  const { child, p } = rise(n);
+  if (!p) return false;
+  if (ts.isPropertyAssignment(p) && child === p.name || ts.isElementAccessExpression(p) && child === p.argumentExpression || ts.isCaseClause(p)) return true;
+  if (ts.isPropertyAccessExpression(p) && child === p.expression) return true;
+  if (ts.isBinaryExpression(p) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken, ts.SyntaxKind.EqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.InKeyword].includes(p.operatorToken.kind)) return true;
+  if (ts.isCallExpression(p) || ts.isNewExpression(p)) {
+    const callee = p.expression, name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : '';
+    if (ts.isNewExpression(p) && name === 'RegExp' || READ_CALLS.has(name) && p.arguments?.[0] === child) return true;
+    if (/^console\./.test(callee.getText())) return true;
+  }
+  return false;
+}
+
 function collect(file, typescript = false) {
   const text = fs.readFileSync(file, 'utf8');
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, typescript ? ts.ScriptKind.TS : ts.ScriptKind.JS);
@@ -103,7 +141,7 @@ function collect(file, typescript = false) {
         for (const span of p.templateSpans) { value += '\u0000' + kinds.length + '\u0000'; kinds.push(kind(span.expression)); value += span.literal.text; }
       } else { value += '\u0000' + kinds.length + '\u0000'; kinds.push(kind(part)); }
     }
-    out.push({ file: path.basename(file), line: line(at), value, kinds, ui: ui(at) });
+    out.push({ file: path.basename(file), line: line(at), value, kinds, ui: ui(at), through: through(at), reads: reads(at) });
   }
   function flatten(n) { n = n; return isPlus(n) ? [...flatten(n.left), ...flatten(n.right)] : [n]; }
   function visit(n) {

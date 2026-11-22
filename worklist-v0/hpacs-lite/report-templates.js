@@ -31,7 +31,7 @@
         const key = templateClass(t.bodypart);
         if (key && !classes.has(key)) classes.set(key, String(t.bodypart).trim().replace(/\s+/g, " "));
       }
-      const options = [new Option("전체 부위", ""), new Option("미지정", JSON.stringify("")),
+      const options = [kinWrite(new Option("", ""), kinSayEn("전체 부위")), kinWrite(new Option("", JSON.stringify("")), kinSayEn("미지정")),
         ...[...classes].sort(([a], [b]) => a.localeCompare(b)).map(([key, name]) => Object.assign(new Option(name, JSON.stringify(key)), { translate: false }))];
       // 마지막 항목의 부위를 바꿔도 사용자가 고른 조건을 몰래 '전체'로 넓히지 않는다.
       if (chosen && !options.some(option => option.value === chosen)) options.push(Object.assign(new Option(label, chosen), { translate: false }));
@@ -39,7 +39,7 @@
     }
     function renderTemplates() {
       // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
-      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
       const s = cur();
       const useMod = $("#t-mod").checked, modalities = templateModalities(s?.modality);
       renderTemplateBodyparts();
@@ -57,18 +57,20 @@
         return (!useMod || !modalities.length || !kinds.length || kinds.some(kind => modalities.includes(kind)))
           && (!body || JSON.stringify(templateClass(t.bodypart)) === body) && words.every(word => text.includes(word));
       });
-      const modStatus = !useMod ? "Modality 전체" : !s ? "검사 미선택 · Modality 미적용"
-        : !modalities.length ? "검사 Modality 없음 · 미적용" : "Modality: " + modalities.join(", ").toUpperCase();
+      const modStatus = !useMod ? kinSayEn("Modality 전체") : !s ? kinSayEn("검사 미선택 · Modality 미적용")
+        : !modalities.length ? kinSayEn("검사 Modality 없음 · 미적용") : "Modality: " + modalities.join(", ").toUpperCase();
       const chosenPart = $("#t-body").selectedOptions[0], chosenText = window.KinLanguage ? window.KinLanguage.source(chosenPart) : chosenPart.textContent;
       // A body part class from the templates is data; the fixed choices are words of the page.
       kinWrite($("#tpl-filter-status"), kinSay("{n0} / {n1}개 · {t2} · {3}{t4}", list.length, templates.length, { t: modStatus },
-        chosenPart.translate === false ? chosenText : { t: chosenText }, { t: words.length ? " · 검색 적용" : "" }));
+        chosenPart.translate === false ? chosenText : { t: kinSayEn(chosenText) }, { t: words.length ? kinSayEn(" · 검색 적용") : "" }));
       $("#tplrows").innerHTML = list.map(t => `
         <tr data-i="${templates.indexOf(t)}" title="더블클릭: 판독문에 삽입${
           t.shortcut ? ` / 판독문에서 &quot;${esc(t.shortcut)}&quot; 입력 후 Tab` : ""} / 우클릭: 편집">
           <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
+      const emptyTemplates = $("#tplrows td.empty");
+      if (emptyTemplates) kinWrite(emptyTemplates, kinSayEn(templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"));
       updateTemplatePreview();
     }
     /**

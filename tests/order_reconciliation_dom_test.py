@@ -13,6 +13,7 @@ import unittest
 from playwright.sync_api import sync_playwright
 
 import worklist_arrivals_dom_test as arrivals
+from main_split_harness import fixture_block
 
 ROOT = Path(__file__).resolve().parents[1]
 ORDERS_JS = (ROOT / "worklist-v0" / "hpacs-lite" / "order-reconciliation.js").read_text(encoding="utf-8")
@@ -51,6 +52,8 @@ class OrderReconciliationDOMTest(unittest.TestCase):
         self.page = self.browser.new_page()
         self.page.on("pageerror", lambda error: self.errors.append(str(error)))
         self.page.set_content(arrivals.HARNESS)
+        # The page's sentence maker, as the arrivals harness gives it (renderObservation writes a sentence of two labels).
+        self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
         self.page.add_script_tag(content=arrivals.ARRIVALS)
         self.page.add_script_tag(content=ORDERS_JS)
         self.page.evaluate("seed=>{window.orders=seed}", OFFLINE_SEED)

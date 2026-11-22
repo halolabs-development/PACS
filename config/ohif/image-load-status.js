@@ -1,6 +1,8 @@
 // A failed pixel request is otherwise only a console error in the pinned viewer. Keep its explanation on the
 // affected frame until that image loads or the viewport changes; a failed prefetch must not cover a displayed image.
 function kinCreateImageLoadStatus() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   // The SOF3 decoder lives for the page: once it could not load, later mode entries keep the pinned path.
   let services, extensions, stop, handleGlobal, sof3, registered = false;
   const globalFailure = event => handleGlobal?.(event);
@@ -15,28 +17,27 @@ function kinCreateImageLoadStatus() {
         'IMAGE_DELIVERY_RECORD_UNAVAILABLE', 'AUTH_SESSION_ENDED', 'AUTH_SESSION_MISMATCH'].includes(body?.code) &&
           typeof body.message === 'string') return body.message + http;
     } catch (_) { /* A non-JSON image-server error still has a visible explanation. */ }
-    if (status === 401) return '로그인 세션을 확인할 수 없습니다. 업무 화면에서 다시 로그인한 뒤 검사를 여세요.' + http;
-    if (status === 403) return '이 검사 영상의 접근 권한이 없습니다. 기관과 검사 접근 권한을 확인하세요.' + http;
-    if (status === 404) return '요청한 원본 영상 또는 프레임이 없습니다. 검사 목록을 새로 고친 뒤 다시 여세요.' + http;
-    if (status === 409) return '검사 원본이나 환자 연결이 변경되었습니다. 검사 목록에서 다시 여세요.' + http;
-    if (status === 400 || status === 416) return '요청한 프레임 번호나 영상 범위가 올바르지 않습니다. 검사를 다시 열고 계속되면 관리자에게 문의하세요.' + http;
-    if (status === 429 || status >= 500) return '영상 서버가 요청을 완료하지 못했습니다. 잠시 후 검사를 다시 열어 주세요.' + http;
+    if (status === 401) return kinText("로그인 세션을 확인할 수 없습니다. 업무 화면에서 다시 로그인한 뒤 검사를 여세요.{0}", http);
+    if (status === 403) return kinText("이 검사 영상의 접근 권한이 없습니다. 기관과 검사 접근 권한을 확인하세요.{0}", http);
+    if (status === 404) return kinText("요청한 원본 영상 또는 프레임이 없습니다. 검사 목록을 새로 고친 뒤 다시 여세요.{0}", http);
+    if (status === 409) return kinText("검사 원본이나 환자 연결이 변경되었습니다. 검사 목록에서 다시 여세요.{0}", http);
+    if (status === 400 || status === 416) return kinText("요청한 프레임 번호나 영상 범위가 올바르지 않습니다. 검사를 다시 열고 계속되면 관리자에게 문의하세요.{0}", http);
+    if (status === 429 || status >= 500) return kinText("영상 서버가 요청을 완료하지 못했습니다. 잠시 후 검사를 다시 열어 주세요.{0}", http);
     const message = String(error?.message ?? error ?? '');
     if (message === 'CACHE_SIZE_EXCEEDED' || /Array buffer allocation failed|Invalid typed array length|out of memory/i.test(message))
-      return '영상 표시 메모리가 부족합니다. 사용하지 않는 영상 창을 닫고 검사를 다시 여세요.';
+      return kinText("영상 표시 메모리가 부족합니다. 사용하지 않는 영상 창을 닫고 검사를 다시 여세요.");
     if (error?.name === 'EvalError' || /WebAssembly|\bwasm\b|content security policy|unsafe-eval/i.test(message))
-      return '압축 영상 프레임을 해독하지 못했습니다. 뷰어 보안 정책과 WebAssembly 디코더 설정을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임을 해독하지 못했습니다. 뷰어 보안 정책과 WebAssembly 디코더 설정을 관리자에게 확인해 주세요.");
     if (error?.code === 'IMAGE_DECODE_EMPTY' || /empty decoded image frame/i.test(message))
-      return '압축 영상 프레임의 해독 결과가 비어 있거나 불완전합니다. 원본 파일 손상과 압축 형식을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임의 해독 결과가 비어 있거나 불완전합니다. 원본 파일 손상과 압축 형식을 관리자에게 확인해 주세요.");
     if (/transfer syntax|decode|decoder|codestream/i.test(message))
-      return '압축 영상 프레임을 해독하지 못했습니다. 원본의 압축 형식과 파일 손상을 관리자에게 확인해 주세요.';
+      return kinText("압축 영상 프레임을 해독하지 못했습니다. 원본의 압축 형식과 파일 손상을 관리자에게 확인해 주세요.");
     if (error?.name === 'TimeoutError' || /timeout|timed out/i.test(message))
-      return '영상 서버 응답 시간이 초과되었습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.';
-    if (error?.name === 'AbortError') return '영상 요청이 취소되었습니다. 이 프레임이 필요하면 검사를 다시 여세요.';
+      return kinText("영상 서버 응답 시간이 초과되었습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.");
+    if (error?.name === 'AbortError') return kinText("영상 요청이 취소되었습니다. 이 프레임이 필요하면 검사를 다시 여세요.");
     if (status === 0 || /Failed to fetch|NetworkError|Load failed|no image frame|multipart|truncat|short read|terminated/i.test(message))
-      return '영상 전송이 끊겼거나 프레임이 완전하지 않습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.';
-    return '영상 데이터를 불러오지 못했습니다' + http +
-      '. 뷰어를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+      return kinText("영상 전송이 끊겼거나 프레임이 완전하지 않습니다. 연결 상태를 확인한 뒤 검사를 다시 여세요.");
+    return kinText("영상 데이터를 불러오지 못했습니다{0}. 뷰어를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", http);
   }
   function mount() {
     stop?.();
@@ -121,12 +122,12 @@ function kinCreateImageLoadStatus() {
     const overlayModalities = ['SEG', 'RTSTRUCT'], overlayFailures = new Map(), overlayLoads = new Map();
     const overlayFailure = (modality, error) => {
       const message = String(error?.message ?? error ?? '');
-      const head = '이 ' + modality + '를 표시하지 못했습니다. ';
+      const head = kinText("이 {0}를 표시하지 못했습니다. ", modality);
       if (error?.name === 'EvalError' || /content security policy|unsafe-eval/i.test(message))
-        return head + '이 뷰어는 아직 ' + modality + ' 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.';
+        return kinText("{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", head, modality);
       const status = error?.status;
       const http = Number.isInteger(status) && status > 0 ? ' (HTTP ' + status + ')' : '';
-      return head + modality + ' 파일을 읽지 못했습니다' + http + '. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.';
+      return kinText("{0}{1} 파일을 읽지 못했습니다{2}. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", head, modality, http);
     };
     const shownOverlays = () => {
       const shown = new Set();
@@ -182,7 +183,7 @@ function kinCreateImageLoadStatus() {
       const failed = set => set?.Modality === modality && overlayFailures.get(set.displaySetInstanceUID);
       // One notice per cell: a segmentation without its source says that, whatever its read did.
       const notice = props => !active ? null : props?.displaySets?.some(sourceless)
-        ? '현재 검사에서 이 ' + modality + '의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.'
+        ? kinText("현재 검사에서 이 {0}의 원본 시리즈를 찾을 수 없어 표시하지 않았습니다. 원본 시리즈가 있는 검사에서 여세요.", modality)
         : props?.displaySets?.map(failed).find(Boolean) || null;
       const guarded = props => {
         const text = notice(props);

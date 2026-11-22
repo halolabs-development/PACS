@@ -72,9 +72,13 @@
       s.reqHosp = s.institutionName ? s.reqHosp : (a.reqHosp ?? s.reqHosp ?? "KIN");
       s.preDoc = a.preDoc ?? "";
       s.preReviewer = a.preReviewer ?? "";
+      // The person each is, as the server names it (writerName) - the list never looks a login up again.
+      s.preDocName = a.preDocName ?? null;
+      s.preReviewerName = a.preReviewerName ?? null;
       s.prelimHidden = a.prelimHidden;
       s.holderMine = a.holderMine === true;
       s.holder = a.holder;          // 서버가 만료된 점유는 빼고 준다
+      s.holderName = a.holderName ?? null;
       s.version = a.version ?? 0;   // 낙관적 락 기준
       // S4-U5: the overlay repaints display fields only. RS, matching, UID, patient key and the rest of the row state
       // above always stay as the server sent them, whatever a stored overlay carries.
@@ -113,7 +117,7 @@
       for (const s of studies) applyQcRow(s);
       for (const cell of $("#rows")?.querySelectorAll("[data-qc-uid]") ?? []) {
         const s = studies.find(x => x.uid === cell.dataset.qcUid);
-        cell.innerHTML = s ? qcCellHtml(s) : "";
+        cell.innerHTML = s ? qcCellHtml(s) : ""; window.KinLanguage?.markup?.(cell);
       }
       syncQcWindow();
       if (!viewedInfoFollowsList()) { renderQcInfo(); renderAcquisition(); }
@@ -171,7 +175,7 @@
       const button = $('#rows').querySelector(`[data-tech-note="${CSS.escape(uid)}"]`);
       if (button && study) {
         const chip = noteChip(uid, study.id);
-        button.textContent = chip.label; button.title = chip.title; button.setAttribute('aria-label', chip.aria);
+        button.textContent = chip.label; kinWrite(button, kinSayEn(chip.title), "title"); button.setAttribute('aria-label', chip.aria);
       }
     }
     const readerAssignments=new Map();
@@ -339,15 +343,13 @@
         box.after(list);
       }
       box.hidden = !n;
-      $("#identity-issues-text").textContent = !n ? "" : `${n} · 환자 식별 불일치로 검사 ${n}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.`
-        + (unobserved ? " · 관측 불가 · 마지막 관측 기준입니다." : "");
+      kinWrite($("#identity-issues-text"), !n ? "" : kinSayEn("{n0} · 환자 식별 불일치로 검사 {n1}건을 목록에서 제외했습니다. 원본 확인이 필요합니다.{t2}", n, n, (unobserved ? kinSayEn(" · 관측 불가 · 마지막 관측 기준입니다.") : "")));
       const list = $("#identity-issues-list");
       if (list) {
         // Only what the answer carries: no patient or institution value of an unresolved UID is shown.
         list.replaceChildren(...[...studyIdentityIssues].map(([uid, code]) => {
           const line = document.createElement("div");
-          line.textContent = `Study UID ${uid} · Status Unresolved${code ? ` (${code})` : ""} · 목록에서 제외됨 · 원본 확인 전에는 열 수 없습니다.`
-            + (unobserved ? " · 마지막 관측 기준" : "");
+          kinWrite(line, kinSayEn("Study UID {0} · Status Unresolved{1} · 목록에서 제외됨 · 원본 확인 전에는 열 수 없습니다.{t2}", uid, code ? ` (${code})` : "", (unobserved ? kinSayEn(" · 마지막 관측 기준") : "")));
           return line;
         }));
         if (!n) { list.hidden = true; box.setAttribute("aria-expanded", "false"); }
@@ -554,9 +556,9 @@
             { id: existing?.id || String(id), name, searchId: 'own:' + saved.id }]);
           if (!work.admits(at)) return;
           if (!stored) throw new Error($('#shortcuts-status').textContent || '바로가기 저장 결과를 확인하지 못했습니다.');
-          status.textContent = '"' + name + '" 바로가기를 My Shortcuts에 저장했습니다.';
+          kinWrite(status, kinSayEn("\"{0}\" 바로가기를 My Shortcuts에 저장했습니다.", name));
           nameInput.value = '';
-        } catch (error) { status.textContent = '저장하지 못했습니다: ' + error.message; }
+        } catch (error) { kinWrite(status, kinSayEn("저장하지 못했습니다: {e0}", error.message)); }
         finally { saveBtn.disabled = false; }
       };
       const commit = values => {
@@ -685,10 +687,16 @@
           const v = c.k === "no" ? offset + i + 1 : (CELL[c.k] ? CELL[c.k](s) : esc(s[c.k] ?? ""));
           const classes = [c.num ? "num" : "", c.k === "acc" ? "acc" : "", ["id", "birth"].includes(c.k) ? "dim" : ""];
           // A cell holding data of the study is never translated (the screen language changes labels and states only).
-          const data = c.k !== "no" && c.k !== "ptClass" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
+          // Pt Class is the value the hospital sent with the order: data too.
+          const data = c.k !== "no" && (!CELL[c.k] || ["desc", "preDoc", "preReviewer"].includes(c.k));
           return `<td class="${classes.filter(Boolean).join(" ")}"${data ? ' translate="no"' : ""}>${v}</td>`;
         }).join("") + `</tr>`).join("")
-        || `<tr><td class="empty" colspan="${shown.length}">${bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'}</td></tr>`;
+        || `<tr><td class="empty" colspan="${shown.length}"></td></tr>`;
+      // The words the rows' own cells write (states, their help, chips) follow the worklist's language, as the page's markup
+      // does; the cells and parts that hold a study's data are marked translate="no" above and stay as written.
+      window.KinLanguage?.markup?.($("#rows"));
+      const emptyCell = $("#rows td.empty");
+      if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
       syncFilterChoices();
       syncViewingRows();
@@ -712,16 +720,17 @@
       // 목록도, 카운트도, 필터 표시도 안 그려진다. 서버 필터가 0/3/7/30/60/-1 외의
       // days를 주면 어느 버튼도 `.on`이 아니라 실제로 도달한다.
       // 화면 한 줄을 못 쓰는 것과 화면 전체가 안 그려지는 것은 다른 사고다.
-      cols.forEach(c => { if (fval[c.k]) active.push(`${c.t}(${fval[c.k]})${shown.includes(c) ? '' : ' [숨긴 열]'}`); });
-      if (sortKey && sortDir && !shown.some(c => c.k === sortKey)) active.push(`숨긴 열 정렬: ${COLS[mode].find(c => c.k === sortKey)?.t ?? sortKey} ${sortDir > 0 ? '오름차순' : '내림차순'}`);
+      // Each part is a sentence of its own and the search values stay data, so the line follows the screen language.
+      cols.forEach(c => { if (fval[c.k]) active.push(kinSayEn('{0}({1}){t2}', c.t, String(fval[c.k]), { t: shown.includes(c) ? '' : kinSayEn(' [숨긴 열]') })); });
+      if (sortKey && sortDir && !shown.some(c => c.k === sortKey)) active.push(kinSayEn('숨긴 열 정렬: {0} {t1}', COLS[mode].find(c => c.k === sortKey)?.t ?? sortKey, { t: kinSayEn(sortDir > 0 ? '오름차순' : '내림차순') }));
       const compound = fval[KinCompoundFilter.KEY];
       const compoundError = KinCompoundFilter.validate(compound, cols);
       if (!compoundError && compound?.version === 2) active.push("Patient Search: " + (compound.quickMatch === "exact" ? "Exact" : "Starts With"));
-      if (compoundError) active.push(`복합 조건 오류: ${compoundError} · 조건을 수정하거나 Clear로 해제하세요`);
+      if (compoundError) active.push(kinSayEn('복합 조건 오류: {0} · 조건을 수정하거나 Clear로 해제하세요', kinSayEn(compoundError)));
       else if (compound?.rules.length) {
-        active.push('복합 ' + KinCompoundFilter.describe(compound, cols));
+        active.push(kinSayEn('복합 {0}', KinCompoundFilter.describe(compound, cols)));
       }
-      $("#filterlist").textContent = (appliedSearch?.pending ? "Draft Filter (not applied) : " : "Filter : ") + (active.join(", ") || "-");
+      kinWrite($("#filterlist"), kinSay("{t0} {1}", { t: kinSay(appliedSearch?.pending ? "Draft Filter (not applied) :" : "Filter :") }, active.reduce((a, b) => a === null ? b : kinSayEn("{0}, {1}", a, b), null) ?? "-"));
 
       const n = (k, v) => list.filter(s => s[k] === v).length;
       if (mode === "Radiology") {
@@ -769,7 +778,7 @@
       kinWrite($("#study-identity-summary"), view.summary.text);
       kinWrite($("#study-identity-summary"), view.summary.title || "", "title");
       const order = $("#study-identity-order");
-      order.textContent = view.order?.text ?? ""; order.title = view.order?.title ?? "";
+      order.textContent = view.order?.text ?? ""; kinWrite(order, view.order?.title ?? "", "title");
       $("#study-identity-tags").replaceChildren(...view.rows.map(row => {
         const line = document.createElement("div"), value = document.createElement("span"), relation = document.createElement("span");
         line.setAttribute("role", "listitem"); line.dataset.tag = row.key;
@@ -806,7 +815,8 @@
     function inProgressReset(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return null;
       const savedBy = appState[s.uid]?.savedBy;
-      return heldByOther(s) || (savedBy && !appState[s.uid].savedByMine ? savedBy : null);
+      return heldByOther(s) ? writerName(s.holderName, s.holder)
+        : savedBy && !appState[s.uid].savedByMine ? writerName(appState[s.uid].savedByName, savedBy) : null;
     }
     function updateReportButtons() {
       const s = cur();
@@ -814,7 +824,7 @@
       const filming = s?.ss === "Unverified" && s?.em !== "E";
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
-      const heldTitle = `${displayActor(held)} 님이 판독 중입니다`;
+      const heldTitle = `${writerName(s?.holderName, held)} 님이 판독 중입니다`;
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
@@ -847,8 +857,7 @@
       const takeover = rad && (!locked || inProgress) && !filming ? inProgressReset(s) : null;
       if (takeover) {
         $("#b-unread").disabled = false;
-        $("#b-unread").title = `${displayActor(takeover)} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 ` +
-          "(쓰던 글은 지우지 않습니다 — 개인 임시글 또는 이력에 남습니다)";
+        kinWrite($("#b-unread"), kinSayEn("{0} 님이 판독 중입니다 — 누르면 점유를 풀고 Unread로 되돌립니다 (쓰던 글은 지우지 않습니다 — 개인 임시글 또는 이력에 남습니다)", takeover), "title");
       }
       // 승인된 판독문을 비우는 길은 사유가 남는 Reset뿐이다. Clear는 그 뒷문이었다.
       $("#b-defer").disabled = !rad || !s || s.rs === "A" || s.rs === "P" || locked || filming || !!held || !serverMode;
@@ -958,7 +967,7 @@
     }
     function renderChips() {
       // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
-      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+      const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
       updateWorklistFolders();
       const holder = $("#chips");
       if (!holder) return;
@@ -1048,16 +1057,16 @@
     let storageSeq = 0, storageLast = null;
     async function refreshStorage(at = work.capture("document")) {
       const seq = ++storageSeq;
-      let bytes = null, reason = "원천 조회에 실패했습니다.";
+      let bytes = null, reason = ["원천 조회에 실패했습니다."];
       try {
         const answer = await transport.request("/statistics", { context: at });
-        if (answer.status === 403) reason = "이 계정으로는 서버 전체 저장량을 볼 수 없습니다.";
-        else if (!answer.ok) reason = `원천이 HTTP ${answer.status}로 답했습니다.`;
+        if (answer.status === 403) reason = ["이 계정으로는 서버 전체 저장량을 볼 수 없습니다."];
+        else if (!answer.ok) reason = ["원천이 HTTP {0}로 답했습니다.", answer.status];
         else {
           const raw = answer.body?.TotalDiskSize;
           const text = typeof raw === "number" ? String(raw) : typeof raw === "string" ? raw.trim() : "";
           if (/^\d+$/.test(text) && Number.isSafeInteger(Number(text))) bytes = Number(text);
-          else reason = "응답 형식을 확인할 수 없습니다.";
+          else reason = ["응답 형식을 확인할 수 없습니다."];
         }
       } catch (e) {}
       work.commit(at, () => { if (seq === storageSeq) paintStorage(bytes, reason); });
@@ -1077,20 +1086,20 @@
       try {
         if (bytes !== null) {
           const at = new Date().toISOString();
-          view = { state: "observed", text: `Storage ${size(bytes)} (Server-wide)`,
-            title: `Orthanc 서버 전체(모든 기관)의 디스크 사용량입니다. 이 기관 몫이 아닙니다. 원천: Orthanc GET /statistics TotalDiskSize(원천 값 ${bytes}바이트). `
-              + `관측 시각: ${KinStudyArrivals.formatTime(at)}(이 화면이 답을 받은 시각). 전체 용량은 원천이 없어 사용률(%)을 보이지 않습니다.` };
+          view = { state: "observed", text: storageSay("Storage {0} (Server-wide)", size(bytes)),
+            title: storageSay("Orthanc 서버 전체(모든 기관)의 디스크 사용량입니다. 이 기관 몫이 아닙니다. 원천: Orthanc GET /statistics TotalDiskSize(원천 값 {0}바이트). 관측 시각: {1}(이 화면이 답을 받은 시각). 전체 용량은 원천이 없어 사용률(%)을 보이지 않습니다.",
+              bytes, KinStudyArrivals.formatTime(at)) };
           storageLast = { bytes, at };
         } else {
-          view = { state: "unobservable", text: "Storage Unobservable",
-          title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: reason }, { t: storageLast
+          view = { state: "unobservable", text: storageSay("Storage Unobservable"),
+          title: storageSay("서버 전체 저장량을 관측하지 못했습니다. 0으로 두지 않습니다. {t0}{t1}", { t: Array.isArray(reason) ? storageSay(...reason) : reason }, { t: storageLast
             ? storageSay(" 마지막으로 관측한 값은 {0}({1})이며 지금 값이 아닐 수 있습니다.", size(storageLast.bytes), KinStudyArrivals.formatTime(storageLast.at)) : "" }) };
         }
       } catch (e) {
-        view = { state: "unobservable", text: "Storage Unobservable", title: "서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다." };
+        view = { state: "unobservable", text: storageSay("Storage Unobservable"), title: storageSay("서버 전체 저장량을 표시하지 못했습니다. 0으로 두지 않습니다.") };
       }
       box.dataset.state = view.state;
-      box.textContent = view.text;
+      kinWrite(box, view.text);
       kinWrite(box, view.title, "title");
     }
     async function load(options = {}) {
@@ -1172,7 +1181,7 @@
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') markObservationUnavailable();
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
             // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
-            listRefreshWarning(true, "검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — " + e.message);
+            listRefreshWarning(true, kinSayEn("검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — {e0}", e.message));
             toast("검사 목록 실패: " + e.message, "err");
             render();
           });

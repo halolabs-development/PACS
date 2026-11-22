@@ -361,7 +361,7 @@ body.report-window-doc { height: 100vh; margin: 0; display: flex; flex-direction
       mirror();
       let result = null;
       try { result = await approveAndNext(); }
-      catch (error) { toast('승인하지 못했습니다' + (error?.message ? ': ' + error.message : ''), 'err'); }
+      catch (error) { toast(kinSay('승인하지 못했습니다{0}', error?.message ? ': ' + error.message : ''), 'err'); }
       finally { approving = false; mirror(); }
       // Only an approval that was accepted and moved on decides anything; the reader may have docked meanwhile.
       if (!result?.moved || shown !== s || pinned) return;

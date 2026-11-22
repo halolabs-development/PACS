@@ -42,7 +42,7 @@ ORIGIN = "https://gateway-support.test"
 BASE = "/worklist/hpacs-lite/"
 PAGE_PATH = BASE + "admin.html"
 SCRIPTS = {BASE + name: lf_text(HPACS / name) for name in (
-    "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
+    "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "session-transport.js", "study-access-admin.js", "signing-key-admin.js",
     "admin-access-review.js", "held-sources-admin.js", "emr-link.js", "emr-link-admin.js", "critical-result-inbox-admin.js", "dicom-peers-admin.js",
     "gateway-rules-admin.js", "gateway-support-admin.js", "patient-consent-admin.js", "product-info-data.js", "product-info.js")}
 INSTITUTION = "SYN-INST-A"
@@ -299,6 +299,34 @@ class AdminGatewaySupportDOMTest(unittest.TestCase):
         overflow = self.page.evaluate("""() => [...document.querySelectorAll('#gateway-support-rows button, #gateway-support-rows select')]
           .filter(e => e.getBoundingClientRect().right > document.documentElement.clientWidth + 1).length""")
         self.assertEqual(overflow, 0, "every action stays inside a narrow window")
+
+    def test_08_english_for_this_sign_in_reads_in_english_and_keeps_the_data(self):
+        # The English choice this sign-in applied on the work page: the section's guidance, the request words and the
+        # refusal read in English; names, versions and the requesting account are written as they are. With no choice the
+        # same steps show the words as written (07).
+        snapshot = """() => { const s = document.querySelector('#gateway-support'), out = [];
+          const walk = document.createTreeWalker(s, NodeFilter.SHOW_TEXT);
+          for (let n = walk.nextNode(); n; n = walk.nextNode()) if (!n.parentElement.closest('[translate=no]')) out.push(n.data);
+          for (const e of s.querySelectorAll('[title]')) out.push(e.getAttribute('title'));
+          return out.filter(t => /[가-힣]/.test(t)); }"""
+        seen = {}
+        for stored in (None, "en"):
+            self.context.close()
+            self.setUp()
+            if stored:
+                self.page.add_init_script("localStorage.setItem('kin-language:v1', JSON.stringify({version: 1, worklist: 'en', "
+                                          "reading: 'en', session: '%s'}))" % ME["sessionId"])
+            self.open()
+            self.load()
+            untranslated = self.lines()[0]["untranslated"]
+            self.load(status=503)
+            seen[stored] = (self.page.evaluate(snapshot), self.message(), untranslated)
+        korean, english = seen[None], seen["en"]
+        self.assertTrue(korean[0], "the guidance and titles are Korean without a choice")
+        self.assertRegex(korean[1], "[가-힣]")
+        self.assertEqual([], english[0])
+        self.assertEqual("The server is busy. Try again shortly.", english[1])
+        self.assertEqual(korean[2], english[2])
 
 
 if __name__ == "__main__":

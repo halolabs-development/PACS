@@ -5,6 +5,9 @@
    negates it; the limits, the square 512 px raster and the camera are ours too. The manual tool's Type and Thickness fields and
    the VR A/P/L/R/H/F presets are not offered: the slab is the whole volume or the VOI Slab, and the MIP orientations stay
    Axial/Coronal/Sagittal. api/src/viewer-volume-mip.ts applies the same recipe rule. No voxels are edited; nothing here renders. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 (function(root){
   const SCHEMA=1,ALGORITHM='kin-mip-batch-1',SIZE=512,FRAME_MS=15000,BUDGET_MS=300000,SPAN_EDGE=1e-9,CAMERA_EDGE=1e-6;
   const AXES=Object.freeze(['Horizontal','Vertical']),KEYS=Object.freeze(['schema','algorithm','axis','interval','count','reverse']);
@@ -13,31 +16,31 @@
   const RAW_BYTES=64*1024*1024,BLOB_BYTES=32*1024*1024;
   const DEFAULTS=Object.freeze({axis:'Horizontal',interval:10,count:36,reverse:false});
   const messages=Object.freeze({
-    reproduce:'MIP Batch 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다.',
-    shape:'저장한 MIP Batch 조건의 형식을 확인할 수 없어 복원하지 않았습니다.',
-    axis:'MIP Batch Axis를 Horizontal 또는 Vertical에서 선택하세요.',
-    limits:'MIP Batch Interval은 1~180도, Number는 2~64장, 전체 회전 범위((Number-1)×Interval)는 360도 이내로 입력하세요.',
-    camera:'MIP 투영 카메라를 확인할 수 없어 MIP Batch를 만들지 않았습니다.',
-    distance:'MIP 투영 카메라가 CT 볼륨 투영 범위 안에 있어 MIP Batch를 만들지 않았습니다.',
-    frameCamera:'MIP Batch 프레임의 투영 카메라를 확인하지 못했습니다.',
-    generating:'MIP Batch 생성이 끝난 뒤 다시 누르세요.',
-    restoring:'MIP 작업 복원이 끝난 뒤 MIP Batch를 만드세요.',
-    saving:'MIP 작업 저장이 끝난 뒤 MIP Batch를 만드세요.',
-    busy:'영상 작업 처리가 끝난 뒤 MIP Batch를 만드세요.',
-    rendering:'최종 표시를 확인한 뒤 MIP Batch를 만드세요.',
-    original:'Original 보기를 끈 뒤 MIP Batch를 만드세요.',
-    save:'MIP Batch 생성을 마친 뒤 MIP 작업을 저장하세요.',
-    tool:'MIP Batch 도구를 불러오지 못해 MIP Batch를 만들 수 없습니다. Projection·Orientation·VOI Slab과 MIP 작업 저장은 계속 쓸 수 있습니다.',
-    restoreTool:'MIP Batch 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다.',
-    frameTimeout:'MIP Batch 프레임의 최종 렌더를 확인하지 못했습니다.',
-    size:'MIP Batch 영상 크기를 확인하지 못했습니다.',
-    image:'MIP Batch 영상을 만들지 못했습니다.',
-    memory:'MIP Batch 결과가 32 MiB를 넘었습니다. Number를 줄이세요.',
-    cancelled:'MIP Batch 생성을 취소했습니다.',
-    changed:'화면이 변경되어 MIP Batch 생성을 중단했습니다.',
-    expired:'MIP Batch 복원 시간이 지났습니다. 이전 화면으로 되돌립니다.',
-    kept:' 이전 MIP Batch 미리보기를 유지합니다.',
-    cleared:'MIP Batch 미리보기를 비웠습니다.',
+    reproduce:kinText("MIP Batch 작업의 계산 방식을 이 뷰어가 재현할 수 없어 복원하지 않았습니다."),
+    shape:kinText("저장한 MIP Batch 조건의 형식을 확인할 수 없어 복원하지 않았습니다."),
+    axis:kinText("MIP Batch Axis를 Horizontal 또는 Vertical에서 선택하세요."),
+    limits:kinText("MIP Batch Interval은 1~180도, Number는 2~64장, 전체 회전 범위((Number-1)×Interval)는 360도 이내로 입력하세요."),
+    camera:kinText("MIP 투영 카메라를 확인할 수 없어 MIP Batch를 만들지 않았습니다."),
+    distance:kinText("MIP 투영 카메라가 CT 볼륨 투영 범위 안에 있어 MIP Batch를 만들지 않았습니다."),
+    frameCamera:kinText("MIP Batch 프레임의 투영 카메라를 확인하지 못했습니다."),
+    generating:kinText("MIP Batch 생성이 끝난 뒤 다시 누르세요."),
+    restoring:kinText("MIP 작업 복원이 끝난 뒤 MIP Batch를 만드세요."),
+    saving:kinText("MIP 작업 저장이 끝난 뒤 MIP Batch를 만드세요."),
+    busy:kinText("영상 작업 처리가 끝난 뒤 MIP Batch를 만드세요."),
+    rendering:kinText("최종 표시를 확인한 뒤 MIP Batch를 만드세요."),
+    original:kinText("Original 보기를 끈 뒤 MIP Batch를 만드세요."),
+    save:kinText("MIP Batch 생성을 마친 뒤 MIP 작업을 저장하세요."),
+    tool:kinText("MIP Batch 도구를 불러오지 못해 MIP Batch를 만들 수 없습니다. Projection·Orientation·VOI Slab과 MIP 작업 저장은 계속 쓸 수 있습니다."),
+    restoreTool:kinText("MIP Batch 도구를 불러오지 못해 MIP 작업을 복원하지 않았습니다."),
+    frameTimeout:kinText("MIP Batch 프레임의 최종 렌더를 확인하지 못했습니다."),
+    size:kinText("MIP Batch 영상 크기를 확인하지 못했습니다."),
+    image:kinText("MIP Batch 영상을 만들지 못했습니다."),
+    memory:kinText("MIP Batch 결과가 32 MiB를 넘었습니다. Number를 줄이세요."),
+    cancelled:kinText("MIP Batch 생성을 취소했습니다."),
+    changed:kinText("화면이 변경되어 MIP Batch 생성을 중단했습니다."),
+    expired:kinText("MIP Batch 복원 시간이 지났습니다. 이전 화면으로 되돌립니다."),
+    kept:kinText(" 이전 MIP Batch 미리보기를 유지합니다."),
+    cleared:kinText("MIP Batch 미리보기를 비웠습니다."),
   });
   const exact=(v,want)=>!!v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===want.length&&Object.keys(v).every(k=>want.includes(k));
   const finite=n=>typeof n==='number'&&Number.isFinite(n);

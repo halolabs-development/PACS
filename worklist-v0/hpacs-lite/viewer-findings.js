@@ -1,6 +1,9 @@
 /* Findings section inside the Measurements panel. All decisions live in the store
  * (finding-link-model.js); this file only renders its state and forwards user actions.
  * Control names are English, messages Korean; external strings go through textContent. */
+// The viewer write path (viewer-language.js): product words in the reader's screen language, or as written.
+function kinText(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.text ? l.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
+function kinHtml(t, ...p) { const l = typeof window === 'object' && window && window.KinLanguage; return l && l.html ? l.html(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i])); }
 window.kinViewerFindings = function (services, model) {
   'use strict';
   let stop = () => {};
@@ -49,7 +52,7 @@ window.kinViewerFindings = function (services, model) {
     if (!host) return false;
     // A section of another record-format version than its model is never mounted beside it.
     if (model.SCHEMA !== 4) {
-      const refused = document.createElement('p'); refused.id = 'kin-viewer-findings'; refused.textContent = model.MODULE_MISMATCH_TEXT || '화면 구성 요소 판이 다릅니다. 새로고침하세요.';
+      const refused = document.createElement('p'); refused.id = 'kin-viewer-findings'; refused.textContent = model.MODULE_MISMATCH_TEXT || kinText("화면 구성 요소 판이 다릅니다. 새로고침하세요.");
       host.append(refused); stop = () => { refused.remove(); stop = () => {}; }; return false;
     }
     const studies = urlStudies();
@@ -66,15 +69,13 @@ window.kinViewerFindings = function (services, model) {
     panel.style.cssText = 'border-top:1px solid #405777;margin-top:10px;padding-top:8px';
     const text = (parent, tag, value) => { const el = document.createElement(tag); el.textContent = value; parent.append(el); return el; };
     text(panel, 'summary', 'Findings');
-    text(panel, 'p', '저장한 표식을 연결해 소견을 기록합니다. 소견의 수치는 연결 당시 서버 사본이며 표식의 현재 확인 상태와는 별개입니다.');
+    text(panel, 'p', kinText("저장한 표식을 연결해 소견을 기록합니다. 소견의 수치는 연결 당시 서버 사본이며 표식의 현재 확인 상태와는 별개입니다."));
     // Not role=status and not <section> rows: the Measurements panel's own tests and scans address
     // `#kin-viewer-history [role=status]` and `#kin-viewer-history section` and must keep matching only theirs.
-    const status = text(panel, 'p', '검사 확인 중…'); status.id = 'kin-viewer-findings-status'; status.setAttribute('aria-live', 'polite');
+    const status = text(panel, 'p', kinText("검사 확인 중…")); status.id = 'kin-viewer-findings-status'; status.setAttribute('aria-live', 'polite');
     const recovery = text(panel, 'p', ''); recovery.id = 'kin-viewer-findings-held'; recovery.hidden = true;
     // Two-study viewer: the product limits of comparison sources, in the user's terms.
-    const pairNote = text(panel, 'p', '비교 화면에서는 첫 검사(현재 검사)의 소견만 표시합니다. 비교 검사 영상 칸을 선택해도 목록과 작성 중인 내용은 그대로입니다. ' +
-      '소견 하나에는 같은 환자의 비교 검사 하나에서만 표식을 연결할 수 있고, 다른 비교 검사는 새 소견으로 기록합니다. ' +
-      '비교 검사를 볼 수 없게 되면 그 검사를 연결한 소견은 목록에서 빠집니다. 소견 저장 한도에는 이 화면에 표시되지 않는 소견도 포함됩니다.');
+    const pairNote = text(panel, 'p', kinText("비교 화면에서는 첫 검사(현재 검사)의 소견만 표시합니다. 비교 검사 영상 칸을 선택해도 목록과 작성 중인 내용은 그대로입니다. 소견 하나에는 같은 환자의 비교 검사 하나에서만 표식을 연결할 수 있고, 다른 비교 검사는 새 소견으로 기록합니다. 비교 검사를 볼 수 없게 되면 그 검사를 연결한 소견은 목록에서 빠집니다. 소견 저장 한도에는 이 화면에 표시되지 않는 소견도 포함됩니다."));
     pairNote.id = 'kin-viewer-findings-pair-note'; pairNote.hidden = !store.pairOf();
     const pairStatus = text(panel, 'p', ''); pairStatus.id = 'kin-viewer-findings-comparison'; pairStatus.hidden = true;
     // markRow holds New Finding from Mark on its own line (never rebuilt by a render, so an open choice list stays open).
@@ -83,7 +84,7 @@ window.kinViewerFindings = function (services, model) {
     const button = (parent, label, run, disabled = false) => {
       const b = text(parent, 'button', label); b.type = 'button'; b.disabled = disabled;
       b.style.cssText = 'margin:3px;padding:4px 7px;border:1px solid #657c9f;border-radius:4px';
-      b.addEventListener('click', () => Promise.resolve().then(run).catch(() => { status.textContent = '작업을 완료하지 못했습니다. 현재 내용을 확인하세요.'; })); return b;
+      b.addEventListener('click', () => Promise.resolve().then(run).catch(() => { status.textContent = kinText("작업을 완료하지 못했습니다. 현재 내용을 확인하세요."); })); return b;
     };
     const field = (parent, label, tag, value, max, change, disabled) => {
       const wrap = text(parent, 'label', label), el = document.createElement(tag);
@@ -94,9 +95,9 @@ window.kinViewerFindings = function (services, model) {
     const names = { arrow: 'Arrow', key: 'Key Image', length: 'Length', angle: 'Angle', ellipse: 'Ellipse ROI', text: 'Text', memo: 'Memo', spine: 'Spine Label', circle: 'Circle by Diameter',
     limbLength: 'Limb Length Discrepancy', acetabular: 'Acetabular Angle', spineBalance: 'Spine Balance', spineCobb: 'Cobb Angle (Lordosis / Kyphosis)', pelvicIncidence: 'Pelvic Incidence',
     ctr: 'CTR', parallel: 'Parallel Lines', ratio: 'Length Ratio', centreAngle: 'Centre-line Angle', volume: 'Volume Measure' };
-    const describe = h => (names[h.kind] || h.kind) + ' · ' + (h.label || '') + ' · 프레임 ' + h.frame + ' · r' + h.revision;
+    const describe = h => kinText("{0} · {1} · 프레임 {2} · r{n3}", (names[h.kind] || h.kind), (h.label || ''), h.frame, h.revision);
     // Copied numbers with names and units only for a known provenance (S2-V); a source's are its frozen revision's.
-    const values = (h, provenance) => { const t = model.valueText(h.kind, h.calculator, h.values, provenance); return t ? ' · ' + t : ''; };
+    const values = (h, provenance) => { const t = String((model.valueSay || model.valueText)(h.kind, h.calculator, h.values, provenance)); return t ? ' · ' + t : ''; };
     // Display copies of unsaved pairs, one per study · item · revision (a saved revision never changes): read while the head is that
     // revision, kept once it has moved on. Without a copy the line names the pair's own revision from the head and shows no number.
     const pairCopies = new Map();
@@ -106,19 +107,17 @@ window.kinViewerFindings = function (services, model) {
       const shown = describe(head) + values(head, own ? 'live-head' : 'server-copy'); pairCopies.set(key, shown); return shown;
     };
     const rows = new Map();
-    const CHARACTERISTICS_HELP = '사용자가 직접 입력하는 병변 특성입니다. Pick Characteristics의 항목을 누르면 칸 끝에 이어 붙고, 붙인 글도 고칠 수 있습니다. 판독문에는 Insert into Report로 넣을 때만 들어갑니다.';
-    const LESION_LOCATION_HELP = '사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). Pick Location의 항목을 누르면 칸 끝에 이어 붙습니다. 영상의 Series/Image 번호는 연결한 표식이 가집니다.';
-    const SIZE_HELP = '사용자가 직접 입력하는 병변 크기입니다(예: 8mm, 12 x 8 mm). 쓴 그대로 저장하며 환산하지 않습니다. 연결한 표식의 측정값은 판독문에 넣을 때 Include Measurements 줄이 따로 가져갑니다.';
-    const QUICK_HELP = '한 줄로 쓰고 Fill Fields를 누르면 크기(숫자+mm/cm 하나)와 Pick 목록의 위치·특성 용어를 칸으로 나누고 나머지를 제목으로 둡니다. 비어 있는 칸만 채우며 서버에는 Save를 눌러야 저장됩니다.';
+    const CHARACTERISTICS_HELP = kinText("사용자가 직접 입력하는 병변 특성입니다. Pick Characteristics의 항목을 누르면 칸 끝에 이어 붙고, 붙인 글도 고칠 수 있습니다. 판독문에는 Insert into Report로 넣을 때만 들어갑니다.");
+    const LESION_LOCATION_HELP = kinText("사용자가 직접 입력하는 병변 위치입니다(예: 우하엽 S6). Pick Location의 항목을 누르면 칸 끝에 이어 붙습니다. 영상의 Series/Image 번호는 연결한 표식이 가집니다.");
+    const SIZE_HELP = kinText("사용자가 직접 입력하는 병변 크기입니다(예: 8mm, 12 x 8 mm). 쓴 그대로 저장하며 환산하지 않습니다. 연결한 표식의 측정값은 판독문에 넣을 때 Include Measurements 줄이 따로 가져갑니다.");
+    const QUICK_HELP = kinText("한 줄로 쓰고 Fill Fields를 누르면 크기(숫자+mm/cm 하나)와 Pick 목록의 위치·특성 용어를 칸으로 나누고 나머지를 제목으로 둡니다. 비어 있는 칸만 채우며 서버에는 Save를 눌러야 저장됩니다.");
     const QUICK_REFUSED = {
-      empty: '나눌 글이 없습니다.',
-      shape: '한 줄, 200자 이하의 글만 나눕니다. 칸에 직접 입력하세요.',
-      ambiguous: '부정·범위·비교·대략 같은 표현이 있어 칸을 나누지 않았습니다. 뜻이 바뀌지 않도록 칸에 직접 입력하세요.',
-      sizes: '크기 표기가 둘 이상이라 칸을 나누지 않았습니다. 칸에 직접 입력하세요.',
+      empty: kinText("나눌 글이 없습니다."),
+      shape: kinText("한 줄, 200자 이하의 글만 나눕니다. 칸에 직접 입력하세요."),
+      ambiguous: kinText("부정·범위·비교·대략 같은 표현이 있어 칸을 나누지 않았습니다. 뜻이 바뀌지 않도록 칸에 직접 입력하세요."),
+      sizes: kinText("크기 표기가 둘 이상이라 칸을 나누지 않았습니다. 칸에 직접 입력하세요."),
     };
-    const LOCATION_HELP = '저장 화면(Saved View)은 저장 작업의 영상 상태 전체를, 3D 표식(3D Point)은 MPR 3D Annotations 작업에 저장한 점 하나를 연결합니다. ' +
-      '3D 표식은 그 작업을 복원하거나 저장해 지금 화면에 표시한 뒤 고르세요. 표식을 바꾸면 Save New Job으로 새 작업을 저장해야 하며, 검사별 저장 작업은 200개까지입니다. ' +
-      '비교 검사를 판독 대상으로 연 화면에서 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요.';
+    const LOCATION_HELP = kinText("저장 화면(Saved View)은 저장 작업의 영상 상태 전체를, 3D 표식(3D Point)은 MPR 3D Annotations 작업에 저장한 점 하나를 연결합니다. 3D 표식은 그 작업을 복원하거나 저장해 지금 화면에 표시한 뒤 고르세요. 표식을 바꾸면 Save New Job으로 새 작업을 저장해야 하며, 검사별 저장 작업은 200개까지입니다. 비교 검사를 판독 대상으로 연 화면에서 저장한 작업은 연결할 수 없으니, 현재 검사를 판독 대상으로 연 화면에서 같은 위치를 새 작업으로 저장해 연결하세요.");
     // A saved location line: a frozen server copy (saved finding) or an unsaved {jobId, revision[, markId]} pair.
     function jobLine(parent, e, s, index, editing) {
       const st = store.state(), copy = model.isJob(s) ? s : null, markId = copy ? (copy.mark ? copy.mark.id : undefined) : s.markId;
@@ -126,18 +125,18 @@ window.kinViewerFindings = function (services, model) {
       const link = copy && e.head ? (e.links || []).find(l => l && l.jobId === s.jobId && (l.markId || null) === (markId || null)) || null : null;
       const status = model.jobStatus({ jobId: s.jobId, revision: s.revision, jobStudyUid: copy ? copy.jobStudyUid : st.scope, markId }, link, copy ? null : listed);
       const shown = markId && !copy ? store.shownJob() : null, shownMark = shown && shown.jobId === s.jobId ? shown.marks.find(m => m.id === markId) : null;
-      const name = copy ? model.jobName(copy) : markId ? '3D Point · ' + (shownMark ? shownMark.label : '표식 ' + markId.slice(0, 8)) + ' · 저장 작업 r' + s.revision
-        : 'Saved View · ' + (listed ? (listed.title || '(제목 없음)') + ' · v' + listed.snapshotVersion : '저장 작업 ' + s.jobId.slice(0, 8)) + ' · r' + s.revision;
+      const name = copy ? model.jobName(copy) : markId ? kinText("3D Point · {0} · 저장 작업 r{n1}", (shownMark ? shownMark.label : kinText("표식 {0}", markId.slice(0, 8))), s.revision)
+        : 'Saved View · ' + (listed ? (listed.title || kinText("(제목 없음)")) + ' · v' + listed.snapshotVersion : kinText("저장 작업 {0}", s.jobId.slice(0, 8))) + ' · r' + s.revision;
       const line = text(parent, 'div', ''); line.dataset.jobId = s.jobId; line.dataset.sourceKind = markId ? 'point' : 'view';
       line.dataset.linkState = status.linkState; line.dataset.sourceStudy = own ? 'current' : 'comparison';
       line.style.cssText = 'margin:2px 0 2px 6px;padding-left:6px;border-left:2px solid ' + (own ? '#405777' : '#b08a3c');
       const withheld = !own && st.pair.status === 'denied';
-      const tag = own ? (store.pairOf() ? '[현재 검사] ' : '') : '[비교 검사] ';
-      text(line, 'span', tag + (index === (e.head && !editing ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : '') + (withheld ? '접근할 수 없는 비교 검사의 저장 위치' : name) + ' · ');
+      const tag = own ? (store.pairOf() ? kinText("[현재 검사] ") : '') : kinText("[비교 검사] ");
+      text(line, 'span', tag + (index === (e.head && !editing ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : '') + (withheld ? kinText("접근할 수 없는 비교 검사의 저장 위치") : name) + ' · ');
       const badge = text(line, 'strong', status.label); badge.dataset.kinLinkState = status.linkState;
-      if (status.linkState === 'metadata-changed' && status.headRevision) text(line, 'span', ' (현재 r' + status.headRevision + ')');
+      if (status.linkState === 'metadata-changed' && status.headRevision) text(line, 'span', kinText(" (현재 r{0})", status.headRevision));
       if (e.staleSource && e.staleSource.jobId === s.jobId && (e.staleSource.markId || undefined) === markId)
-        text(line, 'span', e.staleSource.headHidden ? ' · 서버에서 숨겨짐' : ' · 서버 최신판 r' + e.staleSource.headRevision);
+        text(line, 'span', e.staleSource.headHidden ? kinText(" · 서버에서 숨겨짐") : kinText(" · 서버 최신판 r{0}", e.staleSource.headRevision));
       if (status.linkState !== 'current') text(line, 'p', status.text);
       if (e.head && copy && !editing) {
         button(line, markId ? 'Go to 3D Point' : 'Open Saved View', () => store.navigate(e, index), !!e.busy || withheld || !!st.jobNavigation);
@@ -162,13 +161,13 @@ window.kinViewerFindings = function (services, model) {
       // A pair not saved yet is named from its head with that revision's value (C-R01-012#13), in the same words as its Link Saved Items
       // choice: the server copies exactly the pair's revision on save. A head that has moved on to a later revision never lends the line
       // its newer name or numbers (pairText). The request body still carries the pair only.
-      const label = withheld ? '접근할 수 없는 비교 검사의 표식' : s.kind ? describe(s) + values(s, 'server-copy') : head ? pairText(study, s, head, own) : '표식 ' + s.itemId.slice(0, 8);
-      const tag = own ? (store.pairOf() ? '[현재 검사] ' : '') : '[비교 검사] ';
+      const label = withheld ? kinText("접근할 수 없는 비교 검사의 표식") : s.kind ? describe(s) + values(s, 'server-copy') : head ? pairText(study, s, head, own) : kinText("표식 {0}", s.itemId.slice(0, 8));
+      const tag = own ? (store.pairOf() ? kinText("[현재 검사] ") : '') : kinText("[비교 검사] ");
       text(line, 'span', tag + (index === (e.head ? e.head.item.primary ?? 0 : e.draft.primary) ? '★ ' : '') + label + ' · ');
       const badge = text(line, 'strong', status.label); badge.dataset.kinLinkState = status.linkState;
       if (status.referenceLabel) text(line, 'span', ' · ' + status.referenceLabel);
-      if (status.linkState === 'revised' && status.headRevision) text(line, 'span', ' (현재 r' + status.headRevision + ')');
-      if (e.staleSource && e.staleSource.itemId === s.itemId) text(line, 'span', e.staleSource.headHidden ? ' · 서버에서 숨겨짐' : ' · 서버 최신판 r' + e.staleSource.headRevision);
+      if (status.linkState === 'revised' && status.headRevision) text(line, 'span', kinText(" (현재 r{0})", status.headRevision));
+      if (e.staleSource && e.staleSource.itemId === s.itemId) text(line, 'span', e.staleSource.headHidden ? kinText(" · 서버에서 숨겨짐") : kinText(" · 서버 최신판 r{0}", e.staleSource.headRevision));
       if (status.text && status.linkState !== 'current') text(line, 'p', status.text);
       if (e.head) {
         button(line, 'Go to Image', () => store.navigate(e, index), !!e.busy || withheld);
@@ -187,7 +186,7 @@ window.kinViewerFindings = function (services, model) {
         check.disabled = !!(h.hidden || h.working || e.busy || e.pending || e.draft.sources.length >= model.LIMITS.sources || (study && study.blocked));
         check.setAttribute('aria-label', name + describe(h));
         check.addEventListener('change', () => { if (!store.toggleSource(e, h.id, study ? study.uid : undefined)) check.checked = false; });
-        wrap.append(check, document.createTextNode(' ' + describe(h) + values(h, provenance) + (h.hidden ? ' · Hidden' : h.working ? ' · 미저장 수정 중' : '') +
+        wrap.append(check, document.createTextNode(' ' + describe(h) + values(h, provenance) + (h.hidden ? ' · Hidden' : h.working ? kinText(" · 미저장 수정 중") : '') +
           (h.referenceStatus ? ' · ' + (h.referenceStatus === 'verified' ? 'Verified' : 'Unverified') : '')));
       }
     }
@@ -195,20 +194,20 @@ window.kinViewerFindings = function (services, model) {
       const st = store.state(), pair = store.pairOf(), linked = id => e.draft.sources.some(s => s.itemId === id);
       const heads = store.anchorLive() ? [...st.heads.values()].filter(h => !linked(h.id)) : [];
       const box = text(parent, 'details', ''); box.open = true; text(box, 'summary', 'Link Saved Items');
-      if (!store.anchorLive()) text(box, 'p', '현재 검사의 표식은 현재 검사의 영상 칸을 선택하면 연결할 수 있습니다.');
-      else if (!heads.length) text(box, 'p', '연결할 수 있는 저장 표식이 없습니다. 먼저 표식을 저장하세요.');
+      if (!store.anchorLive()) text(box, 'p', kinText("현재 검사의 표식은 현재 검사의 영상 칸을 선택하면 연결할 수 있습니다."));
+      else if (!heads.length) text(box, 'p', kinText("연결할 수 있는 저장 표식이 없습니다. 먼저 표식을 저장하세요."));
       choices(box, e, heads, 'Link ', null, 'live-head');
       if (!pair) return;
       // The comparison study's own saved list; an entry that already names another comparison study cannot add these.
       const other = store.comparisonOf(e), blocked = !!other && other !== pair;
       const group = text(parent, 'details', ''); group.open = true; group.dataset.kinComparison = pair;
       text(group, 'summary', 'Link Comparison Items');
-      const note = { idle: '비교 검사 표식을 확인하지 않았습니다. Reload Comparison Items로 확인하세요.', loading: '비교 검사 표식 확인 중…',
-        denied: '비교 검사에 접근할 수 없어 표식을 연결할 수 없습니다.', failed: '비교 검사 표식을 확인하지 못했습니다. Reload Comparison Items로 다시 확인하세요.' }[st.pair.status];
-      if (blocked) text(group, 'p', '이 소견에는 다른 비교 검사의 표식이 있어 이 비교 검사의 표식을 연결할 수 없습니다. 새 소견으로 기록하세요.');
+      const note = { idle: kinText("비교 검사 표식을 확인하지 않았습니다. Reload Comparison Items로 확인하세요."), loading: kinText("비교 검사 표식 확인 중…"),
+        denied: kinText("비교 검사에 접근할 수 없어 표식을 연결할 수 없습니다."), failed: kinText("비교 검사 표식을 확인하지 못했습니다. Reload Comparison Items로 다시 확인하세요.") }[st.pair.status];
+      if (blocked) text(group, 'p', kinText("이 소견에는 다른 비교 검사의 표식이 있어 이 비교 검사의 표식을 연결할 수 없습니다. 새 소견으로 기록하세요."));
       else if (note) text(group, 'p', note);
       const pairHeads = st.pair.status === 'ready' ? [...st.pair.heads.values()].filter(h => !linked(h.id)).map(h => ({ ...h, working: st.pair.working.has(h.id) })) : [];
-      if (st.pair.status === 'ready' && !pairHeads.length) text(group, 'p', '연결할 수 있는 비교 검사 저장 표식이 없습니다.');
+      if (st.pair.status === 'ready' && !pairHeads.length) text(group, 'p', kinText("연결할 수 있는 비교 검사 저장 표식이 없습니다."));
       choices(group, e, pairHeads, 'Link Comparison ', { uid: pair, blocked }, 'server-copy');
       button(group, 'Reload Comparison Items', () => store.loadPair(), st.pair.status === 'loading' || !!e.busy);
     }
@@ -228,13 +227,13 @@ window.kinViewerFindings = function (services, model) {
         wrap.append(check, document.createTextNode(' ' + label));
       };
       if (shown && shown.snapshotVersion === 6)
-        for (const mark of shown.marks) if (!linked(shown.jobId, mark.id)) choice('Link 3D Point ' + mark.label + ' · 저장 작업 r' + shown.revision, () => store.toggleJob(e, shown.jobId, mark.id));
-      if (!shown || shown.snapshotVersion !== 6) text(box, 'p', '연결할 3D 표식은 그 표식을 저장한 작업을 복원하거나 저장해 화면에 표시하면 나타납니다.');
+        for (const mark of shown.marks) if (!linked(shown.jobId, mark.id)) choice(kinText("Link 3D Point {0} · 저장 작업 r{n1}", mark.label, shown.revision), () => store.toggleJob(e, shown.jobId, mark.id));
+      if (!shown || shown.snapshotVersion !== 6) text(box, 'p', kinText("연결할 3D 표식은 그 표식을 저장한 작업을 복원하거나 저장해 화면에 표시하면 나타납니다."));
       for (const job of st.jobs.list.values())
-        if (!linked(job.id, undefined)) choice('Link Saved View ' + (job.title || '(제목 없음)') + ' · v' + job.snapshotVersion + ' · r' + job.revision, () => store.toggleJob(e, job.id));
-      const note = { loading: '저장 작업 목록 확인 중…', failed: '저장 작업 목록을 확인하지 못했습니다. Reload Saved Jobs로 다시 확인하세요.' }[st.jobs.status];
+        if (!linked(job.id, undefined)) choice('Link Saved View ' + (job.title || kinText("(제목 없음)")) + ' · v' + job.snapshotVersion + ' · r' + job.revision, () => store.toggleJob(e, job.id));
+      const note = { loading: kinText("저장 작업 목록 확인 중…"), failed: kinText("저장 작업 목록을 확인하지 못했습니다. Reload Saved Jobs로 다시 확인하세요.") }[st.jobs.status];
       if (note) text(box, 'p', note);
-      else if (st.jobs.status === 'ready' && !st.jobs.list.size) text(box, 'p', '이 검사에 연결할 수 있는 저장 작업이 없습니다.');
+      else if (st.jobs.status === 'ready' && !st.jobs.list.size) text(box, 'p', kinText("이 검사에 연결할 수 있는 저장 작업이 없습니다."));
       button(box, 'Reload Saved Jobs', () => store.loadJobs(), st.jobs.status === 'loading' || busy);
     }
     /* The draft's own fields are made once per entry and moved into each later render of its row. A render can be caused by
@@ -267,8 +266,7 @@ window.kinViewerFindings = function (services, model) {
             store.updateDraft(e, { [key]: value });
             if (e.draft[key] === value) { node.value = value; filled.push(name); } else kept.push(name);
           }
-          quickNote.textContent = (filled.length ? '채운 칸: ' + filled.join(', ') : '채운 칸이 없습니다') +
-            (kept.length ? ' · 이미 쓴 칸이나 길이 한도로 그대로 둔 칸: ' + kept.join(', ') : '') + ' · 저장하려면 Save를 누르세요.';
+          quickNote.textContent = kinText("{0}{1} · 저장하려면 Save를 누르세요.", (filled.length ? kinText("채운 칸: {0}", filled.join(', ')) : kinText("채운 칸이 없습니다")), (kept.length ? kinText(" · 이미 쓴 칸이나 길이 한도로 그대로 둔 칸: {0}", kept.join(', ')) : ''));
         });
         picks.push(fill);
         // A fixed pick list under a field: a press appends the term to that field's own text (the reader may change it after).
@@ -286,19 +284,19 @@ window.kinViewerFindings = function (services, model) {
         };
         const title = field(host, 'Finding Title', 'input', e.draft.title, model.LIMITS.title, v => store.updateDraft(e, { title: v }), false);
         // Location (version 3): the reader's own words for where the lesion is, the same code-point limit rule as Characteristics.
-        const where = field(host, 'Location (병변 위치)', 'input', typeof e.draft.lesionLocation === 'string' ? e.draft.lesionLocation : '',
+        const where = field(host, kinText("Location (병변 위치)"), 'input', typeof e.draft.lesionLocation === 'string' ? e.draft.lesionLocation : '',
           model.LESION_LOCATION, v => store.updateDraft(e, { lesionLocation: v }), false);
         where.setAttribute('aria-label', 'Finding Location'); where.translate = false;
         const whereHelp = text(host, 'p', LESION_LOCATION_HELP); whereHelp.id = 'kin-finding-location-help-' + crypto.randomUUID();
         where.setAttribute('aria-describedby', whereHelp.id);
         pickList('Pick Location', model.LOCATION_TERMS, where, 'lesionLocation', model.LESION_LOCATION, 'Add Location');
         // Size (version 4): the reader's own words for the lesion size, kept as typed.
-        const size = field(host, 'Size (크기)', 'input', typeof e.draft.size === 'string' ? e.draft.size : '', model.SIZE, v => store.updateDraft(e, { size: v }), false);
+        const size = field(host, kinText("Size (크기)"), 'input', typeof e.draft.size === 'string' ? e.draft.size : '', model.SIZE, v => store.updateDraft(e, { size: v }), false);
         size.setAttribute('aria-label', 'Finding Size'); size.translate = false;
         const sizeHelp = text(host, 'p', SIZE_HELP); sizeHelp.id = 'kin-finding-size-help-' + crypto.randomUUID();
         size.setAttribute('aria-describedby', sizeHelp.id);
         // Characteristics: native maxLength counts UTF-16 units (astral characters stop earlier); the saved limit is code points.
-        const traits = field(host, 'Characteristics (병변 특성)', 'textarea', typeof e.draft.characteristics === 'string' ? e.draft.characteristics : '',
+        const traits = field(host, kinText("Characteristics (병변 특성)"), 'textarea', typeof e.draft.characteristics === 'string' ? e.draft.characteristics : '',
           model.CHARACTERISTICS, v => store.updateDraft(e, { characteristics: v }), false);
         traits.setAttribute('aria-label', 'Finding Characteristics');
         const help = text(host, 'p', CHARACTERISTICS_HELP); help.id = 'kin-finding-characteristics-help-' + crypto.randomUUID();
@@ -344,11 +342,11 @@ window.kinViewerFindings = function (services, model) {
         const body = text(el, 'p', e.head ? e.head.item.text : e.draft.text); body.style.whiteSpace = 'pre-wrap';
         // Version 1 records show no characteristics line (nor version 1-2 a location line); old prose is never relabelled.
         const where = e.head && e.head.item.schemaVersion >= 3 ? e.head.item.lesionLocation : '';
-        if (where) { const line = text(el, 'p', 'Location (병변 위치): ' + where); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionLocation = ''; }
+        if (where) { const line = text(el, 'p', kinText("Location (병변 위치): {0}", where)); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionLocation = ''; }
         const size = e.head && e.head.item.schemaVersion >= 4 ? e.head.item.size : '';
-        if (size) { const line = text(el, 'p', 'Size (크기): ' + size); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionSize = ''; }
+        if (size) { const line = text(el, 'p', kinText("Size (크기): {n0}", size)); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinLesionSize = ''; }
         const traits = e.head && e.head.item.schemaVersion >= 2 ? e.head.item.characteristics : '';
-        if (traits) { const line = text(el, 'p', 'Characteristics (병변 특성): ' + traits); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinCharacteristics = ''; }
+        if (traits) { const line = text(el, 'p', kinText("Characteristics (병변 특성): {0}", traits)); line.style.whiteSpace = 'pre-wrap'; line.dataset.kinCharacteristics = ''; }
       }
       const same = (s, pair) => (model.isJob(s) ? 'job:' + s.jobId + ':' + (s.mark ? s.mark.id : '') : s.itemId) ===
         (model.isJobPair(pair) ? 'job:' + pair.jobId + ':' + (pair.markId || '') : pair.itemId) && s.revision === pair.revision;
@@ -370,7 +368,7 @@ window.kinViewerFindings = function (services, model) {
           button(el, e.head ? 'Cancel' : 'Discard Draft', () => store.discard(e), !!e.busy);
         } else if (e.head && !e.head.hidden && !store.pairBlocked(e)) button(el, 'Edit', () => store.edit(e), !!e.busy);
         if (e.head && !editing && !e.pending && !store.pairBlocked(e)) button(el, e.head.hidden ? 'Restore' : 'Hide', () => {
-          const reason = window.prompt((e.head.hidden ? '복원' : '숨김') + ' 사유');
+          const reason = window.prompt(kinText("{t0} 사유", (e.head.hidden ? kinText("복원") : kinText("숨김"))));
           if (reason !== null) store.save(e, e.head.hidden ? 'restore' : 'hide', reason);
         }, !!e.busy);
         if (e.latest && !e.pending) button(el, 'Use Latest & Keep Changes', () => store.useLatest(e), !!e.busy);
@@ -394,15 +392,15 @@ window.kinViewerFindings = function (services, model) {
           if (!data || !el.isConnected || histories.get(e) !== list) return;
           if (store.pairBlocked(e)) { history.remove(); histories.delete(e); toggle.setAttribute('aria-expanded', 'false'); return; }
           for (const r of data.revisions) {
-            text(history, 'p', 'r' + r.revision + ' · ' + ({ create: '생성', edit: '수정', hide: '숨김', restore: '복원' }[r.action] || r.action) + ' · ' + r.actor + ' · ' + r.at + ' · ' + r.reason + ' · ' + r.item.title + ' · 표식 ' + r.item.sources.length + '개');
+            text(history, 'p', kinText("r{n0} · {1} · {2} · {3} · {4} · {5} · 표식 {n6}개", r.revision, ({ create: kinText("생성"), edit: kinText("수정"), hide: kinText("숨김"), restore: kinText("복원") }[r.action] || r.action), r.actor, r.at, r.reason, r.item.title, r.item.sources.length));
             // Each revision's own text, characteristics (version 2) and the kinds it linked, counted only.
             const detail = text(history, 'div', ''); detail.dataset.kinRevision = String(r.revision); detail.style.marginLeft = '8px';
-            if (r.item.text) text(detail, 'p', '본문: ' + r.item.text).style.whiteSpace = 'pre-wrap';
-            if (r.item.schemaVersion >= 3) text(detail, 'p', r.item.lesionLocation ? 'Location (병변 위치): ' + r.item.lesionLocation : 'Location (병변 위치): 없음').style.whiteSpace = 'pre-wrap';
-            if (r.item.schemaVersion >= 4) text(detail, 'p', r.item.size ? 'Size (크기): ' + r.item.size : 'Size (크기): 없음').style.whiteSpace = 'pre-wrap';
-            if (r.item.schemaVersion >= 2) text(detail, 'p', r.item.characteristics ? 'Characteristics (병변 특성): ' + r.item.characteristics : 'Characteristics (병변 특성): 없음').style.whiteSpace = 'pre-wrap';
+            if (r.item.text) text(detail, 'p', kinText("본문: {0}", r.item.text)).style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 3) text(detail, 'p', r.item.lesionLocation ? kinText("Location (병변 위치): {0}", r.item.lesionLocation) : kinText("Location (병변 위치): 없음")).style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 4) text(detail, 'p', r.item.size ? kinText("Size (크기): {n0}", r.item.size) : kinText("Size (크기): 없음")).style.whiteSpace = 'pre-wrap';
+            if (r.item.schemaVersion >= 2) text(detail, 'p', r.item.characteristics ? kinText("Characteristics (병변 특성): {0}", r.item.characteristics) : kinText("Characteristics (병변 특성): 없음")).style.whiteSpace = 'pre-wrap';
             const count = kind => r.item.sources.filter(kind).length;
-            text(detail, 'p', '연결: 2D 표식 ' + count(x => !model.isJob(x)) + '개 · Saved View ' + count(x => model.isJob(x) && !x.mark) + '개 · 3D Point ' + count(x => model.isJob(x) && !!x.mark) + '개 · v' + (r.item.schemaVersion || 1));
+            text(detail, 'p', kinText("연결: 2D 표식 {0}개 · Saved View {1}개 · 3D Point {2}개 · v{3}", count(x => !model.isJob(x)), count(x => model.isJob(x) && !x.mark), count(x => model.isJob(x) && !!x.mark), (r.item.schemaVersion || 1)));
           }
           count += data.revisions.length; cursor = data.nextCursor;
           if (cursor && count < 1000) button(history, 'Load More History', more);
@@ -425,9 +423,9 @@ window.kinViewerFindings = function (services, model) {
       markNote.textContent = '';
     });
     const fromMarkButton = button(fromMark, 'New Finding from Mark', () => {
-      if (!picked) { markNote.textContent = ' 먼저 표식을 고르세요.'; return; }
+      if (!picked) { markNote.textContent = kinText(" 먼저 표식을 고르세요."); return; }
       const made = store.newDraftFrom(picked.id, picked.revision);
-      markNote.textContent = made ? '' : ' 고른 표식이 그 사이 바뀌었거나 숨겨졌거나 수정 중이라 소견을 만들지 않았습니다. 다시 고르세요.';
+      markNote.textContent = made ? '' : kinText(" 고른 표식이 그 사이 바뀌었거나 숨겨졌거나 수정 중이라 소견을 만들지 않았습니다. 다시 고르세요.");
     });
     fromMark.append(markNote);
     markRow.append(fromMark);
@@ -437,7 +435,7 @@ window.kinViewerFindings = function (services, model) {
       if (markChoice.dataset.options !== wanted) {
         markChoice.dataset.options = wanted;
         offered = new Map(heads.map(h => [h.id, h.revision]));
-        const none = document.createElement('option'); none.value = ''; none.textContent = '— 저장 표식 선택 —';
+        const none = document.createElement('option'); none.value = ''; none.textContent = kinText("— 저장 표식 선택 —");
         const options = heads.map(h => { const o = document.createElement('option'); o.value = h.id; o.textContent = describe(h) + values(h, 'live-head'); return o; });
         markChoice.replaceChildren(none, ...options);
         // A picked mark stays picked only while it is offered at the same revision; otherwise the reader picks again.
@@ -460,16 +458,15 @@ window.kinViewerFindings = function (services, model) {
       // Held drafts are named by count and study only, so the unsaved-work guards never fire with nothing to resolve.
       const kept = store.held();
       recovery.hidden = !kept.count; recovery.dataset.count = String(kept.count);
-      recovery.textContent = kept.count ? '보관 중인 소견 작성 내용 ' + kept.count + '건 · ' + kept.studies.map(r => (r.current ? '현재 검사 ' : '다른 검사 ') + r.scope + ' ' + r.count + '건').join(' · ') +
-        ' · 해당 검사의 영상 칸을 선택하면 접근과 계정을 확인한 뒤 복원합니다. 현재 검사는 Reload Findings로 다시 확인하세요.' : '';
+      recovery.textContent = kept.count ? kinText("보관 중인 소견 작성 내용 {n0}건 · {1} · 해당 검사의 영상 칸을 선택하면 접근과 계정을 확인한 뒤 복원합니다. 현재 검사는 Reload Findings로 다시 확인하세요.", kept.count, kept.studies.map(r => kinText("{t0}{1} {n2}건", (r.current ? kinText("현재 검사 ") : kinText("다른 검사 ")), r.scope, r.count)).join(' · ')) : '';
       if (kept.count && !s.ended) button(actions, 'Discard Held Drafts', () => {
-        if (window.confirm('보관 중인 소견 작성 내용 ' + store.held().count + '건을 버립니다. 결과를 확인하지 못한 저장 요청은 서버에 이미 저장되었을 수 있습니다. 계속할까요?')) store.discardHeld();
+        if (window.confirm(kinText("보관 중인 소견 작성 내용 {n0}건을 버립니다. 결과를 확인하지 못한 저장 요청은 서버에 이미 저장되었을 수 있습니다. 계속할까요?", store.held().count))) store.discardHeld();
       });
       const pair = store.pairOf();
       pairNote.hidden = !pair; pairStatus.hidden = !pair; panel.dataset.comparisonUid = pair; panel.dataset.comparisonState = pair ? s.pair.status : '';
-      pairStatus.textContent = !pair ? '' : '비교 검사 ' + pair + ' · ' + ({ idle: '표식 확인 전', loading: '표식 확인 중…',
-        ready: '연결할 수 있는 저장 표식 ' + s.pair.heads.size + '개', denied: '접근할 수 없음(그 검사를 연결한 소견은 표시하지 않습니다)',
-        failed: '표식을 확인하지 못했습니다' }[s.pair.status] || '');
+      pairStatus.textContent = !pair ? '' : kinText("비교 검사 {0} · {1}", pair, ({ idle: kinText("표식 확인 전"), loading: kinText("표식 확인 중…"),
+        ready: kinText("연결할 수 있는 저장 표식 {n0}개", s.pair.heads.size), denied: kinText("접근할 수 없음(그 검사를 연결한 소견은 표시하지 않습니다)"),
+        failed: kinText("표식을 확인하지 못했습니다") }[s.pair.status] || ''));
       // A finding that names a comparison study this login can no longer read is not shown unless the
       // user is working on it; the anchor list read that follows removes it for good.
       const shown = e => s.entries.get(e.id) === e && !(store.pairBlocked(e) && !store.hasWork(e));

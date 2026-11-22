@@ -720,7 +720,7 @@ export class AdminService {
    * institution and reason in its audit row. Refused without any write: X unknown or already administered; a service
    * account; a person of another institution or of several; provider groups that disagree with X; a suspended or
    * isolated account, or one that is signed in. Roles are the person's current X roles plus admin — nothing else is chosen here, and passwords,
-   * suspension and the administrator OTP are untouched. Concurrent or repeated runs: the institution lock and the
+   * suspension and the account's own OTP are untouched. Concurrent or repeated runs: the institution lock and the
    * re-read under it let one succeed.
    */
   async designateFirstAdmin(sub: string, institutionValue: string, operator: { name: string; reason: string },

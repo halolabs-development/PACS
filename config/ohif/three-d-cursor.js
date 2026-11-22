@@ -6,6 +6,8 @@
    URL 매개변수·localStorage·전역 토글 같은 런타임 우회 경로는 두지 않는다. OFF면
    preRegistration에서 스크립트를 주입하지 않으므로 모듈 전역도 패널도 생기지 않는다. */
 function kinCreateThreeDCursor() {
+  // Also run on its own (a page test takes this function out of config/ohif.js): the words then stay as written.
+  const kinText = globalThis.kinText || ((t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]))), kinHtml = globalThis.kinHtml || kinText, kinError = globalThis.kinError || ((t, ...p) => Object.assign(new Error(kinText(t, ...p)), { kinWords: true }));
   let services, ready = null, current = null, epoch = 0, ended = false, listening = false, channel = null;
   let rows = [], owner = null, mark = null, listeners = [], mounts = 0, renders = 0, invalidations = 0;
   /* 종료는 이 호스트가 소유한다. retiring은 아직 끝나지 않은 disable→stop이고, blocked는 그
@@ -20,14 +22,14 @@ function kinCreateThreeDCursor() {
   const load = (name, global) => window[global] ? Promise.resolve() : new Promise((resolve, reject) => {
     const script = document.createElement('script'); script.src = '/worklist/hpacs-lite/' + name;
     const finish = error => { clearTimeout(timer); script.onload = script.onerror = null; error ? reject(error) : resolve(); };
-    const timer = setTimeout(() => finish(new Error('3D Cursor 연결이 지연되어 중단했습니다.')), 20000);
-    script.onload = () => finish(window[global] ? null : new Error('3D Cursor 모듈을 확인할 수 없습니다.'));
-    script.onerror = () => finish(new Error('3D Cursor 모듈을 불러오지 못했습니다.'));
+    const timer = setTimeout(() => finish(kinError("3D Cursor 연결이 지연되어 중단했습니다.")), 20000);
+    script.onload = () => finish(window[global] ? null : kinError("3D Cursor 모듈을 확인할 수 없습니다."));
+    script.onerror = () => finish(kinError("3D Cursor 모듈을 불러오지 못했습니다."));
     document.head.append(script);
   });
   async function get(path) {
     const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store' });
-    if (!response.ok) throw new Error('검사 접근 정보를 확인할 수 없습니다.');
+    if (!response.ok) throw kinError("검사 접근 정보를 확인할 수 없습니다.");
     return await response.json();
   }
   const ownerOf = me => me?.kind === 'member' && me.institution && me.sub ? JSON.stringify([me.institution, me.sub]) : null;
@@ -196,7 +198,7 @@ function kinCreateThreeDCursor() {
           { panes, meta, context, host: document.querySelector('#kin-viewer-layout') });
         mounts++;
         bind();
-      })).catch(() => { if (ticket === epoch) say('3D Cursor를 연결하지 못했습니다. 영상 작업을 저장한 뒤 뷰어를 다시 여세요.'); });
+      })).catch(() => { if (ticket === epoch) say(kinText("3D Cursor를 연결하지 못했습니다. 영상 작업을 저장한 뒤 뷰어를 다시 여세요.")); });
     },
     onModeExit() { retire(); },
   };

@@ -131,10 +131,7 @@
       $("#struct-removed").textContent = removing;
       $("#struct-removed-label").style.display = removing ? "" : "none";
       const label = KinReportCitation.FIELD_LABEL[pane.field] ?? pane.field;
-      $("#struct-place").textContent = !pane.plan ? ""
-        : (pane.plan.mode2 === "replace"
-            ? `${label} ${pane.plan.removedLine}번째 줄의 위 문장을 지우고 이 문장으로 바꿉니다.`
-            : `${label} ${pane.plan.line}번째 줄부터 넣습니다. 기존 내용은 지우지 않습니다.`);
+      kinWrite($("#struct-place"), !pane.plan ? "" : pane.plan.mode2 === "replace" ? kinSayEn("{0} {1}번째 줄의 위 문장을 지우고 이 문장으로 바꿉니다.", label, pane.plan.removedLine) : kinSayEn("{0} {1}번째 줄부터 넣습니다. 기존 내용은 지우지 않습니다.", label, pane.plan.line));
       $("#struct-status").textContent = pane.status || why || (plan && plan.message) || "";
       // 다른 판의 서식으로 적힌 값은 보여주기만 한다. 지금 서식으로 다시 렌더해 보내면 서명된
       // 판의 문장을 새 문면으로 조용히 바꾸는 일이 된다.
@@ -327,7 +324,7 @@
       button.id = "b-structured";
       button.type = "button";
       button.textContent = "Structured";
-      button.title = "서식에서 고른 값을 판독문 본문에 한 줄로 넣습니다";
+      kinWrite(button, kinSayEn("서식에서 고른 값을 판독문 본문에 한 줄로 넣습니다"), "title");
       button.addEventListener("click", () => openStructure());
       $("#b-print").before(button);
     }

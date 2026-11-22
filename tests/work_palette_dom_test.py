@@ -15,6 +15,7 @@ one of the five at any alpha; near-black shadows and scrims are neutral. Element
 left out of the sweep and their colours are asserted to stay.
 """
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -347,6 +348,13 @@ class CountRowSite(PaletteSite):
     def __init__(self):
         super().__init__()
         self.appearance, self.appearance_revision = None, 0
+        self.unverified = set()     # studies still being acquired (ss Unverified, em N): their rows are marked apart
+
+    def study_row(self, account, uid=auth.UID, name=auth.PATIENT, patient='SYN-P-001'):
+        row = super().study_row(account, uid, name, patient)
+        if uid in self.unverified:
+            row['state'] = {**row['state'], 'ss': 'Unverified'}
+        return row
 
     def api(self, route, request, method, path, query):
         if path != '/api/reading-appearance':
@@ -380,10 +388,14 @@ class CountRowAndContrastDOM(unittest.TestCase):
         cls.browser.close()
         cls.pw.stop()
 
-    def open(self, width=1920, height=1080, english=False, studies=None):
+    def open(self, width=1920, height=1080, english=False, studies=None, unverified=False):
         site = CountRowSite()
         if studies:
             site.second_study, site.study_count = True, studies
+        if unverified:
+            # A second row for a study still being acquired, beside the first (Verified) one.
+            site.second_study = True
+            site.unverified.add(auth.UID_B)
         context = self.browser.new_context(viewport={'width': width, 'height': height})
         context.route('**/*', lambda route, request: site.handle(route, request))
         page = context.new_page()
@@ -514,6 +526,57 @@ class CountRowAndContrastDOM(unittest.TestCase):
                 page.wait_for_function("!document.body.classList.contains('reading')")
                 settle(page)
                 self.assertEqual([], page.evaluate(COUNT_ROW)['bad'], 'count row after the Reading Workspace')
+                self.doCleanups()
+
+    def test_unverified_row_reads_at_4_5_and_stays_marked_apart(self):
+        # A study still being acquired (Unverified) has its own row look on the reading worklist. Every text in that row (the
+        # body, the reader chip, the status word) reads at 4.5:1 or more idle, under the pointer and selected; the row is
+        # still told apart from a Verified row in the same selection state (the same column drawn differently), and its text
+        # keeps the list's text colour (the mark is not a colour, so a reader's chosen list colour stays theirs).
+        look = '''tr => { const cs = getComputedStyle(tr.querySelector('td.dim'));
+          return {color: cs.color, font: cs.fontStyle, background: cs.backgroundColor, opacity: cs.opacity}; }'''
+        for english in (False, True):
+            with self.subTest(language='en' if english else 'ko'):
+                page = self.open(english=english, unverified=True)
+                expect(page.locator('#rows tr[data-uid]')).to_have_count(2)
+                unv = page.locator('#rows tr.unv[data-uid="%s"]' % auth.UID_B)
+                verified = page.locator('#rows tr[data-uid="%s"]' % auth.UID)
+                expect(unv).to_have_count(1)
+                expect(verified).not_to_have_class(re.compile(r'\bunv\b'))
+
+                def apart(what, a, b):
+                    self.assertNotEqual(a, b, what)
+                    self.assertEqual(a['color'], b['color'], what + ': the list text colour')
+                    self.assertEqual('1', a['opacity'], what)
+                page.mouse.move(2, 2)
+                settle(page)
+                self.assertEqual([], page.evaluate(LOW_CONTRAST, '#rows tr.unv'), 'unverified row, idle')
+                apart('idle, both unselected', unv.evaluate(look), verified.evaluate(look))
+                unv.hover()
+                settle(page)
+                self.assertEqual([], page.evaluate(LOW_CONTRAST, '#rows tr.unv'), 'unverified row under the pointer')
+                unv.click()
+                expect(unv).to_have_class(re.compile(r'\bsel\b'))
+                expect(unv).to_have_class(re.compile(r'\bunv\b'))
+                page.mouse.move(2, 2)
+                settle(page)
+                self.assertEqual([], page.evaluate(LOW_CONTRAST, '#rows tr.unv'), 'unverified row, selected')
+                unv_selected = unv.evaluate(look)
+                verified.click()
+                expect(verified).to_have_class(re.compile(r'\bsel\b'))
+                page.mouse.move(2, 2)
+                settle(page)
+                apart('each selected in turn', unv_selected, verified.evaluate(look))
+                self.assertEqual([], page.evaluate(LOW_CONTRAST, '#rows'), 'rows, a Verified row selected')
+                # The list drawn again (into the Reading Workspace and back) keeps the mark.
+                page.locator('#m-reading').click()
+                page.wait_for_function("document.body.classList.contains('reading')")
+                page.locator('#m-reading').click()
+                page.wait_for_function("!document.body.classList.contains('reading')")
+                page.mouse.move(2, 2)
+                settle(page)
+                self.assertEqual([], page.evaluate(LOW_CONTRAST, '#rows tr.unv'), 'unverified row after the Reading Workspace')
+                self.assertEqual('italic', unv.evaluate(look)['font'], 'mark after the Reading Workspace')
                 self.doCleanups()
 
     def test_writing_fields_are_panels_marked_apart_by_their_edge(self):

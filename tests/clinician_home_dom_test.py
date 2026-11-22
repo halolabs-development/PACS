@@ -91,7 +91,7 @@ def lf_text(path):
 
 ORIGIN = "https://clinician.test"
 BASE = "/worklist/hpacs-lite/"
-SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
+SHIPPED = {name: lf_text(HPACS / name) for name in ("clinician.html", "clinician.js", "unread-badges.js", "report-preview.js", "report-citation.js", "physician-name.js", "worklist-folder-tree.js", "work-mode.js", "product-info-data.js", "product-info.js", "index.html", "worklist-language-terms.js", "worklist-language.js", "auth.js", "work-context.js", "exam-scope.js", "session-transport.js",
                                                     "critical-result-inbox.js", "clinical-signature.js")}
 MAIN_HTML = read_page_source(HPACS / "main.html")
 AUTH_CONTROLLER = lf_text(ROOT / "api" / "src" / "auth.controller.ts")
@@ -1195,6 +1195,24 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.pick(1)
         expect(self.page.locator("#exam-note")).to_be_hidden()
 
+    def test_b14_on_an_english_page_the_reason_an_exam_cannot_be_read_whole_reads_in_english(self):
+        """The same row on a page that follows the English chosen on the work page: the row's reason, the picked study's
+        note and the refused opening read in English."""
+        self.fresh_context("localStorage.setItem('kin-language:v1', JSON.stringify("
+                           "{version: 1, worklist: 'en', reading: 'en', session: 'SYN-SESSION-SYN-CLIN-SUB'}))")
+        rows = {r["uid"]: r for r in self.rows}
+        rows[uid(7)].update(examUnavailable=True, examUnavailableKind="merge")
+        merge = ("Some originals of this merged exam cannot be read, so it is not opened or preloaded. An original is missing "
+                 "from the image archive or this account cannot see it. Refresh the list.")
+        self.open_home()
+        expect(self.row(7).locator("td[data-report] [data-unavailable]")).to_have_attribute("title", merge)
+        self.pick(7, "status")
+        expect(self.page.locator("#exam-note")).to_contain_text(merge)
+        self.page.evaluate("() => { window.synOpened = []; window.open = (...args) => { window.synOpened.push(args); return null; }; }")
+        self.page.locator("#open-viewer").click()
+        expect(self.page.locator("#viewer-note")).to_have_text(merge)
+        self.assertEqual([], self.page.evaluate("window.synOpened"))
+
     def test_b14_a_stored_version_says_which_one_and_leaves_the_row_alone(self):
         """F35 / B14 (Astra's design answer): a stored version read from the Exam Reports buttons shows that version and says
         so; the row keeps the state of its own latest read (it is not that version)."""
@@ -1611,6 +1629,30 @@ class ClinicianHomeDOMTest(unittest.TestCase):
         self.pick(5, "status")
         self.assertEqual(("open", False), (self.reading()["state"], self.reading()["button"]))
         self.assertEqual(1, len(self.readings))
+
+    def test_b19_on_an_english_page_the_reading_request_reads_in_english(self):
+        """The same states on a page that follows the English chosen on the work page: the page's sentences read in
+        English; the time and who asked stay as the server sent them."""
+        self.fresh_context("localStorage.setItem('kin-language:v1', JSON.stringify("
+                           "{version: 1, worklist: 'en', reading: 'en', session: 'SYN-SESSION-SYN-CLIN-SUB'}))")
+        self.reading_rows()
+        self.open_home()
+        self.pick(5, "status")
+        self.assertIn("This study has no reading request.", self.reading()["text"])
+        self.page.get_by_role("button", name="Request Reading", exact=True).click()
+        self.wait_until(lambda: self.reading()["state"] == "open", "the request shown open")
+        shown = self.reading()
+        self.assertEqual("Reading requested.", shown["note"])
+        self.assertIn("The request closes when the report is approved.", shown["text"])
+        self.assertEqual([self.local("2026-11-21T05:03:00.000Z"), "SYN Clinician"], shown["data"])
+        self.pick(7, "status")
+        self.assertEqual([self.local("2026-11-20T23:30:00.000Z"), "SYN Dr. ASKER <b>x</b>"], self.reading()["data"])
+        self.pick(2, "final")
+        self.assertIn("The report was approved and the request closed.", self.reading()["text"])
+        self.pick(4, "status")
+        shown = self.reading()
+        self.assertIn("This study has an approved report, so a reading cannot be requested.", shown["text"])
+        self.assertIsNone(re.search("[가-힣]", shown["text"] + shown["note"]), shown)
 
     def test_b19_a_second_press_and_refusals_are_shown_as_the_server_says(self):
         self.reading_rows()

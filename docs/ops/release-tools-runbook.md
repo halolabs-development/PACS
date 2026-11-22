@@ -672,9 +672,10 @@ Read all applied migrations and their checksums from PostgreSQL and compare them
 New migrations must append; a fixed migration count is not a compatibility check. Require the relevant
 ledger reader/decoder code to match the release pair. Validate disk capacity and the archive digest.
 
-Read the existing realm through Admin REST. Run the candidate's `check_admin_mfa` against its current
-browser/reset flows, required actions, client overrides and BFF AMR mapper. Apply any missing changes
-using [the existing-installation instructions](../../keycloak/README.md), then read them back. Include
+Read the existing realm through Admin REST. Run the candidate's `check_login_flows` against its current
+browser and reset-credentials flow bindings (Keycloak's built-in `browser` and `reset credentials`: no account
+is required to have OTP). Bind them back using [the existing-installation instructions](../../keycloak/README.md)
+inside the maintenance window, then read them back. Include
 realm/client/SMTP display names and all three administrative-event retention values. Import JSON and
 container recreation do not update an existing realm. Record the actual values, without credentials.
 
@@ -754,7 +755,7 @@ remote-administration path. What the production Compose set (`docker-compose.yml
   production overlay was left out.
 - **Remote administration:** SSH by key only (no passwords), from the administration addresses the private release
   record names. Keycloak and Orthanc are administered only through an SSH tunnel to their loopback ports. The
-  product's own administration screens go through 443 with administrator OTP (Inputs and read-only preparation).
+  product's own administration screens go through 443 (Inputs and read-only preparation).
 - **Hospital Gateway host** (a separate machine, `gateway/`): its DICOM port (`GW_DICOM_PORT`, default 4243) answers only
   inside the hospital network; its local REST port stays on loopback; towards the server it needs only outbound HTTPS
   443. Remote support travels over that same outbound connection and the hospital can turn it off
@@ -1131,7 +1132,7 @@ the rollback window; release their holds only through the approved retention pro
 
 Run the host procedure end to end on synthetic data in an isolated rehearsal environment: prior install
 → candidate → R → N → R → candidate. Verify prior rows/files, current and expired sessions, administrator
-OTP, password reset, viewer pixels/configuration, drafts/final reports/drawings and signing.
+sign-in by password only, an account's own OTP, password reset, viewer pixels/configuration, drafts/final reports/drawings and signing.
 Exercise at least one identifiable completed draft destruction in each direction and verify that exact
 content's absence after replay, including drawings and ended-work payloads.
 

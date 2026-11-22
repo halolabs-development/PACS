@@ -429,7 +429,8 @@
             details: null };
         }
         return { key: 'v' + item.version, marks: [],
-        line: [{ text: kinSay('Tech Note v{n0}', item.version) }, { text: actor(item.provenance.author), data: true }, time(item.provenance.recordedAt),
+        // The note's writer as the server names it (api/src/account-identity.ts writerShown, by its account): as is, never looked up.
+        line: [{ text: kinSay('Tech Note v{n0}', item.version) }, { text: item.provenance.author || '', data: true }, time(item.provenance.recordedAt),
             anchorBadge].concat(item.hasText ? [] : [{ text: TEXT.noText }]),
           source: [{ text: SOURCE_TEXT[name] }, observed(item.provenance.observedAt)],
           details: null };
@@ -455,7 +456,7 @@
   function summary(answer, stale, kept, options) {
     const format = options && typeof options.format === 'function' ? options.format : localTime;
     if (kept) return { label: TEXT.stateLabels.stale, text: kinSay('{t0} {t1}', { t: kinSay(TEXT.refreshFailed) }, { t: reasonText(kept.reason, kept.status, kept.code) }), title: '' };
-    if (noInformation(answer, stale)) return { label: '', text: TEXT.noInformation, title: '' };
+    if (noInformation(answer, stale)) return { label: '', text: kinSay(TEXT.noInformation), title: '' };
     return { label: '', text: fill(TEXT.observedAnswer, { observedAt: format(answer.observedAt) }), title: answer.observedAt };
   }
   /** The panel status line when no answer is shown: Failed and the reason (§7 failed, screen-made). */

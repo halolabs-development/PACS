@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma.service';
+import { withWriters } from './member-rights';
 import { OrthancService } from './orthanc.service';
 import { StudyAccessService } from './study-access.service';
 import type { AccessSnapshot } from './study-access.service';
@@ -133,7 +134,7 @@ export class ClinicalContextService {
       priorReports = contextReadSection('priorReports', read.shown
         .map(member => contextPriorItem(member, bodies.get(member.head.id), anchorKeys, read.readAt)), read.readAt, read.signed > (cursor + 1) * CONTEXT_PRIOR_LIMIT);
     }
-    const techNote = contextReadSection('techNote', read.note ? [contextTechNoteItem(uid, read.note, read.readAt)] : [], read.readAt);
+    const techNote = contextReadSection('techNote', read.note ? [contextTechNoteItem(uid, read.note, read.readAt, await withWriters(this.prisma, c))] : [], read.readAt);
     // 의료법 제23조④ 열람: 서명된 과거 판독 본문과 같은 환자의 검사 행은 답이 나가기 전에 접속기록이 된다(R9의 읽기 전용은
     // 업무 자료에 대한 것이다). 기록 대상은 조립된 답에 실제로 실린 항목뿐이다.
     const studied = new Map<string, { institution: string | null; patientId: string | null }>([
@@ -231,7 +232,7 @@ export class ClinicalContextService {
       const bodies = shown.length ? await tx.reportVersion.findMany({ where: { id: { in: shown.map(member => member.head.id) } },
         select: { id: true, findings: true, conclusion: true, recommendation: true } }) : [];
       const note = await tx.techNoteRevision.findFirst({ where: { studyUid: uid }, orderBy: { version: 'desc' },
-        select: { version: true, text: true, author: true, createdAt: true } });
+        select: { version: true, text: true, author: true, authorSub: true, createdAt: true } });
       const readAt = now();
       const pins: ContextPins = contextPins(anchor, note?.version ?? 0, members);
       return { anchor, access: anchorAccess, patientKey, members, signed: signed.length, shown, bodies, note, readAt, pins,scopes };
