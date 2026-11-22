@@ -9648,7 +9648,8 @@ window.KinLanguageTerms = {
  * [KIN 추가] 표시가 붙은 부분만 기본값과 다름.
  */
 
-const KIN_VIEWER_DEFAULT_TITLE = '판독 뷰어 — HALO PACS';
+// The viewer's own window title, in the reader's screen language (viewer-language.js kinText — as written unless English).
+const KIN_VIEWER_DEFAULT_TITLE = kinText('판독 뷰어 — HALO PACS');
 const KIN_VIEWER_PRODUCT = 'HALO PACS Viewer';
 
 // the original image a Physician-mode hand-off asks this document to open first (a key image or a cited line of the

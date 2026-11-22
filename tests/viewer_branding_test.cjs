@@ -56,7 +56,9 @@ function world(){
         &&(r.target===this.target||!!o.subtree&&this.target.contains(r.target));}}
   const el=(tag,text,...kids)=>{const e=new El(doc,tag,text);kids.forEach(k=>{k.parentElement=e;e.children.push(k);});return e;};
   const ctx={document:doc,MutationObserver,ResizeObserver:class{observe(){}disconnect(){}},requestAnimationFrame:fn=>setImmediate(fn),cancelAnimationFrame:clearImmediate,Node:{ELEMENT_NODE:1},BroadcastChannel:class{addEventListener(){}removeEventListener(){}close(){}},
-    window:{addEventListener(){},removeEventListener(){}},queueMicrotask};
+    window:{addEventListener(){},removeEventListener(){}},queueMicrotask,
+    // The viewer's write path (viewer-language.js, shared ahead of this block in config/ohif.js) without English: as written.
+    kinText:(t,...p)=>t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]))};
   vm.createContext(ctx);
   const Brand=vm.runInContext(block+';KinViewerBrand',ctx);
   let cleanup=null;
