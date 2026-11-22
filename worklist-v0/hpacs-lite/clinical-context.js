@@ -429,7 +429,8 @@
             details: null };
         }
         return { key: 'v' + item.version, marks: [],
-        line: [{ text: kinSay('Tech Note v{n0}', item.version) }, { text: actor(item.provenance.author), data: true }, time(item.provenance.recordedAt),
+        // The note's writer as the server names it (api/src/account-identity.ts writerShown, by its account): as is, never looked up.
+        line: [{ text: kinSay('Tech Note v{n0}', item.version) }, { text: item.provenance.author || '', data: true }, time(item.provenance.recordedAt),
             anchorBadge].concat(item.hasText ? [] : [{ text: TEXT.noText }]),
           source: [{ text: SOURCE_TEXT[name] }, observed(item.provenance.observedAt)],
           details: null };

@@ -15,8 +15,8 @@ import { applyKeepList, blockIsBlank, citationArray, citationIdList, citationIns
 import { applyStructureKeepList, isStructureEntry, projectStructure, structureApplyInput, structureArray,
   structureIdList, structureItemKey, structureSameTextCounts, structureUnion, StructureInputError, STRUCTURE_CATALOG,
   REPORT_STRUCTURE_LIMITS, REPORT_STRUCTURE_SCHEMA } from '../report-structure';
-import { draftToken, keptVersionTime, refuseDestroyed, visibleDraftAuthor } from './values';
-import { versionWriterName } from '../member-rights';
+import { draftToken, keptVersionTime, refuseDestroyed, visibleDraftAuthor, shownPreReviewer } from './values';
+import { versionWriterName, withWriters } from '../member-rights';
 import { draftOf, sameAccount } from '../owner-identity';
 import { assertHeadReadable, headForLock, storedVersionReadable, versionBodyReadable, versionClasses, inProgressRefusal } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
@@ -367,6 +367,7 @@ export class PacsReportEvidence {
   async versions(uid: string, c: Caller) {
     // WORKLIST-SPLIT-UID: each read below observes the source for its own request and, inside the existing scope,
     // refuses a UID two patient resources answer instead of putting either patient's header on the stored text.
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     return this.prisma.$transaction(async tx => {
     const prev = await this.access.gate(uid, c, tx);
@@ -381,7 +382,7 @@ export class PacsReportEvidence {
     // 본문을 가려놓고 이력에서 읽히면 가린 게 아니다. 같은 규칙을 여기에도 건다.
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     /**
      * 칸을 **명시해서** 고른다. 행 전체를 돌려주면 새로 생긴 인용 칸이 이력 응답으로
@@ -459,6 +460,7 @@ export class PacsReportEvidence {
    * 그 사이 확정이 끼어들어 "머리에는 없고 초안에는 있는" 없는 상태를 그릴 수 있다.
    */
   async reportCitations(uid: string, c: Caller) {
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -467,7 +469,7 @@ export class PacsReportEvidence {
     // 본문을 가려놓고 그 증언이 읽히면 가린 게 아니다. `versions()`와 같은 규칙을 건다.
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     // 소견 계보의 접근 정책은 트랜잭션 밖에서 준비한다(`putReport`와 같은 이유).
     await this.studyAccess.prepare(c);
@@ -524,6 +526,7 @@ export class PacsReportEvidence {
    * part is the list the next version would hold if I committed now (my additions and removals over the head).
    */
   async reportDrawings(uid: string, c: Caller) {
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -531,7 +534,7 @@ export class PacsReportEvidence {
     const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     return this.prisma.$transaction(async tx => {
       const state = await this.access.gate(uid, c, tx);
@@ -584,6 +587,7 @@ export class PacsReportEvidence {
    */
   async reportDrawing(uid: string, id: string, c: Caller) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) throw new NotFoundException('그림을 찾을 수 없습니다');
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -591,7 +595,7 @@ export class PacsReportEvidence {
     const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     return this.prisma.$transaction(async tx => {
       const state = await this.access.gate(uid, c, tx);
@@ -637,6 +641,7 @@ export class PacsReportEvidence {
    * 확정이 끼어들어 "머리에는 없고 초안에는 있는" 없는 상태를 그릴 수 있다.
    */
   async reportStructure(uid: string, c: Caller) {
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const prev = await this.access.gate(uid, c);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
@@ -644,7 +649,7 @@ export class PacsReportEvidence {
     const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
     refuseDestroyed(prev);
     return this.prisma.$transaction(async tx => {
       const state = await this.access.gate(uid, c, tx);
@@ -713,6 +718,7 @@ export class PacsReportEvidence {
      * uid 목록 **없이** 준비한다. 이 메서드에는 트랜잭션 밖 `gate()`가 없어 밖에서 도는
      * `require`도 없으므로, 아래 트랜잭션 안의 재검사는 이 호출이 채운 캐시에만 기댈 수 있다.
      */
+    await withWriters(this.prisma, c);
     await this.studyAccess.prepare(c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const read = await this.prisma.$transaction(async tx => {
@@ -726,7 +732,7 @@ export class PacsReportEvidence {
     const sourceIdentity = this.studyAccess.assertUnsplitSource(c, parentScope.studies[0]);
       if (!canReadPreliminary(prev, c))
         throw new ForbiddenException(
-          `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+          `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 볼 수 있습니다.`);
       refuseDestroyed(prev);
       const row = await tx.reportVersion.findUnique({
         where: { uid_version: { uid, version: want } },

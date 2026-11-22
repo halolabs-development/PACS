@@ -20,6 +20,7 @@ import { asrConfiguration } from '../asr.service';
 import { groupSources, consensus, sameUidSet, identityIssueList, sameAccessTags } from '../study-source-groups';
 import { dump, qidoCount, toClient, requestColumns, referredAt, ORDER_REQUEST_SELECT } from './values';
 import { need, inst } from './access';
+import { withWriters } from '../member-rights';
 import type { Caller, PacsAccess } from './access';
 import type { PacsInstitutions } from './institutions';
 import type { PacsPreferences } from './preferences';
@@ -226,6 +227,7 @@ export class PacsWorklist {
   async selectStudies(c: Caller, query?: any, purpose: 'current' | 'source' = 'source') {
     const exams = purpose === 'current';
     const me = inst(c);
+    await withWriters(this.prisma, c);
     const access=await this.studyAccess.snapshot(c);
     const requested = query?.uids;
     if (requested !== undefined && (typeof requested !== 'string' || Object.keys(query).some(key => key !== 'uids')))
@@ -645,6 +647,7 @@ export class PacsWorklist {
     const omitStates = query?.states === 'omit';
     if (query && (Object.keys(query).some(key => key !== 'states') || (Object.keys(query).length && !omitStates)))
       throw new BadRequestException('초기 목록 요청 형식이 잘못되었습니다');
+    await withWriters(this.prisma, c);
     const access=await this.studyAccess.snapshot(c);
     const [stateRows, orderRows] = await Promise.all([
       omitStates ? Promise.resolve([]) : this.prisma.studyState.findMany({

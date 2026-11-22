@@ -11,7 +11,8 @@ import type { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
 import { overlayShape, OVERLAY_RULE_TEXT } from '../study-identity';
 import { closeReaderAssignments } from '../reader-assignment.service';
-import { parse, dump, toClient, noteTransactionError, refuseDestroyed } from './values';
+import { parse, dump, toClient, noteTransactionError, refuseDestroyed, shownPreReviewer } from './values';
+import { withWriters } from '../member-rights';
 import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
 import type { PacsInstitutions } from './institutions';
@@ -84,6 +85,7 @@ export class PacsStudyState {
     // QC Flag (pacs/qc-flag.ts): a command of its own, judged on the listed row (the current exam), never mixed with other changes.
     const qc = isQcCommand(body) ? qcCommand(body) : null;
     const purpose = body.ts === undefined && !qc ? 'source' as const : 'current' as const;
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     const prepared = await resolveExamScope(this.prisma,this.studyAccess,c,{uid,purpose,phase:'prepare'});
     return this.access.scopeWrite(uid,c,async(tx,audit)=>{
@@ -124,7 +126,7 @@ export class PacsStudyState {
      */
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 다룰 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 다룰 수 있습니다.`);
 
     if (qc) {
       // Judged on the row read under the write's lock: its generation and QC revision, then one update and one audit row.
@@ -230,6 +232,7 @@ export class PacsStudyState {
   async match(uid: string, oid: string, patient: any, c: Caller, recorded?: RecordedTransaction) {
     need(c.roles, 'technician', '오더 매칭');
     const me = inst(c);
+    await withWriters(this.prisma, c);
     const order = await this.prisma.order.findUnique({ where: { oid } });
     if (!order) throw new BadRequestException('오더를 찾을 수 없습니다');
     // 오더도 검사도 내 기관 것이어야 한다. 남의 병원 오더를 우리 검사에 붙이면
@@ -330,6 +333,7 @@ export class PacsStudyState {
   async unmatch(uid: string, c: Caller, workflow?: ClinicalWorkflow, reason?: unknown) {
     // The Unmatch… window sends why; the right-click Unmatch sends none and is recorded as before.
     const why = unmatchReason(reason);
+    await withWriters(this.prisma, c);
     await prepareExamRead(this.prisma,this.studyAccess,c,uid);
     const prepared=await resolveExamScope(this.prisma,this.studyAccess,c,{uid,purpose:'source',phase:'prepare'});
     return this.access.scopeWrite(uid,c,async(tx,audit)=>{

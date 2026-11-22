@@ -131,6 +131,8 @@ let selectedUid = "UIDVALUE", warnedFor = null, appState = {};
 let previewCalls = [], citeCalls = [], toasts = [], logouts = 0;
 const KinAuth = { logout: async () => { logouts += 1; } };
 const displayActor = value => String(value ?? "").split("@")[0];
+// page-core.js: who saved or holds, as the server names that person (shown as is).
+const writerName = (name, login) => typeof name === "string" && name ? name : String(login ?? "");
 function syncStudy() {}
 function updateReportButtons() {}
 function loadReport() {}

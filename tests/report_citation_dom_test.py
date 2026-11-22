@@ -200,6 +200,8 @@ function startPolling() {}
 function closeSR() {}
 function endPatientCopy() {}
 const displayActor = value => String(value ?? "").split("@")[0];
+// page-core.js: who saved or holds, as the server names that person (shown as is).
+const writerName = (name, login) => typeof name === "string" && name ? name : String(login ?? "");
 // The signed-in reader as the page holds it (the logout capture reads the role from it).
 const sess = { state: "approved", institution: "SYN-INST", sub: "SYN-READER", actor: "doctor@kin", roles: ["radiologist"] };
 function cur() { return studies.find(s => s.uid === selectedUid); }

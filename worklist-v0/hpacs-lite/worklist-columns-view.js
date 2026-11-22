@@ -168,9 +168,9 @@
      */
     function reportOnIt(s) {
       if (!s || !["W", "T", "H"].includes(s.rs)) return { typing: false, by: null, label: "" };
-      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: displayActor(s.holder) };
+      if (s.holder) return { typing: s.rs === "W", by: s.holder, mine: s.holderMine, label: writerName(s.holderName, s.holder) };
       const saved = appState[s.uid]?.savedBy || null;
-      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? displayActor(saved) : "" };
+      return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? writerName(appState[s.uid]?.savedByName, saved) : "" };
     }
 
     // 특수 렌더링이 필요한 칸만 함수로
@@ -209,13 +209,14 @@
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
       desc: s => esc(shownStudyDesc(s)),
-      preDoc: s => esc(displayActor(s.preDoc)),
-      preReviewer: s => esc(displayActor(s.preReviewer)),
+      preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
+      preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
       viewing: s => {
+        const heldBy = writerName(s.holderName, s.holder);   // one shown name for the cell and its title
         const hold = !s.holder ? '' : s.holderMine
           ? `<span class="hold me" title="내가 작성 중">✎ 나</span>`
-          : `<span class="hold other" title="${s.holder === '다른 기관' ? '다른 기관 판독의가' : s.holder === '작성자 비공개' ? '비공개 작성자가' : esc(displayActor(s.holder)) + ' 님이'} 작성 중">✎ <span translate="no">${esc(displayActor(s.holder))}</span></span>`;
+          : `<span class="hold other" title="${heldBy === '다른 기관' ? '다른 기관 판독의가' : heldBy === '작성자 비공개' ? '비공개 작성자가' : esc(heldBy) + ' 님이'} 작성 중">✎ <span translate="no">${esc(heldBy)}</span></span>`;
         const presence = esc(viewingNames.get(s.uid) || '');
         return hold + (hold && presence ? ' · ' : '') + (presence ? `<span translate="no">${presence}</span>` : '');
       },

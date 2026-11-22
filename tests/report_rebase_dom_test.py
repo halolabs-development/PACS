@@ -159,6 +159,8 @@ const RELATED_BASE = Object.freeze({ base: true });
 const KinAuth = { has: () => true, logout: async () => {} };
 const reportPreview = { close() {} };
 const displayActor = value => String(value ?? "").split("@")[0];
+// page-core.js: who saved or holds, as the server names that person (shown as is).
+const writerName = (name, login) => typeof name === "string" && name ? name : String(login ?? "");
 SIGNERFN
 function cur() { return studies.find(s => s.uid === selectedUid); }
 function shownStudyDesc(s) { return s?.desc ?? ""; }

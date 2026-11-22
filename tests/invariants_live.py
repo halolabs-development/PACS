@@ -1355,6 +1355,7 @@ class LiveStack:
         self.token(user)
         return self.actors[user]
 
+
     def require_stack(self) -> None:
         health = self.request("GET", "/health")
         if health.status != 200 or not health.body.get("ok"):
@@ -1595,6 +1596,13 @@ def u5_snapshot(uid: str, floor: int | None) -> dict[str, Any]:
         f"'state', (SELECT to_jsonb(s) FROM \"StudyState\" s WHERE s.uid='{uid}'))::text;"
     )
     return json.loads("\n".join(rows))
+
+
+def shown_name(stack: Any, user: str) -> str:
+    """The person the server names for this user's records to another radiologist: its name in GET colleagues."""
+    viewer = "doctor" if user != "doctor" else "doctor2"
+    peers = stack.request("GET", "/colleagues", viewer)
+    return next(peer["name"] for peer in peers.body if peer.get("id") == stack.actor(user))
 
 
 def u5_post(stack: LiveStack, uid: str, body: bytes, headers: dict[str, str], *,
@@ -3196,7 +3204,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(blocked.body.get("code"), "REPORT_HELD")
             self.assertEqual(blocked.body.get("holder"), self.stack.actor("doctor"))
             conflict = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                             "mine": False, "conflict": True})
             self.assertEqual(self.audit_count(fixture, "report.hold"), 1)
 
             saved = self.commit(fixture, "doctor", "save", 0)
@@ -3358,13 +3367,15 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertIsNone(self.state(fixture, "doctor2")["holder"], "만료된 점유가 화면에 자물쇠로 나갑니다")
             self.assert_status(self.stack.request("PUT", path + "/report", "doctor2", {"findings": "x"}), 200)
             taken = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(taken.body, {"holder": self.stack.actor("doctor2"), "mine": True, "conflict": False})
+            self.assertEqual(taken.body, {"holder": self.stack.actor("doctor2"), "holderName": shown_name(self.stack, "doctor2"),
+                                          "mine": True, "conflict": False})
             self.assertEqual(self.audit_count(fixture, "report.hold"), 2, "만료 뒤 재점유는 새 점유 세션이다")
             blocked = self.stack.request("PUT", path + "/report", "doctor", {"findings": "late"})
             self.assert_status(blocked, 409)
             self.assertEqual(blocked.body.get("holder"), self.stack.actor("doctor2"))
             stale = self.stack.request("POST", path + "/hold", "doctor")
-            self.assertEqual(stale.body, {"holder": self.stack.actor("doctor2"), "mine": False, "conflict": True})
+            self.assertEqual(stale.body, {"holder": self.stack.actor("doctor2"), "holderName": shown_name(self.stack, "doctor2"),
+                                          "mine": False, "conflict": True})
 
     def test_hold_release_clears_only_own_and_each_reacquisition_is_audited_once(self) -> None:
         with self.stack.fixture() as fixture:
@@ -3397,7 +3408,8 @@ class LiveInvariantTests(unittest.TestCase):
             before_row = self.hold_row(fixture.uid)
             self.assertTrue(before_row.startswith(self.stack.actor("doctor") + "|"), before_row)
             conflict = self.stack.request("POST", path + "/hold", "doctor2")
-            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(conflict.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                             "mine": False, "conflict": True})
             self.assertEqual(self.hold_row(fixture.uid), before_row, "남의 점유에 대한 hold가 DB를 건드렸습니다")
             holds = [row for row in self.audit_rows(fixture) if row["action"] == "report.hold"]
             self.assertEqual([row["actor"] for row in holds], [self.stack.actor("doctor")])
@@ -3914,7 +3926,8 @@ class LiveInvariantTests(unittest.TestCase):
                     self.assert_status(result, 409)
                     self.assertEqual(result.body.get("code"), "REPORT_HELD")
                     self.assertEqual(result.body.get("holder"), actor)
-                    self.assertEqual(result.body.get("message"), f"{actor} 님이 판독 중입니다")
+                    self.assertEqual(result.body.get("holderName"), shown_name(self.stack, "doctor"))
+                    self.assertEqual(result.body.get("message"), f"{shown_name(self.stack, 'doctor')} 님이 판독 중입니다")
             self.assert_snapshot_unchanged(fixture, "doctor2", before)
             # FC-040: Reset to Unread is the one commit another reader may send on a reading in progress (W, T, H). It
             # releases the hold and names the reader whose hold it was.
@@ -3941,7 +3954,7 @@ class LiveInvariantTests(unittest.TestCase):
             ), 200)
             result = self.stack.request("POST", path + "/release/force", "jmryu")
             self.assert_status(result, 200)
-            self.assertEqual(result.body, {"ok": True, "released": self.stack.actor("doctor")})
+            self.assertEqual(result.body, {"ok": True, "released": self.stack.actor("doctor"), "releasedName": shown_name(self.stack, "doctor")})
             audits = self.stack.request("GET", f"/audit?uid={quote(fixture.uid)}", "jmryu")
             self.assert_status(audits, 200)
             rows = [r for r in audits.body if r["action"] == "hold.force-release"]
@@ -3969,7 +3982,8 @@ class LiveInvariantTests(unittest.TestCase):
             self.assert_status(self.stack.request("POST", path + "/release/force", "doctor2"), 403)
             result = self.stack.request("POST", path + "/hold", "doctor2")
             self.assert_status(result, 201)
-            self.assertEqual(result.body, {"holder": self.stack.actor("doctor"), "mine": False, "conflict": True})
+            self.assertEqual(result.body, {"holder": self.stack.actor("doctor"), "holderName": shown_name(self.stack, "doctor"),
+                                           "mine": False, "conflict": True})
 
     def test_filming_non_emergency_blocks_all_report_writes_but_allows_reads(self) -> None:
         with self.stack.fixture() as fixture:
@@ -5024,6 +5038,7 @@ class LiveInvariantTests(unittest.TestCase):
             uid, wave = fixture.uid, u5.wav()
             context = u5_context(self.stack, fixture, pin, ("doctor", "doctor2"))
             context["holder"] = self.stack.actor("doctor")
+            context["holder_name"] = shown_name(self.stack, "doctor")
             doctor, doctor2 = self.stack.token("doctor"), self.stack.token("doctor2")
             try:
                 self.assert_status(self.stack.request("POST", f"/studies/{quote(uid)}/hold", "doctor"), 201)
@@ -5049,6 +5064,7 @@ class LiveInvariantTests(unittest.TestCase):
                 state = self.state(fixture, "doctor")
                 context["pre_reviewer"] = state.get("preReviewer") if state else None
                 self.assertEqual(context["pre_reviewer"], self.stack.actor("jmryu"), "지정 상급 판독의가 다릅니다")
+                context["pre_reviewer_name"] = shown_name(self.stack, "jmryu")
                 self.assert_status(self.stack.request("GET", "/bootstrap", "doctor2"), 200)   # 제3자 토큰은 살아 있다
                 u5_call(records, "R-PRELIM", uid, u5_bearer(
                     self.stack, uid, self.stack.token("doctor2"), wave, "audio/wav"))

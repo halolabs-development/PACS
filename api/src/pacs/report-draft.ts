@@ -12,7 +12,8 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaService } from '../prisma.service';
 import { dump, holdAlive, reportHeld, toClient, draftConflict, draftOwner, draftEpochOf, draftExpected, draftSnapshotInput,
   draftEnvelope, draftTransactionError, draftBounded, visibleDraftSummary, draftToken, draftAccessRecord, withAccessRecord,
-  draftCommitFailure, refuseDestroyed, draftDrawingIds, drawingsConflict } from './values';
+  draftCommitFailure, refuseDestroyed, draftDrawingIds, drawingsConflict, shownPreReviewer } from './values';
+import { withWriters } from '../member-rights';
 import type { DraftOwner } from './values';
 import { need, inst } from './access';
 import type { Caller, PacsAccess } from './access';
@@ -141,6 +142,10 @@ export class PacsReportDraft {
    * (`revision`)가 있고, 초안을 바꾸는 모든 길은 아래 `draftTransaction` 하나를 지난다.
    */
   // Shared with putReport: dictation cannot create a weaker copy of report refusal rules.
+  /** Puts the caller's institution's members on the caller as writers are shown (member-rights.ts withWriters), just before an
+   * entry's first read - a request refused by its shape reads nothing. */
+  writersOf<C extends Caller>(c: C): Promise<C> { return withWriters(this.prisma, c); }
+
   private reportDraftRules(prev: any, c: Caller) {
     if (prev?.ss === 'Unverified' && prev.em !== 'E')
       throw new ConflictException('촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다');
@@ -151,7 +156,7 @@ export class PacsReportDraft {
     refuseDestroyed(prev);
     if (!canReadPreliminary(prev, c))
       throw new ForbiddenException(
-        `예비 판독(RS: P) 중입니다. ${prev?.preReviewer ?? '지정된 판독의'}만 이어서 판독할 수 있습니다.`);
+        `예비 판독(RS: P) 중입니다. ${shownPreReviewer(prev, c)}만 이어서 판독할 수 있습니다.`);
     return prev;
   }
 
@@ -201,7 +206,8 @@ export class PacsReportDraft {
     // transaction; no Orthanc read ever happens under the study lock.
     const prepared = await draftBounded((async () => {
       await prepare();
-      await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
+      await this.writersOf(c);
+    await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
       return resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare', intent, identity: true });
     })());
     const sourceRecord = related?.source ? await this.prisma.reportVersion.findUnique({
@@ -456,6 +462,7 @@ export class PacsReportDraft {
     need(c.roles, 'radiologist', '판독문 초안 조회');
     const owner: DraftOwner = { institution: inst(c), sub: c.sub, author: c.actor };
     const receiptId = insertRequestId === undefined ? null : relatedInsertId(insertRequestId);
+    await this.writersOf(c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     const snapshot = await this.prisma.$transaction(async tx => {
       const state = await this.access.gate(uid, c, tx);
@@ -463,7 +470,7 @@ export class PacsReportDraft {
 
       if (!canReadPreliminary(state, c))
         throw new ForbiddenException(
-          `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+          `예비 판독(RS: P) 중입니다. ${shownPreReviewer(state, c)}만 볼 수 있습니다.`);
       const scope = await examParentAccess(tx, this.studyAccess, c, uid);
       for (const source of scope.studies) this.studyAccess.assertUnsplitSource(c, source);
       const draft = await this.access.myDraft(uid, c, tx);
@@ -487,6 +494,7 @@ export class PacsReportDraft {
   }
 
   async dictationGate(uid: string, c: Caller) {
+    await this.writersOf(c);
     await prepareExamRead(this.prisma, this.studyAccess, c, uid, true);
     return this.access.scopeWrite(uid, c, async tx => { await this.reportDraftGate(uid, c, tx); });
   }
@@ -550,6 +558,7 @@ export class PacsReportDraft {
        * 읽기 전에 409 STUDY_IDENTITY_UNRESOLVED다 — 이미 적용·취소·거절된 영수증이 있어도 그 내용도 봉투도 답하지 않는다.
        */
       await draftBounded((async () => {
+        await this.writersOf(c);
         await prepareExamRead(this.prisma,this.studyAccess,c, uid, true);
       })());
       const early = await this.prisma.$transaction(async tx => {
@@ -559,7 +568,7 @@ export class PacsReportDraft {
         assertExamSource(this.studyAccess, c, parent);
         if (!canReadPreliminary(state, c))
           throw new ForbiddenException(
-            `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+            `예비 판독(RS: P) 중입니다. ${shownPreReviewer(state, c)}만 볼 수 있습니다.`);
         const mine = await this.access.myDraft(uid, c, tx);
         if(mine?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:mine});
         const stored = await tx.reportDraftInsertReceipt.findUnique({ where: { insertRequestId: related.insertRequestId } });
@@ -588,7 +597,7 @@ export class PacsReportDraft {
         // 지금 Target 개인 초안의 가독이 영수증 판정보다 먼저다(replay도 지금 권한 아래에서만 답한다).
         if (!canReadPreliminary(state, c))
           throw new ForbiddenException(
-            `예비 판독(RS: P) 중입니다. ${state?.preReviewer ?? '지정된 판독의'}만 볼 수 있습니다.`);
+            `예비 판독(RS: P) 중입니다. ${shownPreReviewer(state, c)}만 볼 수 있습니다.`);
         // 잠금 순서의 나머지: 내 초안 행 → 영수증 행. 경쟁한 요청의 적용·취소는 이 잠금 뒤에 읽히므로 놓치지 않는다.
         const row = await lockedDraftOf(tx, uid, c.sub);
         if(row?.present)await resolveExamScope(tx,this.studyAccess,c,{uid,purpose:'stored',record:row});

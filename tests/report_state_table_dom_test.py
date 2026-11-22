@@ -33,6 +33,27 @@ class StateTableSite(flow.FlowSite):
         return st
 
 
+# An administrator changed X's email and gave X's old one to Z. The page's colleague list (current emails) maps the old email to Z;
+# the server names the writer by the account that saved / holds (savedByName, holderName).
+OLD_EMAIL, X_NOW, X_NAME, Z_NAME = WRITER, "syn-doctor2-new@kin", "SYN Kim Writer", "SYN Lee Other"
+
+
+class MovedEmailSite(StateTableSite):
+    def state_of(self, uid, account):
+        st = super().state_of(uid, account)
+        if uid == h.UID:
+            st.update(savedByName=X_NAME)
+        elif uid == h.UID_B:
+            st.update(holderName=X_NAME)
+        return st
+
+    def api(self, route, request, method, path, query):
+        if method == "GET" and path == "/api/colleagues":
+            return route.fulfill(json=[{"sub": "syn-sub-x", "id": X_NOW, "username": "syn-doctor2-new", "name": X_NAME},
+                                       {"sub": "syn-sub-z", "id": OLD_EMAIL, "username": "syn-doctor2", "name": Z_NAME}])
+        return super().api(route, request, method, path, query)
+
+
 class ReportStateTablePage(unittest.TestCase):
     # The report flow suite's page driving, borrowed without its own cases.
     count = 3
@@ -120,6 +141,23 @@ class ReportStateTablePage(unittest.TestCase):
         expect(self.page.locator("#findings")).not_to_be_editable()
         expect(self.page.locator("#report-editor-state")).to_have_text("Read Only")
         self.assertEqual([], self.site.flow_puts)
+
+    def test_the_writer_is_named_by_the_server_never_by_an_email_that_moved_to_another_member(self):
+        self.site.__class__ = MovedEmailSite
+        self.open()
+        expect(self.rs_cell(h.PATIENT)).to_have_text(f"In Progress by {X_NAME}")
+        expect(self.rs_cell(h.PATIENT_B)).to_have_text(f"In Progress by {X_NAME}")
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        expect(self.page.locator("#report-editor-presence")).to_contain_text(f"In Progress by {X_NAME}")
+        expect(self.page.locator("#report-editor-why")).to_contain_text(X_NAME)
+        expect(self.page.locator("#holdmsg")).to_contain_text(X_NAME)
+        self.assertIn(X_NAME, self.page.locator("#b-defer").get_attribute("title"))
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the held study opens")
+        expect(self.page.locator("#report-editor-presence")).to_contain_text(f"Held by {X_NAME}")
+        self.assertEqual(0, self.page.evaluate("n => document.body.innerHTML.split(n).length - 1", Z_NAME),
+                         "the member who has the old email now is named nowhere")
 
     def test_my_own_unlocked_study_is_unchanged(self):
         self.site.__class__ = flow.FlowSite

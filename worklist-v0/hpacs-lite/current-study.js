@@ -228,8 +228,8 @@
       // same-ID Retry; the Notice speaks for that operation (its own action), and no ordinary write is sent for its text.
       const related = relatedInsertPending(uid);
       if (related) return { status: related.state === "refused" ? "refused" : "unknown", reason: RELATED_PENDING_REASON };
-      const held = heldByOther(studies.find(s => s.uid === uid));
-      if (held) return { status: "refused", reason: `${displayActor(held)} 님이 판독 중입니다` };
+      const row = studies.find(s => s.uid === uid), held = heldByOther(row);
+      if (held) return { status: "refused", reason: `${writerName(row.holderName, held)} 님이 판독 중입니다` };
       return null;
     }
 

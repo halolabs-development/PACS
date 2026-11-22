@@ -1076,10 +1076,11 @@ class ClinicalContextDOMTest(unittest.TestCase):
                 self.assertTrue(any(title == TEXTS["recordedAtNone"] and shown.rstrip().endswith("-")
                                     for shown, title in s["requestTags"]["titled"]), s["requestTags"]["titled"])
                 self.assertIn(TEXTS["checkedPrefix"], s["requestTags"]["text"])
-                # Tech Note: Tech Note v2 · author · recordedAt · Owner (no text, no reason)
+                # Tech Note: Tech Note v2 · author · recordedAt · Owner (no text, no reason). The author is the writer as the server
+                # names it (by its account) and is shown as is - never looked up again by a login.
                 note = answer["sections"]["techNote"]["items"][0]
                 line = region.get_by_role("group", name=TITLES["techNote"]).get_by_role("listitem").first.inner_text()
-                self.assert_order(line, ["Tech Note v2", NAMES[note["provenance"]["author"]], local(note["provenance"]["recordedAt"]), badge])
+                self.assert_order(line, ["Tech Note v2", note["provenance"]["author"], local(note["provenance"]["recordedAt"]), badge])
                 self.assertNotIn(TEXTS["noText"], line)
                 # every time shown has the server's ISO value as its tooltip
                 self.assertIn(prior["provenance"]["recordedAt"], [t[1] for t in s["priorReports"]["titled"]])

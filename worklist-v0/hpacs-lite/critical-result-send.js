@@ -234,7 +234,8 @@
     if (data.orderingPhysician !== undefined && !INBOX_STATES.includes(data.orderingPhysician)) return null;
     const s = data.source;
     const source = isObject(s) && Number.isSafeInteger(s.version) && s.version >= 1 && own(ACTIONS, s.action) && text(s.author)
-      && at(s.at) && typeof s.final === 'boolean' ? { version: s.version, action: s.action, author: s.author, at: s.at } : null;
+      && at(s.at) && typeof s.final === 'boolean' ? { version: s.version, action: s.action, author: s.author,
+        authorName: typeof s.authorName === 'string' && s.authorName ? s.authorName : null, at: s.at } : null;
     if (data.sendable ? data.reason !== null || !source || !recipients.some(r => selectable(data, r)) : data.reason === null) return null;
     return { sendable: data.sendable, reason: data.reason, source, inbox: data.inbox === undefined ? null : data.inbox,
       orderingPhysician: data.orderingPhysician,
@@ -417,7 +418,10 @@
       const name = row ? row.name : fallback && fallback.name, id = row ? row.id : fallback && fallback.id;
       return name || id ? `${name || '—'} (${id || '—'})` : uid;
     };
-    const sourceText = source => `Source: v${source.version} · ${ACTIONS[source.action] || source.action} · ${actorName(source.author)} · ${time(source.at)}`;
+    // The writer of that version as the server names it for this reader (authorName: by its account or the name it was signed under) -
+    // never its stored login looked up again (a login that moved to another member would name them); without it, the login as is.
+    const sourceWriter = source => typeof source.authorName === 'string' && source.authorName ? source.authorName : String(source.author ?? '');
+    const sourceText = source => `Source: v${source.version} · ${ACTIONS[source.action] || source.action} · ${sourceWriter(source)} · ${time(source.at)}`;
     const unsettled = attempt => ['sending', 'checking', 'unknown', 'not-sent'].includes(attempt.state);
     // The open dialog's requests in send order. The dialog takes a new Send only when it has none or every one was refused.
     const shown = () => dialogAttempts.map(id => attempts.get(id)).filter(Boolean);

@@ -6,12 +6,13 @@ import { canReadPreliminary } from '../preliminary-reader';
 import type { StudyAccessService } from '../study-access.service';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { PrismaService } from '../prisma.service';
-import { noteTransactionError, holdAlive, visibleHolder, dump, refuseDestroyed } from './values';
+import { noteTransactionError, holdAlive, visibleHolder, visibleHolderName, dump, refuseDestroyed } from './values';
 import { need, inst } from './access';
 import { resolveExamScope } from '../exam-merge.service';
 import { assertHeadWritable, headForLock } from '../report-visibility';
 import type { Caller, PacsAccess } from './access';
-import { sameAccount } from '../account-identity';
+import { sameAccount, writerShown } from '../account-identity';
+import { withWriters } from '../member-rights';
 
 export class PacsHold {
   constructor(
@@ -39,6 +40,7 @@ export class PacsHold {
   async hold(uid: string, c: Caller, body?: any) {
     const renew = body?.renew === true;
     need(c.roles, 'radiologist', '판독문 점유');
+    await withWriters(this.prisma, c);
     const prepared = await resolveExamScope(this.prisma, this.studyAccess, c, { uid, purpose: 'current', phase: 'prepare', identity: true });
     return this.prisma.$transaction(async tx => {
       await tx.$executeRaw`SET LOCAL lock_timeout = '3s'`;
@@ -49,14 +51,14 @@ export class PacsHold {
       if(!canReadPreliminary(prev,c))throw new ForbiddenException('예비 판독(RS: P) 중인 검사입니다');
       const other=holdAlive(prev)&&!sameAccount(prev.holderSub,c)?prev.holder:null;
       if(renew&&!sameAccount(prev.holderSub,c))
-        return {holder:holdAlive(prev)?visibleHolder(prev,c):null,mine:false,conflict:!!other,lost:true};
+        return {holder:holdAlive(prev)?visibleHolder(prev,c):null,holderName:holdAlive(prev)?visibleHolderName(prev,c):null,mine:false,conflict:!!other,lost:true};
       // Another physician's saved (unsigned) report is not taken by typing: the screen shows it read-only (report-visibility.ts).
       assertHeadWritable(prev,await headForLock(tx,uid,prev),c);
       if(!other){
         await tx.studyState.update({where:{uid},data:{holder:c.actor,holderSub:c.sub,holderInstitutionId:inst(c),heldAt:new Date()}});
         if(!holdAlive(prev))await tx.auditLog.create({data:{actor:c.actor,action:'report.hold',target:uid,detail:dump({institution:inst(c)})}});
       }
-      return {holder:other?visibleHolder(prev,c):c.actor,mine:!other,conflict:!!other};
+      return {holder:other?visibleHolder(prev,c):c.actor,holderName:other?visibleHolderName(prev,c):writerShown(c.actor,c.sub,c),mine:!other,conflict:!!other};
     },{maxWait:4000,timeout:8000}).catch(noteTransactionError);
   }
 
@@ -74,6 +76,7 @@ export class PacsHold {
   async forceRelease(uid: string, c: Caller) {
     return this.access.scopeWrite(uid,c,async(tx,audit)=>{
     need(c.roles, 'admin', '판독 점유 강제 해제');
+    await withWriters(this.prisma, c);
     const prev = await this.access.gate(uid,c,tx);
     if (!prev) throw new NotFoundException('검사를 찾을 수 없습니다');
     await tx.studyState.update({ where: { uid }, data: { holder: null, holderSub: null, holderInstitutionId: null, heldAt: null } });
@@ -82,7 +85,7 @@ export class PacsHold {
       institution: inst(c), by: inst(c), holder: prev.holder ?? null, heldAt: prev.heldAt ?? null, alive: holdAlive(prev),
       holderInstitutionId: prev.holderInstitutionId ?? null, holderSub: prev.holderSub ?? null,
     });
-    return { ok: true, released: visibleHolder(prev,c) };
+    return { ok: true, released: visibleHolder(prev,c), releasedName: visibleHolderName(prev,c) };
     });
   }
 }

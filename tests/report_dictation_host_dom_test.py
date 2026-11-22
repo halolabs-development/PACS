@@ -271,6 +271,8 @@ const RELATED_BASE = Object.freeze({ base: true });
 const KinAuth = { has: () => true, logout: async () => { logouts += 1; } };
 const reportPreview = { close() {} };
 const displayActor = value => String(value ?? "").split("@")[0];
+// page-core.js: who saved or holds, as the server names that person (shown as is).
+const writerName = (name, login) => typeof name === "string" && name ? name : String(login ?? "");
 function cur() { return studies.find(s => s.uid === selectedUid); }
 function heldByOther(s) { return s?.holder && s.holder !== user ? s.holder : null; }
 // FC-040: the shipped updateReportButtons asks this too; the fixture carries the page's rule beside heldByOther.
