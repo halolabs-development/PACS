@@ -714,7 +714,17 @@ class AuthAuditLive(unittest.TestCase):
     def test_11c_no_one_is_made_to_set_up_otp(self):
         """No account is required to set up OTP (keycloak/README.md, OTP는 스스로 등록한 계정만): a radiologist's and an administrator's password each go straight
         back to the product and open a session - no OTP form, no OTP set-up; an administrator who has an OTP of their own
-        is asked it, where a wrong code makes no session and the right one enters."""
+        is asked it, where a wrong code makes no session and the right one enters. The realm signs in and resets
+        passwords with Keycloak's built-in flows, whose only OTP steps are the ones for an account that has OTP."""
+        realm = self.stack.kc_admin("GET", "").body
+        self.assertEqual((realm.get("browserFlow"), realm.get("resetCredentialsFlow")), ("browser", "reset credentials"))
+        for flow in ("browser", "reset%20credentials"):
+            steps = [(row.get("providerId"), row.get("requirement")) for row in self.stack.kc_admin(
+                "GET", f"/authentication/flows/{flow}/executions").body]
+            self.assertIn(("conditional-user-configured", "REQUIRED"), steps, flow)
+            self.assertNotIn("conditional-user-role", [provider for provider, _ in steps], flow)
+            self.assertEqual([requirement for provider, requirement in steps if provider in ("auth-otp-form", "reset-otp")],
+                             ["ALTERNATIVE"] if flow == "browser" else ["REQUIRED"], flow)
         member = self.members["ma"]
         _, status, headers, page = self.password_step(member["username"], member["password"])
         self.assertEqual(status, 302, "a radiologist has no OTP step")
