@@ -58,6 +58,8 @@
    meanwhile, so the pointer that unfolded it stays on it. Below 1366 px its texts already wrap whole in place, so in the bar
    they stay there (nothing to unfold). */
 .left > .statusbar > #toolbar-status { min-height: 1lh; }
+/* In a narrow bar the group takes a line of its own rather than the few pixels left beside the counts. */
+.left > .statusbar > #toolbar-status { flex-basis: min(16em, 100%); }
 @media (max-width: 1365px) {
   .left > .statusbar > #toolbar-status:is(:hover, :focus-within) > .toolbar-status-texts {
     position: static !important; flex-direction: row; flex-wrap: wrap; align-items: center; width: auto; max-width: none; padding: 0;
@@ -74,12 +76,12 @@
   .left:has(> #worklist-folders-panel:not([open])) > .statusbar { margin-inline-start: -22px; }
 }
 @container kin-count-row (min-width: 700px) {
-  .statusbar > #countlist { order: 1; flex: 0 1 auto; min-width: 0; }
-  .statusbar > #toolbar-status { order: 2; flex: 1 1 0; min-width: 4em; }
-  .statusbar > #toolbar-status > .spacer { display: none; }
-  .statusbar > #toolbar-status:not(:hover, :focus-within) > .toolbar-status-texts > * { white-space: nowrap; }
+  .left > .statusbar > #countlist { order: 1; flex: 0 1 auto; min-width: 0; }
+  .left > .statusbar > #toolbar-status { order: 2; flex: 1 1 0; min-width: 4em; }
+  .left > .statusbar > #toolbar-status > .spacer { display: none; }
+  .left > .statusbar > #toolbar-status:not(:hover, :focus-within) > .toolbar-status-texts > * { white-space: nowrap; }
   /* Per page's row keeps its padding and top line in a style attribute; in the bar its controls are the bar's items. */
-  .statusbar > #worklist-pages:not([hidden]) { display: contents !important; }
-  .statusbar > #worklist-pages > label { order: 3; flex: none; margin-inline-start: auto; }
-  .statusbar > #worklist-pages > :not(label) { order: 4; flex: none; }
+  .left > .statusbar > #worklist-pages:not([hidden]) { display: contents !important; }
+  .left > .statusbar > #worklist-pages > label { order: 3; flex: none; margin-inline-start: auto; }
+  .left > .statusbar > #worklist-pages > :not(label) { order: 4; flex: none; }
 }
