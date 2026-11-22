@@ -164,6 +164,16 @@ html,
   line-height: 1.7;
 }
 
+/* The words this sheet draws itself, in the page's language (Keycloak writes the language it chose into <html lang>):
+   Korean above, English here, same places. */
+html[lang="en"] #kc-header-wrapper::before {
+  content: "From the moment a study arrives,\Ato the moment its report is approved.";
+}
+
+html[lang="en"] #kc-header-wrapper::after {
+  content: "Teleradiology reading network";
+}
+
 /* The product picture under the line, as the other Halo products show theirs. */
 #kc-header::after {
   display: block;
@@ -189,6 +199,10 @@ html,
   text-align: center;
   word-break: keep-all;
   pointer-events: none;
+}
+
+html[lang="en"] .login-pf-page::after {
+  content: "Available after you request an account and an administrator approves it · © 2026 Halo Labs Inc.";
 }
 
 /* Sign-in column: no box, one rule on its left. */
@@ -333,24 +347,6 @@ h1#kc-page-title {
   line-height: normal;
 }
 
-#kc-form-login label {
-  font-size: 0;
-  line-height: 1.2;
-}
-
-#kc-form-login label::before {
-  font-size: 12px;
-  line-height: normal;
-}
-
-#kc-form-login label[for="username"]::before {
-  content: "아이디 또는 이메일";
-}
-
-#kc-form-login label[for="password"]::before {
-  content: "비밀번호";
-}
-
 .login-pf-page .card-pf .pf-c-form-control {
   width: 100%;
   height: 46px;
@@ -438,21 +434,6 @@ h1#kc-page-title {
   margin: 5px 0 0;
 }
 
-#kc-form-login #kc-form-buttons::after {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  content: "로그인";
-  color: var(--kin-btn-text);
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 46px;
-  letter-spacing: .12em;
-  pointer-events: none;
-}
-
 #kc-login.pf-c-button {
   width: 100%;
   height: 46px;
@@ -469,12 +450,6 @@ h1#kc-page-title {
   line-height: 44px;
   letter-spacing: .12em;
   cursor: pointer;
-}
-
-/* Only the password form draws its label beside the button (#kc-form-buttons::after above). Other forms that reuse
-   #kc-login - the administrator's OTP code - keep the button's own text. */
-#kc-form-login #kc-login.pf-c-button {
-  color: transparent;
 }
 
 /* Hover, press and disabled as the worklist's buttons: brighten, press down, fade. */
@@ -559,6 +534,10 @@ h1#kc-page-title {
   line-height: 1.2;
   letter-spacing: .04em;
   white-space: nowrap;
+}
+
+html[lang="en"] #kc-form-login .login-pf-settings::after {
+  content: "\1F512  TLS encrypted connection";
 }
 
 .login-pf a,

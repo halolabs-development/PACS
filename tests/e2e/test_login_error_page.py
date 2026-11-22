@@ -35,17 +35,21 @@ HOME = "/api/auth/login"
 REALM = "/auth/realms/kin"
 # The screen's words, written out here (not read from the theme) so a wrong label in the theme fails.
 BACK = "HALO PACS로 돌아가기"
+BACK_EN = "Back to HALO PACS"
 CONTINUE = "HALO PACS로 계속"
+HANGUL = re.compile(r"[가-힣]")
+# Names a Korean login-server page keeps in Latin letters (the product's name, OTP, the connection note's TLS).
+NAMES = {"HALO", "PACS", "OTP", "QR", "TLS"}
 # Keycloak's own messages for each entry (26.7.3, Korean screen; the theme overrides invalidParameterMessage).
 SAID = {
     "dead-reset-link": "자격 증명 재설정이 허용되지 않습니다",
     "unknown-client": "클라이언트를 찾을 수 없습니다.",
     "wrong-return-address": "잘못된 매개변수입니다: redirect_uri",
     "client-with-base-url": "잘못된 매개변수입니다: redirect_uri",
-    "lost-login-cookie": "쿠키를 찾을 수 없습니다. 브라우저에서 쿠키가 활성화되어 있는지 확인하세요.",
+    "lost-login-cookie": "쿠키를 찾을 수 없습니다. 브라우저에서 쿠키가 활성화되어 있는지 확인하세요. \"HALO PACS로 돌아가기\"를 눌러 다시 로그인하세요.",
     "unknown-client-en": "Client not found.",
     # Keycloak's English sentence, with the button it names as the theme draws it.
-    "lost-login-cookie-en": 'If cookies are disabled then enable them. Click "HALO PACS로 돌아가기" to login again.',
+    "lost-login-cookie-en": 'If cookies are disabled then enable them. Click "Back to HALO PACS" to login again.',
 }
 # A locked account (the theme's accountTemporarilyDisabledMessage), and Keycloak's own wrong-password sentence that an
 # unknown username and an unlocked wrong password keep.
@@ -99,10 +103,11 @@ class LoginErrorPageE2E(base.WorklistE2E):
         expect(message.locator("p.instruction").first, entry).to_contain_text(SAID[entry])
         expect(message.locator("a"), entry).to_have_count(1)
         back = page.locator("#kin-back")
+        label = BACK_EN if entry.endswith("-en") else BACK
         expect(back, entry).to_be_visible()
-        expect(back, entry).to_have_text(BACK)
+        expect(back, entry).to_have_text(label)
         self.assertEqual(back.get_attribute("href"), HOME, entry)
-        expect(page.get_by_role("link", name=BACK, exact=True), entry).to_have_count(1)
+        expect(page.get_by_role("link", name=label, exact=True), entry).to_have_count(1)
         # No other way out was drawn: not Keycloak's "back to application" link.
         expect(page.locator("#backToApplication"), entry).to_have_count(0)
         return back
@@ -263,6 +268,85 @@ class LoginErrorPageE2E(base.WorklistE2E):
                 page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-blocked-{logical}.png"), full_page=True)
                 expect(page.locator("#signin")).to_be_visible()
 
+
+    def page_words(self, page, language, shot):
+        """The words a reader sees or hears on a login-server page in the language Keycloak chose: the title, the page
+        text, the lines the style sheet draws, the submit buttons' labels (inputs), the names given to links, buttons and
+        pictures for a screen reader - without the language menu's language names (each written in its own language)
+        and the account name the page repeats (data, not words)."""
+        ARTIFACTS.mkdir(exist_ok=True)
+        page.screenshot(path=str(ARTIFACTS / f"LOGIN-ERROR-PAGE-language-{shot}.png"), full_page=True)
+        expect(page.locator("html")).to_have_attribute("lang", language)
+        expect(page.locator("#kin-legal-links")).to_be_attached()
+        return page.evaluate("""() => {
+          const set = ['kc-locale', 'kc-attempted-username'].map(id => document.getElementById(id)).filter(Boolean);
+          const was = set.map(node => node.style.display);
+          set.forEach(node => { node.style.display = 'none'; });
+          const buttons = [...document.querySelectorAll('input[type=submit], input[type=button]')]
+            .filter(input => input.offsetParent).map(input => input.value);
+          const shown = [...document.body.querySelectorAll('*')].filter(e => !set.some(node => node.contains(e)));
+          const drawn = shown.flatMap(e => ['::before', '::after'].map(p => getComputedStyle(e, p).content))
+            .filter(c => c.startsWith('"'));
+          const named = shown.flatMap(e => [e.getAttribute('aria-label'), e.tagName === 'IMG' ? e.getAttribute('alt') : null])
+            .filter(Boolean);
+          const menu = document.getElementById('kc-current-locale-link');
+          const seen = [document.title, document.body.innerText, ...buttons, ...drawn, ...named,
+                        menu ? menu.getAttribute('aria-label') : ''].join('\\n');
+          set.forEach((node, i) => { node.style.display = was[i]; });
+          return seen; }""")
+
+    def assert_one_language(self, page, language, shot, names=()):
+        # A drawn line's CSS escapes (the line break "\\a ") are not words.
+        seen = re.sub(r"\\[0-9a-fA-F]{1,6} ?", " ", self.page_words(page, language, shot))
+        if language == "en":
+            self.assertIsNone(HANGUL.search(seen), f"{shot}: {seen}")
+        else:
+            self.assertIsNotNone(HANGUL.search(seen), f"{shot}: {seen}")
+            self.assertEqual(set(re.findall(r"[A-Za-z]+", seen)) - NAMES - set(names), set(), f"{shot}: {seen}")
+
+    def test_login_error_page_08_each_page_in_one_language(self):
+        """A Korean and an English browser: the login form, the reset request and its answer, a dead reset link, the
+        new-password form, the first OTP set-up and the one-time code form each show one language only - the product's
+        words and Keycloak's alike - with the same way back in each."""
+        for logical in ("relang-password", "relang-otp", "relang-code"):
+            self.stack.create_test_identity(logical, [], "")
+        coded = self.stack.user_ids["relang-code"]
+        admin_otp.seed(lambda method, path, body: (lambda r: (r.status, r.body))(self.stack.kc_admin(method, path, body)), coded)
+        for browser, language in (("ko-KR", "ko"), ("en-US", "en")):
+            with self.subTest(language=language):
+                page = self.fresh_page(locale=browser)
+                page.goto(self.stack.proxy + HOME)
+                expect(page.locator("#kc-form-login")).to_be_visible()
+                self.assert_one_language(page, language, f"{language}-login")
+                page.locator("#kc-form-login .login-pf-settings a").click()
+                expect(page.locator("#kc-reset-password-form")).to_be_visible()
+                self.assert_one_language(page, language, f"{language}-reset-request")
+                # A username nobody has: the answer is the same as for a real account, and no mail is sent.
+                page.locator("#username").fill("syn-nobody-has-this-name")
+                page.locator("#kc-reset-password-form [type=submit]").click()
+                page.wait_for_load_state()
+                self.assert_one_language(page, language, f"{language}-reset-sent")
+                page.goto(self.stack.proxy + self.entries()["dead-reset-link"])
+                expect(page.locator("#kc-error-message")).to_be_visible()
+                self.assert_one_language(page, language, f"{language}-dead-reset-link")
+                for logical, action, form, names in (
+                        ("relang-password", "UPDATE_PASSWORD", "#kc-passwd-update-form", ()),
+                        # Keycloak lists the authenticator apps by their names.
+                        ("relang-otp", "CONFIGURE_TOTP", "#kc-totp-settings-form", ("FreeOTP", "Google", "Microsoft", "Authenticator"))):
+                    user = self.stack.user_ids[logical]
+                    changed = self.stack.kc_admin("PUT", f"/users/{user}", {"requiredActions": [action]})
+                    self.assertEqual(changed.status, 204, changed.text)
+                    signer = self.fresh_page(locale=browser)
+                    signer.goto(self.stack.proxy + HOME)
+                    self.submit(signer, self.stack.username(logical), self.stack.passwords[logical])
+                    expect(signer.locator(form)).to_be_visible()
+                    self.assert_one_language(signer, language, f"{language}-{action.lower()}", names)
+                # An account with an OTP: after the password, the one-time code form.
+                coder = self.fresh_page(locale=browser)
+                coder.goto(self.stack.proxy + HOME)
+                self.submit(coder, self.stack.username("relang-code"), self.stack.passwords["relang-code"])
+                expect(coder.locator("#kc-otp-login-form")).to_be_visible()
+                self.assert_one_language(coder, language, f"{language}-otp-code")
 
 def load_tests(loader, tests, pattern):
     # Only the cases declared here: the worklist cases this class inherits are not part of this profile.

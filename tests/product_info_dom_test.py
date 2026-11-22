@@ -65,6 +65,8 @@ HOST = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>SYN 
 LOGIN = """<!doctype html><html><head><meta charset="utf-8"><title>SYN login</title></head><body class="login-pf">
 <div class="login-pf-page"><form id="kc-form-login"><input id="username"></form></div>
 <script src="/auth/resources/legal-links.js"></script></body></html>"""
+# The same login page drawn in Korean (Keycloak writes the language it chose into <html lang>).
+LOGIN_KO = LOGIN.replace("<html>", '<html lang="ko">', 1)
 HANGUL = re.compile(r"[가-힣]")
 SHA = "0123456789abcdef0123456789abcdef01234567"
 # The panel as a reader sees it: each section's heading and its rows (item, status, detail).
@@ -123,6 +125,8 @@ class ProductInfoDomTest(unittest.TestCase):
             return route.fulfill(body=HOST, content_type="text/html; charset=utf-8")
         if path == "/auth/login.html":
             return route.fulfill(body=LOGIN, content_type="text/html; charset=utf-8")
+        if path == "/auth/login-ko.html":
+            return route.fulfill(body=LOGIN_KO, content_type="text/html; charset=utf-8")
         if path == "/auth/resources/legal-links.js":
             return route.fulfill(path=str(ROOT / "keycloak/themes/kin-login/login/resources/js/legal-links.js"),
                                  content_type="application/javascript; charset=utf-8")
@@ -369,6 +373,17 @@ class ProductInfoDomTest(unittest.TestCase):
                          login.evaluate("""() => [...document.querySelectorAll('nav[aria-label=Notices] a')]
                            .map(a => [a.textContent, a.getAttribute('href'), a.target])"""))
         self.assertEqual(1, login.locator("#kc-form-login").count())
+        login.close()
+        # The Korean login page names the same four links, same places, in Korean (the screens' own words).
+        login = self.context.new_page()
+        login.goto(ORIGIN + "/auth/login-ko.html")
+        self.assertEqual([["개인정보 처리방침", "/worklist/legal/privacy.html"], ["운영자 고지", "/worklist/legal/operator-notice.html"],
+                          ["오픈소스 고지", "/worklist/legal/open-source-notices.html"], ["접근성", "/worklist/legal/accessibility.html"]],
+                         login.evaluate("""() => [...document.querySelectorAll('nav[aria-label=고지] a')]
+                           .map(a => [a.textContent, a.getAttribute('href')])"""))
+        self.assertEqual([n["href"] for n in MODEL["notices"]], [
+            "/worklist/legal/privacy.html", "/worklist/legal/operator-notice.html",
+            "/worklist/legal/open-source-notices.html", "/worklist/legal/accessibility.html"])
         login.close()
 
     def test_07_keyboard_focus_and_no_side_effects(self):
