@@ -1309,7 +1309,11 @@
    * (GET findings/:id/revisions, read as the record versions this page knows), and the study's current list says whether
    * the item is still there and where it is (GET viewer-items?recheck=).
    */
-  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '3' };
+  // The newest finding record version whose sources this page has checked it reads (versions 2-4 name a saved item the same
+  // way; 4 adds only the free-text size, which this page does not show). The server refuses a whole page holding a newer row,
+  // so this follows the version the viewer writes (finding-link-model.js SCHEMA); tests/clinician_viewer_dom_test.py fails
+  // when that moves on.
+  const FINDING_SCHEMA = { 'X-KIN-Finding-Schema': '4' };
   async function citedImage(rowUid, reportUid, entry) {
     let revision = null, cursor = null;
     for (let n = 0; n < 100 && !revision; n++) {
