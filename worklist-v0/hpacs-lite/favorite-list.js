@@ -3,6 +3,8 @@ window.KinFavoriteList = function (app) {
   const work=window.KinWorkContext;
   let scope=null, sequence=0, controller=null,resume=false;
   const prefix=app.label??'즐겨찾기',noun=app.noun??'폴더';
+  // The line's product words follow the screen language (English only; otherwise as written); a folder's name is data.
+  const kinSayEn=(t,...p)=>window.KinLanguage?.sayEnglish?window.KinLanguage.sayEnglish(t,...p):t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]));
   const identity=()=>JSON.stringify(app.identity());
   const owns=()=>scope&&JSON.stringify(scope.owner)===identity();
   function cancel(){++sequence;controller?.abort();controller=null;}
@@ -18,7 +20,7 @@ window.KinFavoriteList = function (app) {
     if(folder&&(typeof folder.name!=='string'||!Array.isArray(folder.uids)||folder.uids.some(uid=>typeof uid!=='string')))throw new Error(prefix+' '+noun+' 형식 오류');
     if(value.revision<scope.revision)return;
     scope={...scope,revision:value.revision,name:folder?.name??scope.name,uids:new Set(folder?.uids??[]),
-      status:folder?'':noun+'가 삭제되었습니다. 범위를 해제하거나 다른 '+noun+'를 선택하세요.'};changed();
+      status:folder?'':kinSayEn('{0}가 삭제되었습니다. 범위를 해제하거나 다른 {1}를 선택하세요.',kinSayEn(noun),kinSayEn(noun))};changed();
   }
   const api = {
     apply(value,id){
@@ -32,7 +34,7 @@ window.KinFavoriteList = function (app) {
     end(){cancel();if(scope){scope={owner:null,id:null,name:'',uids:new Set(),status:''};changed();}},
     filter(list){return scope?(owns()?list.filter(s=>scope.uids.has(s.uid)):[]):list;},
     key(){return scope?.id??(scope?'invalid':null);},
-    label(){return scope?(owns()?prefix+': '+scope.name+(scope.status?' · '+scope.status:' · 기존 검색과 함께 적용'):prefix+': 계정 확인 필요'):'';},
+    label(){return scope?(owns()?kinSayEn('{0}: {1}{2}',kinSayEn(prefix),scope.name,scope.status?kinSayEn(' · {0}',kinSayEn(scope.status)):kinSayEn(' · 기존 검색과 함께 적용')):kinSayEn('{0}: 계정 확인 필요',kinSayEn(prefix))):'';},
     async refresh(){
       if(work.state()!=='active'||!scope)return;
       if(!owns()){accept(null);return;}

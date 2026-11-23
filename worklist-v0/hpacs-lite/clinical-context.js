@@ -13,6 +13,8 @@
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // The sentences added for the screen language read in English on an English screen only (otherwise exactly as written).
+  const kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
 
   const SCHEMA = 'kin.clinical-context/1';
   const SECTIONS = Object.freeze(['priorReports', 'history', 'requestTags', 'techNote']);
@@ -318,7 +320,7 @@
   function reasonText(reason, status, code) {
     const tail = [status === null || status === undefined ? '' : 'HTTP ' + status, code || ''].filter(Boolean).join(' · ');
     // The reason is the page's words, the status and code are the server's: a sentence keeps them apart for the language.
-    return tail ? kinSay('{t0} ({1})', { t: kinSay(TEXT.reasons[reason]) }, tail) : TEXT.reasons[reason];
+    return tail ? kinSay('{t0} ({1})', { t: kinSay(TEXT.reasons[reason]) }, tail) : kinSayEn(TEXT.reasons[reason]);
   }
 
   // ── stale after a later list observation (§8.1 S1-S8). The baseline is the painted answer's own DTO paths. ──

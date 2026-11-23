@@ -239,20 +239,25 @@
     return study => record(study) && groupMatch(study, expression);
   }
 
+  // The summary's product words (a column name, an operator) read in English on an English screen through the page's
+  // screen-language path; the values are data and stay as written, and so does all of it otherwise (or with no page).
+  const say = (template, ...parts) => typeof window === 'object' && window && window.KinLanguage && window.KinLanguage.sayEnglish
+    ? window.KinLanguage.sayEnglish(template, ...parts) : template.replace(/\{[ten]?(\d+)\}/g, (slot, i) => String(parts[i]));
   function describe(expression, columns) {
-    if (validate(expression, columns)) return '복합 조건 오류';
+    if (validate(expression, columns)) return say('복합 조건 오류');
     if (!expression?.rules.length) return '';
     const available = new Map(fields(columns).map(field => [field.k, field]));
     function groupText(group) {
-      return '(' + group.rules.map(rule => {
+      const parts = group.rules.map(rule => {
         if (own(rule, 'rules')) return groupText(rule);
         const field = available.get(rule.field);
         if (rule.op === 'withinLastDays') {
-          return `${field.t} ${rule.value === '0' ? 'Today' : `Within Last ${rule.value} ${rule.value === '1' ? 'Day' : 'Days'}`}`;
+          return say('{0} {1}', say(field.t), rule.value === '0' ? 'Today' : `Within Last ${rule.value} ${rule.value === '1' ? 'Day' : 'Days'}`);
         }
         const op = operators(field).find(([op]) => op === rule.op)[1];
-        return `${field.t} ${op}${['empty','notEmpty'].includes(rule.op) ? '' : ' ' + rule.value}${rule.op === 'between' ? ' ~ ' + rule.value2 : ''}`;
-      }).join(group.join === 'or' ? ' OR ' : ' AND ') + ')';
+        return say('{0} {1}{2}{3}', say(field.t), say(op), ['empty','notEmpty'].includes(rule.op) ? '' : ' ' + rule.value, rule.op === 'between' ? ' ~ ' + rule.value2 : '');
+      });
+      return say('(' + parts.map((part, i) => '{' + i + '}').join(group.join === 'or' ? ' OR ' : ' AND ') + ')', ...parts);
     }
     return groupText(expression);
   }

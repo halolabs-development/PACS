@@ -135,7 +135,7 @@
       if(!dialog){
         dialog=document.createElement('dialog');dialog.id='multi-selection-dialog';
         dialog.style.cssText='max-width:min(1000px,94vw);max-height:85vh;overflow:auto;color:inherit;background:#142237;border:1px solid #355272;padding:20px';
-        dialog.innerHTML='<h2>Selection Details</h2><p data-summary></p><p data-hint></p><p>두 검사 비교는 원본 환자 키가 같은 검사만 가능합니다. 작성 검사가 선택돼 있으면 그 검사를, 아니면 목록의 첫 검사를 기준으로 엽니다. 현재 판독문은 기존 작성 대상을 유지합니다.</p><div style="overflow:auto"><table><thead><tr><th>Patient ID</th><th>Patient Name</th><th>Study Date</th><th>Modality</th><th>Description</th><th>Action</th></tr></thead><tbody></tbody></table></div><p><button class="chip" type="button" data-compare>Compare Two Studies</button> <button class="chip" type="button" data-close>Close</button></p>';
+        dialog.innerHTML='<h2>Selection Details</h2><p data-summary></p><p data-hint></p><p>두 검사 비교는 원본 환자 키가 같은 검사만 가능합니다. 작성 검사가 선택돼 있으면 그 검사를, 아니면 목록의 첫 검사를 기준으로 엽니다. 현재 판독문은 기존 작성 대상을 유지합니다.</p><div style="overflow:auto"><table><thead><tr><th>Patient ID</th><th>Patient Name</th><th>Study Date</th><th>Modality</th><th>Description</th><th>Action</th></tr></thead><tbody></tbody></table></div><p><button class="chip" type="button" data-compare>Compare Two Studies</button> <button class="chip" type="button" data-close>Close</button></p>';globalThis.KinLanguage?.markup?.(dialog);
         if(openSet){
           const set=element('button','Open Selected Studies',document.createDocumentFragment());set.type='button';set.dataset.openSet='';
           dialog.querySelector('[data-compare]').after(' ',set);set.onclick=runOpenSet;

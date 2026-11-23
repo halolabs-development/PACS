@@ -7,6 +7,7 @@ functions sliced beside them. This file only starts the order model and asserts 
 Hosted only (Chromium); nothing here runs against a server, a database or clinical data.
 """
 import json
+import re
 from pathlib import Path
 import unittest
 
@@ -156,6 +157,43 @@ class OrderReconciliationDOMTest(unittest.TestCase):
         self.assertEqual(["SYN-ONLY · Unlinked · " + PHRASE + " · No Accession"], rows)
         self.assertEqual(OFFLINE_SEED, self.page.evaluate("()=>window.orders"))
 
+    def test_s4u2_07_an_english_screen_reads_the_line_its_rows_and_their_titles_in_english(self):
+        # The same page with the screen language loaded first (as main.html does): the heading line, each row and every
+        # title are product sentences around values (the order id, counts, the time); English reads them in English, no
+        # choice exactly as before.
+        self.page.close()
+        self.page = self.browser.new_page()
+        self.page.on("pageerror", lambda error: self.errors.append(str(error)))
+        self.page.set_content(arrivals.HARNESS)
+        hp = ROOT / "worklist-v0" / "hpacs-lite"
+        self.page.add_script_tag(content=(hp / "worklist-language-terms.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=(hp / "worklist-language.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
+        self.page.add_script_tag(content=arrivals.ARRIVALS)
+        self.page.add_script_tag(content=ORDERS_JS)
+        self.page.evaluate("seed=>{window.orders=seed}", OFFLINE_SEED)
+        self.page.evaluate("()=>{studyObservationModel=KinStudyArrivals.observationStart();"
+                           "orderReconciliationModel=KinOrderReconciliation.start()}")
+        self.poll(reply(READ["full"]))
+        korean = self.view()
+        self.assertIn(PHRASE, korean["summary"])
+        # Korean chosen reads this panel exactly as with no choice (the English words of the line stay English).
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'ko'})")
+        panel = lambda v: {k: v[k] for k in ("summary", "title", "rows", "titles")}
+        self.assertEqual(panel(korean), panel(self.view()))
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        english = self.view()
+        text = json.dumps([english["summary"], english["title"], *english["rows"], *english["titles"]], ensure_ascii=False)
+        self.assertIsNone(re.search("[가-힣]", text), text)
+        self.assertTrue(english["summary"].startswith(HEAD + " · Orders 5 · Order Without Images 3 · Observed "), english["summary"])
+        # A failed observation after it: the added words are English too.
+        self.fail_next()
+        failed = self.view()
+        self.assertTrue(failed["summary"].startswith(HEAD + " · Cannot Observe · as of last observation "), failed["summary"])
+        self.assertIsNone(re.search("[가-힣]", failed["summary"] + failed["title"]))
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        back = self.view()
+        self.assertTrue(back["summary"].startswith(HEAD + " · " + UNAVAILABLE + " · 마지막 관측 "), back["summary"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

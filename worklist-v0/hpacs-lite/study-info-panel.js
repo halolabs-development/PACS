@@ -21,7 +21,7 @@
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
           <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Study</td><td translate="no">${studyDescMarkup(s)}</td></tr>
           <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
           <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
@@ -31,6 +31,7 @@
         </table>` : "";
       if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
+      if (s) paintStudyDesc($("#clinical"), s);
       renderStudyIdentity();
       renderQcInfo();
       renderAcquisition();
@@ -594,8 +595,8 @@
     function paintReceiptGap(mark, s) {
       const gap = studyReceiptGap(s), value = mark.previousElementSibling;
       if (s && value) value.textContent = String(s.count ?? "");
-      mark.hidden = !gap; mark.title = gap?.text ?? "";
-      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
+      mark.hidden = !gap; kinWrite(mark, gap?.text ?? "", "title");
+      if (gap) kinWrite(mark, gap.text, "aria-label"); else mark.removeAttribute("aria-label");
     }
     function renderObservation() {
       if (!studyObservationModel) return;
@@ -614,7 +615,7 @@
         }
         retryButton.hidden = !retryKey || retryButton.dataset.requested === "1"
           || !(serverMode && !offline && !demoMode && KinAuth.has("technician"));
-        retryButton.disabled = !!retryButton.dataset.request; retryButton.title = retry?.title ?? "";
+        retryButton.disabled = !!retryButton.dataset.request; kinWrite(retryButton, retry?.title ? kinSayEn(retry.title) : "", "title");
         // Without a bindable retry the note is labels.retry itself: the F-01 sentence for failed, else nothing.
         if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }
       };
@@ -642,7 +643,7 @@
           const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
           // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
           const gap = studyReceiptGap(row);
-          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); kinWrite(gapText, gap?.title ? kinSayEn(gap.title) : "", "title");
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -688,7 +689,7 @@
       const gapLine = $("#receipt-gap");
       if (gapLine) {
         const gap = studyReceiptGap(s);
-        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); kinWrite(gapLine, gap?.title ? kinSayEn(gap.title) : "", "title");
       }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
@@ -717,7 +718,7 @@
           // This original's own missing-images answer (Technician tab), the one the exam's line counts.
           const gap=KinStudyArrivals.originalGap(studyObservationModel,source.uid),short=gap?.missing&&mode==='Technician'?gap:null;
           const gapWords=short?kinWrite(document.createElement('span'),short.text):null;
-          if(gapWords){gapWords.className='receipt-gap-line';gapWords.title=short.title;}
+          if(gapWords){gapWords.className='receipt-gap-line';kinWrite(gapWords,kinSayEn(short.title),'title');}
           text.replaceChildren(accession,...[own.observation.text,own.change?.text,
             source.gatewayReceipt===undefined?kinSay('Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.'):own.gateway.text].filter(Boolean)
             .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]),...(gapWords?[' · ',gapWords]:[]));
@@ -749,7 +750,7 @@
         const shown = KinStudyArrivals.gatewayRetryAnswer(uid, answer, error);
         Object.assign(button.dataset, { request: "", requested: shown.requested ? "1" : "" });
         const note = button.nextElementSibling;
-        note.textContent = shown.text; note.title = shown.title;
+        kinWrite(note, kinSayEn(shown.text)); kinWrite(note, shown.title ? kinSayEn(shown.title) : "", "title");
         renderObservation();
       });
     }
@@ -771,11 +772,11 @@
       if (!box || !orderReconciliationModel) return;
       const summary = KinOrderReconciliation.summary(orderReconciliationModel);
       box.hidden = summary.hidden;
-      $("#order-reconciliation-summary").textContent = summary.text;
+      kinWrite($("#order-reconciliation-summary"), summary.text);
       kinWrite($("#order-reconciliation-summary"), summary.title || "", "title");
       $("#order-reconciliation-list").replaceChildren(...summary.rows.map(row => {
         const item = document.createElement("div");
-        item.textContent = row.text; kinWrite(item, row.title || "", "title");
+        kinWrite(item, row.text); kinWrite(item, row.title || "", "title");
         return item;
       }));
     }

@@ -114,6 +114,10 @@
     return !!a && !!b && a[1] === b[1] && Number(b[2]) >= Number(a[2]);
   }
 
+  // A refusal this client made itself, with no answer from the server: `madeHere` tells the screen its message is product
+  // wording. A message from a server answer never carries it and is shown as written.
+  const refusedHere = (code, message) => ({ outcome: 'refused', code, message, madeHere: true });
+
   function create(options = {}) {
     const { transport, base } = options;
     if (!transport || typeof transport.request !== 'function') throw new TypeError('KinReportDraftClient.create: a transport is required');
@@ -575,8 +579,8 @@
       const [requestHash, proposalHash] = await Promise.all([digest(tuple), digest(proposal)]);
       return { requestHash, proposalHash };
     }
-    const heldInsert = () => ({ outcome: 'refused', code: 'KIN_RELATED_INSERT_PENDING',
-      message: 'Related Report 삽입의 저장 결과를 아직 확인하지 못해 이 쓰기를 보내지 않았습니다.' });
+    const heldInsert = () => refusedHere('KIN_RELATED_INSERT_PENDING',
+      'Related Report 삽입의 저장 결과를 아직 확인하지 못해 이 쓰기를 보내지 않았습니다.');
     const proposalOf = request => ({ findings: request.findings, conclusion: request.conclusion, recommendation: request.recommendation,
       baseVersion: request.baseVersion, citations: request.citationIds, structured: request.structureIds,
       ...(Array.isArray(request.drawingIds) ? { drawings: request.drawingIds } : {}) });
@@ -799,7 +803,7 @@
           const own = line(uid);
           if (own.insert) return heldInsert();
           if (own.conflict) return { outcome: 'conflict', latest: own.conflict.latest || null };
-          if (!own.revision) return { outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '이 검사의 초안 기준을 알 수 없습니다.' };
+          if (!own.revision) return refusedHere('KIN_DRAFT_BASE_UNKNOWN', '이 검사의 초안 기준을 알 수 없습니다.');
           const blocked = await settle(uid, own, owner, { context, session });
           if (blocked) return blocked;
           // stored는 그 revision에서 서버가 가진 전체 원문이다(없으면 null) — 잡아 둔 원문이 이미 거기 있으면 보낼 것이 없다.
@@ -824,7 +828,7 @@
           if (ticket && own.newest !== ticket) return { outcome: 'merged' };
           if (own.insert) return heldInsert();
           if (own.conflict) return { outcome: 'conflict', latest: own.conflict.latest || null };
-          if (!own.revision) return { outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '이 검사의 초안 기준을 알 수 없어 저장하지 않았습니다.' };
+          if (!own.revision) return refusedHere('KIN_DRAFT_BASE_UNKNOWN', '이 검사의 초안 기준을 알 수 없어 저장하지 않았습니다.');
           const blocked = await settle(uid, own, owner, { context });
           if (blocked) return blocked;
           const now = typeof texts === 'function' ? await texts() : texts;
@@ -863,7 +867,7 @@
         sending(uid);
         return queue(uid, async () => {
           if (!validSnapshot(capture.snapshot) || !isRevision(capture.expectedRevision))
-            return { outcome: 'refused', code: 'KIN_DRAFT_CAPTURE_INCOMPLETE', message: '잡아 둔 초안의 기준을 알 수 없습니다.' };
+            return refusedHere('KIN_DRAFT_CAPTURE_INCOMPLETE', '잡아 둔 초안의 기준을 알 수 없습니다.');
           const own = line(uid);
           if (own.insert) return heldInsert();
           const expected = emptyDraft(capture.snapshot) ? null : capture.snapshot;
@@ -956,7 +960,7 @@
           const own = line(uid);
           if (own.insert) return heldInsert();
           if (own.conflict) return { outcome: 'conflict', latest: own.conflict.latest || null };
-          if (!own.revision) return { outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '이 검사의 초안 기준을 알 수 없습니다.' };
+          if (!own.revision) return refusedHere('KIN_DRAFT_BASE_UNKNOWN', '이 검사의 초안 기준을 알 수 없습니다.');
           const blocked = await settle(uid, own, owner, { context });
           if (blocked) return blocked;
           // Image Report: the discard names the drawing list of the draft it ends (settle confirmed it).
@@ -989,7 +993,7 @@
           }
           if (own.insert) return heldInsert();
           if (own.conflict) return { outcome: 'conflict', latest: own.conflict.latest || null };
-          if (!own.revision) return { outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '이 검사의 초안 기준을 알 수 없어 저장하지 않았습니다.' };
+          if (!own.revision) return refusedHere('KIN_DRAFT_BASE_UNKNOWN', '이 검사의 초안 기준을 알 수 없어 저장하지 않았습니다.');
           const blocked = await settle(uid, own, owner, { context });
           if (blocked) return blocked;
           /**

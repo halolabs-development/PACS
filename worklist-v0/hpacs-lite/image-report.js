@@ -314,11 +314,11 @@
       if (tool() === 'text') {
         const words = text.value.trim();
         if (!words) { say('먼저 Text 칸에 넣을 글을 쓰세요', 'err'); text.focus(); return; }
-        if (!session.marks.push(k, { tool: 'text', color: color(), points: [at], text: words.slice(0, LIMITS.text) })) { say('표시는 한 그림에 ' + LIMITS.strokes + '개까지입니다', 'err'); return; }
+        if (!session.marks.push(k, { tool: 'text', color: color(), points: [at], text: words.slice(0, LIMITS.text) })) { say(kinSayEn('표시는 한 그림에 {0}개까지입니다', LIMITS.strokes), 'err'); return; }
         say(''); paint(); remember(); return;
       }
       const stroke = { tool: tool(), color: color(), points: tool() === 'pen' ? [at] : [at, at] };
-      if (!session.marks.push(k, stroke)) { say('표시는 한 그림에 ' + LIMITS.strokes + '개까지입니다', 'err'); return; }
+      if (!session.marks.push(k, stroke)) { say(kinSayEn('표시는 한 그림에 {0}개까지입니다', LIMITS.strokes), 'err'); return; }
       drawing = { key: k, stroke };
       try { canvas.setPointerCapture(event.pointerId); } catch (_) {}
       paint();

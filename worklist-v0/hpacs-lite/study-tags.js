@@ -42,7 +42,7 @@ window.KinStudyTags=function(app){
     const at=work.capture('document');if(busy||!same())return;const ticket=++seq,unresolved=pending;busy=true;controls();message('태그를 읽는 중…');
     try{const value=await request('GET',undefined,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=unresolved&&catalog()?.revision===unresolved.revision?unresolved:null;draw(true);message(pending?'요청이 아직 반영되지 않았습니다. 같은 요청을 다시 시도할 수 있습니다.':unresolved?'최신 목록을 읽고 재시도 대기를 해제했습니다. 반영 결과를 확인하세요.':'계정의 최신 태그 목록입니다.');});}
-    catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('태그 조회 실패: '+e.message);});}finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
+    catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn('태그 조회 실패: {e0}',e.message));});}finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
   async function command(action,extra={}){
     const at=work.capture('document');if(busy||pending||!same()||!catalog())return;
     if(['add','remove'].includes(action)&&current!==app.current()){current=app.current();draw(true);message('선택 검사가 바뀌었습니다. 대상을 확인하고 다시 누르세요.');return;}
@@ -57,8 +57,8 @@ window.KinStudyTags=function(app){
     const at=work.capture('document');if(busy||pending||!same()||!tag())return;const ticket=++seq,wanted=selected;busy=true;controls();
     try{const value=await request('GET',undefined,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);if(!catalog().tags.some(x=>x.id===wanted))throw new Error('태그가 삭제되었습니다');app.apply(value,scope,wanted);busy=false;const focus=opener;close(true);if(focus?.isConnected)focus.focus();});}
-    catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('태그 목록 적용 실패: '+e.message);});}finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
-  function close(force=false){if(!force&&(busy||pending&&!confirm('처리 결과를 아직 확인하지 못했습니다. 닫고 다시 열어 결과를 확인할까요?')))return;
+    catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn('태그 목록 적용 실패: {e0}',e.message));});}finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}}
+  function close(force=false){if(!force&&(busy||pending&&!confirm(kinSayEn("처리 결과를 아직 확인하지 못했습니다. 닫고 다시 열어 결과를 확인할까요?"))))return;
     ++seq;abort?.abort();abort=null;busy=false;pending=null;owner=state=current=selected=null;$('list').replaceChildren();$('new').value=$('name').value='';$('current').textContent=$('assigned').textContent=$('count').textContent='';message('');if(d.open)d.close();if(!force&&opener?.isConnected)opener.focus();opener=null;}
   function end(){ended=true;names.clear();newNames.clear();draftOwner=null;close(true);app.ended();}
   $('scope').onchange=()=>{scope=$('scope').value;selected=null;draw();};

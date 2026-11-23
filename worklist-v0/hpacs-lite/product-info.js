@@ -94,7 +94,8 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
       line.append(el('a', { href: row.href, target: '_blank', rel: 'noopener' }, 'Open Document'));
       detail.append(line);
     }
-    detail.append(el('div', { class: 'kpi-note' }, row.note));
+    // A note is a product sentence. The note of the statutory label names the Act it quotes, so it stays as written.
+    detail.append(el('div', { class: 'kpi-note' }, row.id !== 'statutoryLabel' && typeof row.note === 'string' ? kinSayEn(row.note) : row.note));
     tr.append(detail);
     tr.append(el('td', {}, row.basis));
     return tr;

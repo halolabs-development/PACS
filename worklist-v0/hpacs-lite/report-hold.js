@@ -50,8 +50,8 @@
           if (warnedFor !== uid) {
             warnedFor = uid;
             const named = writerName(r.holderName, r.holder);
-            const writer = named === '다른 기관' ? '다른 기관 판독의가'
-              : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
+            const writer = named === '다른 기관' ? kinSayEn('다른 기관 판독의가')
+              : named === '작성자 비공개' ? kinSayEn('비공개 작성자가') : kinSayEn('{0} 님이', named);
             toast(String(kinSayEn("{0} 먼저 판독을 시작했습니다 — 잠금이 풀리면 이어서 할 수 있습니다", writer)), "err");
           }
           return;

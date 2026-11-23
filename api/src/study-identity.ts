@@ -107,6 +107,14 @@ export function orderIdentity(me: string, study: IdentityStudyRow, order: OrderI
 export const OVERLAY_KEYS = ['id', 'name', 'sex', 'birth', 'age', 'desc', 'ward', 'date', 'acc', 'modality'] as const;
 export const OVERLAY_RULE_TEXT = `허용 키 ${OVERLAY_KEYS.join(', ')} · 값은 문자열(age는 유한한 숫자도 가능)`;
 
+/**
+ * Patient ID and name in a correction. A key that is absent shows the study's own value; a blank one would replace it with
+ * nothing on every screen, paper and search that reads the overlay. Clearing the whole overlay stays `null`.
+ */
+export const OVERLAY_IDENTITY_BLANK_TEXT = 'Patient ID와 Name은 비워 둘 수 없습니다.';
+export const overlayIdentityBlank = (value: any): boolean => !!value
+  && ['id', 'name'].some(key => typeof value[key] === 'string' && !value[key].trim());
+
 export function overlayShape(value: unknown): boolean {
   if (value === null) return true;
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype)

@@ -38,11 +38,11 @@
       let target = others[0];
       if (others.length > 1) {
         const pick = prompt(
-          "원격판독을 받을 기관 번호:\n" + others.map((i, n) => `${n + 1}. ${i.name}`).join("\n"), "1");
+          kinSayEn("원격판독을 받을 기관 번호:\n{0}", others.map((i, n) => `${n + 1}. ${i.name}`).join("\n")), "1");
         const n = +pick;
         if (!n || !others[n - 1]) return;
         target = others[n - 1];
-      } else if (!confirm(`${target.name} 에 원격판독을 의뢰할까요?`)) return;
+      } else if (!confirm(kinSayEn("{0} 에 원격판독을 의뢰할까요?", target.name))) return;
 
       // 이 의뢰를 시작한 문맥. 뒤따르는 안내와 예약한 단계는 그것이 그대로일 때만 한다 — 로그아웃 준비·세션 종료 뒤의
       // 타이머가 다음 상태를 서버에 보내지 않는다.

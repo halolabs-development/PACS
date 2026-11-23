@@ -69,6 +69,15 @@
           <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
+      // Each row's help and its View button name a template (its title and shortcut are data): one sentence each, so an
+      // English screen reads them in English and a Korean one exactly as drawn.
+      for (const row of $("#tplrows").querySelectorAll("tr[data-i]")) {
+        const t = templates[Number(row.dataset.i)];
+        if (!t) continue;
+        kinWrite(row, kinSayEn("더블클릭: 판독문에 삽입{0} / 우클릭: 편집", t.shortcut ? kinSayEn(' / 판독문에서 "{0}" 입력 후 Tab', t.shortcut) : ""), "title");
+        const view = row.querySelector("[data-tpl-preview]");
+        if (view) kinWrite(view, kinSayEn("상용구 미리보기: {0}", t.title), "aria-label");
+      }
       const emptyTemplates = $("#tplrows td.empty");
       if (emptyTemplates) kinWrite(emptyTemplates, kinSayEn(templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"));
       updateTemplatePreview();

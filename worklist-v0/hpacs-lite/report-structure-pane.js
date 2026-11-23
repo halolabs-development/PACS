@@ -132,7 +132,7 @@
       $("#struct-removed-label").style.display = removing ? "" : "none";
       const label = KinReportCitation.FIELD_LABEL[pane.field] ?? pane.field;
       kinWrite($("#struct-place"), !pane.plan ? "" : pane.plan.mode2 === "replace" ? kinSayEn("{0} {1}번째 줄의 위 문장을 지우고 이 문장으로 바꿉니다.", label, pane.plan.removedLine) : kinSayEn("{0} {1}번째 줄부터 넣습니다. 기존 내용은 지우지 않습니다.", label, pane.plan.line));
-      kinWrite($("#struct-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(pane.status) || why || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(plan && plan.message) || "");
+      kinWrite($("#struct-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(pane.status) || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(plan && plan.message) || "");
       // 다른 판의 서식으로 적힌 값은 보여주기만 한다. 지금 서식으로 다시 렌더해 보내면 서명된
       // 판의 문장을 새 문면으로 조용히 바꾸는 일이 된다.
       $("#struct-apply").disabled = !pane.plan || !!pane.busy || !!pane.readOnly;
@@ -263,7 +263,7 @@
           // 없으면 표시는 적용 전 그대로다.
           if (untouched) reportConverge.delete(epoch.uid); else markConverge(epoch.uid);
           invalidateStructure(epoch.uid);
-          pane.status = "적용하지 못했습니다: " + draftFailureText(result) + " — 판독문은 그대로입니다.";
+          pane.status = kinSayEn("적용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureSaid(result));
           // 그 사이 이 창이 닫히고 다른 창이 열렸다면 남의 창에 이 실패를 그리지 않는다.
           if (structPane === pane) renderStructure();
         });

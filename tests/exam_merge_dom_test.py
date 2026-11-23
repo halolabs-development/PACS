@@ -547,6 +547,17 @@ class ExamMerge(unittest.TestCase):
         self.language("ko")
         expect(badge).to_have_text("나눈 검사 · 원본 볼 수 없음")
 
+    def test_merge_button_title_follows_the_screen_language(self):
+        self.pick(h.UID)
+        self.page.locator("#t-merge-exam").click()
+        go = self.window("merge").locator(".order-dialog-foot button[title]")
+        korean = "체크한 검사를 기준 검사 하나로 합칩니다."
+        expect(go).to_have_attribute("title", korean)
+        self.language("en")
+        expect(go).to_have_attribute("title", "Merges the checked studies into one base study.")
+        self.language("ko")
+        expect(go).to_have_attribute("title", korean)
+
     def test_korean_merge_window_translates_its_words_and_keeps_its_data(self):
         # A study description and patient names that read like the glossary are still data: templates ("Split {0}",
         # "Base {0}") and a glossary word itself ("Continue").

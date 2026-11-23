@@ -37,6 +37,8 @@
         <button type="button" class="primary" data-action="provision" hidden>Create Key</button>
         <button type="button" class="primary" data-action="replace" hidden>Rotate Key</button>
         <button type="button" class="danger" data-action="revoke" hidden>Retire Key</button></div></form>`;
+    // The dialog's own words (no data in them) follow the screen language as the page's markup does.
+    globalThis.KinLanguage?.markup?.(dialog);
     const $ = q => dialog.querySelector(q), form = $('form'), status = $('[data-status]');
     $('[data-target]').textContent = `${user.name || user.username} · ${user.username} · ${user.institution}`;
     // view: the last answer this dialog drew; unknown: a change whose result was not read back (Reload decides).
@@ -134,7 +136,7 @@
     }
 
     function close() {
-      if (busy && !confirm('서명키 요청의 결과를 아직 받지 못했습니다. 닫으시겠습니까?')) return;
+      if (busy && !confirm(kinSayEn("서명키 요청의 결과를 아직 받지 못했습니다. 닫으시겠습니까?"))) return;
       dispose();
     }
     // Close, the page session's end (the attached lifecycle) and pagehide all end here: the generation moves and

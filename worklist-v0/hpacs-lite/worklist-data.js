@@ -36,7 +36,7 @@
       if (!KinCompoundFilter.usesField(filter?.cols?.[KinCompoundFilter.KEY], 'bodyPart', columns)) return '';
       worklistBodyParts.sync(studies);
       const missing = studies.filter(s => worklistBodyParts.get(s.uid) === undefined).length;
-      return missing ? `Partial · 부위 미확인 ${missing}건이 있어 결과가 아직 완전하지 않습니다. Read Body Parts로 조회하세요.` : '';
+      return missing ? kinSayEn("Partial · 부위 미확인 {0}건이 있어 결과가 아직 완전하지 않습니다. Read Body Parts로 조회하세요.", missing) : '';
     }
     function renderBodyParts() {
       const state = worklistBodyParts.sync(studies);
@@ -695,6 +695,8 @@
       // The words the rows' own cells write (states, their help, chips) follow the worklist's language, as the page's markup
       // does; the cells and parts that hold a study's data are marked translate="no" above and stay as written.
       window.KinLanguage?.markup?.($("#rows"));
+      const drawn = new Map(list.slice(offset, offset + resultPageSize).map(s => [s.uid, s]));
+      if (typeof paintRowWords === "function") for (const row of $("#rows").querySelectorAll("tr[data-uid]")) paintRowWords(row, drawn.get(row.dataset.uid));
       const emptyCell = $("#rows td.empty");
       if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
@@ -1020,7 +1022,7 @@
       if(state?.phase==='unknown')return {label:'Refresh Status',dis:offline||!serverMode,act:()=>load()};
       return {label:state?.phase==='saving'?'Saving Emergency Status':s?.em==='E'?'Switch to Normal':'Switch to Emergency',
         dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!technicianWork()||!s||s.tele,
-        ...(technicianWork()?{}:{title:TECHNICIAN_WORK_REASON}),
+        ...(technicianWork()?{}:{title:kinSayEn(TECHNICIAN_WORK_REASON)}),
         act:()=>studyPriority.set(uid,desired)};
     }
     // While a list read is out the folder counts say 'Partial'. A read that ends without its answer applied (Stop Loading,

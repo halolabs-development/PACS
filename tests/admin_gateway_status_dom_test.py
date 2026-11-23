@@ -1141,7 +1141,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
           const unreadable = [r('mystery'), r('sending', {successCount: 5}), r('sending', {serverReceivedAt: 'soon'}), null, 'SYN',
             r('sending', {localCount: -1})].map(x => A.gatewayStatus(x, null, same).key);
           const echo = A.gatewayStatus(r('failed', {errorCode: '<b>SYN</b>'}), null, same).reason;
-          const otherCode = A.gatewayStatus(r('failed', {errorCode: 'stow_http'}), null, same).reason;
+          const otherCode = String(A.gatewayStatus(r('failed', {errorCode: 'stow_http'}), null, same).reason);
           const rows = A.gatewayStatusRows;
           const valid = {studies: [], observedAt: '2026-09-24T01:06:00.000Z', notObserved: []};
           const malformed = [null, [], {}, {...valid, studies: 'SYN'}, {...valid, observedAt: 'soon'},
@@ -1153,7 +1153,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
           const summaries = [A.gatewayStatusSummary(null, same), A.gatewayStatusSummary({failed: true}, same),
             A.gatewayStatusSummary({observedAt: '2026-09-24T01:06:00.000Z', absentKnown: true, statuses: ['failed', 'received', 'SYN']}, same),
             A.gatewayStatusSummary({observedAt: '2026-09-24T01:06:00.000Z', failed: true, absentKnown: false, statuses: []}, same)]
-            .map(s => [s.key, s.text, s.counts]);
+            .map(s => [s.key, String(s.text), s.counts]);
           return {phases, requested, otherKey, requestedFailed, unbindable: [unbindable.key, unbindable.retry], unreadable, echo,
             otherCode, malformed, undecided: [undecided.absentKnown, undecided.rows.length], absent: absent.absentKnown, summaries,
             frozen: Object.isFrozen(A.GATEWAY_STATUS) && Object.values(A.GATEWAY_STATUS).every(Object.isFrozen)}; }""", EPOCH)
@@ -1356,6 +1356,40 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         ], result["summaries"])
         self.assertEqual("No Gateway of this institution has contacted this server since it started (T0).", result["empty"])
         self.assertTrue(result["frozen"])
+
+    def test_14_the_list_line_and_the_retry_words_follow_an_english_screen(self):
+        # The list line's title (the time of the successful query), each row's Now Retry help and a failed row's F-01 note are
+        # product sentences drawn after Refresh: English on an English screen, the same words as drawn with no choice.
+        self.open()
+        self.refresh((200, FIVE))
+        words = """() => { const q = s => [...document.querySelectorAll(s)];
+          return [document.querySelector('#gateway-list-state').title,
+            ...q('#gateway-rows button').map(b => b.title), ...q('#gateway-rows .gw-note').flatMap(n => [n.textContent, n.title])]; }"""
+        korean = self.page.evaluate(words)
+        self.assertTrue(korean[0].startswith("이 시각에 성공한 검사 목록 조회 기준입니다."), korean[0])
+        self.assertTrue(any(has_hangul(w) for w in korean[1:]), "a Now Retry help or an F-01 note is drawn")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        english = self.page.evaluate(words)
+        self.assertTrue(english[0].startswith("Based on the study list query that succeeded at this time."), english[0])
+        self.assertEqual([], [w for w in english if has_hangul(w)])
+        # Drawn again while English (another Refresh): still English.
+        self.refresh((200, FIVE))
+        self.assertEqual([], [w for w in self.page.evaluate(words) if has_hangul(w)])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, self.page.evaluate(words))
+
+    def test_16_the_retry_line_follows_an_english_screen(self):
+        # The waiting-retry line is product words around values: the attempt count and the error code stay as sent.
+        self.open()
+        self.refresh((200, listing([study("1.2.12", receipt("retry", 7, 4))])))
+        detail = lambda: self.rows()[0]["detail"]
+        korean = detail()
+        self.assertTrue(korean.endswith(RETRY_REASON), korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        self.assertTrue(detail().endswith("Waiting for Gateway auto-retry · 1 attempts · Error code stow_http"), detail())
+        self.assertFalse(has_hangul(detail()), detail())
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, detail())
 
     def test_15_a_transfer_refused_for_its_patient_id_says_so_and_offers_no_retry(self):
         # The study stays listed as it was (HALO PACS wrote nothing of the refused copy); its report is failed with the

@@ -45,7 +45,7 @@ window.KinFavorites = function (app) {
     $('folders').replaceChildren();
     for(const f of state?.folders??[]){const b=button(kinSayEn("{0} · {n1}건", f.name, f.uids.length),()=>{selected=f.id;draw();},$('folders'));b.dataset.folderId=f.id;b.setAttribute('aria-pressed',String(f.id===selected));}
     const f=folder();if(!preserve||previous!==selected)$('name').value=names.get(selected)??f?.name??'';
-    $('links').replaceChildren();kinWrite($('count'), f ? kinSayEn("접근 가능한 링크 {n0}건{1}", f.uids.length, (f.unavailable?` · 접근 불가 ${f.unavailable}건`:'')) : kinSayEn("폴더를 만들거나 선택하세요."));
+    $('links').replaceChildren();kinWrite($('count'), f ? kinSayEn("접근 가능한 링크 {n0}건{1}", f.uids.length, (f.unavailable?kinSayEn(' · 접근 불가 {0}건', f.unavailable):'')) : kinSayEn("폴더를 만들거나 선택하세요."));
     for(const uid of f?.uids??[]){const row=document.createElement('div');row.className='favorite-link';row.dataset.uid=uid;
       const text=document.createElement('span');kinWrite(text, label(uid));text.translate=false;row.append(text);
       button(kinSayEn("검사 선택"),()=>choose(uid),row);button(kinSayEn("보기 상태 연결"),()=>editView(uid),row);if(f.views?.[uid]){button(kinSayEn("저장 보기 열기"),()=>openView(uid),row);button(kinSayEn("보기 연결 해제"),()=>command('view',{uid,jobId:null}),row);}button(kinSayEn("링크 제거"),()=>command('remove',{uid}),row);$('links').append(row);}
@@ -133,14 +133,14 @@ message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   function close(force=false){
-    if(!force&&(busy||pending&&!confirm('처리 결과를 아직 확인하지 못했습니다. 닫은 뒤 다시 열어 최신 목록을 확인하세요. 닫을까요?')))return;
+    if(!force&&(busy||pending&&!confirm(kinSayEn("처리 결과를 아직 확인하지 못했습니다. 닫은 뒤 다시 열어 최신 목록을 확인하세요. 닫을까요?"))))return;
     ++seq;abort?.abort();abort=null;busy=false;pending=null;state=null;owner=null;current=null;selected=null;
     viewUid=null;$('view-editor').hidden=true;$('view-choice').replaceChildren();
     $('folders').replaceChildren();$('links').replaceChildren();$('current').textContent=$('count').textContent='';$('name').value=$('new-name').value='';message('');
     if(d.open)d.close();if(!force&&opener?.isConnected)opener.focus();opener=null;
   }
   $('create').onclick=()=>command('create',{name:$('new-name').value});$('rename').onclick=()=>command('rename',{name:$('name').value});
-  $('delete').onclick=()=>{if(folder()&&confirm('이 폴더와 즐겨찾기 링크만 삭제합니다. 원검사와 판독문은 유지됩니다. 계속할까요?'))command('delete');};
+  $('delete').onclick=()=>{if(folder()&&confirm(kinSayEn("이 폴더와 즐겨찾기 링크만 삭제합니다. 원검사와 판독문은 유지됩니다. 계속할까요?")))command('delete');};
   $('view-save').onclick=()=>{if(viewUid&&$('view-choice').value)command('view',{uid:viewUid,jobId:$('view-choice').value});};
   $('view-cancel').onclick=()=>{viewUid=null;$('view-editor').hidden=true;$('view-choice').replaceChildren();controls();};
   $('apply').onclick=applyFolder;

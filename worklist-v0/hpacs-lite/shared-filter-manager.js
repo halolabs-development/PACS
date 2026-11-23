@@ -154,17 +154,17 @@
       const personal = options.personal(); if (!personal) return;
       const from = $('personal').value, selected = names(personal.filters, from), replace = $('replace').checked;
       change({ action:'publish-folder', sourceRevision: personal.revision, from, to:$('destination').value, namePrefix:$('prefix').value, replace },
-        `개인 폴더 "${from || '전체 모음'}"의 검색 ${selected.length}개와 하위·빈 폴더를 기관 "${$('destination').value}"로 배포할까요?\n${selected.join('\n')}\n이름 접두사: ${$('prefix').value || '(없음)'}\n${replace ? '같은 기관 검색 이름과 대상 폴더 메타데이터를 교체합니다.' : '기존 기관 검색과 대상 폴더는 덮어쓰지 않습니다.'}\n개인 원본은 유지됩니다.`);
+        kinSayEn("개인 폴더 \"{0}\"의 검색 {n1}개와 하위·빈 폴더를 기관 \"{2}\"로 배포할까요?\n{3}\n이름 접두사: {4}\n{t5}\n개인 원본은 유지됩니다.", from || kinSayEn("전체 모음"), selected.length, $('destination').value, selected.join('\n'), $('prefix').value || kinSayEn("(없음)"), replace ? kinSayEn("같은 기관 검색 이름과 대상 폴더 메타데이터를 교체합니다.") : kinSayEn("기존 기관 검색과 대상 폴더는 덮어쓰지 않습니다.")));
     });
-    $('save').addEventListener('click', () => change({action:'save-folder',path:$('source').value,description:$('description').value,ordinal:Number($('order').value)},`기관 폴더 "${$('source').value}"의 설명과 순서를 저장할까요?`));
-    $('move').addEventListener('click', () => change({action:'move-folder',from:$('source').value,to:$('destination').value},`기관 폴더 "${$('source').value}"와 하위 검색을 "${$('destination').value}"로 이동할까요? 기존 개인 복사본은 바뀌지 않습니다.`));
-    $('remove').addEventListener('click', () => change({action:'remove-folder',path:$('source').value},`기관 폴더 "${$('source').value}"와 하위 폴더를 제거할까요? 포함된 검색은 부모 폴더로 옮기며 삭제하지 않습니다.`));
+    $('save').addEventListener('click', () => change({action:'save-folder',path:$('source').value,description:$('description').value,ordinal:Number($('order').value)},kinSayEn("기관 폴더 \"{0}\"의 설명과 순서를 저장할까요?", $('source').value)));
+    $('move').addEventListener('click', () => change({action:'move-folder',from:$('source').value,to:$('destination').value},kinSayEn("기관 폴더 \"{0}\"와 하위 검색을 \"{1}\"로 이동할까요? 기존 개인 복사본은 바뀌지 않습니다.", $('source').value, $('destination').value)));
+    $('remove').addEventListener('click', () => change({action:'remove-folder',path:$('source').value},kinSayEn("기관 폴더 \"{0}\"와 하위 폴더를 제거할까요? 포함된 검색은 부모 폴더로 옮기며 삭제하지 않습니다.", $('source').value)));
     function bulk(action) {
       const selected = library?.filters.filter(filter => checked.has(filter.id)) || [];
       if (!selected.length) { options.status('기관 검색을 선택하세요.', true); return; }
       const command = { action, ids: selected.map(filter => filter.id) };
       if (action === 'move-searches') command.to = $('destination').value;
-      change(command, `선택한 기관 검색 ${selected.length}개를 ${action === 'delete-searches' ? '삭제' : '"' + (command.to || '미분류') + '"로 이동'}할까요?\n${selected.map(filter => filter.name).join('\n')}\n기존 개인 복사본·검사·판독문은 유지됩니다.`);
+      change(command, kinSayEn("선택한 기관 검색 {n0}개를 {1}할까요?\n{2}\n기존 개인 복사본·검사·판독문은 유지됩니다.", selected.length, action === 'delete-searches' ? kinSayEn("삭제") : kinSayEn("\"{0}\"로 이동", command.to || kinSayEn("미분류")), selected.map(filter => filter.name).join('\n')));
     }
     $('move-selected').addEventListener('click', () => bulk('move-searches'));
     $('delete-selected').addEventListener('click', () => bulk('delete-searches'));

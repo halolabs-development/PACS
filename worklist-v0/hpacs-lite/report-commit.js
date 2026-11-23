@@ -87,15 +87,15 @@
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
       if (r.holder && r.holderDraft && !r.sameWriter) {
         const who = writerName(r.holderName, r.holder);
-        parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
+        parts.push(kinSayEn("{0} 선생님이 쓰던 글이 있습니다 — 그 글은 {1} 선생님의 개인 임시글로 남아 있습니다.", who, who));
       }
       if (r.savedBy) {
         const who = writerName(r.savedByName, r.savedBy);
-        parts.push(r.savedKept ? `${who} 선생님이 저장해 둔 글은 ${who} 선생님의 개인 임시글로 옮겼습니다.`
-          : `${who} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.`);
+        parts.push(r.savedKept ? kinSayEn("{0} 선생님이 저장해 둔 글은 {1} 선생님의 개인 임시글로 옮겼습니다.", who, who)
+          : kinSayEn("{0} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.", who));
       }
-      return parts.length ? parts.join(" ") + " 판독 상태를 Unread로 되돌렸습니다."
-        : `${writerName(r.holderName, r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
+      return parts.length ? kinSayEn("{0} 판독 상태를 Unread로 되돌렸습니다.", kinSayEn(parts.map((part, i) => "{" + i + "}").join(" "), ...parts))
+        : kinSayEn("{0} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.", writerName(r.holderName, r.holder));
     }
 
     /** 받아들여진 확정의 완료 안내. `lateText`는 그 확정이 싣지 않은, 누른 뒤에 친 글이 남았다는 뜻이다. */
@@ -103,13 +103,13 @@
       const told = action === "reset" && released ? releasedText(released) : null;
       // FC-040: the reader who took it back had text of their own; it was not touched (applyAcceptedCommit, keepCallerDraft).
       const done = told ? (ownKept ? kinSay("{0} {1}", told, kinSay("내가 쓰던 글은 지우지 않았습니다 — 편집기에 그대로 있습니다.")) : told) : {
-        save: "임시 저장했습니다 (RS: T)",
-        defer: `보류했습니다 (RS: H)${reason ? ' — ' + reason : ''}`,
-        approve: "판독문을 승인했습니다 (RS: A)",
-        amend: "수정한 판독문을 다시 승인했습니다 — 이전 승인본은 이력에 남습니다",
-        addendum: "추가기재를 저장했습니다 — 이전 승인본은 그대로 남습니다",
-        reset: "판독을 취소했습니다 (RS: W). 사유가 이력에 기록됐습니다",
-        preliminary: "예비 판독으로 넘겼습니다 (RS: P) — 지정한 상급 판독의만 내용을 볼 수 있습니다",
+        save: kinSayEn("임시 저장했습니다 (RS: T)"),
+        defer: kinSayEn("보류했습니다 (RS: H){0}", reason ? ' — ' + reason : ''),
+        approve: kinSayEn("판독문을 승인했습니다 (RS: A)"),
+        amend: kinSayEn("수정한 판독문을 다시 승인했습니다 — 이전 승인본은 이력에 남습니다"),
+        addendum: kinSayEn("추가기재를 저장했습니다 — 이전 승인본은 그대로 남습니다"),
+        reset: kinSayEn("판독을 취소했습니다 (RS: W). 사유가 이력에 기록됐습니다"),
+        preliminary: kinSayEn("예비 판독으로 넘겼습니다 (RS: P) — 지정한 상급 판독의만 내용을 볼 수 있습니다"),
       }[action];
       if (!lateText) { toast(done, action === "reset" ? "info" : "ok", released ? 9000 : undefined); return; }
       /**
@@ -118,15 +118,15 @@
        * 시간을 준다. 그 뒤로는 초안 표시줄이 같은 사실을 계속 말한다. 그 검사를 떠나 있었으면 어느 검사인지부터 말한다
        * (로그아웃 창과 같은 표기).
        */
-      const missed = action === "approve" || action === "amend" ? "Approve를 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다"
-        : action === "addendum" ? "Addendum을 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다"
-        : "단추를 누른 뒤 입력한 글은 저장된 판독문에 포함되지 않았습니다";
+      const missed = action === "approve" || action === "amend" ? kinSayEn("Approve를 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다")
+        : action === "addendum" ? kinSayEn("Addendum을 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다")
+        : kinSayEn("단추를 누른 뒤 입력한 글은 저장된 판독문에 포함되지 않았습니다");
       if (uid === selectedUid) {
         toast(String(kinSayEn("{n0}. {1} — 그 글은 초안으로 화면에 남아 있습니다.", done, missed)), "info", 12000);
         return;
       }
       // 그 검사를 떠나 있다: 그 검사의 표시줄이 보일 때까지 이 안내가 유일한 자리이므로 사라지게 두지 않는다(U5CLI-F13).
-      noteLeftStudy(uid, `${studyLabel(uid)} — ${done}. ${missed} — 그 검사를 열면 초안으로 남아 있습니다.`);
+      noteLeftStudy(uid, kinSayEn("{0} — {n1}. {2} — 그 검사를 열면 초안으로 남아 있습니다.", studyLabel(uid), done, missed));
     }
 
     /**
@@ -430,7 +430,7 @@
             toast(e.message, "err");
             const askedEdits = reportEdits;
             // While the report is in its separate window the question is asked there (KinReportPopout), else as before.
-            const question = e.message + "\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)";
+            const question = kinSayEn("{e0}\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)", e.message);
             const reportWindowNow = window.KinReportPopout?.current?.();
             if (await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question))) {
               // Asked in the report window, the page went on meanwhile: a yes counts only for the same study, selection,
@@ -842,7 +842,7 @@
      * 아무도 못 여는 판독문이 생긴다.
      */
     async function doPreliminary() {
-      if (!selectedUid) { alert("검사를 선택하세요."); return; }
+      if (!selectedUid) { alert(kinSayEn("검사를 선택하세요.")); return; }
       /**
        * **uid를 여기서 잡는다.**
        *
@@ -858,12 +858,11 @@
       try { peers = await api("GET", "/colleagues", undefined, undefined, at); }
       catch (e) { work.commit(at, () => toast(String(kinSayEn("판독의 목록을 불러오지 못했습니다: {e0}", e.message)), "err")); return; }
       if (!work.admits(at)) return;
-      if (!peers.length) { alert("이 기관에 지정할 다른 판독의가 없습니다."); return; }
+      if (!peers.length) { alert(kinSayEn("이 기관에 지정할 다른 판독의가 없습니다.")); return; }
 
       const s = studies.find(x => x.uid === uid);
       const pick = prompt(
-        `${s?.name ?? ""} (${s?.id ?? ""}) — 최종 판독을 맡길 상급 판독의 번호:\n` +
-        peers.map((u, i) => `${i + 1}. ${u.name} (${u.username})`).join("\n"), "1");
+        kinSayEn("{0} ({1}) — 최종 판독을 맡길 상급 판독의 번호:\n{2}", s?.name ?? "", s?.id ?? "", peers.map((u, i) => `${i + 1}. ${u.name} (${u.username})`).join("\n")), "1");
       const n = +pick;
       if (!n || !peers[n - 1]) return;
       if (uid !== selectedUid) {
@@ -896,6 +895,8 @@
       kinWrite($("#reason-title"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(title));
       $("#reason-choices").innerHTML = choices.map(choice =>
         `<label style="display:block"><input type="radio" name="reason-choice" value="${esc(choice)}"> ${esc(choice)}</label>`).join("");
+      // The choices' words follow the screen language; the value sent (and kept in the history) stays the choice as written.
+      window.KinLanguage?.markup?.($("#reason-choices"));
       extra.value = "";
       const value = () => {
         const choice = modal.querySelector('input[name="reason-choice"]:checked')?.value;

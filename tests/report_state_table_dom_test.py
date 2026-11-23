@@ -55,6 +55,16 @@ class MovedEmailSite(StateTableSite):
         return super().api(route, request, method, path, query)
 
 
+class EmptyDescriptionSite(StateTableSite):
+    """The second study has neither a description nor a modality: the product writes its placeholder there."""
+
+    def study_row(self, account, uid=h.UID, name=h.PATIENT, patient="SYN-P-001"):
+        row = super().study_row(account, uid, name, patient)
+        if name == h.PATIENT_B:  # the flow site draws every row from the first study's uid and sets its own after
+            row.update(desc="", modality="")
+        return row
+
+
 class ReportStateTablePage(unittest.TestCase):
     # The report flow suite's page driving, borrowed without its own cases.
     count = 3
@@ -81,6 +91,86 @@ class ReportStateTablePage(unittest.TestCase):
         self.assertIn("보존 기간이 끝나", self.rs_cell(flow.PATIENT_C).get_attribute("title"))
         # the writer's name is data: never translated
         self.assertEqual(self.rs_cell(h.PATIENT).locator("[translate=no]").inner_text(), WRITER)
+
+    def test_rs_titles_name_the_writer_in_the_language_chosen_after_they_are_drawn(self):
+        # A colleague's Save and a colleague's hold: the RS title joins the state's help with the writer's name (data), and the
+        # viewing cell's mark names its holder. English repaints them with the name as written; Korean or no choice reads
+        # exactly as drawn.
+        self.open()
+        saved, held = self.rs_cell(h.PATIENT), self.rs_cell(h.PATIENT_B)
+        mark = self.row(h.PATIENT_B).locator("span.hold.other")
+        marked = mark.count() > 0
+        read = lambda: (saved.get_attribute("title"), held.get_attribute("title"), mark.get_attribute("title") if marked else None)
+        korean = read()
+        self.assertEqual(f"저장했지만 아직 승인하지 않은 판독문 — {WRITER}", korean[0])
+        self.assertEqual(f"판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다 — {WRITER}", korean[1])
+        if marked:
+            self.assertEqual(f"{WRITER} 님이 작성 중", korean[2])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(saved).to_have_attribute("title", f"Report saved but not yet approved — {WRITER}")
+        expect(held).to_have_attribute("title", f"A radiologist started writing this report (held) — not saved yet — {WRITER}")
+        if marked:
+            expect(mark).to_have_attribute("title", f"{WRITER} writing")
+        for choice in ({"version": 1, "worklist": "ko", "reading": "ko"}, {"version": 1, "worklist": None, "reading": None}):
+            self.page.evaluate("c => KinLanguage.restore(c)", choice)
+            self.assertEqual(korean, read(), choice)
+
+    def test_template_rows_say_how_to_use_them_in_the_language_chosen_after_they_are_drawn(self):
+        # Each template row's help and its View button name the template (title and shortcut are data): English repaints
+        # them; Korean or no choice reads exactly as drawn.
+        self.site.templates = [{**flow.TEMPLATE, "shortcut": "nbct"}, {**flow.TEMPLATE, "id": "SYN-TPL-2", "title": "SYN PLAIN TEMPLATE"}]
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        rows = self.page.locator("#tplrows tr[data-i]")
+        expect(rows).to_have_count(2)
+        read = lambda: rows.evaluate_all("l => l.map(r => [r.title, r.querySelector('[data-tpl-preview]').getAttribute('aria-label')])")
+        korean = read()
+        self.assertEqual([['더블클릭: 판독문에 삽입 / 판독문에서 "nbct" 입력 후 Tab / 우클릭: 편집', "상용구 미리보기: SYN REC TEMPLATE"],
+                          ["더블클릭: 판독문에 삽입 / 우클릭: 편집", "상용구 미리보기: SYN PLAIN TEMPLATE"]], korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.assertEqual([['Double-click: insert into report / Type "nbct" in the report, then press Tab / Right-click: edit',
+                           "Template preview: SYN REC TEMPLATE"],
+                          ["Double-click: insert into report / Right-click: edit", "Template preview: SYN PLAIN TEMPLATE"]], read())
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, read())
+
+    def test_an_empty_description_is_the_pages_word_and_a_real_one_stays_as_written(self):
+        self.site.__class__ = EmptyDescriptionSite
+        self.open()
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the study opens")
+        empty, real = self.row(h.PATIENT_B), self.row(h.PATIENT)
+        info = self.page.locator('#clinical tr:has(> td:text-is("Study")) > td:nth-child(2)')
+        expect(info).to_have_text("(설명 없음)")
+        expect(empty).to_contain_text("(설명 없음)")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(info).to_have_text("(no description)")
+        expect(empty).to_contain_text("(no description)")
+        # drawn again on an English screen
+        self.page.evaluate("() => { render(); renderClinical(); }")
+        expect(info).to_have_text("(no description)")
+        expect(self.row(h.PATIENT_B)).to_contain_text("(no description)")
+        expect(real).to_contain_text("SYN CT CHEST")
+        for choice in ({"version": 1, "worklist": "ko", "reading": "ko"}, {"version": 1, "worklist": None, "reading": None}):
+            self.page.evaluate("c => KinLanguage.restore(c)", choice)
+            expect(info).to_have_text("(설명 없음)")
+            expect(self.row(h.PATIENT_B)).to_contain_text("(설명 없음)")
+
+    def test_a_refusal_the_page_made_is_its_word_and_a_servers_message_stays_as_written(self):
+        self.open()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        toast = self.page.locator("#toast")
+        # The draft client refuses by itself: this page never read the draft of this study, so it has no base to write on.
+        self.page.evaluate("""async () => {
+          const uid = 'syn-study-never-read';
+          draftNotSaved(uid, work.capture('document'), await draftClient.write(uid, {findings: 'SYN'}, {}));
+        }""")
+        expect(toast).to_have_text("Server save failed: Not saved because the draft base for this study is unknown.")
+        # The same code in a server's answer: its message is the server's and is put in as written.
+        self.page.evaluate("""() => draftNotSaved('syn-study-never-read', work.capture('document'),
+          {outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '검사를 찾을 수 없습니다'})""")
+        expect(toast).to_have_text("Server save failed: 검사를 찾을 수 없습니다")
 
     def test_another_radiologists_save_opens_read_only_with_only_reset_open(self):
         self.open()
@@ -118,6 +208,27 @@ class ReportStateTablePage(unittest.TestCase):
         self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko")
         expect(defer).to_have_attribute("title", f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
         self.assertEqual(korean, (why.text_content(), why.get_attribute("title"), hold.text_content()))
+
+    def test_save_as_template_title_says_the_lock_in_the_chosen_language(self):
+        # The title takes the report's lock reason with the writer's name as data; the account panel's role title is a word too.
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        template, roles = self.page.locator("#b-report-template"), self.page.locator("#session-details-roles")
+        korean = f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다"
+        expect(template).to_have_attribute("title", korean)
+        expect(roles).to_have_attribute("title", "Keycloak 렐름 롤")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(template).to_have_attribute("title", f"In progress, saved by {WRITER} — only that radiologist can read and continue it")
+        expect(roles).to_have_attribute("title", "Keycloak realm roles")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(template).to_have_attribute("title", korean)
+        expect(roles).to_have_attribute("title", "Keycloak 렐름 롤")
+        # A study another radiologist holds: the same control says that lock.
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the held study opens")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(template).to_have_attribute("title", "The current report can't be edited")
 
     def test_a_held_report_names_its_holder_in_the_language_chosen_after_it_is_drawn(self):
         # Another radiologist holds the study (typing): Save, Approve and Prelim say who, and the hold bar says so too.

@@ -84,6 +84,21 @@
         || String(s?.modality ?? "").trim()
         || "(설명 없음)";
     }
+    const studyDescIsEmpty = s => !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim();
+    /** The same, as a part of a sentence: the placeholder is the page's word (English on an English screen), a description is data. */
+    function shownStudyDescSaid(s) {
+      const desc = shownStudyDesc(s);
+      return studyDescIsEmpty(s) ? kinSayEn(desc) : desc;
+    }
+    /** The same for a data cell's markup: only the placeholder is marked, so paintStudyDesc can write it as the page's word. */
+    function studyDescMarkup(s) {
+      const desc = esc(shownStudyDesc(s));
+      return studyDescIsEmpty(s) ? `<span data-desc-placeholder>${desc}</span>` : desc;
+    }
+    function paintStudyDesc(root, s) {
+      const placeholder = root?.querySelector?.("[data-desc-placeholder]");
+      if (placeholder) kinWrite(placeholder, shownStudyDescSaid(s));
+    }
     /** A server time (ISO) as this screen's local "YYYY-MM-DD HH:mm"; anything unreadable is blank. */
     function localStamp(iso) {
       const d = typeof iso === "string" && iso ? new Date(iso) : null;
@@ -173,6 +188,41 @@
       return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? writerName(appState[s.uid]?.savedByName, saved) : "" };
     }
 
+    /** The RS cell's word and its product help (the stored hold reason, which is data, is the cell's own business). */
+    function rsWords(s) {
+      const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
+      const on = reportOnIt(s);
+      const help = finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
+        : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
+        : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
+        : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "";
+      return { word, on, help };
+    }
+    /**
+     * The titles of a drawn row that join a product sentence with a name (the name is data, written as given): the row's
+     * markup registers whole sentences only, so these are written as one sentence each after the row is drawn — English on
+     * an English screen, the same words as drawn otherwise. A title with no product words (a hold reason, a bare name) is
+     * left as drawn.
+     */
+    function paintRowWords(row, s) {
+      if (!row || !s) return;
+      paintStudyDesc(row, s);
+      const rs = row.querySelector("span.rs");
+      if (rs && !s.holdReason) {
+        const { on, help } = rsWords(s);
+        if (help && on.by && !on.mine) kinWrite(rs, kinSayEn("{0} — {1}", kinSayEn(help), on.label), "title");
+      }
+      // The missing-images mark's words are a sentence with its counts: written as one, as the panel repaints it.
+      const gapMark = row.querySelector(".receipt-gap[data-gap-uid]");
+      if (gapMark && typeof paintReceiptGap === "function") paintReceiptGap(gapMark, s);
+      const held = row.querySelector("span.hold.other");
+      if (held && s.holder && !s.holderMine) {
+        const heldBy = writerName(s.holderName, s.holder);
+        kinWrite(held, kinSayEn("{0} 작성 중", heldBy === '다른 기관' ? kinSayEn('다른 기관 판독의가') : heldBy === '작성자 비공개' ? kinSayEn('비공개 작성자가')
+          : kinSayEn('{0} 님이', heldBy)), "title");
+      }
+    }
+
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
@@ -188,12 +238,8 @@
       qc: s => `<span data-qc-uid="${esc(s.uid)}">${qcCellHtml(s)}</span>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
-      rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        const on = reportOnIt(s), shown = on.typing ? "In Progress" : word;
-        const help = s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
-          : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
-          : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
-          : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
+      rs: s => { const { word, on, help: product } = rsWords(s), shown = on.typing ? "In Progress" : word;
+        const help = s.holdReason || product;
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
         const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
@@ -208,7 +254,7 @@
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
-      desc: s => esc(shownStudyDesc(s)),
+      desc: s => studyDescMarkup(s),
       preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
       preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.

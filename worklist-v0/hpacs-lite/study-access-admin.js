@@ -17,13 +17,14 @@
     const dialog=document.createElement('dialog');active=dialog;dialog.id='study-access-dialog';
     dialog.style.cssText='width:min(850px,calc(100vw - 32px));max-height:90vh;overflow:auto';
     dialog.innerHTML=`<form class="dialog-body" id="study-access-form"><h2>Study Access</h2><p data-target></p><p>기존 기관·역할 권한 안에서 검사 접근을 제한합니다. 원본 Patient ID·Modality·Study Date를 사용하며, 한 조건 안은 AND, 조건 사이는 OR입니다. Modality 중 하나가 포함되면 검사 전체에 적용됩니다. 접근 설정 이력이 있는 사용자는 기관 변경 후 새 기관 관리자의 명시적 설정 전까지 차단됩니다.</p><p data-status role="status"></p><fieldset data-editor disabled style="border:0;padding:0"><label>Access Mode<select name="mode"><option value="unrestricted">No Additional Restriction</option><option value="rules">Matching Studies</option><option value="all">All Studies in Existing Scope</option><option value="none">Deny All Studies</option></select></label><div class="form-grid" style="margin-top:12px"><label>Starts At (UTC)<input name="starts" type="datetime-local" step="1"></label><label>Ends At (UTC)<input name="ends" type="datetime-local" step="1"></label></div><p>시작 전·종료 후에는 검사 접근이 차단됩니다. 이미 받은 영상·작성 중인 판독문을 원격으로 지우지는 않습니다.</p><div data-rules></div><button type="button" data-add>Add OR Rule</button><label style="margin-top:12px">Change Reason<input name="reason" maxlength="2000" required autocomplete="off"></label></fieldset><div class="dialog-actions"><button type="button" data-close>Close</button><button type="button" data-reload>Reload</button><button type="button" data-retry hidden>Retry Same Request</button><button type="submit" data-save disabled>Save Access</button></div></form>`;
+    globalThis.KinLanguage?.markup?.(dialog);
     const $=q=>dialog.querySelector(q),form=$('form'),status=$('[data-status]'),editor=$('[data-editor]'),rules=$('[data-rules]');
     $('[data-target]').textContent=`${user.name||user.username} · ${user.username} · ${user.institution}`;
     let generation=0,revision=null,pending=null,busy=false,dirty=false,closed=false;
     const sameOwner=()=>{const s=KinAuth.session();return s?.state==='approved'&&JSON.stringify([s.institution,s.sub])===JSON.stringify(owner);};
     function controls(){editor.disabled=busy||revision===null||!!pending;$('[data-save]').disabled=editor.disabled;$('[data-reload]').disabled=busy;$('[data-retry]').hidden=!pending;$('[data-retry]').disabled=busy;}
     function message(text){kinWrite(status, typeof text==='string'&&text?kinSayEn(text):text);}
-    function close(){if(busy||((dirty||pending)&&!confirm('저장되지 않았거나 결과를 확인하지 못한 변경이 있습니다. 닫으시겠습니까?')))return;dispose();}
+    function close(){if(busy||((dirty||pending)&&!confirm(kinSayEn("저장되지 않았거나 결과를 확인하지 못한 변경이 있습니다. 닫으시겠습니까?"))))return;dispose();}
     async function request(method,body){
       if(closed||session.ended())throw Error('세션이 종료되었습니다');
       if(!sameOwner())throw Error('계정이 변경되었습니다. 다시 로그인하세요');
@@ -55,10 +56,10 @@
       revision=result.revision;rules.replaceChildren();form.elements.mode.value=!p.restricted?'unrestricted':!p.rules.length?'none':p.rules[0].all?'all':'rules';
       for(const r of p.rules)if(!r.all)addRule(r);
       form.elements.starts.value=p.startsAt?p.startsAt.slice(0,19):'';form.elements.ends.value=p.endsAt?p.endsAt.slice(0,19):'';form.elements.reason.value='';modeChanged();dirty=false;
-      message(`Revision ${revision} · ${p.restricted?'Restricted':'No Additional Restriction'}${result.needsInstitutionReview?' · 기관 변경 후 최초 설정이 필요합니다.':''}`);
+      message(kinSayEn('Revision {0} · {1}{2}',revision,p.restricted?'Restricted':'No Additional Restriction',result.needsInstitutionReview?kinSayEn(' · 기관 변경 후 최초 설정이 필요합니다.'):''));
     }
     async function reload(ask=true){
-      if(closed||busy||(ask&&(dirty||pending)&&!confirm('현재 입력·재시도 요청을 버리고 서버 설정을 불러오시겠습니까?')))return;
+      if(closed||busy||(ask&&(dirty||pending)&&!confirm(kinSayEn("현재 입력·재시도 요청을 버리고 서버 설정을 불러오시겠습니까?"))))return;
       const token=++generation;busy=true;controls();message('Loading');
       try{const r=await request('GET');if(closed||token!==generation)return;render(r);pending=null;}
       catch(e){
@@ -83,8 +84,8 @@
         catch(e){message(e.message);return;}
       }
       busy=true;controls();message('Saving');const token=++generation;
-      try{const result=await request('POST',pending);if(closed||token!==generation)return;pending=null;dirty=false;revision=null;message(`Saved · Revision ${result.revision}. Reload로 현재 설정을 확인하세요.`);}
-      catch(e){if(closed)return;message((e.message||'저장 결과를 확인하지 못했습니다')+' · 입력을 유지했습니다.');if([400,403,404,409].includes(e.status)){pending=null;if(e.status===409)revision=null;}}
+      try{const result=await request('POST',pending);if(closed||token!==generation)return;pending=null;dirty=false;revision=null;message(kinSayEn('Saved · Revision {0}. Reload로 현재 설정을 확인하세요.',result.revision));}
+      catch(e){if(closed)return;message(kinSayEn('{0} · 입력을 유지했습니다.',e.message||kinSayEn('저장 결과를 확인하지 못했습니다')));if([400,403,404,409].includes(e.status)){pending=null;if(e.status===409)revision=null;}}
       finally{busy=false;if(!closed)controls();}
     }
     form.addEventListener('input',()=>{if(!closed)dirty=true;});form.elements.mode.onchange=modeChanged;
