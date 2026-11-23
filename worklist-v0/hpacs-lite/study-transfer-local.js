@@ -74,12 +74,12 @@ window.KinStudyTransferLocal = function (app) {
     identity: '로그인 서버를 포함한 계정 정보를 확인하지 못해 반입·원본 다운로드를 시작하지 않았습니다. 다시 로그인한 뒤 사용하세요.',
     legacy: '이 탭에 이전 형식의 반입·다운로드 기록이 남아 있습니다. 어느 로그인 서버 계정의 기록인지 확인할 수 없어 자동으로 조회하거나 표시하지 않고 지우지 않은 채 보존합니다. 필요하면 관리자에게 확인을 요청하세요.',
     pollsEnded: '자동 상태 확인을 마쳤습니다. 이후 상태는 Check Again으로 확인하세요.',
-    sending: (done, n) => kinSay('파일을 보내는 중입니다 ({n0}/{n1}).', done, n),
+    sending: (done, n) => kinSayEn('파일을 보내는 중입니다 ({n0}/{n1}).', done, n),
     summary: (kept, attention, refused = 0) => kinSay('반입 결과: 저장 확인 {n0}개{t1}{t2}.', kept, { t: refused ? kinSay(', 거절된 파일 {n0}개', refused) : '' },
       { t: attention ? kinSay(', 확인이 필요한 파일 {n0}개', attention) : '' }),
     checking: '이 파일의 저장 결과를 다시 확인하는 중입니다…',
     sent: '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
-    ready: (n, size) => kinSay('검사 원본 {n0}개({n1})를 내려받을 준비가 되었습니다.', n, size),
+    ready: (n, size) => kinSayEn('검사 원본 {n0}개({n1})를 내려받을 준비가 되었습니다.', n, size),
     readyChosen: (n, size) => kinSay('고른 원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
     sentChosen: '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     // Ready and Sent of an operation whose range is not confirmed (covered): the state alone, neither the whole study
@@ -87,7 +87,7 @@ window.KinStudyTransferLocal = function (app) {
     readyAlone: (n, size) => kinSay('원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
     sentAlone: '서버가 이 작업의 원본 전송을 마쳤습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     selectionMissing: '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있어 준비하지 않았습니다. 다시 골라 주세요.',
-    downloading: (done, n) => kinSay('서버가 원본을 보내는 중입니다 ({n0}/{n1}).', done, n),
+    downloading: (done, n) => kinSayEn('서버가 원본을 보내는 중입니다 ({n0}/{n1}).', done, n),
     incomplete: '서버 기록에서 전송 완료를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새 원본 목록을 준비하세요.',
     downloadUnconfirmed: '서버의 전송 결과를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새로 준비하세요.',
     // A poll deadline does not prove that the browser's own GET will not start: only that it was not seen to start.
@@ -96,7 +96,7 @@ window.KinStudyTransferLocal = function (app) {
     preparing: '원본 목록을 준비하는 중입니다…',
     granting: '내려받기를 시작하는 중입니다…',
     copied: '작업 번호와 파일 번호를 복사했습니다.',
-    copyFailed: (id, index) => kinSay('복사하지 못했습니다. 작업 번호 {0} · 파일 번호 {n1}', id, index),
+    copyFailed: (id, index) => kinSayEn('복사하지 못했습니다. 작업 번호 {0} · 파일 번호 {n1}', id, index),
     resolveInput: '작업 번호(UUID), 파일 번호(0~99), 확인 근거와 확인 시각을 적으세요.',
     resolving: '관리자 확인을 요청하는 중입니다…',
     // An answer this page cannot read as a typed result or refusal: what it did is not known (D1566), never called refused.

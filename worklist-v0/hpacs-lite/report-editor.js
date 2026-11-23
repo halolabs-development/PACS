@@ -625,7 +625,7 @@
       const label = saved ? (appState[n.uid]?.draft ? `Draft Saved${draftAt ? " " + draftAt : ""}` : "Saved")
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
-        : n.status === "conflict" ? kinSay("Save Failed — 서버의 초안이 이 화면과 다릅니다")
+        : n.status === "conflict" ? kinSayEn("Save Failed — 서버의 초안이 이 화면과 다릅니다")
         : kinSay("Save Failed — {0}", { e: n.reason ?? kinSay("서버가 저장을 받지 않았습니다") });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
@@ -1004,7 +1004,7 @@
         loadReport({ force: true });
         updateReportButtons();
         const s = studies.find(x => x.uid === uid), state = appState[uid] ?? {};
-        const study = s ? [s.name, s.id, shownStudyDesc(s)].filter(Boolean).join(" · ") : uid;
+        const study = s ? [s.name, s.id, shownStudyDescSaid(s)].filter(Boolean).join(" · ") : uid;
         // The draft read carries no reading state; this is the state the worklist last received from the server, said as such.
         const server = kinSayEn("목록이 마지막으로 받은 판독 상태: {0} (v{1})", reportStatusWord(state) ?? "—", state.version ?? 0);
         toast(String(read.present

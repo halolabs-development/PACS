@@ -713,6 +713,8 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
         self.poll(reply(self.receipt_row(self.retry_receipt(), 12), at=self.at(1)))
         help_text = lambda: self.page.evaluate("() => $('#receipt-retry').title")
         korean = help_text()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'ko'})")
+        self.assertEqual(korean, help_text())
         self.assertTrue(korean.startswith("HALO PACS에 재시도 요청을 남깁니다."), korean)
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
         self.assertIsNone(re.search("[가-힣]", help_text()), help_text())

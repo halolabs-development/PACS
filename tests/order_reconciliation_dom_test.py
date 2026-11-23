@@ -177,6 +177,10 @@ class OrderReconciliationDOMTest(unittest.TestCase):
         self.poll(reply(READ["full"]))
         korean = self.view()
         self.assertIn(PHRASE, korean["summary"])
+        # Korean chosen reads this panel exactly as with no choice (the English words of the line stay English).
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'ko'})")
+        panel = lambda v: {k: v[k] for k in ("summary", "title", "rows", "titles")}
+        self.assertEqual(panel(korean), panel(self.view()))
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
         english = self.view()
         text = json.dumps([english["summary"], english["title"], *english["rows"], *english["titles"]], ensure_ascii=False)

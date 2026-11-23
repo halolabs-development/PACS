@@ -59,8 +59,8 @@
   function guidanceSaid(rs,show,tele){
     if(tele||!show)return '';
     const current=typeof rs==='string'&&rs?rs:'W';
-    if(current==='W')return kinSay(GUIDANCE_W);
-    return kinSay('판독이 시작된 검사(현재 RS: {0})는 서버 규칙상 Match·Unmatch·Modify Exam으로 바꿀 수 없습니다. 판독 기록은 그대로 보존됩니다. 불일치가 의심되면 담당 판독의·관리자와 확인하세요.',current);
+    if(current==='W')return kinSayEn(GUIDANCE_W);
+    return kinSayEn('판독이 시작된 검사(현재 RS: {0})는 서버 규칙상 Match·Unmatch·Modify Exam으로 바꿀 수 없습니다. 판독 기록은 그대로 보존됩니다. 불일치가 의심되면 담당 판독의·관리자와 확인하세요.',current);
   }
   function guidance(rs,show,tele){return String(guidanceSaid(rs,show,tele));}
 
@@ -112,7 +112,7 @@
   function view(model,uid,state,format=localTime){
     const m=usable(model);
     if(m.available===null)return {hidden:true};
-    const tail=m.available===false?kinSay(' · {0}{1}',kinSay(OBSERVATION_UNAVAILABLE),m.observedAt?kinSay(' · 마지막 관측 {0} 기준',format(m.observedAt)):''):'';
+    const tail=m.available===false?kinSayEn(' · {0}{1}',kinSayEn(OBSERVATION_UNAVAILABLE),m.observedAt?kinSayEn(' · 마지막 관측 {0} 기준',format(m.observedAt)):''):'';
     // The page's sentences joined: each part is read in the screen language (none of them is data).
     const unavailableTitle=m.available===false?kinSay('{t0}{t1}',{t:kinSay(UNAVAILABLE_TITLE)},{t:m.observedAt?kinSay(' 아래 값은 마지막으로 성공한 관측의 것입니다.'):''}):'';
     const row=m.rows?.get(uid)??null;

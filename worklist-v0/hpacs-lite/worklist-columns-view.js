@@ -82,7 +82,12 @@
     function shownStudyDesc(s) {
       return String(s?.desc ?? "").trim()
         || String(s?.modality ?? "").trim()
-        || kinSayEn("(설명 없음)");
+        || "(설명 없음)";
+    }
+    /** The same, as a part of a sentence: the placeholder is the page's word (English on an English screen), a description is data. */
+    function shownStudyDescSaid(s) {
+      const desc = shownStudyDesc(s);
+      return desc === "(설명 없음)" && !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim() ? kinSayEn(desc) : desc;
     }
     /** A server time (ISO) as this screen's local "YYYY-MM-DD HH:mm"; anything unreadable is blank. */
     function localStamp(iso) {

@@ -3,6 +3,8 @@
   'use strict';
   // A sentence of the page built from its template and its parts ({t: words}); written so the screen language reads it.
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // The sentences this display adds read in English on an English screen only (otherwise exactly as written).
+  const kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   /*
    * The only source the server may name while no authoritative site order source is connected. Any
    * other value is not an answer this build knows how to show, so it is treated as unreadable.
@@ -63,15 +65,15 @@
 
   function rowLabel(row){
     if(row.link==='observed')return {key:'observed',text:row.oid+' · Linked · Observed',
-      title:kinSay('연결된 검사의 영상 행이 성공한 HALO PACS 관측에 있습니다. 영상 수나 검사 종료를 뜻하지 않습니다.')};
-    if(row.link==='not_observed')return {key:'not_observed',text:kinSay('{0} · Linked · {1}',row.oid,kinSay(ORDER_WITHOUT_IMAGES)),
-      title:kinSay('연결된 검사가 성공한 HALO PACS 관측에 없습니다. 관측 실패나 뷰어 로딩 실패가 아닙니다.')};
-    if(row.accession==='absent')return {key:'unlinked_no_accession',text:kinSay('{0} · Unlinked · {1} · No Accession',row.oid,kinSay(ORDER_WITHOUT_IMAGES)),
-      title:kinSay('오더에 accession이 없어 어떤 검사와도 비교할 수 없습니다. 같음도 불일치도 아닙니다.')};
-    if(!row.candidates.length)return {key:'unlinked_no_match',text:kinSay('{0} · Unlinked · {1} · No Accession Match',row.oid,kinSay(ORDER_WITHOUT_IMAGES)),
-      title:kinSay('같은 기관의 연결되지 않은 관측 검사 중 accession이 같은 검사가 없습니다.')};
+      title:kinSayEn('연결된 검사의 영상 행이 성공한 HALO PACS 관측에 있습니다. 영상 수나 검사 종료를 뜻하지 않습니다.')};
+    if(row.link==='not_observed')return {key:'not_observed',text:kinSayEn('{0} · Linked · {1}',row.oid,kinSayEn(ORDER_WITHOUT_IMAGES)),
+      title:kinSayEn('연결된 검사가 성공한 HALO PACS 관측에 없습니다. 관측 실패나 뷰어 로딩 실패가 아닙니다.')};
+    if(row.accession==='absent')return {key:'unlinked_no_accession',text:kinSayEn('{0} · Unlinked · {1} · No Accession',row.oid,kinSayEn(ORDER_WITHOUT_IMAGES)),
+      title:kinSayEn('오더에 accession이 없어 어떤 검사와도 비교할 수 없습니다. 같음도 불일치도 아닙니다.')};
+    if(!row.candidates.length)return {key:'unlinked_no_match',text:kinSayEn('{0} · Unlinked · {1} · No Accession Match',row.oid,kinSayEn(ORDER_WITHOUT_IMAGES)),
+      title:kinSayEn('같은 기관의 연결되지 않은 관측 검사 중 accession이 같은 검사가 없습니다.')};
     return {key:'unlinked_match',text:row.oid+' · Unlinked · Accession Match: '+row.candidates.join(', '),
-      title:kinSay('같은 기관의 연결되지 않은 관측 검사와 accession이 같습니다. 자동으로 연결하지 않습니다. 확인 후 Match로만 연결합니다.')};
+      title:kinSayEn('같은 기관의 연결되지 않은 관측 검사와 accession이 같습니다. 자동으로 연결하지 않습니다. 확인 후 Match로만 연결합니다.')};
   }
   const WITHOUT_IMAGES=new Set(['not_observed','unlinked_no_accession','unlinked_no_match']);
 
@@ -81,13 +83,13 @@
     if(m.available===null)return {key:'not_attempted',hidden:true,text:'',title:'',rows:[]};
     const rows=(m.orders||[]).map(rowLabel),missing=rows.filter(row=>WITHOUT_IMAGES.has(row.key)).length;
     if(m.available===false)return {key:'observation_unavailable',hidden:false,
-      text:kinSay('{0} · {1}{2}',head,kinSay(OBSERVATION_UNAVAILABLE),m.observedAt?kinSay(' · 마지막 관측 {0} 기준',format(m.observedAt)):''),
+      text:kinSayEn('{0} · {1}{2}',head,kinSayEn(OBSERVATION_UNAVAILABLE),m.observedAt?kinSayEn(' · 마지막 관측 {0} 기준',format(m.observedAt)):''),
       title:m.observedAt?kinSay('{t0} {t1} {t2}',{t:kinSay(TITLE)},{t:kinSay('HALO PACS 관측 요청이 실패했습니다.')},{t:kinSay('아래 목록은 마지막으로 성공한 관측의 답입니다.')}):kinSay('{t0} {t1}',{t:kinSay(TITLE)},{t:kinSay('HALO PACS 관측 요청이 실패했습니다.')}),rows};
     if(m.orders===null)return {key:'unknown',hidden:false,text:head+' · Unknown · Observed '+format(m.observedAt),
       title:kinSay('{t0} {t1}',{t:kinSay(TITLE)},{t:kinSay('이번 관측으로는 오더 대사를 판정하지 못했습니다.')}),rows:[]};
     return {key:'observed',hidden:false,
-      text:kinSay('{0} · Orders {n1}{2} · Observed {3}',head,rows.length,missing?kinSay(' · {0} {n1}',kinSay(ORDER_WITHOUT_IMAGES),missing):'',format(m.observedAt)),
-      title:kinSay(TITLE),rows};
+      text:kinSayEn('{0} · Orders {n1}{2} · Observed {3}',head,rows.length,missing?kinSayEn(' · {0} {n1}',kinSayEn(ORDER_WITHOUT_IMAGES),missing):'',format(m.observedAt)),
+      title:kinSayEn(TITLE),rows};
   }
 
   const api={start,read,succeeded,failed,rowLabel,summary,SOURCE,MARKER,

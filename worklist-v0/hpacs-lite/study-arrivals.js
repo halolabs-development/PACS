@@ -155,7 +155,7 @@
     if(b.state==='not_observed')return {key:'not_observed',text:'Not Observed('+format(b.observedAt)+')',
       title:kinSayEn('성공한 HALO PACS 관측에 이 검사의 영상 행이 없습니다. 예고만 된 검사·아직 저장 전·제거된 검사를 구분하지 않습니다.')};
     if(b.state==='observation_unavailable')return {key:'observation_unavailable',
-      text:kinSay('{t0}{t1}',{t:kinSay(PHRASES.observationUnavailable)},{t:!b.last?'':b.last.notObserved?kinSay(' · 마지막 관측({0}) Not Observed',format(b.last.observedAt)):kinSay(' · 마지막 {0}',kinHeld(b.last.count,b.last.observedAt,format))}),
+      text:kinSayEn('{t0}{t1}',{t:kinSayEn(PHRASES.observationUnavailable)},{t:!b.last?'':b.last.notObserved?kinSayEn(' · 마지막 관측({0}) Not Observed',format(b.last.observedAt)):kinSayEn(' · 마지막 {0}',kinHeld(b.last.count,b.last.observedAt,format))}),
       title:kinSayEn('HALO PACS 관측 요청이 실패했습니다. 마지막으로 성공한 관측값과 그 시각을 그대로 보여 줍니다.')};
     if(b.state==='outside_list')return {key:'outside_list',text:'Outside Observed List',title:kinSayEn('이번 관측 목록에 없는 검사입니다. 삭제나 감소로 보지 않습니다.')};
     if(b.state==='not_attempted')return {key:'not_attempted',text:'',title:''};
@@ -402,7 +402,7 @@
     let needsCheck=0;for(const row of m.rows.values())if(row.needsCheck)needsCheck++;
     const tail=needsCheck?' · Needs Check '+needsCheck:'';
     if(m.available===false)return {key:'observation_unavailable',
-    text:kinSay('{t0}{t1}{t2}',{t:kinSay(PHRASES.observationUnavailable)},{t:m.observedAt?kinSay(' · 마지막 관측 {0} 유지',format(m.observedAt)):''},{t:tail}),
+    text:kinSay('{t0}{t1}{t2}',{t:kinSayEn(PHRASES.observationUnavailable)},{t:m.observedAt?kinSay(' · 마지막 관측 {0} 유지',format(m.observedAt)):''},{t:tail}),
       title:kinSayEn(m.observedAt?'HALO PACS 관측 요청이 실패했습니다. 목록·개수·관측 시각은 마지막으로 성공한 관측값입니다.':'아직 성공한 HALO PACS 관측이 없습니다. 개수를 표시하지 않습니다.'),
       notObserved:m.notObserved,needsCheck};
     if(m.available!==true)return {key:'not_attempted',text:'',title:'',notObserved:null,needsCheck};

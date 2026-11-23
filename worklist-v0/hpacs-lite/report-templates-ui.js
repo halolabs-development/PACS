@@ -31,7 +31,7 @@
       if (templatePreview.uid !== selectedUid) { closeTemplatePreview(false); return; }
       const s = cur(), why = templateInsertionBlock(templatePreview.template);
       $("#tpl-preview-target").dataset.uid = selectedUid ?? "";
-      kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
+      kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDescSaid(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
       kinWrite($("#tpl-preview-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? (s?.rs === "A"
         ? kinSayEn("삽입은 개인 초안에 반영됩니다. 승인본에 추가하려면 Addendum을 사용하세요.")
         : kinSayEn("삽입은 개인 초안에 반영됩니다. 확정하려면 Save 또는 Approve를 사용하세요.")));
@@ -220,7 +220,7 @@
       const modalities = String(s.modality ?? "").split(",").map(value => value.trim()).filter(Boolean);
       // 환자 식별은 출처 확인에만 쓴다. 재사용 문장/제목에 검사 식별을 자동으로 섞지 않는다.
       editTemplate(null, { uid: selectedUid,
-        label: kinSayEn("가져온 검사: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) },
+        label: kinSayEn("가져온 검사: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDescSaid(s), s.acc || kinSayEn("없음")) },
         { ...text, modality: modalities.length === 1 ? modalities[0] : "" });
     });
     // 취소는 아무것도 안 한다. 저장을 누른 것만이 저장이다.

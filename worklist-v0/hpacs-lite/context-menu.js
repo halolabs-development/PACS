@@ -282,7 +282,7 @@
             doUnmatch();
           } }),
         { sep: 1 },
-        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: kinSay("새 검사(SC 생성)는 현재 연결되어 있지 않습니다."), act: () => {} },
+        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: kinSayEn("새 검사(SC 생성)는 현재 연결되어 있지 않습니다."), act: () => {} },
       ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
       { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     }

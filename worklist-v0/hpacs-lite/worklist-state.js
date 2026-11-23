@@ -38,7 +38,7 @@
       $("#related-return").disabled = !s || !relatedUid;
       // The study's own data in one sentence of the page: no other glossary template reads its parts as page words.
       const currentLine = s
-        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDesc(s))
+        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDescSaid(s))
         : kinSay("판독 대상을 선택하세요");
       kinWrite($("#related-current"), currentLine);
       kinWrite($("#related-current"), currentLine, "title");

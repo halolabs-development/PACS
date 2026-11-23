@@ -113,7 +113,7 @@
     }
     $('#sr-open').addEventListener('click', () => {
       closeSR(); const s = viewed(); if (!s || demoMode || !srValidUid(s.uid)) return;
-      srUid = s.uid; kinWrite($('#sr-context'), kinSayEn("열람 검사 · {0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDesc(s)));
+      srUid = s.uid; kinWrite($('#sr-context'), kinSayEn("열람 검사 · {0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDescSaid(s)));
       srDialog.showModal(); srList();
     });
     $('#sr-series').addEventListener('change', () => {

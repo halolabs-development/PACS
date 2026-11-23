@@ -541,15 +541,16 @@
       candidateStatus.hidden = !candidate;
       const candidateLines = [];
       if (candidate) {
-        candidateLines.push(kinSayEn('New Selection · {0} · {1}', candidate.status, kinSayEn(String(candidate.message))));
+        // Each line: its words as written, then the message as the page's sentence (English on an English screen).
+        candidateLines.push(['New Selection · ' + candidate.status + ' · ', kinSayEn(String(candidate.message))]);
         for (const member of candidate.members || []) if (member.status === 'error') {
           const state = memberState(member.code);
-          candidateLines.push(kinSayEn('{0} · {1} · {2}', label(member), state.status, kinSayEn(String(state.message))));
+          candidateLines.push([label(member) + ' · ' + state.status + ' · ', kinSayEn(String(state.message))]);
         }
       }
-      if (candidateStatus.textContent !== candidateLines.join('')) {
-        candidateStatus.replaceChildren(...candidateLines.map(text => {
-          const line = document.createElement('div'); kinWrite(line, text); return line;
+      if (candidateStatus.textContent !== candidateLines.map(parts => parts.join('')).join('')) {
+        candidateStatus.replaceChildren(...candidateLines.map(([head, message]) => {
+          const line = document.createElement('div'); line.append(head, kinWrite(document.createTextNode(''), message)); return line;
         }));
       }
       previous.disabled = busy || !c || blocked || c.page <= 0;
