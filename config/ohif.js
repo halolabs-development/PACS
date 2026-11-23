@@ -10682,21 +10682,42 @@ function kinViewerImageReference(imageId) {
 }
 // The cell's image number ("I: n (k/N)") and scroll bar follow STACK_VIEWPORT_SCROLL, which the renderer sends from its own
 // scroll but not from a direct setImageIdIndex() (that sends STACK_NEW_IMAGE only), so a cell moved here kept the old number.
-// The same event is sent on the cell's element in the renderer's own order: once the request is issued, before its image
-// arrives (the viewer raises its Loading cover on this event and lowers it on the STACK_NEW_IMAGE that follows). Nothing is
-// sent when the index did not change (the renderer then loads nothing), the move is no longer the live one of this cell, or
-// the request left the cell on another index or image.
+// The viewer raises its Loading cover on that scroll event and lowers it on STACK_NEW_IMAGE, so the event is sent only when
+// the requested image has arrived: from a capture listener on the cell's STACK_NEW_IMAGE for that image, which runs before
+// the viewer's own handling of the same event lowers the cover. A load that fails (the pinned GPU loader reports the error
+// and still settles the setter) sends no STACK_NEW_IMAGE, so neither the number nor the cover moves. Nothing is sent when
+// the index did not change (the renderer then loads nothing), the move is no longer the live one of this cell, or a wheel
+// or key has moved the cell's target on since.
 function kinViewerAnnounceScroll(v, index, from, imageId, live) {
   try {
     const name = window.cornerstone?.Enums?.Events?.STACK_VIEWPORT_SCROLL, element = v.element;
-    if (!name || !element || typeof element.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    if (!name || !element || typeof element.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return false;
     if (from === index || !live() || typeof v.getCurrentImageIdIndex !== 'function' || v.getCurrentImageIdIndex() !== index
-        || v.getImageIds()[index] !== imageId) return;
+        || (typeof v.targetImageIdIndex === 'number' && v.targetImageIdIndex !== index) || v.getImageIds()[index] !== imageId) return false;
     element.dispatchEvent(new CustomEvent(name, { cancelable: true, detail: { newImageIdIndex: index,
       imageId, direction: Number.isInteger(from) ? index - from : 0 } }));
     return true;
   } catch (_) {}
   return false;
+}
+// Watches the cell for the requested image's STACK_NEW_IMAGE (capture, so it runs before the viewer's own listener) while
+// the setter runs. `arrived` is null when the cell cannot be watched (no element, no event name or no current index — not
+// the pinned viewer); the caller then keeps its check of the image the cell reports.
+function kinViewerWatchArrival(v, index, from, imageId, live) {
+  const unwatched = { arrived: () => null, stop() {} };
+  try {
+    const name = typeof window === 'undefined' ? null : window.cornerstone?.Enums?.Events?.STACK_NEW_IMAGE, element = v.element;
+    if (!name || !element || typeof element.addEventListener !== 'function' || !Number.isInteger(from)) return unwatched;
+    let arrived = false;
+    const seen = event => {
+      const shown = event?.detail?.imageId ?? event?.detail?.image?.imageId;
+      if (shown !== imageId) return;
+      arrived = true;
+      kinViewerAnnounceScroll(v, index, from, imageId, live);
+    };
+    element.addEventListener(name, seen, true);
+    return { arrived: () => arrived, stop() { try { element.removeEventListener(name, seen, true); } catch (_) {} } };
+  } catch (_) { return unwatched; }
 }
 // Exact-frame navigation shared by the Saved Items "Go to Image" button and the Findings section.
 // `env` exposes the live closure state of kinCreateViewerHistory through getters, so every decision
@@ -10737,35 +10758,26 @@ async function kinViewerNavigateTo(env, target) {
     const index = (v ? v.getImageIds() : []).findIndex(id => env.matches(env.reference(id), identity));
     if (index >= 0) {
       const cell = () => live() && env.services.viewportGridService.getActiveViewportId() === viewportId;
-      let from = null, announced = false;
+      let watch = null;
       try {
         // The pinned setter preserves its load Promise but leaves the scroll target
         // and an older wheel debounce untouched. Retarget before starting the load;
         // doing this after await would rewind a newer user scroll.
-        from = typeof v.getCurrentImageIdIndex === 'function' ? v.getCurrentImageIdIndex() : null;
+        const from = typeof v.getCurrentImageIdIndex === 'function' ? v.getCurrentImageIdIndex() : null;
         const imageId = v.getImageIds()[index];
         clearTimeout(v.debouncedTimeout);
         v.targetImageIdIndex = index;
-        const loading = v.setImageIdIndex(index);
-        announced = kinViewerAnnounceScroll(v, index, from, imageId, cell);
-        await loading;
+        watch = from === index ? null : kinViewerWatchArrival(v, index, from, imageId, cell);
+        await v.setImageIdIndex(index);
       } catch (_) {
-        // The image never came and the cell still shows the one it showed (the setter has already moved its index): put
-        // the number and the index back the renderer's way, a scroll to that image and its load, so neither the number nor
-        // the Loading cover stays on the frame that did not arrive. Not when the user moved the cell meanwhile.
-        if (announced && cell() && Number.isInteger(from) && v.getCurrentImageIdIndex?.() === index && v.targetImageIdIndex === index) {
-          try {
-            v.targetImageIdIndex = from;
-            const back = v.setImageIdIndex(from);
-            kinViewerAnnounceScroll(v, from, index, v.getImageIds()[from], cell);
-            Promise.resolve(back).catch(() => {});
-          } catch (_) {}
-        }
         return live() ? refusal('frame-missing') : refusal('superseded');
-      }
+      } finally { watch?.stop(); }
       if (!cell()) return refusal('superseded');
       // A wheel or key that moved the cell on while this frame loaded is the newer choice: this move does not report arrival.
       if (typeof v.targetImageIdIndex === 'number' && v.targetImageIdIndex !== index) return refusal('superseded');
+      // The requested image must have arrived in the cell: the pinned GPU loader settles the setter normally after a failed
+      // load and leaves the cell's index on the requested frame while the previous image stays shown.
+      if (watch && watch.arrived() === false) return refusal('frame-missing');
       // The frame actually shown after the await is the only proof; a user scroll or a
       // display-set change during the load must not be reported as arrival.
       if (!env.matches(env.reference(v.getCurrentImageId?.()), identity)) return refusal('frame-missing');

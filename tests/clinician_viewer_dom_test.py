@@ -2028,38 +2028,55 @@ class ClinicianViewerDOMTest(unittest.TestCase):
     def test_06c_the_cell_number_follows_the_frame_a_cited_line_opens(self):
         """The cell's image number ("I: n (k/N)") and scroll bar follow STACK_VIEWPORT_SCROLL, which the renderer sends from its
         own scroll and not from a direct setImageIdIndex(). Opening the frame a cited line names (the same exact-frame move as
-        Go to Image and the Findings section) sends that event on the cell, once, as soon as the move is asked and before its
-        image arrives, naming the new index; a frame already shown sends nothing."""
+        Go to Image and the Findings section) sends that event on the cell, once, when the requested image arrives: from the
+        capture phase of its STACK_NEW_IMAGE, before the viewer's own handling of that event lowers the Loading cover the
+        scroll event raised. A frame already shown, a failed load and a move a wheel step overtook send nothing."""
         six = """([series, sop, at, mode]) => { const v = synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp');
           const id = s => `wadors:${location.origin}/dicom-web/studies/${window.synStudy}/series/${series}/instances/${s}/frames/1`;
           const sops = [0, 1, 2, 3, 4, 5].map(i => i === at ? sop : sop + '.9' + i);
           let current = 0, asked = 0; window.synScrolls = []; window.synOrder = [];
+          // The viewer around the cell: its number follows the scroll event, its Loading cover goes up on the scroll event
+          // and down on the cell's STACK_NEW_IMAGE (listeners of the target, not capture).
+          window.synNumber = 0; window.synLoading = false;
           cornerstone.Enums.Events.STACK_VIEWPORT_SCROLL = 'syn-stack-scroll';
-          v.element.addEventListener('syn-stack-scroll', e => { window.synScrolls.push(e.detail); window.synOrder.push('scroll'); });
+          v.element.addEventListener('syn-stack-scroll', e => { window.synScrolls.push(e.detail); window.synOrder.push('scroll');
+            window.synNumber = e.detail.newImageIdIndex; window.synLoading = true; });
+          v.element.addEventListener('syn-stack-new-image', () => { window.synOrder.push('lowered'); window.synLoading = false; });
           v.getImageIds = () => sops.map(id); v.getCurrentImageIdIndex = () => current; v.getCurrentImageId = () => id(sops[current]);
-          // As the pinned setter: the index moves at once; 'fail' rejects the first load, 'wheel' is a wheel step taken while
-          // the first image loads (the renderer's own scroll sets the target).
-          v.setImageIdIndex = index => { current = index; window.synOrder.push('asked ' + index); const first = asked++ === 0;
+          // As the pinned setter: the same index loads nothing; another index moves at once and its image arrives as the
+          // cell's STACK_NEW_IMAGE before the Promise settles. 'gpu-fail' is the pinned GPU loader's failed load (an
+          // IMAGE_LOAD_ERROR, no STACK_NEW_IMAGE, the Promise settles normally, the index stays on the requested frame);
+          // 'reject' rejects; 'wheel' is a wheel step taken while the first image loads (the renderer's scroll sets the target).
+          v.setImageIdIndex = index => { window.synOrder.push('asked ' + index);
+            if (index === current) return Promise.resolve(id(sops[current]));
+            current = index; const first = asked++ === 0;
             return new Promise((resolve, reject) => setTimeout(() => {
               if (first && mode === 'wheel') v.targetImageIdIndex = index + 1;
-              window.synOrder.push(first && mode === 'fail' ? 'failed' : 'loaded');
-              first && mode === 'fail' ? reject(new Error('SYN load')) : resolve(); }, 0)); };
+              if (first && (mode === 'gpu-fail' || mode === 'reject')) {
+                window.synOrder.push('failed');
+                return mode === 'reject' ? reject(new Error('SYN load')) : resolve(); }
+              window.synOrder.push('arrived');
+              v.element.dispatchEvent(new CustomEvent('syn-stack-new-image', { detail: { imageId: id(sops[index]), imageIdIndex: index } }));
+              resolve(id(sops[index])); }, 0)); };
           synServices.displaySetService.getActiveDisplaySets = () => [{ StudyInstanceUID: window.synStudy, SeriesInstanceUID: series,
             displaySetInstanceUID: 'syn-ds', images: sops.map(s => ({ SOPInstanceUID: s })) }]; }"""
         entry_note = "() => { const n = document.getElementById('kin-viewer-entry-note'); return n && !n.hidden ? n.textContent : null; }"
+        highlighted = "() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.highlighted).map(a => a.data.label)"
         try:
             moved = '요청한 원본 영상(프레임 1)으로 이동했습니다. 표식을 강조했습니다.'
-            cases = ((4, None, [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'scroll', 'loaded'], moved),
-                     (0, None, [], ['asked 0', 'loaded'], moved),
-                     # The image never came: the cell keeps showing image 1, so its number and index go back there (the
-                     # renderer's scroll and load lower the Loading cover) and the failure is said.
-                     (4, 'fail', [{'newImageIdIndex': 4, 'direction': 4}, {'newImageIdIndex': 0, 'direction': -4}],
-                      ['asked 4', 'scroll', 'failed', 'asked 0', 'scroll', 'loaded'],
-                      '요청한 원본 영상으로 이동하지 못했습니다. 원본 프레임을 열지 못했습니다.'),
+            missing = '요청한 원본 영상으로 이동하지 못했습니다. 원본 프레임을 열지 못했습니다.'
+            # (at, mode, scroll events, order, number shown, said, marks highlighted)
+            cases = ((4, None, [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'arrived', 'scroll', 'lowered'], 4, moved,
+                      ['SYN-A length']),
+                     (0, None, [], ['asked 0'], 0, moved, ['SYN-A length']),
+                     # The image never came: the cell keeps showing image 1 under its number 1, no Loading cover was raised,
+                     # and the failure is said with no mark highlighted.
+                     (4, 'gpu-fail', [], ['asked 4', 'failed'], 0, missing, []),
+                     (4, 'reject', [], ['asked 4', 'failed'], 0, missing, []),
                      # A wheel step while the image loads is the newer choice: no arrival is claimed for the older move.
-                     (4, 'wheel', [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'scroll', 'loaded'],
-                      '요청한 원본 영상으로 이동하지 못했습니다. 다른 영상 칸을 골라 이동을 멈췄습니다.'))
-            for at, mode, scrolls, order, said in cases:
+                     (4, 'wheel', [], ['asked 4', 'arrived', 'lowered'], 0,
+                      '요청한 원본 영상으로 이동하지 못했습니다. 다른 영상 칸을 골라 이동을 멈췄습니다.', []))
+            for at, mode, scrolls, order, number, said, lit in cases:
                 with self.subTest(at=at, mode=mode):
                     self.me, self.viewer_mode = CLINICIAN, 'physician'
                     self.viewer_target = {'studyUid': VA, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)}
@@ -2074,6 +2091,9 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                     if scrolls:
                         self.assertTrue(self.page.evaluate(f"() => synScrolls[0].imageId.includes('/instances/{SOP}/')"))
                     self.assertEqual(order, self.page.evaluate("() => synOrder"))
+                    self.assertEqual((number, False), tuple(self.page.evaluate("() => [synNumber, synLoading]")),
+                                     'the number names the image shown and no Loading cover stays')
+                    self.assertEqual(lit, self.page.evaluate(highlighted))
         finally:
             self.viewer_mode, self.viewer_target = None, None
             self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
