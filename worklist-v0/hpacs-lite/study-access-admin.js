@@ -1,5 +1,10 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // The page owns termination; this dialog releases its edit and pending request with that lifecycle.
   let active=null,session=null,closeActive=null,refused=null;
   const emptyRule=()=>({patientId:null,modalities:[],dateFrom:null,dateTo:null,studyUids:[]});
@@ -17,7 +22,7 @@
     let generation=0,revision=null,pending=null,busy=false,dirty=false,closed=false;
     const sameOwner=()=>{const s=KinAuth.session();return s?.state==='approved'&&JSON.stringify([s.institution,s.sub])===JSON.stringify(owner);};
     function controls(){editor.disabled=busy||revision===null||!!pending;$('[data-save]').disabled=editor.disabled;$('[data-reload]').disabled=busy;$('[data-retry]').hidden=!pending;$('[data-retry]').disabled=busy;}
-    function message(text){status.textContent=text;}
+    function message(text){kinWrite(status, typeof text==='string'&&text?kinSayEn(text):text);}
     function close(){if(busy||((dirty||pending)&&!confirm('저장되지 않았거나 결과를 확인하지 못한 변경이 있습니다. 닫으시겠습니까?')))return;dispose();}
     async function request(method,body){
       if(closed||session.ended())throw Error('세션이 종료되었습니다');

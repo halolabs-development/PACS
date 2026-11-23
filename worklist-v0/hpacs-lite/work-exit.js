@@ -435,7 +435,7 @@
     function overwriteServerDraft(prep) {
       if (logoutPrep !== prep || !prep.uid || !["failed", "ended"].includes(prep.state)) return;
       if (!draftClient.resolve(prep.uid)) {
-        logoutStatus(prep, "서버의 초안을 아직 확인하지 못했습니다. Retry 또는 Recover Draft로 다시 확인하세요.");
+        logoutStatus(prep, kinSayEn("서버의 초안을 아직 확인하지 못했습니다. Retry 또는 Recover Draft로 다시 확인하세요."));
         return;
       }
       if (prep.state === "failed") saveForLogout(prep);
@@ -611,7 +611,7 @@
           }
           forgetCapture(prep);
           prep.state = "done";
-          logoutStatus(prep, "판독문 초안을 저장했습니다. 로그인 화면으로 이동합니다…");
+          logoutStatus(prep, kinSayEn("판독문 초안을 저장했습니다. 로그인 화면으로 이동합니다…"));
           KinAuth.leave();
         });
       } finally {

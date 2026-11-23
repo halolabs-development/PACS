@@ -27,7 +27,7 @@ window.KinConsultations = function(app) {
   let owner=null,ended=false,busy=false,sequence=0,controller=null,pending=null,items=[],cursor=null,direction='received',row=null,createUid=null,opener=null;
   const same=()=>work.state()==='active'&&!ended&&dialog.open&&app.allowed()&&JSON.stringify(owner)===JSON.stringify(app.identity());
   const dirty=()=>!!$('reason').value||!!$('note').value;
-  const identity=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):uid+' · 목록을 새로고침하여 검사 정보를 확인하세요';};
+  const identity=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):kinSayEn("{0} · 목록을 새로고침하여 검사 정보를 확인하세요", uid);};
   function controls() {
     for(const el of dialog.querySelectorAll('input,select,textarea,button'))el.disabled=busy||!!pending||!same();
     $('close').disabled=false;$('retry').hidden=!pending;$('retry').disabled=busy||!same();
@@ -54,14 +54,14 @@ window.KinConsultations = function(app) {
   function drawList() {
     const list=shown();$('count').textContent=`${list.length} shown / ${items.length} loaded${cursor?' · More Available':''}`;
     $('list').replaceChildren(...list.map(r=>{const b=document.createElement('button');b.type='button';b.dataset.consultation=r.id;
-      b.textContent=`${r.state} · ${identity(r.studyUid)} · ${direction==='received'?r.requesterActor:r.recipientName}`;
+      kinWrite(b, `${r.state} · ${identity(r.studyUid)} · ${direction==='received'?r.requesterActor:r.recipientName}`);
       b.setAttribute('aria-pressed',String(row?.id===r.id));b.onclick=()=>{if(mayLeave())loadRow(r.id);};return b;}));controls();
   }
   function clearEditor() {row=null;createUid=null;$('reason').value=$('note').value='';$('create').hidden=$('detail').hidden=true;
     for(const id of ['study','participants','current-state','original','answer'])$(id).textContent='';$('reader').replaceChildren();$('heading').textContent='Select a Request';}
   function drawRow(value, evidence) {
     row=item(value);createUid=null;$('create').hidden=true;$('detail').hidden=false;$('heading').textContent='Request Details';
-    $('study').textContent=identity(row.studyUid);$('participants').textContent=`From: ${row.requesterActor} · To: ${row.recipientName} · ${row.recipientActor}`;
+    kinWrite($('study'), identity(row.studyUid));kinWrite($('participants'), `From: ${row.requesterActor} · To: ${row.recipientName} · ${row.recipientActor}`);
     $('current-state').textContent=[row.state,new Date(row.updatedAt).toLocaleString(),row.changedBy,window.KinClinicalSignature?.(evidence,row.revision)].filter(Boolean).join(' · ');
     $('original').translate=$('answer').translate=$('study').translate=false;$('original').textContent=row.reason;$('answer').textContent=row.reply||row.cancelReason||'—';$('reason').value=$('note').value='';drawList();
   }
@@ -97,7 +97,7 @@ window.KinConsultations = function(app) {
   }
   function create() {
     if(!mayLeave())return;const study=app.current();if(!study){kinWrite($('status'), kinSayEn("검사 목록에서 의뢰할 검사를 먼저 선택하세요."));return;}
-    pending=null;clearEditor();createUid=study.uid;$('heading').textContent='New Consultation';$('study').textContent=identity(createUid);$('create').hidden=false;
+    pending=null;clearEditor();createUid=study.uid;kinWrite($('heading'), 'New Consultation');kinWrite($('study'), identity(createUid));$('create').hidden=false;
     run(async(signal,current,at)=>{const value=await app.api('GET','/consultation-candidates',undefined,signal,at);
       work.commit(at,()=>{if(!current())return;verified(value);
       if(!Array.isArray(value.readers))throw Error('수신자 목록을 확인할 수 없습니다');

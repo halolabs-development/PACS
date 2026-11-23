@@ -1282,6 +1282,12 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         # Another institution's patient or an unknown ID: the server's sentence, nothing drawn.
         self.consent_load("P404")
         self.consent_said("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", failed=True)
+        # The server's sentence is said through the error box's rule: a known one reads in English on an English screen
+        # (also when English arrives after it is drawn); Korean or no choice keeps it as the server wrote it.
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        self.consent_said("No study with this patient ID was found at this institution", failed=True)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.consent_said("이 기관에서 이 환자 번호의 검사를 찾지 못했습니다", failed=True)
         expect(self.page.locator("#patient-consent-patient")).to_be_hidden()
         expect(self.page.locator("#patient-consent-form")).to_be_hidden()
         # An answer naming another patient, or another account, is not drawn.

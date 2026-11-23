@@ -1,5 +1,9 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const copy=value=>JSON.parse(JSON.stringify(value));
   function normalize(value){
     return value?.version===1&&['automatic','manual'].includes(value.mode)&&typeof value.clearResults==='boolean'
@@ -21,8 +25,8 @@
     // options, with nowhere to keep them, so storage is never touched and the controls stay off. Ending the session or
     // any owner change after mount (to another account, to none, or from none to one) still empties the list.
     const bound=owner(),key=bound&&'kin-worklist-search:v1:'+bound;let saved=null,note='',ended=false;
-    try{const raw=key&&root.localStorage.getItem(key);if(raw){saved=raw.length<=200&&normalize(JSON.parse(raw));if(!saved)note='저장된 검색 설정을 확인할 수 없어 기본값을 적용했습니다.';}}
-    catch(_){note='검색 설정을 읽지 못해 기본값을 적용했습니다.';}
+    try{const raw=key&&root.localStorage.getItem(key);if(raw){saved=raw.length<=200&&normalize(JSON.parse(raw));if(!saved)note=kinSayEn("저장된 검색 설정을 확인할 수 없어 기본값을 적용했습니다.");}}
+    catch(_){note=kinSayEn("검색 설정을 읽지 못해 기본값을 적용했습니다.");}
     const state=create(snapshot(),saved),container=document.createElement('span');container.style.cssText='display:flex;gap:6px;align-items:center;flex-wrap:wrap';
     container.innerHTML='<label>Search Mode <select class="chip" data-search-mode><option value="automatic">Automatic</option><option value="manual">Manual</option></select></label><button class="chip" type="button" data-search-apply>Search</button><label><input type="checkbox" data-search-clear> Clear Results on Clear</label><small data-search-status role="status"></small>';
     host.append(container);const mode=container.querySelector('select'),clear=container.querySelector('input'),status=container.querySelector('[role=status]');
@@ -33,10 +37,10 @@
     mode.value=state.preferences().mode;clear.checked=state.preferences().clearResults;
     const lock=()=>container.querySelectorAll('input,select,button').forEach(el=>el.disabled=true);if(!key)lock();
     const live=()=>!ended&&owner()===bound;
-    function show(){const result=state.read(snapshot());status.textContent=result.empty?'검색 결과를 비웠습니다. Search로 다시 검색하세요.':result.pending?'조건 변경 미적용 · 목록은 이전 검색 결과입니다.':note;}
+    function show(){const result=state.read(snapshot());kinWrite(status, result.empty?kinSayEn("검색 결과를 비웠습니다. Search로 다시 검색하세요."):result.pending?kinSayEn("조건 변경 미적용 · 목록은 이전 검색 결과입니다."):note);}
     function apply(){if(!live())return;state.apply(snapshot());note='';render();show();}
     function configure(){if(!live()||!key)return;state.configure({version:1,mode:mode.value,clearResults:clear.checked},snapshot());
-      try{root.localStorage.setItem(key,JSON.stringify(state.preferences()));note='';}catch(_){note='검색 설정을 저장하지 못했습니다. 현재 창에만 적용합니다.';}render();show();}
+      try{root.localStorage.setItem(key,JSON.stringify(state.preferences()));note='';}catch(_){note=kinSayEn("검색 설정을 저장하지 못했습니다. 현재 창에만 적용합니다.");}render();show();}
     mode.onchange=clear.onchange=configure;container.querySelector('button').onclick=apply;
     const work = root.KinWorkContext;
     work.onInvalidate(event => {

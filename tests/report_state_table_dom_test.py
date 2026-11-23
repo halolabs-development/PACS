@@ -7,6 +7,7 @@ Reset to Unread (the in-progress takeover), and names its writer beside the edit
 with a live hold) is listed as In Progress by that reader. A study whose report was destroyed at the end of its retention
 (RS D, `bodyLock: 'destroyed'`) is listed as Destroyed and opens read-only with that reason. Only HTTP is synthetic.
 """
+import re
 import unittest
 
 import auth_logout_dom_test as h
@@ -104,10 +105,36 @@ class ReportStateTablePage(unittest.TestCase):
         self.pick(h.PATIENT)
         self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
         defer = self.page.locator("#b-defer")
+        why, hold = self.page.locator("#report-editor-why"), self.page.locator("#holdmsg")
+        korean = (why.text_content(), why.get_attribute("title"), hold.text_content())
         self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "en")
-        expect(defer).to_have_attribute("title", f"In progress, saved by {WRITER} — only that radiologist can read and continue it")
+        english = f"In progress, saved by {WRITER} — only that radiologist can read and continue it"
+        expect(defer).to_have_attribute("title", english)
+        # The editor head and the hold bar say the same reason, drawn before the choice: repainted, the name as written.
+        expect(why).to_have_text(english)
+        expect(why).to_have_attribute("title", english)
+        expect(hold).to_contain_text(f"✎ {english}. To continue, use More ▸ Reset to Unread")
+        self.assertIsNone(re.search("[가-힣]", hold.text_content() + why.text_content()))
         self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", "ko")
         expect(defer).to_have_attribute("title", f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
+        self.assertEqual(korean, (why.text_content(), why.get_attribute("title"), hold.text_content()))
+
+    def test_a_held_report_names_its_holder_in_the_language_chosen_after_it_is_drawn(self):
+        # Another radiologist holds the study (typing): Save, Approve and Prelim say who, and the hold bar says so too.
+        self.open()
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the study opens")
+        buttons = [self.page.locator(b) for b in ("#b-save", "#b-approve", "#b-prelim")]
+        hold = self.page.locator("#holdmsg")
+        korean = [b.get_attribute("title") for b in buttons] + [hold.text_content()]
+        self.assertEqual([f"{WRITER} 님이 판독 중입니다"] * 3, korean[:3])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        for b in buttons:
+            expect(b).to_have_attribute("title", f"{WRITER} is reading")
+        expect(hold).to_contain_text(f"✎ {WRITER} is reading — you can continue reading once the lock is released")
+        self.assertIsNone(re.search("[가-힣]", hold.text_content()))
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, [b.get_attribute("title") for b in buttons] + [hold.text_content()])
 
     def test_a_korean_report_screen_keeps_its_lock_reason_when_the_list_is_english(self):
         # The list in English, the report screen in Korean, the study picked from the list: every lock reason on the

@@ -1,5 +1,9 @@
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // D1882 Held Studies: studies whose sending hospital is unknown, as the server groups them (device, raw InstitutionName
   // text, arrival times, count; no patient or study fact). Registering a device or a spelling the hospital confirmed is
   // one POST; the server attaches the held studies it now decides. The page owns termination (KinConsoleSession).
@@ -9,7 +13,7 @@
 
   function message(text) {
     const box = $('#held-message');
-    box.textContent = text || '';
+    kinWrite(box, typeof text === 'string' && text ? kinSayEn(text) : text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -25,11 +29,11 @@
 
   // Fixed sentences only: server wording is never shown here.
   function failure(error, writing) {
-    if (error?.status === 403) return writing ? '이 계정으로는 등록할 수 없습니다.' : '이 계정으로는 보류 검사 알림을 조회할 수 없습니다.';
-    if (error?.status === 409) return '이미 다른 기관에 등록된 값입니다. 병원과 다시 확인하세요.';
-    if (error?.status === 400) return '입력을 확인하세요. 장비 AE Title은 16자 이내이고 병원과 확인한 내용이 필요합니다.';
-    if (error?.status === 503) return '서버가 바쁘거나 원본 조회가 지연되었습니다. 잠시 후 다시 시도하세요.';
-    return writing ? '등록 결과를 확인하지 못했습니다. Refresh로 현재 상태를 확인하세요.' : '보류 검사 알림을 불러오지 못했습니다.';
+    if (error?.status === 403) return writing ? kinSayEn("이 계정으로는 등록할 수 없습니다.") : kinSayEn("이 계정으로는 보류 검사 알림을 조회할 수 없습니다.");
+    if (error?.status === 409) return kinSayEn("이미 다른 기관에 등록된 값입니다. 병원과 다시 확인하세요.");
+    if (error?.status === 400) return kinSayEn("입력을 확인하세요. 장비 AE Title은 16자 이내이고 병원과 확인한 내용이 필요합니다.");
+    if (error?.status === 503) return kinSayEn("서버가 바쁘거나 원본 조회가 지연되었습니다. 잠시 후 다시 시도하세요.");
+    return writing ? kinSayEn("등록 결과를 확인하지 못했습니다. Refresh로 현재 상태를 확인하세요.") : kinSayEn("보류 검사 알림을 불러오지 못했습니다.");
   }
 
   function state(key, text) {
@@ -55,7 +59,7 @@
     const own = result.institution?.name || result.institution?.id || '';
     const rows = groups.map(group => {
       const tr = document.createElement('tr');
-      cell(tr, group.device ?? 'Not Recorded').title = group.device ? '' : '수신 장비(AE Title)가 기록되지 않았습니다(REST 업로드 등). 기관명 표기로만 연결할 수 있습니다.';
+      kinWrite(cell(tr, group.device ?? 'Not Recorded'), group.device ? '' : kinSayEn("수신 장비(AE Title)가 기록되지 않았습니다(REST 업로드 등). 기관명 표기로만 연결할 수 있습니다."), "title");
       cell(tr, group.institutionText || '(empty)');
       cell(tr, group.reason === 'patient_not_identified' ? 'Patient Not Identified' : 'Unknown Source');
       cell(tr, group.firstArrival);
@@ -64,7 +68,7 @@
       const actions = cell(tr, '');
       if (group.reason === 'patient_not_identified') {
         const guidance = document.createElement('p');
-        guidance.textContent = '송신 병원에서 환자를 확인해 PatientID를 보정·재전송한 뒤 아카이브 관리자가 PatientID가 비어 있는 기존 사본을 제거해야 합니다. 이후 Refresh Held Studies로 확인하세요. 환자를 확인하지 못한 검사는 판독하지 않습니다.';
+        kinWrite(guidance, kinSayEn("송신 병원에서 환자를 확인해 PatientID를 보정·재전송한 뒤 아카이브 관리자가 PatientID가 비어 있는 기존 사본을 제거해야 합니다. 이후 Refresh Held Studies로 확인하세요. 환자를 확인하지 못한 검사는 판독하지 않습니다."));
         actions.append(guidance);
       }
       if (group.sourceUnregistered === false) return tr;
@@ -82,7 +86,7 @@
       const names = group.institutionNames;
       if (names.length > 1) {
         const guidance = document.createElement('p');
-        guidance.textContent = '이 기관의 표기인지 병원과 확인한 이름만 각각 등록하세요. 모든 원본의 기관이 확인되기 전에는 검사가 계속 보류될 수 있습니다.';
+        kinWrite(guidance, kinSayEn("이 기관의 표기인지 병원과 확인한 이름만 각각 등록하세요. 모든 원본의 기관이 확인되기 전에는 검사가 계속 보류될 수 있습니다."));
         actions.append(guidance);
       }
       for (const name of names.filter(Boolean))
@@ -121,9 +125,9 @@
     form.dataset.kind = kind;
     form.dataset.value = value;
     $('#held-dialog-title').textContent = kind === 'device' ? 'Register Device' : 'Register Name';
-    $('#held-dialog-target').textContent = kind === 'device'
-      ? `수신 장비 "${value}"를 ${own}의 장비로 등록합니다. 이 장비로 받은 보류 검사와 앞으로 받을 검사가 ${own}에 연결됩니다.`
-      : `기관명 표기 "${value}"를 ${own}의 표기로 등록합니다. 이 표기로 받은 보류 검사와 앞으로 받을 검사가 ${own}에 연결됩니다.`;
+    kinWrite($('#held-dialog-target'), kind === 'device'
+      ? kinSayEn("수신 장비 \"{0}\"를 {1}의 장비로 등록합니다. 이 장비로 받은 보류 검사와 앞으로 받을 검사가 {2}에 연결됩니다.", value, own, own)
+      : kinSayEn("기관명 표기 \"{0}\"를 {1}의 표기로 등록합니다. 이 표기로 받은 보류 검사와 앞으로 받을 검사가 {2}에 연결됩니다.", value, own, own));
     $('#held-dialog-message').textContent = '';
     dialog.showModal();
   }
@@ -146,7 +150,7 @@
       void refresh(outcome);
     } catch (error) {
       if (KinConsoleSession.ended()) return;
-      $('#held-dialog-message').textContent = failure(error, true);
+      kinWrite($('#held-dialog-message'), (said => typeof said === 'string' && said ? kinSayEn(said) : said)(failure(error, true)));
     } finally {
       pending = null;
       button.disabled = false;

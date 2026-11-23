@@ -9622,6 +9622,18 @@ window.KinLanguageTerms = {
     tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
     /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
     isSentence,
+    /** The sentence write() last put in the text of this element (or its attribute `name`) and still owns there, or null — so another
+     *  place that says the same thing (a button copying the title of its neighbour) gets the sentence, not the words of today. */
+    /** A product message handed on as a string to a place that shows only product messages (a toast, a status line): a
+     *  sentence the glossary knows whole reads in English on an English screen, as the known sentence of an error place does;
+     *  anything else, an empty string and a sentence pass as they are. */
+    phrase: value => typeof value === 'string' && value ? sayEnglish(value) : value,
+    said(el, name = '') {
+      if (!el) return null;
+      flush();
+      const node = name ? el : el.firstChild;
+      return (node && records.get(node)?.get(name)) || null;
+    },
     /** A dialog the page opens by itself for one screen (no pointer or key on that screen first, such as the reading
      * workspace opening Tech Note): it opens in that screen's language. */
     opensOn(region, open) {

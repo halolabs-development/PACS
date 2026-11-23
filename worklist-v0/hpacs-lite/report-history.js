@@ -51,7 +51,9 @@
       const note = document.createElement("div");
       note.className = "vcite";
       const line = document.createElement("p");
-      line.textContent = text;
+      // A note of the page (its own words): a whole known sentence reads in the language of the screen.
+      const L = globalThis.KinLanguage;
+      if (L?.write) L.write(line, L.phrase ? L.phrase(text) : text); else line.textContent = text;
       note.append(line);
       host.replaceChildren(note);
     }

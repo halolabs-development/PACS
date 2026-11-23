@@ -40,7 +40,7 @@
         clearWorklistFilters();const wanted=new Set(uids),known=new Set(studies.map(s=>s.uid));
         consultationFilter={uids:wanted,revision:++consultationFilterSequence,label:(direction==='received'?'Received':'Sent')+' Consultations · Loaded Requests'};render();
         const missing=[...wanted].filter(uid=>!known.has(uid)).length;
-        if(missing)toast(`자문 검사 ${wanted.size}건 중 ${missing}건이 현재 불러온 검사 목록에 없습니다. Refresh 후 접근 가능한 검사를 확인하세요.`, 'info');
+        if(missing)toast(String(kinSayEn("자문 검사 {n0}건 중 {1}건이 현재 불러온 검사 목록에 없습니다. Refresh 후 접근 가능한 검사를 확인하세요.", wanted.size, missing)), 'info');
       },
       clearFilter:()=>{consultationFilter=null;render();},
     });
@@ -841,7 +841,7 @@
       addOnRecords.push(record);
       const failed = error => {
         console.error('Worklist add-on "' + record.name + '" could not be installed', error);
-        toast('추가 기능 "' + record.name + '"을(를) 불러오지 못했습니다. 다른 기능은 그대로 사용할 수 있습니다.', 'err');
+        toast(String(kinSayEn("추가 기능 \"{0}\"을(를) 불러오지 못했습니다. 다른 기능은 그대로 사용할 수 있습니다.", record.name)), 'err');
         endAddOn(record);
       };
       const adopt = dispose => {

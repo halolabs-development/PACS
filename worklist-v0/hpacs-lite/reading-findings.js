@@ -7,6 +7,9 @@
  * textContent. Control names English, messages Korean. */
 window.KinReadingFindings = function (app) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
   const work = window.KinWorkContext, transport = window.KinSessionTransport.page();
@@ -317,7 +320,7 @@ window.KinReadingFindings = function (app) {
     // shows both studies (S2-B2).
     const located = !!source && source.kind === 'job';
     const comparison = source && !located && source.studyUid !== st.uid ? row.comparison : null;
-    setResult(located ? '저장 작업 복원 중…' : '영상 이동 중… 결과를 확인하고 있습니다.', 'pending', false);
+    setResult(located ? kinSayEn("저장 작업 복원 중…") : kinSayEn("영상 이동 중… 결과를 확인하고 있습니다."), 'pending', false);
     await commands.run({
       expected: { owner: live() ? owner() : null, sub: sub(), uid: st.uid, generation: st.generation },
       source: source || null, comparison,
@@ -349,19 +352,19 @@ window.KinReadingFindings = function (app) {
     const st = store.state(), row = st.rows.find(r => r.id === id);
     const source = row && Array.isArray(row.sources) ? row.sources[index] : null;
     if (!live() || !st.uid || st.uid !== current() || !source) {
-      setResult('소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 인용하세요.', 'list-changed', false);
+      setResult(kinSayEn("소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 인용하세요."), 'list-changed', false);
       render();
       return;
     }
     if (typeof app.cite !== 'function') {
-      setResult('이 화면에서는 판독문에 넣을 수 없습니다.', 'unsupported', false);
+      setResult(kinSayEn("이 화면에서는 판독문에 넣을 수 없습니다."), 'unsupported', false);
       return;
     }
-    if (row.hidden) { setResult('숨긴 소견은 판독문에 인용할 수 없습니다.', 'refused', false); return; }
+    if (row.hidden) { setResult(kinSayEn("숨긴 소견은 판독문에 인용할 수 없습니다."), 'refused', false); return; }
     // Current/Revised/Metadata-changed may be quoted after the person has seen the state; a hidden or
     // missing mark may not. The judgement that counts is the server's, recomputed at insert time.
     if (source.linkState === 'hidden' || source.linkState === 'missing') {
-      setResult('숨겨졌거나 사라진 출처는 판독문에 인용할 수 없습니다.', 'refused', false);
+      setResult(kinSayEn("숨겨졌거나 사라진 출처는 판독문에 인용할 수 없습니다."), 'refused', false);
       return;
     }
     const block = citation.assembleBlock(row);
@@ -382,7 +385,7 @@ window.KinReadingFindings = function (app) {
       // not: the next press comes from this same list, on the revision it is still showing.
       inserted: effect(() => { show(false); }, 'study') },
       origin || null);
-    if (opened) setResult('판독문에 넣을 내용을 미리보기에서 확인하세요.', 'cite-preview', false);
+    if (opened) setResult(kinSayEn("판독문에 넣을 내용을 미리보기에서 확인하세요."), 'cite-preview', false);
   }
   /* Insert Selected into Report (several findings, one server write). A finding is chosen with the revision and the source it shows
    * when the box is ticked: its primary source, or - when that one is hidden or missing - the first source that is not. A reloaded
@@ -431,11 +434,11 @@ window.KinReadingFindings = function (app) {
     sync(); pruneSelected();
     const st = store.state();
     if (!live() || !st.uid || st.uid !== current() || !selected.size) {
-      setResult('소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 고르세요.', 'list-changed', false);
+      setResult(kinSayEn("소견 목록이 그 사이 바뀌었습니다. Reload Findings로 다시 확인한 뒤 고르세요."), 'list-changed', false);
       render(); renderSelected();
       return;
     }
-    if (typeof app.cite !== 'function') { setResult('이 화면에서는 판독문에 넣을 수 없습니다.', 'unsupported', false); return; }
+    if (typeof app.cite !== 'function') { setResult(kinSayEn("이 화면에서는 판독문에 넣을 수 없습니다."), 'unsupported', false); return; }
     // List order, not the order of the ticks: the report reads top to bottom like the list.
     const items = st.rows.filter(row => selected.has(row.id)).map(row => {
       const chosen = selected.get(row.id), source = row.sources[chosen.index];
@@ -448,7 +451,7 @@ window.KinReadingFindings = function (app) {
     });
     const opened = app.cite({ uid: st.uid, items,
       inserted: effect(() => { selected = new Map(); show(false); }, 'study') }, insertSelected);
-    if (opened) setResult('판독문에 넣을 내용을 미리보기에서 확인하세요.', 'cite-preview', false);
+    if (opened) setResult(kinSayEn("판독문에 넣을 내용을 미리보기에서 확인하세요."), 'cite-preview', false);
   }
   // Only the existing open/re-attach paths; the user presses Go to Image again afterwards.
   function openViewer() {
@@ -459,7 +462,7 @@ window.KinReadingFindings = function (app) {
     if (!choice || choice.kind !== 'refused' || !command.openable(choice.reason)) { renderReadiness(); return; }
     if (choice.reason === 'unattached' && choice.slot) app.popup(choice.slot.studies[0], choice.slot.studies[1] || null, choice.slot.series ?? null);
     else app.open(st.uid);
-    setResult('영상 화면 열기를 요청했습니다. 영상이 표시되면 Go to Image를 다시 누르세요. 자동으로 이동하지 않습니다.', 'opening', false);
+    setResult(kinSayEn("영상 화면 열기를 요청했습니다. 영상이 표시되면 Go to Image를 다시 누르세요. 자동으로 이동하지 않습니다."), 'opening', false);
     renderReadiness();
   }
 
@@ -513,7 +516,7 @@ window.KinReadingFindings = function (app) {
         const line = node('p', kinSay('Characteristics (병변 특성): {0}', row.characteristics), article);
         line.className = 'reading-findings-characteristics'; line.dataset.kinCharacteristics = '';
       }
-      node('p', (row.author || '작성자 미확인') + ' · r' + row.revision + ' · ' + row.updated + (row.hidden ? ' · Hidden' : ''), article).className = 'reading-findings-meta';
+      node('p', kinSayEn('{0} · r{1} · {2}{3}', row.author || kinSayEn('작성자 미확인'), row.revision, row.updated, row.hidden ? ' · Hidden' : ''), article).className = 'reading-findings-meta';
       const sources = node('ul', '', article); sources.dataset.kinSources = '';
       row.sources.forEach((s, i) => {
         const job = s.kind === 'job';
@@ -522,11 +525,11 @@ window.KinReadingFindings = function (app) {
         const label = node('span', '', item); label.id = 'reading-findings-label-' + (++labels);
         kinWrite(label, kinSay('{t0}{t1} · ', { t: i === row.primary ? '★ ' : '' }, { t: s.description }));
         const badge = node('strong', s.linkLabel, item); badge.dataset.kinLinkState = s.linkState;
-        if ((s.linkState === 'revised' || s.linkState === 'metadata-changed') && s.headRevision) node('span', ' (현재 r' + s.headRevision + ')', item);
+        if ((s.linkState === 'revised' || s.linkState === 'metadata-changed') && s.headRevision) node('span', kinSayEn(" (현재 r{0})", s.headRevision), item);
         if (s.linkState !== 'current') node('span', ' · ' + s.linkText, item);
         item.dataset.sourceStudy = s.foreign ? 'comparison' : 'current';
-        if (job) node('span', s.foreign ? ' · 저장 작업의 두 검사를 같은 순서로 표시하는 영상 화면에서만 엽니다' : ' · 이 검사만 표시하는 영상 화면에서만 엽니다', item);
-        else if (s.foreign) node('span', ' · 비교 검사 영상(선택한 검사와 이 비교 검사를 함께 표시하는 화면으로만 이동)', item);
+        if (job) node('span', s.foreign ? kinSayEn(" · 저장 작업의 두 검사를 같은 순서로 표시하는 영상 화면에서만 엽니다") : kinSayEn(" · 이 검사만 표시하는 영상 화면에서만 엽니다"), item);
+        else if (s.foreign) node('span', kinSayEn(" · 비교 검사 영상(선택한 검사와 이 비교 검사를 함께 표시하는 화면으로만 이동)"), item);
         const target = button(job ? (s.mark ? kinSay('Go to 3D Point') : kinSay('Open Saved View')) : kinSay('Go to Image'), () => go(row.id, i), item);
         target.dataset.focusKey = row.id + ':' + i; target.setAttribute('aria-describedby', heading.id + ' ' + label.id);
         if (target.dataset.focusKey === key) refocus = target;

@@ -1,5 +1,9 @@
 (() => {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // Product words in the language this page took as it opened (worklist-language.js), or as written.
   const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   const el = name => document.getElementById(`audit-${name}`);
@@ -20,7 +24,7 @@
   let rightsSequence = 0, rightsPending = false, rightsSnapshot = null;
   let incidentSequence = 0, incidentPending = false, incidentSnapshot = null, incidentDownload = null;
   // A status line of the page: a sentence the glossary knows whole reads in English on an English page, anything else as written.
-  const statusLine = (node, text) => { const L = window.KinLanguage; if (L && L.write && L.sayEnglish && typeof text === 'string' && text) L.write(node, L.sayEnglish(text)); else node.textContent = text; };
+  const statusLine = (node, text) => { const L = window.KinLanguage; if (L && L.write && L.sayEnglish && typeof text === 'string' && text) L.write(node, L.sayEnglish(text)); else kinWrite(node, text); };
   const message = text => statusLine(el('message'), text);
   const value = item => item == null ? 'Not Recorded' : typeof item === 'string' ? item : JSON.stringify(item);
   const fact = item => !item ? 'Not Recorded' : item.status === 'known' ? value(item.value) : `${item.status}: ${item.reason}`;
@@ -43,7 +47,7 @@
   function refuse() {
     denied = true; forgetIntake(); clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
     el('form').reset();
-    message('감사 기록을 조회할 권한이 없습니다.');
+    message(kinSayEn("감사 기록을 조회할 권한이 없습니다."));
   }
   function query() {
     const patientId = el('patient').value.trim(), assigningAuthority = el('authority').value.trim();
@@ -94,7 +98,7 @@
       else body[`${key}Done`] = true;
     }
     el('export-message').textContent = '';
-    pending = true; message(mode === 'export' ? '내보내는 중입니다.' : '조회 중입니다.'); controls();
+    pending = true; message(mode === 'export' ? kinSayEn("내보내는 중입니다.") : kinSayEn("조회 중입니다.")); controls();
     try {
       const response = await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/${mode === 'export' ? 'exports' : 'investigations'}`,
         { method: 'POST', json: body, context });
@@ -102,9 +106,9 @@
       if (response.status === 403) {
         if (response.body?.code === 'AuditorNotDesignated') refuse();
         else if (response.body?.code === 'AuditScopeNotGranted') {
-          if (mode === 'export') { el('export-message').textContent = '이 계정에는 내보내기 권한이 없습니다.'; message(''); }
-          else message('이 계정에는 접속기록 조회 권한이 없습니다.');
-        } else message('요청이 거절되었습니다. 감사 권한과 요청 상태를 확인하세요.');
+          if (mode === 'export') { kinWrite(el('export-message'), kinSayEn("이 계정에는 내보내기 권한이 없습니다.")); message(''); }
+          else message(kinSayEn("이 계정에는 접속기록 조회 권한이 없습니다."));
+        } else message(kinSayEn("요청이 거절되었습니다. 감사 권한과 요청 상태를 확인하세요."));
         return;
       }
       if (!response.ok || response.incomplete) throw Object.assign(new Error(), { status: response.status, code: response.body?.code });
@@ -115,7 +119,7 @@
         downloaded = URL.createObjectURL(new Blob([JSON.stringify(response.body, null, 2)], { type: 'application/json;charset=utf-8' }));
         const link = document.createElement('a'); link.href = downloaded; link.download = 'audit-records.json';
         document.body.append(link); link.click(); link.remove();
-        message('현재 조건의 전체 기록을 내보냈습니다.');
+        message(kinSayEn("현재 조건의 전체 기록을 내보냈습니다."));
       } else {
         // Build both streams before changing either table, so a failed response cannot look complete.
         const fragments = active.map(key => {
@@ -127,20 +131,20 @@
           const page = response.body[key], count = (pages[key]?.count || 0) + page.rows.length;
           pages[key] = { count, next: page.nextCursor };
           el(`${key}-rows`).append(fragment);
-          el(`${key}-summary`).textContent = `표시 ${count}건 / 전체 ${page.total}건`;
+          kinWrite(el(`${key}-summary`), kinSayEn("표시 {n0}건 / 전체 {n1}건", count, page.total));
         }
         el('results').hidden = false;
-        message(streams.some(key => pages[key]?.next) ? '일부 기록을 조회했습니다. Load More로 이어서 확인하세요.' :
-          streams.some(key => pages[key]?.count) ? '선택한 조건의 조회를 마쳤습니다.' : '표시할 기록이 없습니다.');
+        message(streams.some(key => pages[key]?.next) ? kinSayEn("일부 기록을 조회했습니다. Load More로 이어서 확인하세요.") :
+          streams.some(key => pages[key]?.count) ? kinSayEn("선택한 조건의 조회를 마쳤습니다.") : kinSayEn("표시할 기록이 없습니다."));
       }
     } catch (error) {
       if (!admits()) return;
       el('workspace').hidden = false;
       message(error.status === 503 && error.code === 'InvestigationTimedOut' ?
-        '기간이나 조건을 좁혀 다시 시도' + (mode === 'more' ? ' — 표시된 기록은 일부입니다.' : '') :
-        mode === 'export' ? '내보내기에 실패했습니다. 조건과 연결 상태를 확인하고 다시 시도하세요.' :
-        mode === 'more' ? '이어보기에 실패했습니다. 표시된 기록은 일부입니다. 다시 시도하세요.' :
-        '조회에 실패했습니다. 조건과 연결 상태를 확인하고 다시 시도하세요.');
+        kinSayEn("기간이나 조건을 좁혀 다시 시도{t0}", mode === 'more' ? kinSayEn(" — 표시된 기록은 일부입니다.") : '') :
+        mode === 'export' ? kinSayEn("내보내기에 실패했습니다. 조건과 연결 상태를 확인하고 다시 시도하세요.") :
+        mode === 'more' ? kinSayEn("이어보기에 실패했습니다. 표시된 기록은 일부입니다. 다시 시도하세요.") :
+        kinSayEn("조회에 실패했습니다. 조건과 연결 상태를 확인하고 다시 시도하세요."));
     } finally {
       if (current === sequence) { pending = false; controls(); }
     }
@@ -200,9 +204,9 @@
     }
     inspectionSnapshot = snapshot;
     const summary = snapshot.summary, report = snapshot.cycle?.events.find(e => e.kind === 'report-generated');
-    el('inspection-summary').textContent = `Month: ${summary.month}\nEvent Count: ${report?.eventCount ?? summary.eventCount}\n` +
+    kinWrite(el('inspection-summary'), `Month: ${summary.month}\nEvent Count: ${report?.eventCount ?? summary.eventCount}\n` +
       `Report SHA-256: ${report?.reportSha256 ?? 'Not Recorded'}\n` +
-      `Actions: ${JSON.stringify(summary.byAction)}\n` + (report ? '시작 시 저장한 보고서입니다. 이후 유입된 사건을 다시 합산하지 않습니다.' : '미리보기입니다. 시작할 때 보고서를 저장합니다.');
+      `Actions: ${JSON.stringify(summary.byAction)}\n` + (report ? kinText('시작 시 저장한 보고서입니다. 이후 유입된 사건을 다시 합산하지 않습니다.') : kinText('미리보기입니다. 시작할 때 보고서를 저장합니다.')));
     if (snapshot.status) el('inspection-summary').textContent +=
       `\nReview: ${snapshot.status.state === 'report-only' ? 'Pending' : 'Recorded'}` +
       `\n미확인 다운로드 ${snapshot.status.missingDownloadReasons.length}건 / 진행 중 후속조치 ${snapshot.status.openInvestigations.length}건`;
@@ -253,7 +257,7 @@
     if (mode !== 'months' && !month) return;
     const current = ++inspectionSequence, context = KinWorkContext.capture('document');
     const admits = () => current === inspectionSequence && month === el('inspection-month').value && KinWorkContext.admits(context) && !denied;
-    inspectionPending = true; inspectionMessage(mode === 'steps' ? '기록 중입니다.' : '월간 점검을 불러오는 중입니다.'); inspectionControls();
+    inspectionPending = true; inspectionMessage(mode === 'steps' ? kinSayEn("기록 중입니다.") : kinSayEn("월간 점검을 불러오는 중입니다.")); inspectionControls();
     try {
       const route = mode === 'months' ? '' : `/${encodeURIComponent(month)}` + (['report', 'steps'].includes(mode) ? `/${mode}` : '');
       const response = await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/inspections${route}`,
@@ -261,13 +265,13 @@
       if (!admits()) return;
       if (response.status === 403) {
         if (response.body?.code === 'AuditorNotDesignated') refuse();
-        else inspectionMessage(response.body?.code === 'AuditScopeNotGranted' ? '이 계정에는 월간 점검 권한이 없습니다.' : '감사 권한과 요청 상태를 확인하세요.');
+        else inspectionMessage(response.body?.code === 'AuditScopeNotGranted' ? kinSayEn("이 계정에는 월간 점검 권한이 없습니다.") : kinSayEn("감사 권한과 요청 상태를 확인하세요."));
         return;
       }
       if (response.status === 503 && response.body?.code === 'InvestigationTimedOut') {
-        inspectionMessage('월간 점검 처리 시간이 초과되었습니다. ' + (['report', 'steps'].includes(mode)
-          ? '입력 내용은 유지했습니다. 월을 다시 열어 저장된 기록을 확인하세요.'
-          : '해당 월의 결과를 가져오지 못했습니다. 잠시 후 다시 시도하세요. 반복되면 관리자에게 문의하세요.'));
+        inspectionMessage(kinSayEn("월간 점검 처리 시간이 초과되었습니다. {t0}", ['report', 'steps'].includes(mode)
+          ? kinSayEn("입력 내용은 유지했습니다. 월을 다시 열어 저장된 기록을 확인하세요.")
+          : kinSayEn("해당 월의 결과를 가져오지 못했습니다. 잠시 후 다시 시도하세요. 반복되면 관리자에게 문의하세요.")));
         return;
       }
       if (!response.ok || response.incomplete) throw new Error();
@@ -281,14 +285,14 @@
         const lastEnded = new Date(Date.UTC(seoulNow.getUTCFullYear(), seoulNow.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
         for (const item of response.body.months) el('inspection-month').add(new Option(
           `${item.month} — ${states[item.state] || item.state}${item.month < lastEnded ? ' · 기한 경과' : ''}`, item.month));
-        inspectionMessage(response.body.months.length ? '점검할 달을 선택하세요. 기한이 지난 달도 점검할 수 있습니다.' : '점검이 남은 달이 없습니다.');
+        inspectionMessage(response.body.months.length ? kinSayEn("점검할 달을 선택하세요. 기한이 지난 달도 점검할 수 있습니다.") : kinSayEn("점검이 남은 달이 없습니다."));
       } else {
         showInspection(response.body, recordedFormKey, mode === 'steps');
-        inspectionMessage(mode === 'steps' ? '확인 기록을 추가했습니다.' : response.body.cycle ? '저장된 시작 보고서와 확인 기록을 표시합니다.' : 'Start Inspection으로 보고서를 저장한 뒤 확인 기록을 추가하세요.');
+        inspectionMessage(mode === 'steps' ? kinSayEn("확인 기록을 추가했습니다.") : response.body.cycle ? kinSayEn("저장된 시작 보고서와 확인 기록을 표시합니다.") : kinSayEn("Start Inspection으로 보고서를 저장한 뒤 확인 기록을 추가하세요."));
       }
     } catch {
-      if (admits()) inspectionMessage(mode === 'steps' ? '기록 응답을 확인하지 못했습니다. 입력 내용은 유지했습니다. 월을 다시 열어 저장된 기록을 확인하세요.' :
-        '월간 점검을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도하세요.');
+      if (admits()) inspectionMessage(mode === 'steps' ? kinSayEn("기록 응답을 확인하지 못했습니다. 입력 내용은 유지했습니다. 월을 다시 열어 저장된 기록을 확인하세요.") :
+        kinSayEn("월간 점검을 불러오지 못했습니다. 연결 상태를 확인하고 다시 시도하세요."));
     } finally {
       if (current === inspectionSequence) { inspectionPending = false; inspectionControls(); }
     }
@@ -433,7 +437,7 @@
         input.closest('label').after(hint); input.setAttribute('aria-describedby', id);
       }
       const at = input.value ? new Date(`${input.value}Z`) : null;
-      hint.textContent = at && Number.isFinite(+at) ? `= ${at.toLocaleString()} (이 컴퓨터 시각)` : '';
+      kinWrite(hint, at && Number.isFinite(+at) ? kinSayEn("= {0} (이 컴퓨터 시각)", at.toLocaleString()) : '');
     }
   }
   function disclosureControls() {
@@ -480,7 +484,7 @@
     disclosureEl('scope').append(row);
   }
   function disclosureScopeDenied() {
-    clearDisclosure(); disclosureEl('workspace').hidden = true; disclosureMessage('이 계정에는 진료기록 사본 발급 권한이 없습니다.');
+    clearDisclosure(); disclosureEl('workspace').hidden = true; disclosureMessage(kinSayEn("이 계정에는 진료기록 사본 발급 권한이 없습니다."));
   }
   const disclosureReceive = { key: 'disclosure', show: text => disclosureMessage(text), receive: () => disclosureRequest('receive') };
   function disclosureIntake(id) {
@@ -508,13 +512,13 @@
     disclosureEl('detail').hidden = false;
     const labels = { pending: 'Pending', 'pending-overdue': 'Pending Overdue', 'release-required': 'Release Required',
       'hold-out-of-sync': 'Hold Out of Sync', released: 'Released' };
-    disclosureEl('state').textContent = `Request ID: ${facts.requestId}\nPatient: ${request.patient.patientId} / ${request.patient.assigningAuthority}\n` +
+    kinWrite(disclosureEl('state'), `Request ID: ${facts.requestId}\nPatient: ${request.patient.patientId} / ${request.patient.assigningAuthority}\n` +
       `Requester: ${request.requester.name}\nRecipient: ${request.delivery.recipient}\nMethod: ${request.delivery.method}\n` +
       `Request: ${facts.resolution ? 'Resolved' : 'Pending'}\nIssuance ID: ${snapshot.issuanceId ?? 'null'}\n` +
       `Issuance: ${copy?.status.state ?? (snapshot.issuanceId ? 'Unavailable' : 'Not Prepared')}\n` +
       snapshot.states.map(h => `Hold: ${labels[h.state] || h.state} / Due At: ${h.dueAt}`).join('\n') +
-      (snapshot.issuanceId === null ? '\n발급 준비가 아직 완료되지 않았습니다. 원본 누락 또는 준비 실패 상태에서도 연장·종결할 수 있습니다.' : '') +
-      `\nResolution: ${facts.resolution ? JSON.stringify(facts.resolution) : 'Not Recorded'}`;
+      (snapshot.issuanceId === null ? '\n' + kinText('발급 준비가 아직 완료되지 않았습니다. 원본 누락 또는 준비 실패 상태에서도 연장·종결할 수 있습니다.') : '') +
+      `\nResolution: ${facts.resolution ? JSON.stringify(facts.resolution) : 'Not Recorded'}`);
     if (copy) {
       const history = copy.issuance.events.filter(e => e.kind === 'delivery');
       for (const event of history) disclosureEl('state').textContent +=
@@ -529,7 +533,7 @@
       disclosureEl('versions').append(row);
     }
     for (const [name, format] of [['json', 'signed-electronic'], ['html', 'paper-print']])
-      disclosureEl(`${name}-sha`).textContent = copy?.artifact && copy.issuance.manifest.delivery.format === format ? `SHA-256: ${copy.sha256} (서버 보고)` : '';
+      kinWrite(disclosureEl(`${name}-sha`), copy?.artifact && copy.issuance.manifest.delivery.format === format ? kinSayEn("SHA-256: {0} (서버 보고)", copy.sha256) : '');
     const extend = disclosureEl('extend');
     extend.elements.clauseId.value = snapshot.holds[0].basis.clauseId;
     extend.elements.version.value = snapshot.holds[0].basis.clause.version;
@@ -542,20 +546,19 @@
   // Both the state and the deadline are read from the re-read request: another session may have ended it and released
   // its holds in between, and an ended request answers no new preparation or issue.
   function heldAmbiguityGuidance(snapshot, mode) {
-    const step = mode === 'issue' ? '발급' : '발급 준비', id = snapshot.facts.requestId;
+    const step = mode === 'issue' ? kinText('발급') : kinText('발급 준비'), id = snapshot.facts.requestId;
     const ended = !!snapshot.facts.resolution;
-    return `${RECORD_KIND_BOTH} ` + (ended
-      ? `요청 ${id}은(는) 기록 종류가 지정되지 않아 ${step}할 수 없었고, 다시 조회하니 이미 종결된 상태(Request: Resolved)입니다. 종결된 요청으로는 새로 발급 준비하거나 발급할 수 없습니다.`
-      : `요청 ${id}은(는) 접수된 상태(Request: Pending)로 남아 있지만 기록 종류가 지정되지 않아 ${step}할 수 없습니다.`) +
-      (snapshot.states.some(h => h.state !== 'released') ? ' 아래 Hold 기한도 그대로 적용됩니다.' : '') +
-      (ended ? ' 사본이 필요하면 다른 요청 ID를 입력해 Record Type을 지정하여 새로 접수하세요.'
-        : ' 이 요청은 Resolve에서 실제 종결 사유의 증빙으로 닫고, 다른 요청 ID를 입력해 Record Type을 지정하여 새로 접수하세요.') +
-      ' 아래는 다시 조회한 상태입니다.';
+    return kinText('{0} {1}{t2}{t3} 아래는 다시 조회한 상태입니다.', kinText(RECORD_KIND_BOTH), ended
+      ? kinText('요청 {0}은(는) 기록 종류가 지정되지 않아 {1}할 수 없었고, 다시 조회하니 이미 종결된 상태(Request: Resolved)입니다. 종결된 요청으로는 새로 발급 준비하거나 발급할 수 없습니다.', id, step)
+      : kinText('요청 {0}은(는) 접수된 상태(Request: Pending)로 남아 있지만 기록 종류가 지정되지 않아 {1}할 수 없습니다.', id, step),
+      snapshot.states.some(h => h.state !== 'released') ? kinText(' 아래 Hold 기한도 그대로 적용됩니다.') : '',
+      ended ? kinText(' 사본이 필요하면 다른 요청 ID를 입력해 Record Type을 지정하여 새로 접수하세요.')
+        : kinText(' 이 요청은 Resolve에서 실제 종결 사유의 증빙으로 닫고, 다른 요청 ID를 입력해 Record Type을 지정하여 새로 접수하세요.'));
   }
   async function disclosureRequest(mode) {
     if (!ready || denied || disclosurePending) return;
     const id = disclosureEl('id').value.trim();
-    if (!id) { disclosureMessage('요청 ID를 입력하세요.'); return; }
+    if (!id) { disclosureMessage(kinSayEn("요청 ID를 입력하세요.")); return; }
     let body, path = `requests/${encodeURIComponent(id)}`;
     try {
       if (mode === 'receive') { body = disclosureIntake(id); path = 'requests'; }
@@ -572,10 +575,10 @@
         body = { extensionId: crypto.randomUUID(), previousDueAt: disclosureSnapshot.states[0].dueAt, dueAt: utcInput(v.dueAt),
           basis: { clauseId: v.clauseId, version: v.version }, evidenceId: v.evidenceId };
       } else if (mode === 'resolve') { body = formValues('resolve'); path += '/resolve'; }
-    } catch (error) { disclosureMessage(error.message || '입력을 확인하세요.'); return; }
+    } catch (error) { disclosureMessage(error.message || kinSayEn("입력을 확인하세요.")); return; }
     const current = ++disclosureSequence, context = KinWorkContext.capture('document');
     const admits = () => current === disclosureSequence && id === disclosureEl('id').value.trim() && KinWorkContext.admits(context);
-    disclosurePending = true; disclosureMessage('요청을 처리하고 있습니다.'); disclosureControls();
+    disclosurePending = true; disclosureMessage(kinSayEn("요청을 처리하고 있습니다.")); disclosureControls();
     const call = async (route, method = 'GET', json) => {
       let answer;
       try { answer = answerOf(await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/${route}`,
@@ -590,7 +593,7 @@
     };
     // What the write's own answer said, kept apart from what the re-read could confirm.
     const attempt = failure => failure?.kind === 'refused' ? refusalText(failure.code) :
-      failure ? `처리 결과를 확인하세요 (${failure.code}).` : '';
+      failure ? kinText('처리 결과를 확인하세요 ({0}).', failure.code) : '';
     let failure = null;
     try {
       if (mode !== 'open') {
@@ -613,19 +616,19 @@
       if (!admits()) return;
       showDisclosure(snapshot, copy);
       disclosureMessage(failure?.code === 'RecordKindAmbiguous' ? [heldAmbiguityGuidance(snapshot, mode),
-          issuanceUnread ? `발급 상태는 다시 읽지 못했습니다 (${issuanceUnread.code}).` : ''].filter(Boolean).join(' ') :
-        [attempt(failure), issuanceUnread ? `발급 상태는 다시 읽지 못했습니다 (${issuanceUnread.code}).` : '',
+          issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : ''].filter(Boolean).join(' ') :
+        [attempt(failure), issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : '',
           failure || issuanceUnread ? '아래는 다시 조회한 상태입니다. 입력은 유지했습니다.' : '저장된 요청과 발급 상태를 다시 조회했습니다.'].filter(Boolean).join(' '));
     } catch (error) {
       if (!admits() || error.stale) return;
       if (error.scope) disclosureScopeDenied();
-      else if (error.intakeRefused) disclosureMessage(error.code === 'RecordKindAmbiguous' ? RECORD_KIND_GUIDANCE + ' 요청은 접수되지 않았고 입력은 유지했습니다.' :
-        `${refusalText(error.code)} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.`);
+      else if (error.intakeRefused) disclosureMessage(error.code === 'RecordKindAmbiguous' ? kinSayEn("{0} 요청은 접수되지 않았고 입력은 유지했습니다.", RECORD_KIND_GUIDANCE) :
+        kinSayEn("{0} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.", refusalText(error.code)));
       else {
         // A failed refresh cannot leave old action buttons presenting a confirmed state; the write's own answer stays said.
         disclosureSnapshot = null; disclosureCopy = null; disclosureEl('detail').hidden = true;
         disclosureMessage([attempt(failure), error.kind === 'refused' ? refusalText(error.code) :
-          `요청 상태를 확인하지 못했습니다 (${error.code || 'ResponseUnavailable'}). 입력은 유지했습니다. Open Request로 다시 확인하세요.`].filter(Boolean).join(' '));
+          kinText('요청 상태를 확인하지 못했습니다 ({0}). 입력은 유지했습니다. Open Request로 다시 확인하세요.', error.code || 'ResponseUnavailable')].filter(Boolean).join(' '));
       }
     } finally {
       if (current === disclosureSequence) { disclosurePending = false; disclosureControls(); }
@@ -674,7 +677,7 @@
     timeHints(rightsEl('workspace'));
   }
   function rightsScopeDenied() {
-    clearRights(true); rightsEl('workspace').hidden = true; rightsEl('message').textContent = '이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다.';
+    clearRights(true); rightsEl('workspace').hidden = true; kinWrite(rightsEl('message'), kinSayEn("이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다."));
   }
   const rightsReceive = { key: 'rights', show: text => { rightsEl('message').textContent = text; }, receive: () => rightsRequest('receive') };
   // A state is shown as confirmed only if its status agrees with the facts it names; a withdrawal closes the request
@@ -697,31 +700,31 @@
     rightsControls();
   }
   function noticeDraft(state) {
-    if (!state.decision) return '결정 후 계약의 근거 조문을 표시합니다.';
+    if (!state.decision) return kinText('결정 후 계약의 근거 조문을 표시합니다.');
     const d = state.decision;
-    return ['통지 문안 확정 전 (P5). 아래는 계약의 결정 및 근거 조문 자리표시입니다.',
-      ...d.records.map(r => `${r.recordId}: ${r.outcome}\n근거 조문: ${r.basis.join(', ') || '계약에 별도 조문 없음'}`),
-      ...(d.records.some(r => r.outcome.startsWith('refused-')) ? ['보존기간 경과 여부는 이 결정에 반영되지 않습니다(CD-07-Q1 미정). 보존기간이 끝난 기록이면 통지 전에 확인하세요.'] : []),
+    return [kinText('통지 문안 확정 전 (P5). 아래는 계약의 결정 및 근거 조문 자리표시입니다.'),
+      ...d.records.map(r => kinText('{0}: {1}\n근거 조문: {2}', r.recordId, r.outcome, r.basis.join(', ') || kinText('계약에 별도 조문 없음'))),
+      ...(d.records.some(r => r.outcome.startsWith('refused-')) ? [kinText('보존기간 경과 여부는 이 결정에 반영되지 않습니다(CD-07-Q1 미정). 보존기간이 끝난 기록이면 통지 전에 확인하세요.')] : []),
       d.notice.content === 'refusal-with-reason-and-objection-method' ?
-        '거절 사유: 위 계약의 결정·근거 조문.\n이의제기 방법: 문안 확정 전 (P5).' :
-        '조치 결과 통지: 실제 수행 결과를 확인하여 문안을 작성하세요.'].join('\n');
+        kinText('거절 사유: 위 계약의 결정·근거 조문.\n이의제기 방법: 문안 확정 전 (P5).') :
+        kinText('조치 결과 통지: 실제 수행 결과를 확인하여 문안을 작성하세요.')].join('\n');
   }
   function showRights(state) {
     rightsSnapshot = state; rightsEl('detail').hidden = false;
-    rightsEl('state').textContent = [`Request: ${state.status}`, `Request ID: ${state.request.requestId}`,
+    kinWrite(rightsEl('state'), [`Request: ${state.status}`, `Request ID: ${state.request.requestId}`,
       `Kind: ${state.request.kind}`, `Patient ID: ${state.request.patient.patientId}`,
       `Assigning Authority: ${state.request.patient.assigningAuthority}`, `Patient Link ID: ${state.request.patient.linkId}`,
       `Records: ${state.request.recordIds.join(', ')}`, `Statement: ${state.request.statement}`,
       `Received At: ${state.request.receivedAt}`, `Received By: ${state.receivedBy.subject}`, `Recorded At: ${state.recordedAt}`,
       `Notice Due By: ${state.dueBy}`,
-      state.overdue ? '통지 기한 경과: 철회 기록 시각, 실제 통지 시각 또는 현재 시각 기준입니다.' : '통지 기한 내',
+      state.overdue ? kinText('통지 기한 경과: 철회 기록 시각, 실제 통지 시각 또는 현재 시각 기준입니다.') : kinText('통지 기한 내'),
       ...(state.decision ? [`Decided At: ${state.decision.decidedAt}`, `Decided By: ${state.decision.decidedBy.subject}`] : []),
       ...(state.notification ? [`Notified At: ${state.notification.notifiedAt}`, `Evidence: ${state.notification.evidenceId}`,
         `Notice: ${state.notification.content}`, `Recorded By: ${state.notification.recordedBy.subject}`,
         `Notification Recorded At: ${state.notification.recordedAt}`] : []),
       ...(state.withdrawal ? [`Withdrawn At: ${state.withdrawal.recordedAt}`, `Evidence: ${state.withdrawal.evidenceId}`,
-        `Recorded By: ${state.withdrawal.recordedBy.subject}`, '철회 증빙으로 요구와 응답 의무를 닫았습니다.'] : [])].join('\n');
-    rightsEl('notice').textContent = noticeDraft(state);
+        `Recorded By: ${state.withdrawal.recordedBy.subject}`, kinText('철회 증빙으로 요구와 응답 의무를 닫았습니다.')] : [])].join('\n'));
+    kinWrite(rightsEl('notice'), noticeDraft(state));
     rightsEl('correction').hidden = !state.decision?.records.some(r => r.outcome === 'correct-by-new-signed-version');
     if (state.notification) for (const key of ['notifiedAt', 'recipient', 'method', 'evidenceId', 'content'])
       rightsEl('notify').elements[key].value = key === 'notifiedAt' ? state.notification[key].replace(/Z$/, '') : state.notification[key];
@@ -742,7 +745,7 @@
         rightsEl('id').value = r.requestId; clearRights(); rightsRequest('open');
       });
       td.append(open); tr.append(td);
-      for (const text of [r.kind, r.receivedAt, r.status, r.dueBy + (r.overdue ? ' — 통지 기한 경과' : '')]) {
+      for (const text of [r.kind, r.receivedAt, r.status, r.dueBy + (r.overdue ? kinText(' — 통지 기한 경과') : '')]) {
         const cell = document.createElement('td'); cell.textContent = text; tr.append(cell);
       }
       rightsEl('list').append(tr);
@@ -768,10 +771,10 @@
           else { delete body.outcome; body.notifiedAt = utcInput(body.notifiedAt); }
         }
       }
-    } catch (error) { rightsEl('message').textContent = error.message || '입력을 확인하세요.'; return; }
+    } catch (error) { kinWrite(rightsEl('message'), error.message || kinSayEn("입력을 확인하세요.")); return; }
     const current = ++rightsSequence, context = KinWorkContext.capture('document');
     const admits = () => current === rightsSequence && id === rightsEl('id').value.trim() && KinWorkContext.admits(context);
-    rightsPending = true; rightsControls(); rightsEl('message').textContent = '요구를 처리하고 있습니다.';
+    rightsPending = true; rightsControls(); kinWrite(rightsEl('message'), kinSayEn("요구를 처리하고 있습니다."));
     const say = text => { rightsEl('message').textContent = text; };
     const close = () => { rightsSnapshot = null; rightsEl('detail').hidden = true; };
     const call = async (route, method, json) => {
@@ -867,16 +870,18 @@
     const value = new Date(at).toISOString().replace(/Z$/, '').replace(/0+$/, '').replace(/\.$/, '');
     return value.endsWith(':00') ? value.slice(0, -3) : value;
   };
-  function incidentScopeText(scope) {
-    return [scope.subjectsIdentifiable ? '원장 조회 범위에서 식별되었습니다.' : '영향 대상자를 전부 특정할 수 없습니다. 아래 식별된 일부를 전체 대상 또는 0명으로 해석하지 마세요.',
-      `Period: ${scope.filters.from} — ${scope.filters.to}`, ...scope.reasons.map(r => `확인 근거: ${r.note || r.code || r.kind}`),
+  // On the screen in the language of the page; in the downloaded notice draft (a document) as written.
+  const asWritten = (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+  function incidentScopeText(scope, say = kinText) {
+    return [scope.subjectsIdentifiable ? say('원장 조회 범위에서 식별되었습니다.') : say('영향 대상자를 전부 특정할 수 없습니다. 아래 식별된 일부를 전체 대상 또는 0명으로 해석하지 마세요.'),
+      `Period: ${scope.filters.from} — ${scope.filters.to}`, ...scope.reasons.map(r => say('확인 근거: {0}', r.note || r.code || r.kind)),
       ...scope.identified.map(p => `Patient: ${p.patient.patientId} / ${p.patient.assigningAuthority}\nEvents: ${p.eventIds.join(', ')}\nFirst / Last: ${p.firstAt} / ${p.lastAt}`),
       ...scope.identifiedLocally.map(p => `Local Patient: ${fact(p.source.sourcePatientId)} / ${fact(p.source.sourceInstitution)}\nStudies: ${p.studyIds.join(', ')}\nEvents: ${p.eventIds.join(', ')}`)].join('\n\n');
   }
   function incidentDraftText(draft) {
     return [draft.title, `Status: ${draft.status}`, draft.wording, ...(draft.applicabilityNote ? [draft.applicabilityNote] : []), `Incident: ${draft.incidentId} / ${draft.incidentType}`,
       `Awareness: ${draft.awarenessAt}`, `Verdict: ${draft.verdict} / ${draft.determinationAt}`,
-      `Evidence: ${draft.facts.evidenceId}`, `Basis: ${draft.basis.join(', ')}`, draft.cloud, 'Impact Scope', incidentScopeText(draft.scope),
+      `Evidence: ${draft.facts.evidenceId}`, `Basis: ${draft.basis.join(', ')}`, draft.cloud, 'Impact Scope', incidentScopeText(draft.scope, asWritten),
       ...draft.obligations.map(o => `${o.kind}\nRecipient: ${o.recipient}\nDue: ${o.dueAt || o.timing}\nStatus: ${o.status}\n` +
         o.requiredFields.map(field => `${field}: 문안 확정 전 (P5)`).join('\n')),
       'Recorded Facts', incidentJson(draft.facts), 'Performance Evidence', incidentJson(draft.evidence)].join('\n\n');
@@ -907,7 +912,7 @@
   function showIncident(data) {
     incidentSnapshot = data; incidentEl('detail').hidden = false;
     incidentEl('state').textContent = `${data.incidentId}\nStatus: ${incidentStatus(data)}\nVerdict: ${data.plan.verdict}\nAs of: ${data.plan.asOf}\n${data.cloud}`;
-    incidentEl('scope').textContent = incidentScopeText(data.scope);
+    kinWrite(incidentEl('scope'), incidentScopeText(data.scope));
     incidentEl('history').textContent = incidentJson({ history: data.history, closure: data.closed, notices: data.plan.ledger.notices,
       decisions: data.plan.ledger.decisions, delays: data.plan.ledger.delays, assessments: data.plan.ispAssessments });
     const table = document.createElement('table'), header = document.createElement('tr');
@@ -1024,21 +1029,21 @@
         }
         if (mode === 'draft') path += `/drafts/${encodeURIComponent(incidentEl('draft').elements.form.value)}`;
       }
-    } catch (error) { incidentEl('message').textContent = error.message; return; }
+    } catch (error) { kinWrite(incidentEl('message'), typeof error?.message === 'string' && error.message ? kinSayEn(error.message) : ''); return; }
     const current = ++incidentSequence, context = KinWorkContext.capture('document');
     const admits = () => current === incidentSequence && id === incidentEl('id').value.trim() && KinWorkContext.admits(context);
-    incidentPending = true; incidentControls(); incidentEl('message').textContent = '사건을 확인하고 있습니다.';
+    incidentPending = true; incidentControls(); kinWrite(incidentEl('message'), kinSayEn("사건을 확인하고 있습니다."));
     try {
       const response = await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/${path}`,
         { method: ['list', 'open', 'draft'].includes(mode) ? 'GET' : 'POST', ...(body ? { json: body } : {}), context });
       if (!admits()) return;
       if (response.status === 403 && response.body?.code === 'AuditorNotDesignated') { refuse(); return; }
       if (response.status === 403 && response.body?.code === 'AuditScopeNotGranted') {
-        clearIncident(); incidentEl('workspace').hidden = true; incidentEl('message').textContent = '이 계정에는 사건 조사와 전체 범위 내보내기 권한이 없습니다.'; return;
+        clearIncident(); incidentEl('workspace').hidden = true; kinWrite(incidentEl('message'), kinSayEn("이 계정에는 사건 조사와 전체 범위 내보내기 권한이 없습니다.")); return;
       }
       if (!response.ok || response.incomplete) throw Error(response.body?.code || 'ResponseUnavailable');
       if (mode === 'draft') {
-        const text = incidentDraftText(response.body); incidentEl('draft-content').textContent = text;
+        const text = incidentDraftText(response.body); kinWrite(incidentEl('draft-content'), text);
         if (incidentDownload) URL.revokeObjectURL(incidentDownload);
         incidentDownload = URL.createObjectURL(new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' }));
         const link = document.createElement('a'); link.href = incidentDownload; link.download = `incident-${response.body.form}-draft.txt`; link.click();
@@ -1051,12 +1056,12 @@
         }
         incidentEl('listing').replaceChildren(list);
       } else showIncident(response.body);
-      incidentEl('message').textContent = mode === 'draft' ? '초안을 내려받았습니다. 발송하거나 이행으로 기록하지 않았습니다.' : '저장된 사건 상태입니다. 음수 남은 시간은 기한 경과를 뜻하며 기록을 막지 않습니다.';
+      kinWrite(incidentEl('message'), mode === 'draft' ? kinSayEn("초안을 내려받았습니다. 발송하거나 이행으로 기록하지 않았습니다.") : kinSayEn("저장된 사건 상태입니다. 음수 남은 시간은 기한 경과를 뜻하며 기록을 막지 않습니다."));
     } catch (error) {
       if (!admits()) return;
       incidentSnapshot = null; incidentEl('detail').hidden = true;
-      incidentEl('message').textContent = error.message === 'IncidentDutiesOpen' ? '계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.' :
-        `사건 상태를 확인하지 못했습니다 (${error.message}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.`;
+      kinWrite(incidentEl('message'), error.message === 'IncidentDutiesOpen' ? kinSayEn("계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.") :
+        kinSayEn("사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", error.message));
     } finally { if (current === incidentSequence) { incidentPending = false; incidentControls(); } }
   }
   incidentEl('id').addEventListener('input', clearIncident);
@@ -1078,19 +1083,19 @@
   });
   el('inspection-finish').addEventListener('click', () => {
     inspectionFinished = true; inspectionControls();
-    inspectionMessage('화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다.');
+    inspectionMessage(kinSayEn("화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다."));
   });
   el('form').addEventListener('submit', event => { event.preventDefault(); load(); });
   el('export').addEventListener('click', () => load('export'));
   el('more').addEventListener('click', () => load('more'));
   for (const name of ['patient', 'authority', 'from', 'to', 'kind']) el(name).addEventListener('input', () => {
-    clear(); message('조건이 바뀌었습니다. Search로 조회하세요.');
+    clear(); message(kinSayEn("조건이 바뀌었습니다. Search로 조회하세요."));
   });
   el('logout').addEventListener('click', () => KinAuth.logout());
   KinAuth.onLifecycle(state => {
     if (['ending', 'unconfirmed', 'confirmed'].includes(state.state)) {
       ready = false; forgetIntake(); clear(); clearInspection(); clearDisclosure(true); clearRights(true); clearIncident(); el('workspace').hidden = true;
-      el('form').reset(); message('세션을 확인하고 다시 로그인하세요.');
+      el('form').reset(); message(kinSayEn("세션을 확인하고 다시 로그인하세요."));
     }
   });
   KinAuth.onEndedElsewhere(() => KinAuth.leave());
@@ -1111,5 +1116,5 @@
     ready = true; el('workspace').hidden = false; controls(); message(kinText('조건을 선택하고 Search로 조회하세요.'));
     // Pre-fill the intake forms; a refusal or failure here is said again when Receive Request is pressed.
     loadIntake().catch(() => {});
-  }).catch(() => message('세션을 확인할 수 없습니다. 다시 로그인하세요.'));
+  }).catch(() => message(kinSayEn("세션을 확인할 수 없습니다. 다시 로그인하세요.")));
 })();

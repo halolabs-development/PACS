@@ -507,7 +507,7 @@ window.KinStudyTransferLocal = function (app) {
     else if (/PERMISSION|ACCESS|SUBJECT|AUTH/.test(c)) guidance = '현재 계정의 권한을 확인하세요. 기존 작업은 상태 조회만 가능합니다.';
     else if (/DICOM_|PATIENT_|SOP_|STUDY_UID|IDENTITY/.test(c)) guidance = '파일 형식과 환자·검사 식별 정보를 확인하세요. 관리자에게 작업 번호를 알려 주세요.';
     else if (/ORTHANC|STORAGE|NOT_READY/.test(c)) guidance = '서버 연결과 저장소 상태를 관리자에게 확인하세요.';
-    return `${c} · 결과를 확인하지 못했습니다. ${guidance}`;
+    return kinSayEn("{0} · 결과를 확인하지 못했습니다. {1}", c, guidance);
   }
 
   function uncertain(entry, message) {
@@ -1392,7 +1392,7 @@ window.KinStudyTransferLocal = function (app) {
         if (ended || gen !== generation) return;
         if (failed) { result.textContent = TEXT.lost; return; }
         // Recovery is an explicit server action; its reply does not authorize another payload send or certify a file.
-        result.textContent = diagnostic(answer.body, '관리자 확인 요청 뒤 이 작업의 상태를 다시 확인하세요.');
+        kinWrite(result, diagnostic(answer.body, kinSayEn("관리자 확인 요청 뒤 이 작업의 상태를 다시 확인하세요.")));
         const op = operations.find(o => o.kind === 'import' && o.id === id);
         if (op) readImport(op);
       });

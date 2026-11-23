@@ -535,7 +535,8 @@
       summary.textContent = summaryText(s);
       const text = attempt ? [attempt.status, attempt.message].filter(Boolean).join(' · ') : '';
       const statusText = note ? [text, note].filter(Boolean).join(' · ') : text;
-      if (status.textContent !== statusText) status.textContent = statusText;
+      const parts = [attempt?.status, attempt?.message, note].filter(Boolean).map(v => typeof v === 'string' ? kinSayEn(v) : v);
+      if (status.textContent !== statusText) kinWrite(status, kinSayEn(parts.map((_, i) => `{${i}}`).join(' · '), ...parts));
       const candidate = c && s.candidateAttempt;
       candidateStatus.hidden = !candidate;
       const candidateLines = [];
@@ -580,7 +581,8 @@
           const marks = document.createElement('span'); marks.className = 'multi-study-marks';
           marks.textContent = [viewerFor(value) && c ? 'Viewing' : '', value === target ? 'Reading Target' : ''].filter(Boolean).join(' · ');
           const line = document.createElement('span'); line.className = 'multi-study-state';
-          line.textContent = [state.status, state.message].filter(Boolean).join(' · ');
+          const said = [state.status, state.message].filter(Boolean).map(v => typeof v === 'string' ? kinSayEn(v) : v);
+          kinWrite(line, kinSayEn(said.map((_, i) => `{${i}}`).join(' · '), ...said));
           li.append(head, marks, line);
           if (c) {
             const actions = document.createElement('span'); actions.className = 'multi-study-actions';

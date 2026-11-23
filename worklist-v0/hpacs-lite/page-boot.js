@@ -71,8 +71,8 @@
         const el = $(s); el.disabled = !tec;
         if (!tec) kinWrite(el, kinSayEn(TECHNICIAN_WORK_REASON), "title");
       });
-      const r = sess.demo ? "데모" : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || "권한 없음");
-      $("#roles").textContent = r;
+      const r = sess.demo ? kinSayEn("데모") : (sess.roles.filter(x => ["radiologist","technician","admin"].includes(x)).join(", ") || kinSayEn("권한 없음"));
+      kinWrite($("#roles"), r);
       $("#member-link").style.display = !sess.demo && KinAuth.has("admin") ? "" : "none";
     }
 
@@ -251,7 +251,7 @@
         await loadActorNames(at); await load();
         work.commit(at, () => toast("서버에 다시 연결됐습니다", "ok"));
       }
-      catch (e) { work.commit(at, () => toast("아직 연결되지 않습니다: " + e.message, "err")); }
+      catch (e) { work.commit(at, () => toast(String(kinSayEn("아직 연결되지 않습니다: {e0}", e.message)), "err")); }
     });
 
     /** applyRoleUi가 만든 원본 역할 문자열. 기관 이름을 덧붙이는 기준점이다. */
@@ -517,15 +517,14 @@
           const key = `kin-app-backup-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "")}`;
           try { localStorage.setItem(key, JSON.stringify(legacyAppState)); } catch (e) {}
           localStorage.removeItem("kin-app");
-          toast(`이 브라우저에 남아 있던 기록 ${localKeys.length}건은 서버 데이터로 대체됩니다 ` +
-                `(localStorage의 ${key}에 보관)`, "info");
+          toast(String(kinSayEn("이 브라우저에 남아 있던 기록 {n0}건은 서버 데이터로 대체됩니다 (localStorage의 {1}에 보관)", localKeys.length, key)), "info");
         }
         goOnline(b);
         // No await between starting polling and establishing the default: even
         // Refresh during a delayed colleague lookup must keep the search scope.
         const def = userFilters.find(f => f.isDefault);
         if (def) {
-          if (applyFilter(def)) toast(`기본 필터 "${def.name}" 적용됨 — Clear를 누르면 풀립니다`, "info");
+          if (applyFilter(def)) toast(String(kinSayEn("기본 필터 \"{0}\" 적용됨 — Clear를 누르면 풀립니다", def.name)), "info");
           else {
             fval[KinCompoundFilter.KEY] = null;
             render();

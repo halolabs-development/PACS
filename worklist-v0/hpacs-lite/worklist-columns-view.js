@@ -143,21 +143,21 @@
      * 다른가다 — 고친 글이 없는 재승인은 없다.
      */
     function amendApproval(a, edited, now = Date.now()) {
-      if (!a?.amendUntil) return { open: false, title: "승인 시각을 확인할 수 없는 판독문입니다 — Addendum으로 덧붙일 수 있습니다" };
-      if (reportFinalized(a, now)) return { open: false, title: "Finalized — 승인 후 24시간이 지났습니다. More ▸ Addendum으로 덧붙일 수 있습니다" };
-      if (a.addendumAt) return { open: false, title: "추가기재(Addendum)가 붙은 판독문입니다 — More ▸ Addendum으로 덧붙일 수 있습니다" };
-      if (!a.amendMine) return { open: false, title: "승인한 판독의만 24시간 안에 본문을 고칠 수 있습니다 — 덧붙이려면 More ▸ Addendum" };
+      if (!a?.amendUntil) return { open: false, title: kinSayEn("승인 시각을 확인할 수 없는 판독문입니다 — Addendum으로 덧붙일 수 있습니다") };
+      if (reportFinalized(a, now)) return { open: false, title: kinSayEn("Finalized — 승인 후 24시간이 지났습니다. More ▸ Addendum으로 덧붙일 수 있습니다") };
+      if (a.addendumAt) return { open: false, title: kinSayEn("추가기재(Addendum)가 붙은 판독문입니다 — More ▸ Addendum으로 덧붙일 수 있습니다") };
+      if (!a.amendMine) return { open: false, title: kinSayEn("승인한 판독의만 24시간 안에 본문을 고칠 수 있습니다 — 덧붙이려면 More ▸ Addendum") };
       const until = amendTime(a.amendUntil);
       return edited
-        ? { open: true, title: `승인 후 24시간 안입니다 — 본문을 고쳐 다시 Approve할 수 있습니다 (${until}까지). 의뢰의 화면에 "수정됨(시각)"이 붙습니다` }
-        : { open: false, title: `승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 (${until}까지)` };
+        ? { open: true, title: kinSayEn("승인 후 24시간 안입니다 — 본문을 고쳐 다시 Approve할 수 있습니다 ({0}까지). 의뢰의 화면에 \"수정됨(시각)\"이 붙습니다", until) }
+        : { open: false, title: kinSayEn("승인됨 — 본문을 고치면 다시 Approve할 수 있습니다 ({0}까지)", until) };
     }
     /** 편집기 머리줄의 판독 상태(승인본일 때만): Approved/Finalized, 수정 가능 (시각)까지, 수정됨 (시각). */
     function reportStatusParts(a, now) {
       if (a?.rs !== "A") return [];
       const parts = [reportStatusWord(a, now)];
-      if (a.amendUntil && !a.addendumAt && !reportFinalized(a, now)) parts.push(`수정 가능 ${amendTime(a.amendUntil)}까지`);
-      if (a.amendedAt) parts.push(`수정됨 ${amendTime(a.amendedAt)}`);
+      if (a.amendUntil && !a.addendumAt && !reportFinalized(a, now)) parts.push(kinSayEn("수정 가능 {0}까지", amendTime(a.amendUntil)));
+      if (a.amendedAt) parts.push(kinSayEn("수정됨 {0}", amendTime(a.amendedAt)));
       return parts;
     }
     function reportStatusLine(a, now) { return reportStatusParts(a, now).join(" · "); }

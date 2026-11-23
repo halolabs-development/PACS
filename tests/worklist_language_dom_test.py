@@ -941,6 +941,29 @@ class WorklistLanguageDOM(unittest.TestCase):
         self.assertIsNone(page.evaluate("document.documentElement.getAttribute('data-kin-lang-worklist')"))
         self.assertEqual([], self.site.appearance_writes)
 
+    def test_the_first_screen_says_its_reasons_in_the_language_chosen_after_it_is_drawn(self):
+        """Before any study is chosen the editor head says why it is read only, Dictate says the recognizer is not
+        connected and Mark CVR says when it can be sent. They are drawn before the account's choice arrives: English
+        repaints them, Korean or no choice reads exactly as drawn."""
+        page = self.page
+        page.goto(auth.MAIN_URL)
+        expect(page.locator("#rows")).to_contain_text(auth.PATIENT)
+        wait_startup(page, self.site)
+        why, dictate, cvr = page.locator("#report-editor-why"), page.locator("#b-dictate"), page.locator("#b-mark-cvr")
+        read = lambda: (why.text_content(), why.get_attribute("title"), dictate.get_attribute("title"), cvr.get_attribute("title"))
+        drawn = read()
+        self.assertEqual(("검사를 선택하세요", "검사를 선택하세요", "음성 인식기가 연결되지 않았습니다."), drawn[:3])
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(why).to_have_text("Select a study")
+        expect(why).to_have_attribute("title", "Select a study")
+        expect(dictate).to_have_attribute("title", "Speech recognizer is not connected.")
+        expect(cvr).not_to_have_attribute("title", re.compile("[가-힣]"))
+        expect(cvr).to_have_attribute("title", re.compile("critical result"))
+        for choice in (KO_BOTH, NONE):
+            page.evaluate("choice => KinLanguage.restore(choice)", choice)
+            expect(why).to_have_text(drawn[0])
+            self.assertEqual(drawn, read(), choice)
+
     def test_words_the_worklist_writes_after_start_follow_both_languages(self):
         """The words the page writes after its start (connection line, filter summary and filter row, folders, search
         line, related exam filter, storage, empty list) follow the chosen language, also when written again later."""

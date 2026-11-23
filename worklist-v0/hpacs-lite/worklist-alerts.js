@@ -1,6 +1,11 @@
 /* Audio follows explicit list changes, never inferred clinical priority. */
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const defaults=()=>({version:2,newStudies:false,emergency:false,initialEmergency:false,volume:0.3});
   function normalize(value){
     if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!==(value.version===1?'emergency,newStudies,version,volume':'emergency,initialEmergency,newStudies,version,volume')||![1,2].includes(value.version)||typeof value.newStudies!=='boolean'||typeof value.emergency!=='boolean'||(value.version===2&&typeof value.initialEmergency!=='boolean')||![0.1,0.3,0.6].includes(value.volume))return null;
@@ -38,7 +43,7 @@
     const bound=owner(),key=bound&&'kin-worklist-alerts:v1:'+bound,model=observer(),initial=initialObserver();
     let ended=false,settings=defaults(),audio=null,armed=false,busy=false,storage,feedback='',last='Waiting for List',generation=0,observations=0;
     const tones=new Set(),live=()=>!ended&&!!bound&&owner()===bound&&available();
-    try{storage=root.localStorage;const raw=key?storage.getItem(key):null;if(raw!==null){const value=raw.length<=256&&normalize(JSON.parse(raw));if(value)settings=value;else feedback='저장된 설정 오류 · 기본 Off';}}catch(_){feedback='저장소 사용 불가 · 이 창에서만 설정합니다.';}
+    try{storage=root.localStorage;const raw=key?storage.getItem(key):null;if(raw!==null){const value=raw.length<=256&&normalize(JSON.parse(raw));if(value)settings=value;else feedback=kinSayEn("저장된 설정 오류 · 기본 Off");}}catch(_){feedback=kinSayEn("저장소 사용 불가 · 이 창에서만 설정합니다.");}
     const initialEnabled=settings.initialEmergency;
     const dialog=document.createElement('dialog');dialog.id='worklist-alerts-dialog';dialog.setAttribute('aria-labelledby','worklist-alerts-title');
     dialog.style.cssText='width:540px;max-width:calc(100vw - 32px);max-height:85vh;overflow:auto;background:#101e32;color:#e1ecfc;border:1px solid #657c9f;border-radius:10px;padding:20px';
@@ -50,12 +55,12 @@
       enable.disabled=test.disabled=!active||busy;enable.textContent=armed?'Disable Sound':'Enable Sound';
       fresh.checked=settings.newStudies;urgent.checked=settings.emergency;initialBox.checked=settings.initialEmergency;volume.value=String(settings.volume);
       dialog.querySelector('#alerts-audio-state').textContent=busy?'Connecting Audio':armed&&audio?.state==='running'?'Sound Ready':'Sound Off';
-      dialog.querySelector('#alerts-list-state').textContent=last+(initial.count()?' · Initial Emergency '+initial.count()+' Pending':'');dialog.querySelector('#alerts-feedback').textContent=feedback;
+      kinWrite(dialog.querySelector('#alerts-list-state'), kinSayEn('{0}{1}', last, initial.count()?' · Initial Emergency '+initial.count()+' Pending':''));kinWrite(dialog.querySelector('#alerts-feedback'), feedback);
     }
     function stopTones(){for(const oscillator of tones){try{oscillator.stop();}catch(_){}try{oscillator.disconnect();}catch(_){}}tones.clear();}
     function tone(emergency){
       if(work.state()!=='active')return false;
-      if(!live()||!armed||audio?.state!=='running'){feedback='목록 변화가 있습니다. 소리 알림은 Enable Sound로 직접 허용하세요.';return false;}
+      if(!live()||!armed||audio?.state!=='running'){feedback=kinSayEn("목록 변화가 있습니다. 소리 알림은 Enable Sound로 직접 허용하세요.");return false;}
       let gain,oscillator;
       try{
         const now=audio.currentTime;gain=audio.createGain();oscillator=audio.createOscillator();
@@ -64,13 +69,13 @@
         tones.add(oscillator);oscillator.onended=()=>{tones.delete(oscillator);oscillator.disconnect();gain.disconnect();};oscillator.start(now);oscillator.stop(now+0.24);return true;
       }catch(_){
         armed=false;tones.delete(oscillator);try{oscillator?.stop();}catch(_){}try{oscillator?.disconnect();gain?.disconnect();}catch(_){}
-        feedback='소리 재생에 실패했습니다. 출력 장치를 확인한 뒤 Test Sound로 다시 시도하세요.';return false;
+        feedback=kinSayEn("소리 재생에 실패했습니다. 출력 장치를 확인한 뒤 Test Sound로 다시 시도하세요.");return false;
       }
     }
     function initialSound(){
       if(document.hidden||!settings.initialEmergency||!armed)return false;
       const count=initial.count(),played=initial.consume(()=>tone(true));
-      if(played)feedback='첫 목록에 있던 응급 검사 '+count+'건의 묶음 알림을 재생했습니다.';
+      if(played)feedback=kinSayEn("첫 목록에 있던 응급 검사 {n0}건의 묶음 알림을 재생했습니다.", count);
       return played;
     }
     async function sound(testing){
@@ -85,17 +90,17 @@
           if(!live()||ticket!==generation)return;
           if(audio.state!=='running')throw Error('브라우저에서 소리를 허용한 뒤 다시 시도하세요.');
           if(!work.admits(at))return;
-          work.commit(at,()=>{armed=true;if(testing&&tone(false))feedback='시험음 재생을 요청했습니다. 실제 스피커와 음량을 확인하세요.';});
-          if(!testing&&initial.count()&&settings.initialEmergency){const before=observations;await refresh();work.commit(at,()=>{if(live()&&ticket===generation&&observations===before)feedback='최신 목록을 확인하지 못해 첫 목록 알림을 보류했습니다. Refresh 후 다시 확인하세요.';});}
+          work.commit(at,()=>{armed=true;if(testing&&tone(false))feedback=kinSayEn("시험음 재생을 요청했습니다. 실제 스피커와 음량을 확인하세요.");});
+          if(!testing&&initial.count()&&settings.initialEmergency){const before=observations;await refresh();work.commit(at,()=>{if(live()&&ticket===generation&&observations===before)feedback=kinSayEn("최신 목록을 확인하지 못해 첫 목록 알림을 보류했습니다. Refresh 후 다시 확인하세요.");});}
         }
-      }catch(e){work.commit(at,()=>{if(live()&&ticket===generation){armed=false;feedback=e.message==='이 브라우저는 소리 알림을 지원하지 않습니다.'?e.message:'소리를 시작하지 못했습니다. 브라우저 권한·출력 장치를 확인하고 다시 시도하세요.';}});}
+      }catch(e){work.commit(at,()=>{if(live()&&ticket===generation){armed=false;feedback=e.message==='이 브라우저는 소리 알림을 지원하지 않습니다.'?kinSayEn(e.message):kinSayEn("소리를 시작하지 못했습니다. 브라우저 권한·출력 장치를 확인하고 다시 시도하세요.");}});}
       finally{work.commit(at,()=>{if(ticket===generation){busy=false;render();}});}
     }
     fresh.onchange=urgent.onchange=initialBox.onchange=volume.onchange=()=>{
       if(!live()){render();return;}
       settings={version:2,newStudies:fresh.checked,emergency:urgent.checked,initialEmergency:initialBox.checked,volume:Number(volume.value)};
       if(!settings.initialEmergency)initial.clear();
-      try{storage.setItem(key,JSON.stringify(settings));feedback='설정 저장됨 · 이 브라우저';}catch(_){feedback='설정을 저장하지 못해 이 창에서만 적용됩니다.';}render();
+      try{storage.setItem(key,JSON.stringify(settings));feedback=kinSayEn("설정 저장됨 · 이 브라우저");}catch(_){feedback=kinSayEn("설정을 저장하지 못해 이 창에서만 적용됩니다.");}render();
     };
     enable.onclick=()=>sound(false);test.onclick=()=>sound(true);done.onclick=()=>dialog.close();
     button.onclick=()=>{render();if(live()){dialog.showModal();fresh.focus();}};
@@ -117,7 +122,7 @@
         if(!initialPlayed&&!result.baseline&&!document.hidden&&(settings.newStudies&&result.newStudies>0||settings.emergency&&result.emergency>0)){
           tone(settings.emergency&&result.emergency>0);
         }
-      }catch(e){model.reset();initial.clear();last='Alerts Unverified';feedback=e.message;}
+      }catch(e){model.reset();initial.clear();last='Alerts Unverified';feedback=typeof e?.message==='string'&&e.message?kinSayEn(e.message):'';}
       render();
     },end};
   }

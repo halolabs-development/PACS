@@ -1,5 +1,9 @@
 (function (root) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // KEY-ADMIN: the admin creates, rotates or retires one member's server-held approval key (D1770). The doctor's
   // approval does not change; this dialog only drives POST admin/users/:id/signing-key, which runs ServerKeys.manage.
   // The page owns termination; the dialog releases its pending request with that lifecycle (as Study Access does).
@@ -69,8 +73,8 @@
       $('[data-rows]').replaceChildren(...rows);
       $('[data-wrap]').hidden = !rows.length;
       const current = result.keys.find(key => key.kid === result.current);
-      status.textContent = current ? `Active Key · ${current.kid} · ${current.registeredAt}`
-        : 'No Active Key · 이 회원의 온라인 승인은 키를 만들기 전까지 거절됩니다.';
+      kinWrite(status, current ? `Active Key · ${current.kid} · ${current.registeredAt}`
+        : kinSayEn("No Active Key · 이 회원의 온라인 승인은 키를 만들기 전까지 거절됩니다."));
     }
 
     async function request(method, body) {
@@ -102,7 +106,7 @@
       } catch (error) {
         if (closed || token !== generation) return;
         if (error.status === 403) { dispose(); refused?.(error.message); return; }
-        status.textContent = error.message || '서명키를 불러오지 못했습니다';
+        kinWrite(status, error.message || kinSayEn("서명키를 불러오지 못했습니다"));
       } finally { if (!closed && token === generation) { busy = false; controls(); } }
     }
 
@@ -124,8 +128,8 @@
         // closes the dialog through the read, as Study Access does.
         if (error.unread || !error.status || error.status >= 500 && error.status !== 503) unknown = true;
         if ([403, 409].includes(error.status)) view = null;
-        status.textContent = (error.message || '서명키를 변경하지 못했습니다') +
-          (unknown ? ' · 결과를 확인하지 못했습니다. Reload로 현재 키를 확인하세요.' : view ? '' : ' · Reload로 현재 키를 확인하세요.');
+        kinWrite(status, kinSayEn('{0}{1}', error.message ? kinSayEn(error.message) : kinSayEn('서명키를 변경하지 못했습니다'),
+          unknown ? kinSayEn(' · 결과를 확인하지 못했습니다. Reload로 현재 키를 확인하세요.') : view ? '' : kinSayEn(' · Reload로 현재 키를 확인하세요.')));
       } finally { if (!closed && token === generation) { busy = false; controls(); } }
     }
 

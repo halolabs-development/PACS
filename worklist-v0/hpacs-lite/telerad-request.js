@@ -17,7 +17,7 @@
             appState[uid] = mergeObservedReportState(uid, st);
             syncStudy(uid); render();
           });
-        } catch (e) { work.commit(at, () => toast("원격판독 상태 변경 실패: " + e.message, "err")); }
+        } catch (e) { work.commit(at, () => toast(String(kinSayEn("원격판독 상태 변경 실패: {e0}", e.message)), "err")); }
         return;
       }
       s.ts = ts;
@@ -48,7 +48,7 @@
       // 타이머가 다음 상태를 서버에 보내지 않는다.
       const at = work.capture("document");
       await setTs(uid, "wait", target.id, at);
-      if (!work.commit(at, () => toast(`${target.name} 에 원격판독을 의뢰했습니다 — TS 열에서 진행 상태를 보세요`, "info"))) return;
+      if (!work.commit(at, () => toast(String(kinSayEn("{0} 에 원격판독을 의뢰했습니다 — TS 열에서 진행 상태를 보세요", target.name)), "info"))) return;
       // 전송 파이프라인 시뮬레이션(우리 쪽 구간만). 실제 전송 큐는 5단계 Connect.
       setTimeout(() => work.commit(at, () => { if (tsIs(uid, "wait")) setTs(uid, "sending", undefined, at); }), 1200);
       setTimeout(() => work.commit(at, () => { if (tsIs(uid, "sending")) setTs(uid, "sent", undefined, at); }), 3500);

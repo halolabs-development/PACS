@@ -19,7 +19,7 @@
     collectionSelect?.addEventListener('change', () => {
       if (shortcutBusy || shortcutDraft) {
         collectionSelect.value = filterCollection?.collection || '';
-        shortcutStatus('바로가기 편집을 마친 뒤 모음을 변경하세요.');
+        shortcutStatus(kinSayEn("바로가기 편집을 마친 뒤 모음을 변경하세요."));
         return;
       }
       activeFilterName = null; folderAppliedSearch = null;
@@ -58,17 +58,17 @@
     }
     function shortcutStatus(message) {
       const status = $('#shortcuts-status');
-      if (status && status.textContent !== message) status.textContent = message;
+      if (status && status.textContent !== message) kinWrite(status, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(message));
       // 저장 도중 화면 전환을 취소한 경우 팝업도 미확정 상태를 보여 주어야 다시 저장 여부를 판단할 수 있다.
       const popupStatus = examFilterDialog?.open && examFilterDialog.querySelector('[role=status]');
-      if (popupStatus && message && popupStatus.textContent !== message) popupStatus.textContent = message;
+      if (popupStatus && message && popupStatus.textContent !== message) kinWrite(popupStatus, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(message));
     }
     async function reloadFolderSearches(at = work.capture('document')) {
       const sequence = ++filterReadSequence;
       const sharedSequence = ++sharedFilterReadSequence;
       filterCollection = null;
-      shortcutStatus('바로가기를 불러오는 중입니다.');
-      if (!serverMode || offline) { shortcutStatus('서버에 연결한 뒤 바로가기를 불러오세요.'); return; }
+      shortcutStatus(kinSayEn("바로가기를 불러오는 중입니다."));
+      if (!serverMode || offline) { shortcutStatus(kinSayEn("서버에 연결한 뒤 바로가기를 불러오세요.")); return; }
       const results = await Promise.allSettled([
         api('GET', '/filter-folders', undefined, undefined, at),
         api('GET', '/shared-filters', undefined, undefined, at),
@@ -82,11 +82,11 @@
         try {
           if (personal.status === 'rejected') throw personal.reason;
           acceptFilterCollection(personal.value);
-          shortcutStatus(shortcutDraft ? '편집 내용을 유지했습니다. Filter Exams에서 이름을 확인하고 Save as Shortcut으로 다시 저장하세요.'
-            : shared.status === 'rejected' ? '기관 검색을 불러오지 못했습니다. 다시 불러오세요.' : '');
+          shortcutStatus(shortcutDraft ? kinSayEn("편집 내용을 유지했습니다. Filter Exams에서 이름을 확인하고 Save as Shortcut으로 다시 저장하세요.")
+            : shared.status === 'rejected' ? kinSayEn("기관 검색을 불러오지 못했습니다. 다시 불러오세요.") : '');
         } catch (error) {
           filterCollection = null;
-          shortcutStatus('검색 모음을 읽지 못해 저장을 막았습니다. Filter Exams를 다시 열어 불러오세요. ' + error.message);
+          shortcutStatus(kinSayEn("검색 모음을 읽지 못해 저장을 막았습니다. Filter Exams를 다시 열어 불러오세요. {e0}", error.message));
         }
         updateWorklistFolders(); render();
       });
@@ -94,14 +94,14 @@
     async function saveFolderShortcuts(next) {
       if (!Array.isArray(next) || !work.admits(work.capture('document'))) return;
       shortcutDraft = JSON.parse(JSON.stringify(next));
-      if (shortcutBusy) { shortcutStatus('저장 중입니다. 추가 편집은 현재 저장 뒤에 반영합니다.'); return; }
+      if (shortcutBusy) { shortcutStatus(kinSayEn("저장 중입니다. 추가 편집은 현재 저장 뒤에 반영합니다.")); return; }
       if (!filterCollection || !serverMode || offline) {
-        shortcutStatus('검색 모음 버전을 확인해야 저장할 수 있습니다. Filter Exams를 다시 열어 불러오세요.'); return;
+        shortcutStatus(kinSayEn("검색 모음 버전을 확인해야 저장할 수 있습니다. Filter Exams를 다시 열어 불러오세요.")); return;
       }
       const at = work.capture('document'), sent = JSON.stringify(shortcutDraft);
       const body = collectionBody({ expectedOwner: [...filterCollection.owner], revision: filterCollection.revision,
         command: { action: 'replace-shortcuts', shortcuts: JSON.parse(sent) } });
-      shortcutBusy = true; ++filterReadSequence; shortcutStatus('바로가기를 저장 중입니다.');
+      shortcutBusy = true; ++filterReadSequence; shortcutStatus(kinSayEn("바로가기를 저장 중입니다."));
       let saved = false;
       try {
         await filterWriteReady(undefined, at);
@@ -115,12 +115,12 @@
       } catch (error) {
         work.commit(at, () => {
           filterCollection = null;
-          shortcutStatus('저장 결과를 확인하지 못했습니다. 편집은 유지됩니다. Filter Exams를 다시 열어 확인해 주세요. ' + error.message);
+          shortcutStatus(kinSayEn("저장 결과를 확인하지 못했습니다. 편집은 유지됩니다. Filter Exams를 다시 열어 확인해 주세요. {e0}", error.message));
         });
       } finally {
         work.commit(at, () => {
           shortcutBusy = false; updateWorklistFolders();
-          if (saved) shortcutStatus('바로가기를 저장했습니다.');
+          if (saved) shortcutStatus(kinSayEn("바로가기를 저장했습니다."));
         });
       }
       if (saved && shortcutDraft && work.admits(at)) return saveFolderShortcuts(shortcutDraft);
@@ -131,7 +131,7 @@
         ++filterReadSequence; ++sharedFilterReadSequence;
         if (shortcutBusy) {
           shortcutBusy = false; filterCollection = null;
-          shortcutStatus('저장 결과를 확인해야 합니다. 편집으로 돌아온 뒤 Filter Exams를 다시 열어 확인해 주세요.');
+          shortcutStatus(kinSayEn("저장 결과를 확인해야 합니다. 편집으로 돌아온 뒤 Filter Exams를 다시 열어 확인해 주세요."));
         } else shortcutStatus($('#shortcuts-status')?.textContent || '');
       } else if (event.reason === 'cancel') {
         // Resuming never revives the previous write ticket or silently resends its array.
@@ -194,7 +194,7 @@
         cancel: () => worklistBodyParts.cancel() },
       async readFolders(signal, at = work.capture("document")) {
         const sequence = ++filterReadSequence;
-        work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 불러오는 중입니다.'); });
+        work.commit(at, () => { filterCollection = null; shortcutStatus(kinSayEn("검색 모음을 불러오는 중입니다.")); });
         try {
         if (await filterWriteReady(signal, at)) throw new Error('폴더 관리는 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
         const snapshot = await api('GET', '/filter-folders', undefined, signal, at);
@@ -205,14 +205,14 @@
         shortcutStatus('');
         return filterCollection;
         } catch (error) {
-          work.commit(at, () => { if (sequence !== filterReadSequence) return; filterCollection = null; shortcutStatus('검색 모음을 읽지 못했습니다. 다시 불러오세요. ' + error.message); });
+          work.commit(at, () => { if (sequence !== filterReadSequence) return; filterCollection = null; shortcutStatus(kinSayEn("검색 모음을 읽지 못했습니다. 다시 불러오세요. {e0}", error.message)); });
           throw error;
         }
       },
       async writeFolders(body, signal, at = work.capture("document")) {
         const request = collectionBody(body);
         ++filterReadSequence;
-        work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장 중입니다.'); });
+        work.commit(at, () => { filterCollection = null; shortcutStatus(kinSayEn("검색 모음을 저장 중입니다.")); });
         try {
         if (await filterWriteReady(signal, at)) throw new Error('폴더 관리는 서버 계정으로 로그인한 뒤 사용할 수 있습니다.');
         const snapshot = await api('POST', '/filter-folders', request, signal, at);
@@ -223,7 +223,7 @@
         shortcutStatus('');
         return filterCollection;
         } catch (error) {
-          work.commit(at, () => { filterCollection = null; shortcutStatus('검색 모음을 저장하지 못했습니다. 다시 불러오세요. ' + error.message); });
+          work.commit(at, () => { filterCollection = null; shortcutStatus(kinSayEn("검색 모음을 저장하지 못했습니다. 다시 불러오세요. {e0}", error.message)); });
           throw error;
         }
       },
@@ -306,7 +306,7 @@
     function applyFilter(f, folderId) {
       if (!f || !Array.isArray(COLS[f.mode])) { toast('저장 검색의 업무 화면을 확인할 수 없습니다.', 'err'); return false; }
       const compoundError = KinCompoundFilter.validate(f.cols?.[KinCompoundFilter.KEY], COLS[f.mode]);
-      if (compoundError) { toast('복합 조건을 적용하지 못했습니다: ' + compoundError, 'err'); return false; }
+      if (compoundError) { toast(String(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", compoundError)), 'err'); return false; }
       activeFilterName = userFilters.some(saved => saved.name === f.name) ? f.name : null;
       const source = folderId && folderSearches().find(saved => saved.treeId === (f.treeId || 'own:' + f.id));
       folderAppliedSearch = source ? { id: source.treeId, name: source.name, criteria: filterCriteriaKey(f) } : null;
@@ -364,7 +364,7 @@
     $("#savefilter").addEventListener("click", () => {
       const current = snapshotFilter();
       const error = KinCompoundFilter.validate(current.cols[KinCompoundFilter.KEY], COLS[current.mode]);
-      if (error) { toast('복합 조건을 저장하지 못했습니다: ' + error, 'err'); return; }
+      if (error) { toast(String(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", error)), 'err'); return; }
       savedFilterManager.open();
     });
 
@@ -392,12 +392,12 @@
             const at = work.capture("document");
             if (serverMode) {
               try { await api("PATCH", `/filters/${f.id}/default`, { on }, undefined, at); await reloadPrefs(at); }
-              catch (err) { work.commit(at, () => toast("실패: " + err.message, "err")); return; }
+              catch (err) { work.commit(at, () => toast(String(kinSayEn("실패: {e0}", err.message)), "err")); return; }
             } else {
               userFilters.forEach(x => x.isDefault = false);
               f.isDefault = on; saveFiltersLocal(); renderChips();
             }
-            work.commit(at, () => toast(on ? `"${f.name}" 을 기본 필터로 지정했습니다` : "기본 필터에서 해제했습니다"));
+            work.commit(at, () => toast(String(on ? kinSayEn("\"{0}\" 을 기본 필터로 지정했습니다", f.name) : kinSayEn("기본 필터에서 해제했습니다"))));
           } },
         { sep: 1 },
         { label: "Delete", act: async () => {
@@ -405,7 +405,7 @@
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/filters/${f.id}`, undefined, undefined, at); await reloadPrefs(at); }
-              catch (err) { work.commit(at, () => toast("삭제 실패: " + err.message, "err")); return; }
+              catch (err) { work.commit(at, () => toast(String(kinSayEn("삭제 실패: {e0}", err.message)), "err")); return; }
             } else {
               userFilters.splice(i, 1); saveFiltersLocal(); renderChips();
             }

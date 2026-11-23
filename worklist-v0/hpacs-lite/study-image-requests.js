@@ -17,7 +17,7 @@
     function mountImageRequests({ api, apiBase, work, transport, owner, allowed, current, study, institution, can }) {
       // The page's sentences and the words it writes go through the screen language (this part also runs on its own).
       const kinSay = (t, ...p) => window.KinLanguage ? window.KinLanguage.say(t, ...p) : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
-      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+      const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name === 'title' || name === 'placeholder') el[name] = value; else if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
       const TEXT = {
         queueHint: '소속 기관 검사에 임상의가 남긴 외부영상(External Images)·영상전송(Send Images) 요청입니다. 요청은 처리 상태의 '
           + '기록이며 이 칸은 영상을 옮기지 않습니다. 영상은 기존 경로에서 따로 옮기고, 처리를 마치면 Close에 처리 기록을 남기세요.',
@@ -26,7 +26,7 @@
         queueLoading: '요청 대기열을 불러오는 중입니다…',
         queueFailed: '요청 대기열을 불러오지 못했습니다.',
         queueEmpty: '이 조건의 영상 요청이 없습니다. 목록 조회는 성공했습니다.',
-        queueReady: (n, more) => `영상 요청 ${n}건을 최신순으로 표시합니다.${more ? ' More로 다음 요청을 이어서 읽습니다.' : ''}`,
+        queueReady: (n, more) => kinSayEn('영상 요청 {n0}건을 최신순으로 표시합니다.{t1}', n, more ? kinSayEn(' More로 다음 요청을 이어서 읽습니다.') : ''),
         detailLoading: '요청을 불러오는 중입니다…',
         detailFailed: '요청을 불러오지 못했습니다.',
         malformed: '영상 요청 응답 형식을 확인할 수 없습니다. 다시 불러오세요.',
@@ -34,7 +34,7 @@
         // U4p §3.3 화면 문구 규칙: Closed 옆에 늘 함께 쓴다.
         closedNote: '이 기록은 실제 전송 여부를 나타내지 않습니다',
         unlisted: '워크리스트에 없는 검사',
-        meta: (created, name) => `${created} 요청 · ${name}`,
+        meta: (created, name) => kinSayEn('{0} 요청 · {1}', created, name),
         registered: '등록 기관',
         noNote: '이 동작에는 note(1~2,000자)가 필요합니다.',
         sending: '보내는 중입니다…',
@@ -64,10 +64,10 @@
         readHint: '이 검사에 임상의가 남긴 영상 요청입니다. 판독 화면에서는 읽기만 하고, 처리는 Technician 모드의 Image Requests에서 합니다.',
         readLoading: '이 검사의 영상 요청을 불러오는 중입니다…',
         readFailed: '이 검사의 영상 요청을 불러오지 못했습니다.',
-        readCounts: (n, parts) => `이 검사의 영상 요청 ${n}건 · ${parts}`,
+        readCounts: (n, parts) => kinSayEn('이 검사의 영상 요청 {n0}건 · {1}', n, parts),
         readEmpty: '이 검사에는 영상 요청이 없습니다.',
         // 안내 띠의 알림은 짧게(띠의 다른 줄을 좁혀 줄을 바꾸지 않게), 전문은 툴팁.
-        notice: { counts: (n, parts) => `영상 요청 ${n}건 · ${parts}`, failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
+        notice: { counts: (n, parts) => kinSayEn('영상 요청 {n0}건 · {1}', n, parts), failed: '영상 요청 읽기 실패', refused: '영상 요청 읽기 거절',
           account: '영상 요청: 계정 바뀜' },
         readUnread: '이 검사의 영상 요청은 읽지 않습니다(원격판독 검사).',
         // 끊김은 상태를 말한다: 이 화면의 연결 판단일 뿐 통신을 막는 것은 아니다.
@@ -139,7 +139,7 @@
       };
       const setState = (box, state, text, detail) => {
         box.dataset.state = state;
-        kinWrite(box.querySelector('.image-request-line'), text);
+        kinWrite(box.querySelector('.image-request-line'), typeof text === 'string' && text ? kinSayEn(text) : text);
         kinWrite(box.querySelector('.image-request-detail'), detail || '');
       };
       const dash = value => typeof value === 'string' && value.trim() ? value : '—';
@@ -174,17 +174,17 @@
       };
       const kindName = kind => {
         const name = make('strong', null, KINDS[kind]);
-        name.title = KIND_TIPS[kind];
+        kinWrite(name, KIND_TIPS[kind] ? kinSayEn(KIND_TIPS[kind]) : '', "title");
         return name;
       };
       const line = (label, value) => {
         const node = make('p', 'image-request-text');
-        node.append(make('span', 'image-request-muted', label), ' ', value);
+        node.append(make('span', 'image-request-muted', typeof label === 'string' && label ? kinSayEn(label) : label), ' ', value);
         return node;
       };
       const studyLabel = uid => {
         const row = study(uid);
-        return row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : `${TEXT.unlisted} · ${uid}`;
+        return row ? `${dash(row.name)} · ${dash(row.id)} · ${dash(row.date)} · ${dash(row.desc)}` : kinSayEn('{0} · {1}', kinSayEn(TEXT.unlisted), uid);
       };
 
       /** 응답의 owner가 이 화면의 계정인가. 다르면 false(다른 계정의 답), 모양이 틀리면 null(형식 오류)이다. */
@@ -290,12 +290,12 @@
       /** 요청 한 건의 읽기 전용 줄들: 종류·상태·검사·요청자와 상대 기관·사유·처리자·note. */
       function itemLines(item, withStudy) {
         const head = make('p');
-        head.append(badge(item.state), ' ', kindName(item.kind), ` · ${TEXT.meta(time(item.createdAt), person(item.requester))}`);
+        head.append(badge(item.state), ' ', kindName(item.kind), make('span', null, kinSayEn(' · {0}', TEXT.meta(time(item.createdAt), person(item.requester)))));
         const lines = [head];
         if (withStudy) lines.push(line('Study', studyLabel(item.studyUid)));
         const registered = item.counterparty.institutionId === null ? null : institution(item.counterparty.institutionId);
         lines.push(line('Counterparty', item.counterparty.institutionId === null ? item.counterparty.text
-          : `${item.counterparty.text} (${TEXT.registered}: ${registered || item.counterparty.institutionId})`));
+          : kinSayEn('{0} ({1}: {2})', item.counterparty.text, kinSayEn(TEXT.registered), registered || item.counterparty.institutionId)));
         lines.push(line('Reason', item.reason));
         if (item.handler) lines.push(line('Handler', person(item.handler)));
         if (item.note !== null) lines.push(line(NOTE_LABEL[item.state] || 'Note', item.note));
@@ -673,7 +673,7 @@
           const stale = !loaded ? '' : action === 'accept' ? (state === 'Requested' ? '' : TEXT.stateAccept)
             : ACTIVE.includes(state) ? '' : TEXT.stateDone;
           control.disabled = attempt !== null || !loaded || !!role || !!stale;
-          kinWrite(control, role || stale || kinSay(TEXT.tips[action]), "title");
+          kinWrite(control, (typeof (role || stale) === 'string' && (role || stale) ? kinSayEn(role || stale) : role || stale) || kinSay(TEXT.tips[action]), "title");
         }
         writeRetry.hidden = writeDiscard.hidden = !attempt || attempt.busy;
         const note = id === null ? null : notes.get(id) || null;
