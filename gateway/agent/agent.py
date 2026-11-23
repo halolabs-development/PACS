@@ -78,6 +78,7 @@ GATEWAY_ERROR_CODES = {
     "cloud authentication failed": "cloud_auth",
     "announce HTTP {}": "announce_http",
     "STOW HTTP {}": "stow_http",
+    "STOW refused patient identity conflict": "stow_patient_conflict",
     "STOW response invalid": "stow_response_invalid",
     "STOW response shape invalid": "stow_response_invalid",
     "STOW failure sequence invalid": "stow_response_invalid",
@@ -137,6 +138,10 @@ RETENTION_COLUMNS = (
 )
 # not_routed: the study's destinations do not include KIN, so KIN is never announced to and gets no receipt.
 FINAL_STUDY_PHASES = ("complete", "failed", "not_routed")
+# KIN's answers to a STOW that the same bytes can never change: the study KIN holds under this UID is another patient's
+# (the PatientID differs), or already two patients'. KIN wrote nothing. Read from the 409 answer's JSON code alone; any
+# other 409 (the archive's own, for a body of another study) is retried as before.
+STOW_IDENTITY_REFUSALS = ("PATIENT_ID_CONFLICT", "EXISTING_STUDY_IDENTITY_UNRESOLVED")
 # KIN's final answers for one receipt: stored/replayed/stale (2xx) or refused for this body. Anything
 # else (401/403/5xx, transport) leaves the receipt pending for a later pass.
 RECEIPT_FINAL_REFUSALS = (400, 404, 409)
@@ -151,7 +156,7 @@ RETRY_POLL_UID = re.compile(r"[0-9.]+")
 # Operational status (heartbeat). The admin console shows, per Gateway credential, when KIN last heard from it, its queue,
 # its version, how long it has run, its last accepted STOW and whether the local DICOM listener answers. The beat runs on
 # its own thread so a long STOW (up to STOW_TIMEOUT_SECONDS) never reads as a lost Gateway. Fixed cadence, not in Config.
-AGENT_VERSION = "2026.11.3"
+AGENT_VERSION = "2026.11.4"
 HEARTBEAT_SECONDS = 30.0
 # Signed updates (update.py, the container's launcher). The launcher names the signed version of the release it runs in
 # KIN_AGENT_RUN_VERSION, so the heartbeat and the console show the version that was verified, not a constant in a file.
@@ -1262,6 +1267,9 @@ class Cloud:
             timeout=self.stow_timeout,
         )
         if not response.ok:
+            if response.status_code == 409 and stow_refusal_code(response) in STOW_IDENTITY_REFUSALS:
+                # Not an error of the transfer: the same images get the same answer, so the study is failed, not retried.
+                raise PermanentGatewayError("STOW refused patient identity conflict")
             raise GatewayError(f"STOW HTTP {response.status_code}")
         self.last_stow_at = time.monotonic()
         try:
@@ -1414,6 +1422,16 @@ def dicom_echo(host: str, port: int, called: str, calling: str = DICOM_CALLING_A
                 sock.close()
             except OSError:
                 pass
+
+
+def stow_refusal_code(response: requests.Response) -> str | None:
+    """The `code` of a refused STOW's JSON answer, or None (no JSON, not an object, no text code). Never raises."""
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    code = payload.get("code") if isinstance(payload, dict) else None
+    return code if isinstance(code, str) else None
 
 
 def failed_sops(payload: Any) -> set[str]:

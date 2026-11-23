@@ -194,7 +194,10 @@
   /*
    * S4-U4 Now Retry. Only a readable `retry` receipt offers the request, keyed by the exact receipt it was
    * drawn from (epoch|agentSeq), so an answer can never be written over a newer state. `failed` is F-01:
-   * the same bytes cannot succeed, so it gets the sentence and never a control. The Gateway label above is
+   * the same bytes cannot succeed, so it gets the sentence and never a control. A failed report whose code is
+   * IDENTITY_REFUSED_CODE is not F-01: HALO PACS did not take the images because their patient ID is not the one this
+   * study is stored under (or the study is already stored under two). It gets its own sentence, never a control and
+   * never a promise that sending the same images again helps. The Gateway label above is
    * not touched by any of this. A request is stored, not run: nothing here says the retry happened.
    */
   const RETRY_EPOCH=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -208,6 +211,9 @@
     notRetry:'지금은 재시도 대기 상태가 아니어서 요청하지 않았습니다. 목록이 갱신되면 다시 확인하세요.',
     busy:'요청이 겹쳐 처리하지 못했습니다. 잠시 후 다시 시도하세요.',
     failed:'재시도 요청을 보내지 못했습니다. 다시 시도하세요.'});
+  const IDENTITY_REFUSED_CODE='stow_patient_conflict';
+  const IDENTITY_REFUSED='이 검사 UID의 원본 환자 번호를 하나로 확인할 수 없어 영상을 받지 않았습니다';
+  const IDENTITY_REFUSED_TITLE='Gateway가 보낸 영상의 환자 번호가 HALO PACS에 이미 저장된 이 검사의 영상과 다르거나, 이 검사가 이미 서로 다른 환자 번호로 저장되어 있습니다. 받지 않은 영상은 저장되지 않았고 Gateway는 같은 영상을 자동으로 다시 보내지 않습니다.';
   const readableReceipt=receipt=>!!receipt&&typeof receipt==='object'&&PHASES.includes(receipt.phase)
     &&count(receipt.successCount)&&count(receipt.localCount)&&receipt.successCount<=receipt.localCount&&validTime(receipt.serverReceivedAt);
 
@@ -288,7 +294,9 @@
 
   function gatewayRetryAction(receipt){
     if(!readableReceipt(receipt))return null;
-    if(receipt.phase==='failed')return {kind:'unsupported_f01',text:RETRY_TEXT.unsupported,title:RETRY_TEXT.unsupportedTitle};
+    if(receipt.phase==='failed')return receipt.errorCode===IDENTITY_REFUSED_CODE
+      ?{kind:'identity_refused',text:IDENTITY_REFUSED,title:IDENTITY_REFUSED_TITLE}
+      :{kind:'unsupported_f01',text:RETRY_TEXT.unsupported,title:RETRY_TEXT.unsupportedTitle};
     if(receipt.phase!=='retry'||!count(receipt.agentSeq)||typeof receipt.epoch!=='string'||!RETRY_EPOCH.test(receipt.epoch))return null;
     return {kind:'now_retry',key:receipt.epoch+'|'+receipt.agentSeq,text:RETRY_TEXT.button,title:RETRY_TEXT.buttonTitle};
   }
@@ -336,8 +344,11 @@
     const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?['오류 코드 '+receipt.errorCode]:[];
     const retry=gatewayRetryAction(receipt);
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.
-    if(receipt.phase==='failed')
-      return pick('failed',detail,[...(receipt.errorCode==='instance_exceeds_budget'?[OVERSIZED]:[]),...code].join(' · '),retry);
+    // A refused patient ID is its own reason, with no F-01 note beside it.
+    if(receipt.phase==='failed'){
+      const refused=receipt.errorCode===IDENTITY_REFUSED_CODE;
+      return pick('failed',detail,[...(receipt.errorCode==='instance_exceeds_budget'?[OVERSIZED]:refused?[IDENTITY_REFUSED]:[]),...code].join(' · '),refused?null:retry);
+    }
     if(receipt.phase==='retry'){
       const reason=['Gateway 자동 재시도 대기',...(count(receipt.attempt)?['시도 '+receipt.attempt+'회']:[]),...code].join(' · ');
       if(retry&&retry.kind==='now_retry'&&requestedKey===retry.key)return pick('retry_requested',detail,reason,null);

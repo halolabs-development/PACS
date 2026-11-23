@@ -21,8 +21,8 @@ export const GATEWAY_ERROR_PHASES: readonly GatewayPhase[] = ['retry', 'failed']
 export const GATEWAY_ERROR_CODES = [
   'configuration', 'local_orthanc_unreachable', 'local_orthanc_http', 'local_study_lookup',
   'local_instance_metadata', 'local_duplicate_sop', 'local_change_invalid', 'token_unreachable', 'token_http',
-  'token_invalid', 'cloud_unreachable', 'cloud_auth', 'announce_http', 'stow_http', 'stow_response_invalid',
-  'stow_sop_failed', 'local_sop_missing', 'instance_exceeds_budget', 'batch_exceeds_budget', 'other',
+  'token_invalid', 'cloud_unreachable', 'cloud_auth', 'announce_http', 'stow_http', 'stow_patient_conflict',
+  'stow_response_invalid', 'stow_sop_failed', 'local_sop_missing', 'instance_exceeds_budget', 'batch_exceeds_budget', 'other',
 ] as const;
 export type GatewayErrorCode = typeof GATEWAY_ERROR_CODES[number];
 

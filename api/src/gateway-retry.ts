@@ -6,8 +6,9 @@
  * 그대로다. 요청은 저장된 `retry` 영수증의 (epoch, seq) 하나에 묶이고, Gateway가 더 새 상태를 보고하면
  * 더는 전달되지 않는 기록이 된다. 확인 경로(ack)는 없다. 그래서 HTTP 성공은 "저장됨"이지 "재시도됨"이 아니다.
  *
- * `failed`는 F-01이다. 유일한 생산자가 바이트 상한을 넘는 단일 인스턴스라 같은 바이트로는 성공할 수 없다.
- * 거절만 하고 여기서 다시 열지 않는다(H-2).
+ * `failed`는 다시 열지 않는다(H-2). 바이트 상한을 넘는 단일 인스턴스는 F-01이다 — 같은 바이트로는 성공할 수 없다.
+ * KIN이 환자 번호 불일치로 받지 않은 검사(`stow_patient_conflict`)는 재시도 대기가 아니므로 `not_retry`다 — 같은 영상은
+ * 같은 답을 받는다.
  */
 export const GATEWAY_RETRY_POLL_LIMIT = 100;
 
@@ -47,9 +48,12 @@ export function parseGatewayRetryPoll(query: unknown): string {
 
 type GatewayRetryDecision = 'eligible' | 'not_retry' | 'unsupported_f01';
 
-/** 요청을 묶을 수 있는 저장 영수증은 `retry` 하나다. 영수증이 없거나 다른 단계면 not_retry, `failed`는 F-01. */
-export function decideGatewayRetryRequest(receipt: { phase: string } | null): GatewayRetryDecision {
+/**
+ * 요청을 묶을 수 있는 저장 영수증은 `retry` 하나다. 영수증이 없거나 다른 단계면 not_retry. `failed`는 F-01이고, 그 가운데
+ * 환자 번호 불일치로 받지 않은 것만 not_retry다.
+ */
+export function decideGatewayRetryRequest(receipt: { phase: string; errorCode?: string | null } | null): GatewayRetryDecision {
   if (!receipt) return 'not_retry';
-  if (receipt.phase === 'failed') return 'unsupported_f01';
+  if (receipt.phase === 'failed') return receipt.errorCode === 'stow_patient_conflict' ? 'not_retry' : 'unsupported_f01';
   return receipt.phase === 'retry' ? 'eligible' : 'not_retry';
 }

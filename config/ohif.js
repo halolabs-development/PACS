@@ -360,6 +360,9 @@ window.KinLanguageTerms = {
     ["worklist", "#filterrow .date-filter .date-custom::before", "Custom date range", "직접 지정 기간"],
   ],
   terms: [
+    // A Gateway transfer HALO PACS did not take for its patient ID (study-arrivals.js gatewayStatus, gatewayRetryAction).
+    ["이 검사 UID의 원본 환자 번호를 하나로 확인할 수 없어 영상을 받지 않았습니다", "The original patient ID of this study UID could not be confirmed as one, so the images were not received", "m"],
+    ["Gateway가 보낸 영상의 환자 번호가 HALO PACS에 이미 저장된 이 검사의 영상과 다르거나, 이 검사가 이미 서로 다른 환자 번호로 저장되어 있습니다. 받지 않은 영상은 저장되지 않았고 Gateway는 같은 영상을 자동으로 다시 보내지 않습니다.", "The patient ID of the images the Gateway sent differs from the images of this study already stored in HALO PACS, or this study is already stored under different patient IDs. The images that were not received were not stored, and the Gateway does not send the same images again on its own.", "m"],
     // Folding the report window band's panels in place (main.html .rw; workspace-panels.js foldPanel).
     ["접힌 패널", "Folded panels", "l"],
     ["Thumbnail 패널 접기", "Fold the Thumbnail panel", "l"],
