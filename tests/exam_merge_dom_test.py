@@ -620,6 +620,41 @@ class ExamMerge(unittest.TestCase):
         win.locator(".order-dialog-foot button", has_text=re.compile("^Merge$")).click()
         expect(win.locator(".exam-merge-refused")).to_have_text('SYNACC-A2: 판독문이 있습니다(RS T). 먼저 판독 취소(Reset)를 하세요.')
 
+    def test_english_screen_finishes_split_unmerge_and_merge_in_english(self):
+        done = lambda win: win.locator("p.order-note.ok")
+        hangul = re.compile("[가-힣]")
+        self.language("en")
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        win.get_by_role("checkbox", name="Split SYN Series 2").check()
+        win.get_by_role("button", name="Split", exact=True).click()
+        expect(done(win)).to_have_text("Split. Each part can be read at Split 1/2 and Split 2/2 in the list.")
+        win.get_by_role("button", name="Close", exact=True).click()
+        self.pick(SPLIT_UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        win.get_by_role("button", name="Unsplit", exact=True).click()
+        expect(done(win)).to_have_text("Restored. The original images and the existing report history were kept.")
+        win.get_by_role("button", name="Close", exact=True).click()
+        self.site.groups[h.UID] = [h.UID, h.UID_B]
+        settle(self.page, "load()")
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        expect(win.locator("tbody tr")).to_have_count(2)
+        expect(win.locator(".order-note").first).not_to_contain_text(hangul)
+        win.locator(".order-dialog-foot button", has_text="Unmerge").click()
+        expect(done(win)).to_have_text("Restored. The original images and the existing report history were kept.")
+        win.get_by_role("button", name="Close", exact=True).click()
+        expect(self.page.locator("#rows tr[data-uid]")).to_have_count(3)
+        self.pick(h.UID)
+        self.page.locator("#t-merge-exam").click()
+        win = self.window("merge")
+        win.locator(".order-dialog-foot button", has_text=re.compile("^Merge$")).click()
+        expect(done(win)).to_be_visible()
+        expect(done(win)).not_to_contain_text(hangul)
+
     def test_korean_unmerge_and_split_windows_keep_their_data(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.desc[h.UID_B] = "Split Chest CT"

@@ -254,7 +254,7 @@
     const color = () => value(colorRadios);
     const image = () => session?.images.find(i => i.id === imageSelect.value) || null;
     const key = () => keyOf(background(), background() === 'image' ? image() : null);
-    const say = (message, kind = '') => { status.textContent = message; status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
+    const say = (message, kind = '') => { kinWrite(status, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(message)); status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
     const reason = (error, fallback) => (error && (error.body?.message || error.message)) || fallback;
 
     function sync() {

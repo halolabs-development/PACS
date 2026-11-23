@@ -82,8 +82,8 @@
         const blob=new Blob([table(rows,columns,options.cellText,kind)],{type:kind==='txt'?'text/plain;charset=utf-8':'text/csv;charset=utf-8'});
         const a=el('a',null,null);a.href=URL.createObjectURL(blob);a.download=name;document.body.append(a);a.click();a.remove();
         setTimeout(()=>URL.revokeObjectURL(a.href),0);
-        const done=`${rows.length}건을 내보냈습니다 (${name}).`,left=gone?`그 사이 목록에서 사라진 ${gone}건은 뺐습니다.`:'';
-        dialog.close();options.notify?.([done,left].filter(Boolean).join(' '));
+        const done=kinSayEn('{n0}건을 내보냈습니다 ({1}).',rows.length,name),left=gone?kinSayEn('그 사이 목록에서 사라진 {0}건은 뺐습니다.',gone):'';
+        dialog.close();options.notify?.(left?kinSayEn('{0} {1}',done,left):done);
       };
       dialog.addEventListener('close',()=>{if(live())button.focus();});
       dialog.showModal();

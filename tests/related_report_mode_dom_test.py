@@ -503,6 +503,18 @@ class RelatedModePage(unittest.TestCase):
         expect(self.page.locator("#related-mode-insert")).to_be_focused()
         self.assertEqual(0, self.page.locator("dialog[open]").count())
 
+    def test_english_screen_reads_the_status_line_and_its_title_in_english(self):
+        self.open()
+        self.open_target()
+        self.enter()
+        self.js("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.select_source("recommendation")
+        self.page.locator("#related-mode-insert").click()
+        words = "There is no text to insert, or the selected range cannot be confirmed. Select within a single Findings or Conclusion field."
+        status = self.page.locator("#related-mode-status")
+        expect(status).to_have_text(words)
+        expect(status).to_have_attribute("title", words)
+
     def select_source(self, field):
         self.page.locator(f'[data-related-source="{field}"]').evaluate("""node => {
           const r = document.createRange(); r.selectNodeContents(node);

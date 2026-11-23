@@ -677,6 +677,19 @@ class QcFollowsTheListDOM(QcBase):
                 self.assertIn('SYN-P-002', text)
                 expect(page.locator('#toast')).to_contain_text('1건을 내보냈습니다')
                 expect(page.locator('#toast')).to_contain_text('목록에서 사라진 1건은 뺐습니다')
+        # English: both sentences of the notice, around the count and the file name.
+        self.site.gone.clear(), self.site.unavailable.clear()
+        page.locator('#m-refresh').click()
+        expect(self.qc_cell()).to_contain_text(self.REASON)
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.open_export('csv')
+        self.site.gone.add(auth.UID)
+        self.reread()
+        expect(page.locator('#rows tr[data-uid="%s"]' % auth.UID)).to_have_count(0)
+        self.export('csv')
+        expect(page.locator('#toast')).to_contain_text('Exported 1 studies (')
+        expect(page.locator('#toast')).to_contain_text('1 that left the list meanwhile were left out.')
+        expect(page.locator('#toast')).not_to_contain_text(re.compile('[가-힣]'))
         self.assertEqual([], self.errors)
 
 

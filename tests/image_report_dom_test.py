@@ -307,6 +307,15 @@ class ImageReportPage(unittest.TestCase):
         self.page.keyboard.press("Escape")
         expect(dialog).to_be_hidden()
 
+    def test_english_screen_reads_the_window_status_in_english(self):
+        self.open()
+        self.open_study(h.PATIENT)
+        self.open_window()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.choose("Breast diagram")
+        self.page.locator("#image-report-attach").click()
+        expect(self.page.locator("#image-report-status")).to_have_text("Nothing to attach — draw first")
+
     def test_marks_undo_clear_and_each_background_keeps_its_own(self):
         self.open()
         self.open_study(h.PATIENT)

@@ -8226,8 +8226,8 @@
         renderDraftBar();
         updateReportButtons();
       }
-      if (op.state === "applied") relatedMode.announce("삽입됨 · " + relatedInsertLabel(op));
-      else if (op.state === "discarded" && op.reverted) relatedMode.announce("넣었던 글을 취소했습니다 (Insert Discarded).");
+      if (op.state === "applied") relatedMode.announce(kinSayEn("삽입됨 · {0}", relatedInsertLabel(op)));
+      else if (op.state === "discarded" && op.reverted) relatedMode.announce(kinSayEn("넣었던 글을 취소했습니다 (Insert Discarded)."));
       relatedMode.refresh();
     }
     /** Shows the pending operation's Notice again (a refused command or entry names it). */
@@ -13270,7 +13270,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           const readingReturn = new URLSearchParams(new URL(state.href, location.origin).hash.slice(1)).get('kin-reading-return');
           const input = target.exam ? popup.KinViewerExamScope?.snapshot() : null;
           if (target.exam && !input) { kinWrite(status, kinSayEn("검사 범위를 확인한 뒤 목록에서 다시 여세요.")); return; }
-          openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { status.textContent = message; } });
+          openOhifWindow(input?.reportUid || target.studies[0], input?.prior?.reportUid || (!input && target.studies[1]) || null, target.series, readingReturn, { ...(input ? {exam:input} : {}), freshDocument: true, notice: message => { kinWrite(status, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(message)); } });
           render(); return;
         }
         if (action === 'close') {

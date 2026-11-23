@@ -514,6 +514,19 @@ class ViewerWindowManagerDOMTest(unittest.TestCase):
             self.assertIn("승인", label)
             self.assertIn("Unread", label)
 
+    def test_latest_images_refusal_reads_in_the_screen_language(self):
+        for name in ("worklist-language-terms.js", "worklist-language.js"):
+            self.page.add_script_tag(path=str(WINDOWS.with_name(name)))
+        self.page.evaluate("""() => {
+          KinLanguage.restore({version:1,worklist:'en',reading:'en'});
+          __makePopup({dirty:true});
+          document.querySelector('#viewer-windows-open').click();
+          document.querySelector('[data-window-index="0"][data-window-action="latest"]').onclick();
+        }""")
+        text = self.page.locator('#viewer-windows-status').inner_text()
+        self.assertTrue(text.strip())
+        self.assertNotRegex(text, "[가-힣]")
+
     def test_latest_images_refuses_reload_and_preserves_dirty_source(self):
         result = self.page.evaluate("""() => {
           const made=__makePopup({dirty:true});

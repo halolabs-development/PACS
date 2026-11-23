@@ -424,6 +424,24 @@ class TechnicianOrders(unittest.TestCase):
             appState[uid] = {{ ...appState[uid], ward: "SYN OWN WARD", ov: {{ ward: "" }} }}; syncStudy(uid); return [own, s.ward]; }}"""))
         self.assertEqual(("POST", "/api/unmatch", {"uid": h.UID, "reason": "Wrong order of the same patient"}), self.site.sent[-1])
 
+    def test_english_screen_finishes_match_and_unmatch_in_english(self):
+        self.page.evaluate("() => KinLanguage.restore({ version: 1, worklist: 'en', reading: 'en' })")
+        hangul = re.compile("[가-힣]")
+        self.pick_study(h.PATIENT)
+        self.pick_order("SYN-O-1")
+        self.action("Match…").click()
+        w = self.window("order-match")
+        w.get_by_role("button", name="Match").click()
+        expect(w).to_contain_text("After (read back)")
+        expect(w).not_to_contain_text(hangul)
+        w.get_by_role("button", name="Close").click()
+        self.action("Unmatch…").click()
+        w = self.window("order-unmatch")
+        w.get_by_label("Reason").fill("Wrong order of the same patient")
+        w.get_by_role("button", name="Unmatch").click()
+        expect(w).to_contain_text("Order SYN-O-1 is Unmatched again.")
+        expect(w).not_to_contain_text(hangul)
+
     def test_unmatch_refusal_is_shown_in_the_window(self):
         self.pick_study(rf.PATIENT_C)
         self.site.unmatch_refusal = "SYN 판독 전(RS: W)인 검사만 매칭을 풀 수 있습니다"

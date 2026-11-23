@@ -309,7 +309,7 @@ window.KinViewerPatientTabs = (() => {
       if (reason !== null) return { ok: false, message: say(kinText("{0}의 판독문 {1}이 확인되지 않아 환자를 옮기지 않았습니다 ({2}).", from.patient.name, intent === 'save' ? kinText("저장") : kinText("버리기"), reason)) };
       if (!await open(to.href, { gen })) {
         if (!holds()) return superseded;
-        return { ok: false, message: say(`${to.patient.name}의 영상을 열지 못했습니다. ${current === from ? kinText("지금 환자에 머뭅니다.") : ''}`.trim()) };
+        return { ok: false, message: say(kinText("{0}의 영상을 열지 못했습니다. {1}", to.patient.name, current === from ? kinText("지금 환자에 머뭅니다.") : '').trim()) };
       }
       // The report target is asked to move only once the next patient's images are drawn; when they are not, the images go
       // back to the patient left (the report target was not asked).
