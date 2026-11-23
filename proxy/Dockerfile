@@ -13,7 +13,9 @@ FROM nginx:1.27-alpine
 # 자체 서명 인증서를 컨테이너가 직접 만든다.
 # **개인키를 저장소에 커밋하지 않기 위해서다.** 공개 저장소에 키가 한 번 올라가면
 # 히스토리에서 지워도 이미 나간 것이다.
-RUN apk add --no-cache openssl
+# apk upgrade: the base tag is no longer rebuilt, so its packages' security updates come from the Alpine repository.
+RUN apk upgrade --no-cache \
+ && apk add --no-cache openssl
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY 10-selfsigned.sh /docker-entrypoint.d/10-selfsigned.sh

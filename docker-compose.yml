@@ -47,7 +47,8 @@ services:
       - proxy-certs:/etc/nginx/certs   # 자체 서명 인증서는 여기 남는다(저장소에 커밋하지 않는다)
 
   orthanc:
-    image: orthancteam/orthanc:24.12.0
+    # orthancteam/orthanc:24.12.0 with Debian's security updates (gateway/orthanc/Dockerfile).
+    build: ./gateway/orthanc
     container_name: kin-orthanc
     restart: unless-stopped
     environment:

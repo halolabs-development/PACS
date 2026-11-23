@@ -30,7 +30,9 @@ RUN apt-get update -y \
  && apt-get install -y --no-install-recommends python3 python3-venv \
  && rm -rf /var/lib/apt/lists/* \
  && python3 -m venv /opt/kin-print \
- && /opt/kin-print/bin/pip install --no-cache-dir --disable-pip-version-check --require-hashes -r /opt/kin-print/requirements.txt
+ && /opt/kin-print/bin/pip install --no-cache-dir --disable-pip-version-check --require-hashes -r /opt/kin-print/requirements.txt \
+ # The venv seeds setuptools, which neither helper imports; left in, it ships with its known vulnerabilities.
+ && /opt/kin-print/bin/pip uninstall --yes --disable-pip-version-check setuptools
 
 WORKDIR /app
 
@@ -83,8 +85,11 @@ COPY --from=build /app/mwl ./mwl
 COPY start-production.sh ./start-production.sh
 # 운영 서버의 legacy builder도 지원한다(COPY --chmod는 BuildKit 전용).
 # 실패 전달 스풀 디렉터리와 CD-09-P 초안 파기 원장·그 사본(백업 밖 볼륨): node만 읽고 쓴다. 이름 있는 볼륨은 이 소유·권한을 처음 한 번 물려받는다.
+# The npm CLI comes with the node base image and is used only by the development and build stages: nothing in the
+# running server, its migration, backup recovery or checks calls npm or npx, so it is not shipped.
 RUN chmod 644 /app/start-production.sh \
- && install -d -o node -g node -m 700 /var/lib/kin-emr /var/lib/kin-purpose /var/lib/kin-ledger-mirror
+ && install -d -o node -g node -m 700 /var/lib/kin-emr /var/lib/kin-purpose /var/lib/kin-ledger-mirror \
+ && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER node
 EXPOSE 3000
 CMD ["sh", "/app/start-production.sh", "serve"]

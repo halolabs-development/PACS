@@ -696,9 +696,12 @@ candidate's (`git diff --quiet <run-sha> <candidate> -- '*package-lock.json' '*r
 by hand on the candidate's ref first. An incomplete run (exit 2, "Not checked") is not a check: run it again. For
 every line under "Needs action", the private release record names the update this release carries or why the
 release goes out without it; do the same for the components under "Not seen by the scanners", against their
-vendors' advisories. The run builds the product images with `--pull` on a runner without a build cache; build the
-release images with `--pull --no-cache`, so a cached package-install layer cannot keep packages older than what was
-checked. The images the stack runs by name (Orthanc, PostgreSQL, Keycloak) are checked as their registry serves
+vendors' advisories. The run builds the product images with `--pull` on a runner without a build cache - the API, the
+proxy, the gateway agent and Orthanc (`gateway/orthanc/Dockerfile`: `orthancteam/orthanc:24.12.0` with Debian's
+security updates; every Compose file builds its Orthanc from it); build the release images with `--pull --no-cache`,
+so a cached package-install layer cannot keep packages older than what was checked. A built image's ID in the run is
+the runner's build, not the release's: record the release build's own image IDs. The images the stack runs by name
+(PostgreSQL, Keycloak) are checked as their registry serves
 them on the run's day: compare each digest in the run's "Image" column with the image the running container uses,
 `docker image inspect --format '{{index .RepoDigests 0}}' "$(docker inspect --format '{{.Image}}' <container>)"`,
 and record a difference - a newer local copy of the tag does not change a container that is still running the old
@@ -908,7 +911,8 @@ looked at.
 3. Take B, rehearse its restore, hold the set and preserve the exact running image IDs under hold tags.
    Include the migration image. Confirm B's manifest has `resumed_services: []`: calling
    `ops_backup.py` with writers already stopped prevents its finally block from restarting them.
-4. Load the candidate archive; verify image revision labels. The load moves the project's image names to the
+4. Load the candidate archive - the built images: API, migration, proxy and Orthanc (an earlier release that ran
+   `orthancteam/orthanc:24.12.0` by tag keeps that image under its hold tag) - and verify image revision labels. The load moves the project's image names to the
    candidate's images: its intent and what those names were before are recorded first, and it is not taken
    back - the previous release's images stay under their hold tags, and the running containers are not
    affected (they run by image ID; do not recreate them from the previous directory in between). **Prepare the candidate beside the live
@@ -1204,18 +1208,22 @@ own steps, and a CLI runs only while the session does not hold it.
    variables (no site credential leaves the site):
 
    ```bash
-   docker compose -p pacs-starter-kit -f docker-compose.yml -f docker-compose.prod.yml build api api-migrate proxy
-   docker save -o kin-n-images.tar pacs-starter-kit-api pacs-starter-kit-api-migrate pacs-starter-kit-proxy
+   docker compose -p pacs-starter-kit -f docker-compose.yml -f docker-compose.prod.yml build --pull --no-cache api api-migrate proxy orthanc
+   docker save -o kin-n-images.tar pacs-starter-kit-api pacs-starter-kit-api-migrate pacs-starter-kit-proxy pacs-starter-kit-orthanc
+   docker image inspect --format '{{.Id}}' pacs-starter-kit-orthanc
    sha256sum kin-n-images.tar
    ```
 
-   Copy the file to the host outside the checkout and the backup root, and
-   compare its sha256 there.
+   N builds its Orthanc (`gateway/orthanc/Dockerfile`: a86ecf1's
+   `orthancteam/orthanc:24.12.0` with Debian's security updates), so it is in the
+   file; record its image ID for U4. Copy the file to the host outside the
+   checkout and the backup root, and compare its sha256 there.
 3. **Check the nightly helper and the space.**
    `~/.local/bin/kin-pacs-reviewed-backup --check` must print
    `pins ok c7ef074`. The newest daily set must be `complete: true`. Free space:
    at least two daily sets (B and N's set) plus the image file and the loaded
-   images, about 3 GB on 2026-10-31.
+   images, about 3 GB on 2026-10-31 before N's file held Orthanc; measure again
+   with this file's size.
 4. Schedule the window so that it does not cover the nightly job's 20:00 UTC
    start. During a locked step the job fails on the lock (`O_EXCL`) and writes
    nothing.
@@ -1365,7 +1373,9 @@ no `retain()`: keep the lock with `lease.retained = True`, release it with
              for service in ('api', 'api-migrate'))   # the proxy image carries no revision label
   ```
 
-  The load moves the three project tags to N; B's images keep their hold tags.
+  The load moves the three project tags to N and adds `pacs-starter-kit-orthanc`;
+  B's images keep their hold tags, and B's `orthancteam/orthanc:24.12.0` stays
+  for a rollback.
 - **U4. Upgrade.** Set `KIN_REVISION=<N>` in `.env`, then:
 
   ```python
@@ -1376,6 +1386,7 @@ no `retain()`: keep the lock with `lease.retained = True`, release it with
   ops.run(compose + ['up', '-d', '--no-build', '--pull', 'never'], timeout=install_timeout)
   ready()
   assert ops.text(['docker', 'inspect', '--format', '{{.State.ExitCode}}', 'kin-api-migrate']) == '0'
+  assert ops.text(['docker', 'inspect', '--format', '{{.Image}}', 'kin-orthanc']) == '<Orthanc image ID from step 2>'
   ```
 
   `api-migrate` applies N's 21 migrations to the 46 of a86ecf1. Then check:

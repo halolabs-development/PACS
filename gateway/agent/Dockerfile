@@ -3,6 +3,12 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# zlib's security update, which the base image does not have yet. Over HTTPS, as everything else these hosts fetch.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --only-upgrade -y zlib1g \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
