@@ -164,7 +164,7 @@
     function updateReportTemplateButton() {
       const why = reportTemplateBlock();
       $("#b-report-template").disabled = !!why;
-      kinWrite($("#b-report-template"), kinSayEn(why ?? "현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
+      kinWrite($("#b-report-template"), why ? reportBlockSaid(why) : kinSayEn("현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
       if (templateEditor?.source && templateEditor.source.uid !== selectedUid) closeTemplateEditor(false);
       updateTemplateEditor();
     }
@@ -177,9 +177,9 @@
       $("#tpl-cancel").disabled = session.pending;
       $("#tpl-save").disabled = session.pending || !!why;
       kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
-      kinWrite($("#tpl-save"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? "", "title");
+      kinWrite($("#tpl-save"), why ? reportBlockSaid(why) : "", "title");
       if (session.source) kinWrite($("#tpl-source"), kinSayEn("{0}\n{1}", session.source.label,
-        why != null ? kinSayEn(why) : kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
+        why ? reportBlockSaid(why) : kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
     }
     function closeTemplateEditor(returnFocus = true) {
       const session = templateEditor;

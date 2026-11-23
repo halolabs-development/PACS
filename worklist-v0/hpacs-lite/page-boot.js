@@ -286,6 +286,8 @@
     (() => {
       const user = document.getElementById("user"), roles = document.getElementById("roles");
       const who = document.getElementById("session-who"), details = document.getElementById("session-details");
+      // The role names in this cell are data (translate="no"); its title is a product word, so it is written on the language path.
+      kinWrite(document.getElementById("session-details-roles"), kinSayEn("Keycloak 렐름 롤"), "title");
       const sync = () => {
         document.getElementById("session-details-user").textContent = user.textContent;
         document.getElementById("session-details-roles").textContent = roles.textContent;

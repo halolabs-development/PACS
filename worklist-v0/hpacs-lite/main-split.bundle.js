@@ -458,14 +458,17 @@
      * 스크립트가 판독문 칸에 글을 넣어도 되는가. 상용구 삽입과 소견 인용이 **같은 관문
      * 하나**를 쓴다 — 둘이 각자 검사를 들고 있으면 언젠가 한쪽만 고쳐진다.
      */
-    function reportEditorBlock(admission = null) {
-      // The editor head, a toast or a title says it: the reason as a sentence of the screen. The lock on a report another
-      // physician saved or holds names that physician, so it is that sentence (reportLockSay); any other reason is a whole
-      // product sentence.
-      const why = reportWriteBlock(admission);
-      if (why) return appState[selectedUid]?.prelimHidden && typeof reportLockSay === "function" && typeof reportLockText === "function"
+    // The editor head, a toast or a title says a write block as a sentence of the screen. The lock on a report another
+    // physician saved or holds names that physician, so it is that sentence (reportLockSay); any other reason is a whole
+    // product sentence.
+    function reportBlockSaid(why) {
+      return appState[selectedUid]?.prelimHidden && typeof reportLockSay === "function" && typeof reportLockText === "function"
         && why === reportLockText(appState[selectedUid]) ? reportLockSay(appState[selectedUid])
         : (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why);
+    }
+    function reportEditorBlock(admission = null) {
+      const why = reportWriteBlock(admission);
+      if (why) return reportBlockSaid(why);
       // value 대입은 촬영 중/타인 점유의 readOnly도 우회한다. 타이핑과 같은 관문을 거친다.
       // C-R01-109#2: a field locked because the study is not verified yet says so (loadReport and updateReportButtons set the reason).
       const lockedField = RFIELDS.map(k => $("#" + k)).find(field => field.readOnly);
@@ -769,7 +772,7 @@
     function updateReportTemplateButton() {
       const why = reportTemplateBlock();
       $("#b-report-template").disabled = !!why;
-      kinWrite($("#b-report-template"), kinSayEn(why ?? "현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
+      kinWrite($("#b-report-template"), why ? reportBlockSaid(why) : kinSayEn("현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
       if (templateEditor?.source && templateEditor.source.uid !== selectedUid) closeTemplateEditor(false);
       updateTemplateEditor();
     }
@@ -782,9 +785,9 @@
       $("#tpl-cancel").disabled = session.pending;
       $("#tpl-save").disabled = session.pending || !!why;
       kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
-      kinWrite($("#tpl-save"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? "", "title");
+      kinWrite($("#tpl-save"), why ? reportBlockSaid(why) : "", "title");
       if (session.source) kinWrite($("#tpl-source"), kinSayEn("{0}\n{1}", session.source.label,
-        why != null ? kinSayEn(why) : kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
+        why ? reportBlockSaid(why) : kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
     }
     function closeTemplateEditor(returnFocus = true) {
       const session = templateEditor;
@@ -17662,6 +17665,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     (() => {
       const user = document.getElementById("user"), roles = document.getElementById("roles");
       const who = document.getElementById("session-who"), details = document.getElementById("session-details");
+      // The role names in this cell are data (translate="no"); its title is a product word, so it is written on the language path.
+      kinWrite(document.getElementById("session-details-roles"), kinSayEn("Keycloak 렐름 롤"), "title");
       const sync = () => {
         document.getElementById("session-details-user").textContent = user.textContent;
         document.getElementById("session-details-roles").textContent = roles.textContent;

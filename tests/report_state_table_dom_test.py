@@ -209,6 +209,27 @@ class ReportStateTablePage(unittest.TestCase):
         expect(defer).to_have_attribute("title", f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다")
         self.assertEqual(korean, (why.text_content(), why.get_attribute("title"), hold.text_content()))
 
+    def test_save_as_template_title_says_the_lock_in_the_chosen_language(self):
+        # The title takes the report's lock reason with the writer's name as data; the account panel's role title is a word too.
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        template, roles = self.page.locator("#b-report-template"), self.page.locator("#session-details-roles")
+        korean = f"{WRITER} 님이 Save해 둔 진행 중 판독입니다 — 그 판독의만 보고 이어 쓸 수 있습니다"
+        expect(template).to_have_attribute("title", korean)
+        expect(roles).to_have_attribute("title", "Keycloak 렐름 롤")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(template).to_have_attribute("title", f"In progress, saved by {WRITER} — only that radiologist can read and continue it")
+        expect(roles).to_have_attribute("title", "Keycloak realm roles")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(template).to_have_attribute("title", korean)
+        expect(roles).to_have_attribute("title", "Keycloak 렐름 롤")
+        # A study another radiologist holds: the same control says that lock.
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the held study opens")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(template).to_have_attribute("title", "The current report can't be edited")
+
     def test_a_held_report_names_its_holder_in_the_language_chosen_after_it_is_drawn(self):
         # Another radiologist holds the study (typing): Save, Approve and Prelim say who, and the hold bar says so too.
         self.open()

@@ -5245,6 +5245,7 @@ window.KinLanguageTerms = {
     ["영상을 저장하고 내주는 Orthanc 서버입니다.", "The Orthanc server that stores and serves images.", "m"],
     ["검사·판독·회원 기록을 담는 HALO PACS 데이터베이스입니다.", "The HALO PACS database that holds study, report and member records.", "m"],
     ["로그인과 계정을 맡는 Keycloak 서버입니다.", "The Keycloak server that handles sign-in and accounts.", "m"],
+    ["Keycloak 렐름 롤", "Keycloak realm roles", "l"],
     ["이번 조회에서 이 구성요소가 직접 답했습니다.", "This component answered directly in this query.", "m"],
     ["이번 조회에서 이 구성요소에 연결하지 못했거나 오류로 답했습니다.", "In this query, this component could not be reached or answered with an error.", "m"],
     ["제한 시간 안에 답하지 않았습니다.", "Did not answer within the time limit.", "m"],

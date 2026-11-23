@@ -406,6 +406,23 @@ class AdminAuditDOMTest(unittest.TestCase):
         self.assertIsNone(re.search(r"\d", s["fixed"][0]), "the unattributed-rows sentence carries no count")
         self.assertIsNotNone(self.page.evaluate("() => window.KinAdminAudit ?? null"))
 
+    def test_02b_row_titles_follow_an_english_screen(self):
+        # The titles of a drawn row are product words: English on an English screen (the recorded time stays as it is);
+        # no choice reads them exactly as before.
+        self.open()
+        self.refresh((200, PAGE1))
+        before = self.table()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        self.wait_until(lambda: self.table()[0]["timeTitle"] == "Server time recorded " + at(5), "the time title in English")
+        rows = self.table()
+        not_recorded = "This value was not recorded in this row. It is not filled in by guessing from other values."
+        self.assertEqual(not_recorded, rows[0]["marks"][0][1])
+        self.assertEqual("The recorded value is empty.", rows[2]["marks"][0][1])
+        self.assertEqual([], [mark[1] for row in rows for mark in row["marks"] if has_hangul(mark[1])])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.wait_until(lambda: self.table()[0]["timeTitle"] == before[0]["timeTitle"], "the time title as before")
+        self.assertEqual(before, self.table())
+
     def test_02_rows_in_words_with_not_recorded_and_withheld(self):
         self.open()
         self.refresh((200, PAGE1))

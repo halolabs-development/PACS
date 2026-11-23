@@ -819,7 +819,8 @@
           else setMessage(kinSayEn("비밀번호 변경 메일을 보냈습니다."));
         } catch (error) {
           if (KinConsoleSession.ended() || error.stale || membersDenied) return;
-          setMessage(error.message);
+          // The server's sentence reads in English only when the whole of it is a glossary entry; any other stays as written.
+          setMessage(globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(error.message) : error.message);
         }
       }
 
@@ -2170,7 +2171,7 @@
             ? Object.keys(value).map(field => ({ label: field, text: `${value[field].from} → ${value[field].to}`, state: "value", title: "" }))
             : [valueLine(key, value)])]
           : Object.keys(row.detail).filter(key => key !== "reason").map(key => valueLine(key, row.detail[key]));
-        return { time: format(row.at), timeTitle: `기록한 서버 시각 ${row.at}`, actor: row.actor, action: row.action,
+        return { time: format(row.at), timeTitle: kinSayEn("기록한 서버 시각 {0}", row.at), actor: row.actor, action: row.action,
           target: row.target, previous, reason, detail: detail.length ? detail : [notRecorded(null)] };
       }
 
@@ -2285,7 +2286,7 @@
           const value = document.createElement("span");
           value.className = `aval ${item.state}`;
           value.textContent = item.text;
-          if (item.title) value.title = item.title;
+          if (item.title) kinWrite(value, kinSayEn(item.title), "title");
           line.append(value);
           return line;
         });
@@ -2297,7 +2298,7 @@
         for (const [value, title] of [[shown.time, shown.timeTitle], [shown.actor], [shown.action], [shown.target]]) {
           const cell = document.createElement("td");
           cell.textContent = value;
-          if (title) cell.title = title;
+          if (title) kinWrite(cell, title, "title");
           tr.append(cell);
         }
         for (const lines of [shown.previous, shown.reason, shown.detail]) {

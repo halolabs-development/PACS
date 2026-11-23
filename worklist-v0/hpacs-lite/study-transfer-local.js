@@ -419,7 +419,8 @@ window.KinStudyTransferLocal = function (app) {
   function adoptRefusal(entry, r) {
     entry.state = 'result';
     entry.outcome = 'rejected';
-    entry.message = `${r.code} · ${r.message}`;
+    // The code as is; the server's sentence reads in English only when the whole of it is a glossary entry.
+    entry.message = kinSayEn('{0} · {1}', r.code, phrase(r.message));
     entry.final = true;
     unsent.delete(entry);
     entry.file = null;
