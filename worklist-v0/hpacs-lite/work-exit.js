@@ -641,6 +641,7 @@
     function logoutStatus(prep, text) {
       const line = prep.panel?.querySelector("[role=status]");
       // A line of this panel's own table is said as the page's sentence (a whole sentence the glossary knows reads in English).
+      if (line) kinWrite(line, typeof text === "string" && text ? kinSayEn(text) : text);
     }
 
     /**
