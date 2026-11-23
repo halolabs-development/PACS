@@ -122,7 +122,7 @@
         : action === "addendum" ? "Addendum을 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다"
         : "단추를 누른 뒤 입력한 글은 저장된 판독문에 포함되지 않았습니다";
       if (uid === selectedUid) {
-        toast(`${done}. ${missed} — 그 글은 초안으로 화면에 남아 있습니다.`, "info", 12000);
+        toast(String(kinSayEn("{n0}. {1} — 그 글은 초안으로 화면에 남아 있습니다.", done, missed)), "info", 12000);
         return;
       }
       // 그 검사를 떠나 있다: 그 검사의 표시줄이 보일 때까지 이 안내가 유일한 자리이므로 사라지게 두지 않는다(U5CLI-F13).
@@ -451,8 +451,7 @@
                 latest = replaceReportState(uid, b.states?.[uid]);
               } catch (failure) {
                 if (work.admits(at))
-                  toast("서버의 최신 판독문을 불러오지 못했습니다 — 쓰던 내용은 화면에 그대로 있습니다" +
-                        (failure?.message ? ` (${failure.message})` : ""), "err");
+                  toast(String(kinSayEn("서버의 최신 판독문을 불러오지 못했습니다 — 쓰던 내용은 화면에 그대로 있습니다{0}", failure?.message ? ` (${failure.message})` : "")), "err");
                 return;
               }
               appState[uid] = latest;
@@ -463,11 +462,9 @@
               loadReport({ force: true }); render(); renderRelated(); updateReportButtons();
               // The replacement may itself contain the reader's server draft; name the source shown.
               if (appState[uid]?.draft)
-                toast("서버의 초안을 불러왔습니다 — 화면에 보이는 것은 초안입니다. " +
-                      (appState[uid]?.rs === "A"
-                        ? "Discard Draft로 서버 내용을 보거나, Addendum을 눌러 승인본을 확인하고 기준을 다시 잡으세요."
-                        : "Discard Draft를 누르면 서버 내용으로 돌아갑니다.") +
-                      " 쓰던 내용은 클립보드에 있습니다.", "info");
+                toast(String(kinSayEn("서버의 초안을 불러왔습니다 — 화면에 보이는 것은 초안입니다. {t0} 쓰던 내용은 클립보드에 있습니다.", appState[uid]?.rs === "A"
+                        ? kinSayEn("Discard Draft로 서버 내용을 보거나, Addendum을 눌러 승인본을 확인하고 기준을 다시 잡으세요.")
+                        : kinSayEn("Discard Draft를 누르면 서버 내용으로 돌아갑니다."))), "info");
               else
                 toast("서버 판독문을 불러왔습니다. 쓰던 내용은 클립보드에 있습니다.", "info");
             }
@@ -476,7 +473,7 @@
           // 문맥이 무효가 된 뒤의 실패(이어진 읽기의 취소 등)는 알릴 실패가 아니다.
           // 서명키가 없어 거절된 승인은 판독의가 풀 수 없다: 서버가 말한 까닭을 읽고 관리자에게 전할 만큼 오래 보인다.
           const words = refusalWords(e, action);
-          if (work.admits(at)) toast(words ? kinSay("저장 실패: {e0}", words) : "저장 실패: " + e.message, "err",
+          if (work.admits(at)) toast(String(words ? kinSay("저장 실패: {e0}", words) : kinSayEn("저장 실패: {e0}", e.message)), "err",
             e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
           return;
         } finally {
@@ -825,8 +822,8 @@
           .then(checked => { if (checked.outcome === "conflict") work.commit(at, () => openDraftConflict(uid)); });
         render(); renderRelated(); updateReportButtons();
         if (uid === selectedUid)
-          toast(sent.action === "approve" ? "Batch Approve의 승인이 확인됐습니다 (RS: A) — 판독문을 확인한 뒤 다시 누르세요"
-            : "Batch Reading의 저장이 확인됐습니다 (RS: T) — 판독문을 확인한 뒤 다시 누르세요", "info");
+          toast(String(sent.action === "approve" ? kinSayEn("Batch Approve의 승인이 확인됐습니다 (RS: A) — 판독문을 확인한 뒤 다시 누르세요")
+            : kinSayEn("Batch Reading의 저장이 확인됐습니다 (RS: T) — 판독문을 확인한 뒤 다시 누르세요")), "info");
       });
       return learned;
     }
@@ -859,7 +856,7 @@
       const at = work.capture("study");
       let peers;
       try { peers = await api("GET", "/colleagues", undefined, undefined, at); }
-      catch (e) { work.commit(at, () => toast("판독의 목록을 불러오지 못했습니다: " + e.message, "err")); return; }
+      catch (e) { work.commit(at, () => toast(String(kinSayEn("판독의 목록을 불러오지 못했습니다: {e0}", e.message)), "err")); return; }
       if (!work.admits(at)) return;
       if (!peers.length) { alert("이 기관에 지정할 다른 판독의가 없습니다."); return; }
 
@@ -896,7 +893,7 @@
     function askReason({ title, choices, optional = false }) {
       if (reasonResolve) reasonResolve(null);
       const modal = $("#reasonmodal"), extra = $("#reason-extra"), ok = $("#reason-ok");
-      $("#reason-title").textContent = title;
+      kinWrite($("#reason-title"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(title));
       $("#reason-choices").innerHTML = choices.map(choice =>
         `<label style="display:block"><input type="radio" name="reason-choice" value="${esc(choice)}"> ${esc(choice)}</label>`).join("");
       extra.value = "";

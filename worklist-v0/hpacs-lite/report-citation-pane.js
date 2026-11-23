@@ -203,9 +203,9 @@
     function citationInsertBlock() {
       const why = reportEditorBlock();
       if (why) return why;
-      if (!serverMode || demoMode) return "서버에 연결돼 있을 때만 인용할 수 있습니다";
-      if (offline) return "서버 연결이 끊겨 인용할 수 없습니다 — 연결된 뒤 다시 시도하세요";
-      if (commitInFlight) return "판독문 확정이 끝난 뒤 다시 시도하세요";
+      if (!serverMode || demoMode) return kinSayEn("서버에 연결돼 있을 때만 인용할 수 있습니다");
+      if (offline) return kinSayEn("서버 연결이 끊겨 인용할 수 없습니다 — 연결된 뒤 다시 시도하세요");
+      if (commitInFlight) return kinSayEn("판독문 확정이 끝난 뒤 다시 시도하세요");
       /**
        * **낡은 초안(behind)에서는 인용하지 않는다** (§6 마지막 항목).
        *
@@ -214,7 +214,7 @@
        * 나란히 보고 그 판 번호로 기준을 다시 잡은 뒤에 인용한다.
        */
       if (reportDraftBehind(appState[selectedUid] ?? {}))
-        return "이 초안은 더 낡은 승인본을 기준으로 씁니다 — Addendum을 눌러 승인본을 확인하고 기준을 다시 잡은 뒤 인용하세요";
+        return kinSayEn("이 초안은 더 낡은 승인본을 기준으로 씁니다 — Addendum을 눌러 승인본을 확인하고 기준을 다시 잡은 뒤 인용하세요");
       return null;
     }
 
@@ -307,7 +307,7 @@
       // 여기서 계획을 **다시 세우지 않는다.** 이 함수는 누름 자체에서도 여러 번 불리므로,
       // 여기서 갱신하면 열고 나서 바뀐 것을 조용히 흡수해 "확인한 자리"가 사라진다.
       kinWrite($("#cite-preview-place"), placementLine($("#cite-preview-field").value, citePane.plan));
-      kinWrite($("#cite-preview-status"), why ?? citePane.status ??
+      kinWrite($("#cite-preview-status"), why ?? (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(citePane.status) ??
         kinSay("확인을 누르면 서버가 이 문장과 증언을 함께 기록한 뒤 {0} 칸에 붙입니다. 기존 내용은 한 글자도 지우지 않고 위 위치에 줄 단위로 넣습니다.",
           KinReportCitation.FIELD_LABEL[$("#cite-preview-field").value]));
       $("#cite-preview-insert").disabled = !!why || citeBusy || m.state === "loading";
@@ -665,8 +665,8 @@
         }
         closeCitePreview();
         renderDraftBar();
-        toast(pane.many ? kinSay("판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", pane.items.length)
-          : "판독문에 넣었습니다 — 같은 저장에 출처 증언이 함께 기록됐습니다", "ok");
+        toast(String(pane.many ? kinSay("판독문에 소견 {n0}건을 넣었습니다 — 같은 저장에 소견마다 출처 증언이 함께 기록됐습니다", pane.items.length)
+          : kinSayEn("판독문에 넣었습니다 — 같은 저장에 출처 증언이 함께 기록됐습니다")), "ok");
       } finally {
         // 이 삽입이 잠근 창의 단추는 이 삽입이 푼다(자기 것만). 창을 다시 그리는 것은 문맥이 그대로일 때만 한다.
         setCiteBusy(false);

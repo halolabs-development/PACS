@@ -317,12 +317,12 @@
    */
   const GATEWAY_STATUS=Object.freeze({
     received:Object.freeze({text:'Report Received',
-      title:'HALO PACS가 이 검사의 Gateway 전송 보고를 받았습니다. 보고 시점에 Gateway가 자기 큐에서 센 수이며 영상 수신이나 전송 종료를 뜻하지 않습니다.'}),
-    retry_requested:Object.freeze({text:'Retry Requested',title:RETRY_TEXT.requestedTitle}),
+      title:kinSayEn('HALO PACS가 이 검사의 Gateway 전송 보고를 받았습니다. 보고 시점에 Gateway가 자기 큐에서 센 수이며 영상 수신이나 전송 종료를 뜻하지 않습니다.')}),
+    retry_requested:Object.freeze({text:'Retry Requested',title:kinSayEn(RETRY_TEXT.requestedTitle)}),
     failed:Object.freeze({text:'Transfer Failed',
-      title:'Gateway가 이 검사의 전송 실패를 보고했습니다. 마지막 보고 기준이며 그 뒤의 결과는 다음 보고로만 알 수 있습니다.'}),
-    unknown:Object.freeze({text:'Unknown',title:'Gateway 보고 형식을 해석하지 못해 상태를 알 수 없습니다. 실패나 정상으로 세지 않습니다.'}),
-    query_failed:Object.freeze({text:'Query Failed',title:'검사 목록 조회가 실패했습니다. 보이는 목록과 상태는 마지막으로 성공한 조회 기준입니다.'})});
+      title:kinSayEn('Gateway가 이 검사의 전송 실패를 보고했습니다. 마지막 보고 기준이며 그 뒤의 결과는 다음 보고로만 알 수 있습니다.')}),
+    unknown:Object.freeze({text:'Unknown',title:kinSayEn('Gateway 보고 형식을 해석하지 못해 상태를 알 수 없습니다. 실패나 정상으로 세지 않습니다.')}),
+    query_failed:Object.freeze({text:'Query Failed',title:kinSayEn('검사 목록 조회가 실패했습니다. 보이는 목록과 상태는 마지막으로 성공한 조회 기준입니다.')})});
   const GATEWAY_STATUS_ORDER=Object.freeze(['failed','retry_requested','unknown','received']);
   // A closed server set (gateway-receipt.ts); anything else is not echoed, whatever it says.
   const ERROR_CODE=/^[a-z_]{1,40}$/;
@@ -332,7 +332,7 @@
   function gatewayStatus(receipt,requestedKey=null,format=localTime){
     const pick=(key,detail,reason,retry)=>({key,text:GATEWAY_STATUS[key].text,title:GATEWAY_STATUS[key].title,detail,reason,retry});
     if(!readableReceipt(receipt))return pick('unknown','Gateway 보고 형식을 확인할 수 없습니다','',null);
-    const detail='Gateway 보고('+format(receipt.serverReceivedAt)+'): Gateway가 집계한 '+receipt.localCount+'건 중 '+receipt.successCount+'건 전송';
+    const detail=kinSayEn('Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송',format(receipt.serverReceivedAt),receipt.localCount,receipt.successCount);
     const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?['오류 코드 '+receipt.errorCode]:[];
     const retry=gatewayRetryAction(receipt);
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.

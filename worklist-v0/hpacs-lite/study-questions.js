@@ -1189,4 +1189,4 @@
         // The one connection rule (page-core.js), the same the Mark CVR window uses: Reply, Close and Retry wait for it.
         online: serverReachable,
         owner: () => { const s = KinAuth.session(); return s?.state === 'approved' ? [s.institution ?? null, s.sub ?? null] : null; } });
-    } catch (_) { toast(kinSayEn('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.'), 'err'); }
+    } catch (_) { toast(String(kinSayEn('임상의 질문 줄을 준비하지 못했습니다. 판독 작업은 계속할 수 있습니다.')), 'err'); }

@@ -114,8 +114,8 @@
           cells = batch.map((rep, index) => {
             const cell = document.createElement("div");
             cell.className = "thumb-card";
-            const heading = `항목 ${start + index + 1} · ${rep.number ? `번호 ${rep.number}` : "번호 없음"}`;
-            const description = rep.description || "설명 없음";
+            const heading = kinSayEn("항목 {0} · {1}", start + index + 1, rep.number ? kinSayEn("번호 {n0}", rep.number) : kinSayEn("번호 없음"));
+            const description = rep.description || kinSayEn("설명 없음");
             kinWrite(cell, kinSayEn("{0}\n{1}\nSeries UID: {2}\n더블클릭: Film Box", heading, description, rep.seriesUid || kinSayEn("없음")), "title");
             const preview = document.createElement("div");
             preview.className = "thumb-preview";
@@ -123,13 +123,13 @@
             const label = document.createElement("div");
             label.className = "thumb-label";
             const number = document.createElement("div"), detail = document.createElement("div");
-            number.className = "thumb-number"; number.textContent = heading;
-            detail.className = "thumb-description"; detail.textContent = description; detail.translate = false;
+            number.className = "thumb-number"; kinWrite(number, heading);
+            detail.className = "thumb-description"; kinWrite(detail, description); detail.translate = false;
             label.append(number, detail);
             // title과 생략 표시만으로는 키보드나 터치에서 전체 식별 정보를 읽을 수 없다.
             const disclosure = document.createElement("details"), summary = document.createElement("summary"), full = document.createElement("div");
             disclosure.className = "thumb-details"; kinWrite(summary, kinSayEn("상세 정보"));
-            full.className = "thumb-full"; full.textContent = `${heading}\n${description}\nSeries UID: ${rep.seriesUid || "없음"}`;
+            full.className = "thumb-full"; kinWrite(full, kinSayEn("{0}\n{1}\nSeries UID: {2}", heading, description, rep.seriesUid || kinSayEn("없음")));
             disclosure.append(summary, full);
             const seriesKey = rep.sourceUid + ":" + rep.seriesUid;
             disclosure.open = opened.series.has(seriesKey);

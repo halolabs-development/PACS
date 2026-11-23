@@ -20,7 +20,7 @@ window.KinFavorites = function (app) {
   const names=new Map();let draftOwner=null,newName='';
   $('name').oninput=()=>{if(selected)names.set(selected,$('name').value);};
   $('new-name').oninput=()=>{newName=$('new-name').value;};
-  const label=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):'현재 불러온 목록에 없는 검사 · '+uid;};
+  const label=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):kinSayEn("현재 불러온 목록에 없는 검사 · {0}", uid);};
   function controls(){
     d.querySelectorAll('button,input,select').forEach(el=>el.disabled=busy||!!pending);
     $('retry').hidden=!pending;$('retry').disabled=busy;
@@ -38,43 +38,43 @@ window.KinFavorites = function (app) {
       throw new Error('즐겨찾기 계정·목록 형식을 확인할 수 없습니다');
     state=value;app.changed?.(value);
   }
-  function button(text,action,parent){const b=document.createElement('button');b.type='button';b.textContent=text;b.onclick=action;parent.append(b);return b;}
+  function button(text,action,parent){const b=document.createElement('button');b.type='button';kinWrite(b, text);b.onclick=action;parent.append(b);return b;}
   function draw(preserve=false){
     const previous=selected;
     if(!folder())selected=state?.folders[0]?.id??null;
     $('folders').replaceChildren();
-    for(const f of state?.folders??[]){const b=button(f.name+' · '+f.uids.length+'건',()=>{selected=f.id;draw();},$('folders'));b.dataset.folderId=f.id;b.setAttribute('aria-pressed',String(f.id===selected));}
+    for(const f of state?.folders??[]){const b=button(kinSayEn("{0} · {n1}건", f.name, f.uids.length),()=>{selected=f.id;draw();},$('folders'));b.dataset.folderId=f.id;b.setAttribute('aria-pressed',String(f.id===selected));}
     const f=folder();if(!preserve||previous!==selected)$('name').value=names.get(selected)??f?.name??'';
     $('links').replaceChildren();kinWrite($('count'), f ? kinSayEn("접근 가능한 링크 {n0}건{1}", f.uids.length, (f.unavailable?` · 접근 불가 ${f.unavailable}건`:'')) : kinSayEn("폴더를 만들거나 선택하세요."));
     for(const uid of f?.uids??[]){const row=document.createElement('div');row.className='favorite-link';row.dataset.uid=uid;
-      const text=document.createElement('span');text.textContent=label(uid);text.translate=false;row.append(text);
-      button('검사 선택',()=>choose(uid),row);button('보기 상태 연결',()=>editView(uid),row);if(f.views?.[uid]){button('저장 보기 열기',()=>openView(uid),row);button('보기 연결 해제',()=>command('view',{uid,jobId:null}),row);}button('링크 제거',()=>command('remove',{uid}),row);$('links').append(row);}
+      const text=document.createElement('span');kinWrite(text, label(uid));text.translate=false;row.append(text);
+      button(kinSayEn("검사 선택"),()=>choose(uid),row);button(kinSayEn("보기 상태 연결"),()=>editView(uid),row);if(f.views?.[uid]){button(kinSayEn("저장 보기 열기"),()=>openView(uid),row);button(kinSayEn("보기 연결 해제"),()=>command('view',{uid,jobId:null}),row);}button(kinSayEn("링크 제거"),()=>command('remove',{uid}),row);$('links').append(row);}
     kinWrite($('current'), current ? kinSayEn("추가할 선택 검사 · {0}", label(current)) : kinSayEn("목록에서 검사를 선택하면 폴더에 추가할 수 있습니다."));controls();
   }
   async function request(method,body,path='/favorite-folders',at){const local=abort=new AbortController(),timer=setTimeout(()=>local.abort(),12000);try{return await app.api(method,path,body,local.signal,at);}finally{clearTimeout(timer);if(abort===local)abort=null;}}
   async function load(){
     const at=work.capture('document');
-    if(busy||!same())return;const unresolved=pending;const ticket=++seq;busy=true;controls();message('즐겨찾기를 읽는 중…');
+    if(busy||!same())return;const unresolved=pending;const ticket=++seq;busy=true;controls();message(kinSayEn("즐겨찾기를 읽는 중…"));
     try{const value=await request('GET',undefined,undefined,at);
-      work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=unresolved&&value.revision===unresolved.revision?unresolved:null;draw(true);message(pending?'요청이 아직 반영되지 않았습니다. 같은 요청을 다시 시도할 수 있습니다.':unresolved?'최신 목록을 읽었습니다. 이전 요청은 재시도 대기에서 해제했습니다. 반영 결과를 확인하세요.':'계정의 최신 즐겨찾기입니다.');});}
-    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){message('조회 실패: '+e.message);}});}
+      work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=unresolved&&value.revision===unresolved.revision?unresolved:null;draw(true);message(pending?kinSayEn("요청이 아직 반영되지 않았습니다. 같은 요청을 다시 시도할 수 있습니다."):unresolved?kinSayEn("최신 목록을 읽었습니다. 이전 요청은 재시도 대기에서 해제했습니다. 반영 결과를 확인하세요."):kinSayEn("계정의 최신 즐겨찾기입니다."));});}
+    catch(e){work.commit(at,()=>{if(ticket===seq&&same()){message(kinSayEn("조회 실패: {e0}", e.message));}});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   async function command(action,extra={}){
     const at=work.capture('document');
     if(busy||pending||!same()||!state)return;
-    if(action==='add'&&current!==app.current()){current=app.current();draw(true);message('선택 검사가 바뀌었습니다. 추가할 검사를 확인하고 다시 누르세요.');return;}
+    if(action==='add'&&current!==app.current()){current=app.current();draw(true);message(kinSayEn("선택 검사가 바뀌었습니다. 추가할 검사를 확인하고 다시 누르세요."));return;}
     pending={expectedOwner:owner,revision:state.revision,requestId:crypto.randomUUID(),folderId:action==='create'?crypto.randomUUID():selected,action,...extra};
     await send();
   }
   async function send(){
     const at=work.capture('document');
-    if(busy||!pending||!same())return;const ticket=++seq,body=pending;busy=true;controls();message('변경을 저장하는 중…');
+    if(busy||!pending||!same())return;const ticket=++seq,body=pending;busy=true;controls();message(kinSayEn("변경을 저장하는 중…"));
     try{const value=await request('POST',body,undefined,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);pending=null;
       if(body.action==='view'){viewUid=null;$('view-editor').hidden=true;$('view-choice').replaceChildren();}
       if(['rename','delete'].includes(body.action))names.delete(body.folderId);
-      if(body.action==='create'){selected=body.folderId;newName='';$('new-name').value='';}draw();message('저장되었습니다.');});}
+      if(body.action==='create'){selected=body.folderId;newName='';$('new-name').value='';}draw();message(kinSayEn("저장되었습니다."));});}
     catch(e){work.commit(at,()=>{if(ticket===seq&&same()){
 
       if([400,403,404,409].includes(e.status))pending=null;
@@ -85,7 +85,7 @@ message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e
   async function editView(uid){
     const at=work.capture('document');
     if(busy||pending||!same())return;
-    const ticket=++seq,wanted=selected;busy=true;controls();message('저장 보기 목록을 확인하는 중…');
+    const ticket=++seq,wanted=selected;busy=true;controls();message(kinSayEn("저장 보기 목록을 확인하는 중…"));
     try{const value=await request('GET',undefined,undefined,at);if(ticket!==seq||!same())return;if(!work.commit(at,()=>adopt(value)))return;
       if(!state.folders.find(f=>f.id===wanted)?.uids.includes(uid))throw new Error('폴더에서 제거된 검사입니다');
       const data=await request('GET',undefined,'/studies/'+encodeURIComponent(uid)+'/viewer-jobs',at);
@@ -93,14 +93,14 @@ message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e
       if(!Array.isArray(data.jobs))throw new Error('저장 보기 목록을 확인할 수 없습니다');
       viewUid=uid;$('view-choice').replaceChildren();
       for(const job of data.jobs){const option=document.createElement('option');option.value=job.id;option.textContent=job.title+' · '+job.id;$('view-choice').append(option);}
-      $('view-editor').hidden=false;message(data.jobs.length?'연결할 저장 보기를 선택하세요.':'이 검사에 저장된 보기 상태가 없습니다. 영상에서 비교 작업을 먼저 저장하세요.');});
-    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('보기 목록 확인 실패: '+e.message);});}
+      $('view-editor').hidden=false;message(data.jobs.length?kinSayEn("연결할 저장 보기를 선택하세요."):kinSayEn("이 검사에 저장된 보기 상태가 없습니다. 영상에서 비교 작업을 먼저 저장하세요."));});
+    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn("보기 목록 확인 실패: {e0}", e.message));});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   async function openView(uid){
     const at=work.capture('document');
     if(busy||pending||!same())return;
-    const ticket=++seq,wanted=selected;busy=true;controls();message('저장 보기의 원본과 접근 권한을 확인하는 중…');
+    const ticket=++seq,wanted=selected;busy=true;controls();message(kinSayEn("저장 보기의 원본과 접근 권한을 확인하는 중…"));
     try{const value=await request('GET',undefined,undefined,at);if(ticket!==seq||!same())return;if(!work.commit(at,()=>adopt(value)))return;
       const f=state.folders.find(f=>f.id===wanted),id=f?.views?.[uid];
       if(!f?.uids.includes(uid)||!id||!app.study(uid))throw new Error('연결된 저장 보기나 현재 검사 목록을 확인할 수 없습니다');
@@ -108,18 +108,18 @@ message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e
       work.commit(at,()=>{if(ticket!==seq||!same())return;
       if(job.id!==id||job.studyUid!==uid)throw new Error('저장 보기의 검사가 일치하지 않습니다');
       busy=false;close(true);app.openSavedView(uid,job);});
-    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('저장 보기를 열지 않았습니다: '+e.message);});}
+    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn("저장 보기를 열지 않았습니다: {e0}", e.message));});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   async function applyFolder(){
     const at=work.capture('document');
     if(busy||pending||!same()||!folder())return;
-    const ticket=++seq,wanted=selected;busy=true;controls();message('폴더를 확인하는 중…');
+    const ticket=++seq,wanted=selected;busy=true;controls();message(kinSayEn("폴더를 확인하는 중…"));
     try{const value=await request('GET',undefined,undefined,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);
-      if(!state.folders.some(f=>f.id===wanted)){draw();message('이 폴더는 삭제되었습니다. 다른 폴더를 선택하세요.');return;}
+      if(!state.folders.some(f=>f.id===wanted)){draw();message(kinSayEn("이 폴더는 삭제되었습니다. 다른 폴더를 선택하세요."));return;}
       app.applyFolder(state,wanted);const focus=opener;busy=false;close(true);if(focus?.isConnected)focus.focus();});
-    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('목록 적용 실패: '+e.message);});}
+    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn("목록 적용 실패: {e0}", e.message));});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   async function choose(uid){
@@ -127,9 +127,9 @@ message(kinSay('저장 확인 실패: {e0}{t1} 입력은 유지했습니다.',{e
     if(busy||pending||!same())return;const ticket=++seq,wanted=selected;busy=true;controls();
     try{const value=await request('GET',undefined,undefined,at);
       work.commit(at,()=>{if(ticket!==seq||!same())return;adopt(value);
-      if(!state.folders.find(f=>f.id===wanted)?.uids.includes(uid)||!app.study(uid)){draw();message('이 검사를 지금 열 수 없습니다. 목록을 새로고침하거나 접근 권한을 확인하세요.');return;}
+      if(!state.folders.find(f=>f.id===wanted)?.uids.includes(uid)||!app.study(uid)){draw();message(kinSayEn("이 검사를 지금 열 수 없습니다. 목록을 새로고침하거나 접근 권한을 확인하세요."));return;}
       busy=false;const focus=opener;close(true);app.select(uid);if(focus?.isConnected)focus.focus();});
-    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message('검사 확인 실패: '+e.message);});}
+    }catch(e){work.commit(at,()=>{if(ticket===seq&&same())message(kinSayEn("검사 확인 실패: {e0}", e.message));});}
     finally{work.commit(at,()=>{if(ticket===seq){busy=false;controls();}});}
   }
   function close(force=false){

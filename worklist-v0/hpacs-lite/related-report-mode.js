@@ -14,6 +14,10 @@
  */
 (function (root) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const SOURCE_FIELDS = Object.freeze(['findings', 'conclusion', 'recommendation']);
   const SECTIONS = Object.freeze(['findings', 'conclusion']);
   const OPTIONAL_FIELDS = Object.freeze(['recommendation']);
@@ -147,7 +151,7 @@
         name.className = 'related-mode-label';
         name.textContent = label;
         text.setAttribute('translate', 'no');
-        text.textContent = value === null || value === undefined || value === '' ? UNKNOWN : String(value);
+        kinWrite(text, value === null || value === undefined || value === '' ? kinSayEn(UNKNOWN) : String(value));
         line.append(name, text);
         nodes.push(line);
       }
@@ -233,13 +237,13 @@
     function insertReason() {
       if (!state) return REASON;
       const { view } = sourceView();
-      if (view.state !== 'ready' || !SOURCE_FIELDS.some(field => view.texts?.[field])) return '넣을 이전 판독문이 표시돼 있지 않습니다.';
+      if (view.state !== 'ready' || !SOURCE_FIELDS.some(field => view.texts?.[field])) return kinSayEn("넣을 이전 판독문이 표시돼 있지 않습니다.");
       return app.insertBlock();
     }
     function renderButtons() {
       const why = confirming ? null : insertReason();
       insertButton.disabled = !!why || !!confirming;
-      insertButton.title = why || '선택한 글(선택이 없으면 판독문 전체)을 확인한 뒤 현재 초안 끝에 넣습니다';
+      kinWrite(insertButton, (typeof why === 'string' && why ? kinSayEn(why) : why) || kinSayEn("선택한 글(선택이 없으면 판독문 전체)을 확인한 뒤 현재 초안 끝에 넣습니다"), "title");
     }
 
     function render() {

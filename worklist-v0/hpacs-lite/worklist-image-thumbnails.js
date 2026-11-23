@@ -1,5 +1,11 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinError = m => globalThis.KinLanguage?.error ? globalThis.KinLanguage.error(m) : m;
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const uid=value=>typeof value==='string'&&value.length<=64&&/^\d+(?:\.\d+)+$/.test(value);
   const orthanc=value=>typeof value==='string'&&/^([0-9a-f]{8}-){4}[0-9a-f]{8}$/.test(value);
   const PAGE_SIZE=12,WORKERS=4,IMAGE_LIMIT=4*1024*1024,PAGE_LIMIT=48*1024*1024;
@@ -95,17 +101,17 @@
       const op={selected,abort,context,valid:()=>gate.admits(context)&&ticket===generation&&!abort.signal.aborted&&sourceIs(selected)};
       const list=ordered(),start=page*PAGE_SIZE,batch=list.slice(start,start+PAGE_SIZE),grid=find('#thumb-images-grid');grid.replaceChildren();
       const cards=batch.map((frame,index)=>cardFor(frame,start+index,op));for(const item of cards)grid.append(item.card);
-      find('#thumb-images-status').textContent=batch.length?'현재 페이지 영상을 확인하는 중…':'표시할 원본 영상이 없습니다.';updatePages();
+      kinWrite(find('#thumb-images-status'), batch.length?kinSayEn("현재 페이지 영상을 확인하는 중…"):kinSayEn("표시할 원본 영상이 없습니다."));updatePages();
       enqueue(async()=>{
         if(!op.valid())return;const account={bytes:0};let next=0,halted=false,completed=0;
-        const timer=setTimeout(()=>{op.timedOut=true;abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){cards.forEach(item=>{item.button.disabled=true;const shown=window.KinLanguage?window.KinLanguage.source(item.preview):item.preview.textContent;if(shown==='Loading…'||shown.startsWith('Not started'))item.preview.textContent='Not loaded · Retry Images';});find('#thumb-images-status').textContent='응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요.';}});},15000);
+        const timer=setTimeout(()=>{op.timedOut=true;abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){cards.forEach(item=>{item.button.disabled=true;const shown=window.KinLanguage?window.KinLanguage.source(item.preview):item.preview.textContent;if(shown==='Loading…'||shown.startsWith('Not started'))kinWrite(item.preview, 'Not loaded · Retry Images');});kinWrite(find('#thumb-images-status'), kinSayEn("응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요."));}});},15000);
         const worker=async()=>{
           while(op.valid()&&!halted&&next<cards.length){
             const item=cards[next++];
             try{await loadCard(item,op,account);if(op.valid())completed++;}
             catch(error){
               if(!op.valid())return;
-              gate.commit(context,()=>{item.preview.textContent=`Unavailable · ${error.message} · Retry Images`;item.button.disabled=true;});
+              gate.commit(context,()=>{kinWrite(item.preview, kinSayEn('Unavailable · {e0} · Retry Images', kinError(String(error?.message ?? ''))));item.button.disabled=true;});
               if(error instanceof TypeError||error.status===401||error.status===403)halted=true;
             }
           }
@@ -114,7 +120,7 @@
           await Promise.allSettled(Array.from({length:Math.min(WORKERS,cards.length)},worker));
           if(!op.valid())return;
           gate.commit(context,()=>{if(halted)cards.slice(next).forEach(item=>{item.preview.textContent='Not loaded · Retry Images';item.button.disabled=true;});
-          find('#thumb-images-status').textContent=halted?'일부 요청이 중단됐습니다. Retry Images로 다시 확인하세요.':`${completed} / ${cards.length} images ready`;});
+          kinWrite(find('#thumb-images-status'), halted?kinSayEn("일부 요청이 중단됐습니다. Retry Images로 다시 확인하세요."):`${completed} / ${cards.length} images ready`);});
         }finally{clearTimeout(timer);if(controller===abort)controller=null;}
       });
     }
@@ -130,19 +136,19 @@
         gate.commit(context,()=>{frames=[];for(const instance of group.instances)for(let frame=0;frame<instance.frames;frame++)frames.push({...instance,frame});
         find('#thumb-images-series').textContent=`${group.label} · Series ${group.uid}`;find('#thumb-images-order').disabled=false;find('#thumb-images-retry').disabled=false;page=0;renderPage();});
       }catch(error){
-        if(!gate.admits(context)||ticket!==generation||!sourceIs(selected))return;gate.commit(context,()=>{find('#thumb-images-status').textContent=abort.signal.aborted?'응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요.':`${error.message} · Retry Images로 다시 확인하세요.`;find('#thumb-images-retry').disabled=false;updatePages();});
+        if(!gate.admits(context)||ticket!==generation||!sourceIs(selected))return;gate.commit(context,()=>{kinWrite(find('#thumb-images-status'), abort.signal.aborted?kinSayEn("응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요."):kinSayEn("{e0} · Retry Images로 다시 확인하세요.", error.message));find('#thumb-images-retry').disabled=false;updatePages();});
       }finally{if(controller===abort)controller=null;}
     }
     function startInventory(){
-      if(gate.state()!=='active'||!current())return;const context=gate.capture('study');cancel();frames=[];page=0;find('#thumb-images-grid').replaceChildren();find('#thumb-images-status').textContent='원본 영상 목록을 불러오는 중…';find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
+      if(gate.state()!=='active'||!current())return;const context=gate.capture('study');cancel();frames=[];page=0;find('#thumb-images-grid').replaceChildren();kinWrite(find('#thumb-images-status'), kinSayEn("원본 영상 목록을 불러오는 중…"));find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
       const ticket=generation,selected=source,abort=controller=new AbortController();
-      enqueue(async()=>{if(!gate.admits(context)||ticket!==generation||!sourceIs(selected))return;const timer=setTimeout(()=>{abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){find('#thumb-images-status').textContent='응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요.';find('#thumb-images-retry').disabled=false;}});},15000);try{await loadInventory(selected,ticket,abort,context);}finally{clearTimeout(timer);}});
+      enqueue(async()=>{if(!gate.admits(context)||ticket!==generation||!sourceIs(selected))return;const timer=setTimeout(()=>{abort.abort();gate.commit(context,()=>{if(ticket===generation&&sourceIs(selected)){kinWrite(find('#thumb-images-status'), kinSayEn("응답 시간이 초과됐습니다. Retry Images로 다시 확인하세요."));find('#thumb-images-retry').disabled=false;}});},15000);try{await loadInventory(selected,ticket,abort,context);}finally{clearTimeout(timer);}});
     }
     function open(value){
       if(!owned()||!host||!value||!uid(value.uid)||value.uid!==options.currentUid()||!uid(value.series))return false;
       const scope=root.KinExamScope.read(value),sourceUid=value.sourceUid||value.uid;
         if(!scope?.sources.some(s=>s.studyUid===sourceUid&&root.KinExamScope.allows(s,value.series)))return false;
-        close();source={...value,sourceUid,scopeStamp:root.KinExamScope.screenStamp(value)};order='ascending';page=0;view=makeView();host.replaceChildren(view);find('#thumb-images-series').textContent=`Series ${value.series}`;find('#thumb-images-status').textContent='원본 영상 목록을 불러오는 중…';find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
+        close();source={...value,sourceUid,scopeStamp:root.KinExamScope.screenStamp(value)};order='ascending';page=0;view=makeView();host.replaceChildren(view);kinWrite(find('#thumb-images-series'), `Series ${value.series}`);kinWrite(find('#thumb-images-status'), kinSayEn("원본 영상 목록을 불러오는 중…"));find('#thumb-images-order').disabled=true;find('#thumb-images-retry').disabled=true;updatePages();
       startInventory();return true;
     }
     gate.onInvalidate(event=>{

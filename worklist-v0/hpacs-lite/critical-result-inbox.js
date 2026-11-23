@@ -73,6 +73,9 @@
  */
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
   const kinSay = globalThis.KinLanguage?.say || ((phrase, ...parts) =>
     phrase.replace(/\{[ten]?(\d+)\}/g, (slot, i) => parts[i] ?? slot));
   const kinWrite = globalThis.KinLanguage?.write || ((node, value, name) => {
@@ -123,7 +126,7 @@
     offline: '서버 연결이 끊겼습니다. 표시된 받은 중요 결과는 최신이 아닐 수 있습니다.',
     emptyPending: '확인 대기 중인 받은 중요 결과가 없습니다. 목록 조회는 성공했습니다.',
     emptyAll: '받은 중요 결과가 없습니다. 목록 조회는 성공했습니다.',
-    ready: (n, more) => `받은 중요 결과 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
+    ready: (n, more) => kinSayEn('받은 중요 결과 {n0}건을 최신순으로 표시합니다.{t1}', n, more ? kinSayEn(' More로 이어서 읽습니다.') : ''),
     badge: 'Pending ACK는 아직 수신 확인하지 않은 받은 중요 결과의 수이며 서버가 센 값입니다. 열어보았는지는 기록하지 않습니다.',
     badgeFailed: '받은 중요 결과를 불러오지 못해 확인 대기 수를 모릅니다.',
     locked: '로그인한 계정이 바뀌었습니다. 이 화면에서는 중요 결과를 더 읽거나 확인하지 않습니다. 화면을 다시 불러오세요.',
@@ -336,7 +339,7 @@
       return element;
     };
     // 같은 글자를 다시 쓰지 않는다: 주기 읽기마다 상태 줄이 바뀐 것처럼 읽히지 않게.
-    const setText = (element, value) => { if (element.textContent !== value) kinWrite(element, value); };
+    const setText = (element, value) => { if (element.textContent !== value) kinWrite(element, typeof value === 'string' && value ? kinSayEn(value) : value); };
     const setTitle = (element, value) => { if (element.title !== value) kinWrite(element, value, "title"); };
     const statusText = make('p', 'cvr-inbox-status-text'), statusDetail = make('p', 'cvr-inbox-status-detail');
     statusBox.replaceChildren(statusText, statusDetail);
@@ -1111,7 +1114,7 @@
       if (model.ack !== 'off') {
         const ack = button(kinSay('Acknowledge'), () => acknowledge(model.key), kinSay(TEXT.ackTitle));
         ack.disabled = model.ack === 'busy';
-        writeControls.set(ack, { disabled: ack.disabled, title: TEXT.ackTitle });
+        writeControls.set(ack, { disabled: ack.disabled, title: kinSayEn(TEXT.ackTitle) });
         ack.setAttribute('aria-describedby', modeNote.id);
         actions.push(ack);
       }

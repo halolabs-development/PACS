@@ -789,7 +789,7 @@
         line.append(value, relation);
         return line;
       }));
-      $("#study-identity-guidance").textContent = view.guidance;
+      kinWrite($("#study-identity-guidance"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(view.guidance));
     }
     /**
      * 표시줄이 안내하는 확정 단추는 **지금 눌리는 것뿐이다.** 승인된 판독문에서 Save·Approve는 잠겨 있는데 "확정하려면 Save
@@ -824,7 +824,7 @@
       const filming = s?.ss === "Unverified" && s?.em !== "E";
       const filmingTitle = "촬영 중(미확인) 검사입니다 — 기사 확인(Verify) 뒤 판독할 수 있습니다";
       const held = heldByOther(s);
-      const heldTitle = `${writerName(s?.holderName, held)} 님이 판독 중입니다`;
+      const heldTitle = kinSayEn("{0} 님이 판독 중입니다", writerName(s?.holderName, held));
       // The report state table (report-visibility.ts): another physician's Save is theirs - the same bar says who is on it.
       // Fixtures that load this block without page-core.js keep the Preliminary words.
       const lockText = typeof reportLockText === "function" ? reportLockText(appState[selectedUid]) : appState[selectedUid]?.prelimHidden ? "다른 판독의의 예비 판독(RS: P)입니다" : "";
@@ -833,11 +833,11 @@
       const inProgress = appState[selectedUid]?.bodyLock === "in-progress";
       $("#holdbar").style.display = held || inProgress ? "flex" : "none";
       // A hold over another physician's Save does not end with the hold: the bar says the Save's words either way.
-      $("#holdmsg").textContent = inProgress
-        ? `✎ ${lockText}` + (rad ? ". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다)." : "")
+      kinWrite($("#holdmsg"), inProgress
+        ? kinSayEn("✎ {0}{1}", lockSay, rad ? kinSayEn(". 이어 쓰려면 More ▸ Reset to Unread로 되돌리세요 (그 글은 그 판독의의 개인 임시글로 남습니다).") : "")
         : !held ? ""
-        : `✎ ${heldTitle} — 잠금이 풀리면 이어서 판독할 수 있습니다` +
-          (rad && ["W", "T", "H"].includes(s?.rs) ? ". 자리를 비웠다면 More ▸ Reset to Unread로 되돌릴 수 있습니다." : "");
+        : kinSayEn("✎ {0} — 잠금이 풀리면 이어서 판독할 수 있습니다{t1}", heldTitle,
+          rad && ["W", "T", "H"].includes(s?.rs) ? kinSayEn(". 자리를 비웠다면 More ▸ Reset to Unread로 되돌릴 수 있습니다.") : ""));
       $("#deferbar").style.display = s?.rs === "H" ? "flex" : "none";
       $("#defermsg").textContent = s?.rs === "H" ? `⏸ On Hold${s.holdReason ? ' — ' + s.holdReason : ''}` : "";
       // 남의 예비 판독은 읽지도 쓰지도 못한다. 서버가 막지만 회색으로 보이는 편이 낫다 —
@@ -878,7 +878,7 @@
          */
         const amend = amendApproval(appState[s.uid], reportEditedFromApproved(s.uid));
         $("#b-approve").disabled = !amend.open;
-        $("#b-approve").title = amend.title;
+        kinWrite($("#b-approve"), amend.title, "title");
       }
       // Addendum은 승인된 판독문에만 붙는다
       $("#b-addendum").disabled = s?.rs !== "A" || !rad || locked || filming || !!held;
@@ -900,6 +900,8 @@
         $(id).readOnly = !rad || locked || filming || !!held;
         // C-R01-109#2: an unverified study locks these fields until Verify; the editor names that beside Read Only.
         $(id).dataset.lockReason = filming && !held ? filmingTitle : !held && locked ? lockText : "";
+        // The same reason as the sentence its screen says it in (the editor head reads it: reportEditorBlock).
+        $(id).kinLockReason = filming && !held ? kinSayEn(filmingTitle) : !held && locked ? lockSay || null : null;
       }
       if(studyPriority?.get(selectedUid))for(const id of ['#b-save','#b-approve','#b-unread','#b-addendum','#b-prelim','#b-defer']) {
         const button=$(id);if(button){button.disabled=true;kinWrite(button, kinSay('응급 상태 저장 결과를 확인한 뒤 판독을 저장하세요'), "title");}
@@ -912,7 +914,7 @@
         for (const id of ["#b-approve", "#b-save", "#b-unread", "#b-clear", "#b-paste", "#b-defer", "#b-addendum",
           "#b-prelim"]) {
           const el = $(id);
-          if (el) { el.disabled = true; el.title = relatedWhy; }
+          if (el) { el.disabled = true; kinWrite(el, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(relatedWhy), "title"); }
         }
       // The controls painted by their own areas from the report state (Mark CVR: critical-result-send.js) follow it here too:
       // the answer of a commit, a poll or a draft sync that changed it reaches them with More left open. Before the identity rule
@@ -933,7 +935,7 @@
       const approveNext = $("#b-approve-next");
       if (approveNext) {
         approveNext.disabled = $("#b-approve").disabled;
-        kinWrite(approveNext, $("#b-approve").title
+        kinWrite(approveNext, window.KinLanguage?.said?.($("#b-approve"), "title") || $("#b-approve").title
           || kinSay("승인한 뒤 목록의 다음 검사로 갑니다 — 승인이 확인되고 화면에 그려진 뒤에만 이동하고, 결과를 모르거나 거절되면 이 검사에 머뭅니다"), "title");
       }
       // 초안 표시줄의 확정 안내는 방금 정한 단추 상태를 그대로 따른다(눌리지 않는 단추를 안내하지 않는다).
@@ -1035,7 +1037,7 @@
           folderStateBeforeRead = null; updateWorklistFolders();
         }
         $('#study-fetch').hidden = !state.busy && !state.resumable && !state.message;
-        $('#study-fetch-status').textContent = state.message + (state.total == null ? '' : ` (${state.received}/${state.total}건 받음 · 완료 후 목록 반영)`);
+        kinWrite($('#study-fetch-status'), kinSayEn("{0}{1}", (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(state.message), state.total == null ? '' : kinSayEn(" ({0}/{n1}건 받음 · 완료 후 목록 반영)", state.received, state.total)));
         $('#study-fetch-resume').hidden = state.busy || !state.resumable; $('#study-fetch-cancel').hidden = !state.busy;
       },
     });
@@ -1162,7 +1164,7 @@
         // 그리기 실패는 그리기 실패라고 말한다. 데이터는 이미 들어와 있고, 버리지 않는다.
         return work.commit(at, () => {
           try { render(); refreshRight(); worklistStartup?.afterList(); autoPreload?.afterList(); }
-          catch (e2) { console.error(e2); toast("화면 그리기 오류: " + e2.message, "err"); }
+          catch (e2) { console.error(e2); toast(String(kinSayEn("화면 그리기 오류: {0}", e2.message)), "err"); }
         }) ? true : undefined;
       } catch (e) {
         if (!work.admits(at) || loadSequence !== listLoadSequence) return;
@@ -1182,7 +1184,7 @@
             if (!e.stale && e.code !== 'STUDY_LIST_CHANGED') renderIdentityIssues(true);
             // The next list read that succeeds (a poll too) takes this notice away (worklist-polling.js listRefreshWarning).
             listRefreshWarning(true, kinSayEn("검사 목록을 불러오지 못했습니다. 현재 목록과 입력은 유지했습니다 — {e0}", e.message));
-            toast("검사 목록 실패: " + e.message, "err");
+            toast(String(kinSayEn("검사 목록 실패: {e0}", e.message)), "err");
             render();
           });
           // C-R03-144: 서버의 답 없이 끝난 읽기는 연결을 한 번 확인한다(page-boot.js confirmConnection).

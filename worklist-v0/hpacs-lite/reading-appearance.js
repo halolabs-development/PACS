@@ -62,10 +62,10 @@ window.KinReadingAppearance = function (options) {
     #reading-appearance-dialog h2 { margin:0 0 12px;font-size:18px; }
   `;document.head.append(style);
   const dialog=document.createElement('dialog');dialog.id='reading-appearance-dialog';dialog.setAttribute('aria-labelledby','reading-appearance-title');
-  const element=(tag,text,parent)=>{const e=document.createElement(tag);e.textContent=text;if(parent)parent.append(e);return e;};
+  const element=(tag,text,parent)=>{const e=document.createElement(tag);kinWrite(e, text);if(parent)parent.append(e);return e;};
   const title=element('h2','Appearance & Tools',dialog);title.id='reading-appearance-title';
-  element('p','글자 크기·글꼴·색과 도구 위치를 계정에 저장하고 다른 기기에서 함께 불러올 수 있습니다. 이전 설정에 없는 항목은 현재 값을 유지합니다.',dialog);
-  const mprStatus=element('p','MPR Properties의 표시·마우스·동기화 설정도 계정 표시 설정에 포함됩니다.',dialog);mprStatus.id='reading-mpr-status';mprStatus.setAttribute('role','status');
+  element('p',kinSayEn("글자 크기·글꼴·색과 도구 위치를 계정에 저장하고 다른 기기에서 함께 불러올 수 있습니다. 이전 설정에 없는 항목은 현재 값을 유지합니다."),dialog);
+  const mprStatus=element('p',kinSayEn("MPR Properties의 표시·마우스·동기화 설정도 계정 표시 설정에 포함됩니다."),dialog);mprStatus.id='reading-mpr-status';mprStatus.setAttribute('role','status');
   const fields={};
   for(const [name,label] of [['list','Worklist'],['current','Current Report'],['prior','Prior Report']]){
     const row=element('label',label,dialog),select=element('select','',row);select.id='reading-text-'+name;
@@ -73,7 +73,7 @@ window.KinReadingAppearance = function (options) {
     fields[name]=select;select.onchange=()=>{if(!live()){end();return;}value={...value,[name]:Number(select.value)};apply();save();};
   }
   const fontSection=element('fieldset','',dialog);element('legend','Font',fontSection);
-  element('p','설치되지 않은 글꼴은 기기의 대체 글꼴로 표시합니다.',fontSection);
+  element('p',kinSayEn("설치되지 않은 글꼴은 기기의 대체 글꼴로 표시합니다."),fontSection);
   const fontFields={};
   for(const [name,label] of [['list','Worklist Font'],['current','Current Report Font'],['prior','Prior Report Font']]){
     const row=element('label',label,fontSection),select=element('select','',row);select.id='reading-font-'+name;
@@ -84,7 +84,7 @@ window.KinReadingAppearance = function (options) {
   const fontReset=element('button','Reset Fonts',fontSection);fontReset.type='button';fontReset.id='reading-font-reset';
   fontReset.onclick=()=>{if(!live()){end();return;}fontValue=defaultFonts();applyFonts();saveFonts();};
   const colorSection=element('fieldset','',dialog);element('legend','Text Color',colorSection);
-  element('p','기본 글자색만 바꿉니다. 검사 상태색과 선택 표시는 유지합니다.',colorSection);
+  element('p',kinSayEn("기본 글자색만 바꿉니다. 검사 상태색과 선택 표시는 유지합니다."),colorSection);
   const colorFields={};
   for(const [name,label] of [['list','Worklist Text Color'],['current','Current Report Text Color'],['prior','Prior Report Text Color']]){
     const row=element('label',label,colorSection),select=element('select','',row);select.id='reading-color-'+name;
@@ -95,7 +95,7 @@ window.KinReadingAppearance = function (options) {
   const colorReset=element('button','Reset Text Colors',colorSection);colorReset.type='button';colorReset.id='reading-color-reset';
   colorReset.onclick=()=>{if(!live()){end();return;}colorValue=defaultColors();applyColors();saveColors();};
   const dockSection=element('fieldset','',dialog);element('legend','Viewer Tool Dock',dockSection);
-  element('p','현재 통합 영상과 다음 영상 창에 적용합니다. 이미 열린 다른 영상 창은 유지합니다.',dockSection);
+  element('p',kinSayEn("현재 통합 영상과 다음 영상 창에 적용합니다. 이미 열린 다른 영상 창은 유지합니다."),dockSection);
   const dockFields={};
   for(const [name,label,choices] of [['placement','Dock Position',[['bottom','Bottom'],['top','Top']]],['panel','Open Panel',[['-1','Collapsed'],['0','Measurements'],['1','Comparison'],['2','Report Editor']]]]){
     const row=element('label',label,dockSection),select=element('select','',row);select.id='reading-dock-'+name;dockFields[name]=select;
@@ -106,7 +106,7 @@ window.KinReadingAppearance = function (options) {
   autoInput.onchange=()=>{if(!live()){end();return;}setDock({...dockValue,autoHide:autoInput.checked});};
   const dockStatus=element('p','',dockSection);dockStatus.id='reading-dock-status';dockStatus.setAttribute('role','status');
   const toolbarSection=element('fieldset','',dialog);element('legend','Viewer Toolbar',toolbarSection);
-  element('p','영상의 비교 작업·배치 패널에서 순서·표시를 편집합니다. 계정에서 불러오면 현재 통합 영상과 다음 영상 창에 적용하며 열린 다른 창은 유지합니다.',toolbarSection);
+  element('p',kinSayEn("영상의 비교 작업·배치 패널에서 순서·표시를 편집합니다. 계정에서 불러오면 현재 통합 영상과 다음 영상 창에 적용하며 열린 다른 창은 유지합니다."),toolbarSection);
   const toolbarSummary=element('p','',toolbarSection);toolbarSummary.id='reading-toolbar-summary';
   const toolbarStatus=element('p','',toolbarSection);toolbarStatus.id='reading-toolbar-status';toolbarStatus.setAttribute('role','status');
   const toolbarReset=element('button','Reset Toolbar',toolbarSection);toolbarReset.type='button';toolbarReset.id='reading-toolbar-reset';toolbarReset.onclick=()=>setToolbar(defaultToolbar());
@@ -123,7 +123,7 @@ window.KinReadingAppearance = function (options) {
 
   const viewer=window.KinViewerIdentity,viewerModalities=viewer.modalities;let viewerValue=viewer.read(initialOwner);
   const clone=v=>JSON.parse(JSON.stringify(v)),viewerFields={},viewerProfiles={current:'general',prior:'general'},viewerSection=element('fieldset','',dialog);element('legend','Image Identification',viewerSection);
-  element('p','기준 검사와 비교 검사의 환자 이름·검사 날짜·검사 설명 위치를 따로 정하고, 촬영 modality별 표시를 덮어쓸 수 있습니다. 환자 ID와 기준/비교 표시는 항상 유지합니다.',viewerSection);
+  element('p',kinSayEn("기준 검사와 비교 검사의 환자 이름·검사 날짜·검사 설명 위치를 따로 정하고, 촬영 modality별 표시를 덮어쓸 수 있습니다. 환자 ID와 기준/비교 표시는 항상 유지합니다."),viewerSection);
   const positionChoices=[['top-left','Top Left'],['top-right','Top Right'],['bottom-left','Bottom Left'],['bottom-right','Bottom Right']];
   for(const [role,label] of [['current','Current Image'],['prior','Prior Image']]){
     const group=element('fieldset','',viewerSection);element('legend',label,group);viewerFields[role]={};
@@ -157,7 +157,7 @@ window.KinReadingAppearance = function (options) {
   function resetViewerProfile(role){if(!live()){end();return;}const selected=viewerProfiles[role],fresh=viewer.defaults()[role];if(selected==='general')setViewer({...viewerValue,[role]:{...fresh,overrides:viewerValue[role].overrides}});else{const overrides={...viewerValue[role].overrides};delete overrides[selected];setViewer({...viewerValue,[role]:{...viewerValue[role],overrides}});}}
   const stopViewer=viewer.subscribe(initialOwner,next=>{if(!live())return;if(JSON.stringify(viewerValue)!==JSON.stringify(next)){viewerValue=next;generation++;showViewer();kinWrite(viewerStatus, kinSayEn("같은 계정의 영상 표시 변경을 적용했습니다."));}});showViewer();
   const markers=window.KinMarkerStyle,markerFields={},markerSection=element('fieldset','',dialog);let markerValue=markers.read(initialOwner);element('legend','Measurement Markers',markerSection);
-  element('p','측정·화살표 표식의 색, 선 굵기, 선 모양, 화살촉과 글꼴을 이 계정으로 연 모든 영상 창의 표식에 바로 적용합니다. 측정값·좌표, 저장된 SR과 인쇄 출력은 바뀌지 않습니다.',markerSection);
+  element('p',kinSayEn("측정·화살표 표식의 색, 선 굵기, 선 모양, 화살촉과 글꼴을 이 계정으로 연 모든 영상 창의 표식에 바로 적용합니다. 측정값·좌표, 저장된 SR과 인쇄 출력은 바뀌지 않습니다."),markerSection);
   for(const [name,label,choices] of [['color','Marker Color',markers.colors],['width','Marker Line Thickness',markers.widths],['line','Marker Line Style',markers.lines],['arrowheads','Arrowheads',markers.arrowheads],['font','Marker Text Font',markers.fonts]]){
     const row=element('label',label,markerSection),select=element('select','',row);select.id='reading-marker-'+name;markerFields[name]=select;
     for(const [id,text] of choices){const option=element('option',text,select);option.value=id;}
@@ -181,9 +181,9 @@ window.KinReadingAppearance = function (options) {
   function dockChanged(e){if(!live()||e.detail?.owner!==initialOwner)return;let clean=normalizeDock(e.detail.value);if(!clean)return;clean={...clean,version:2,autoHide:clean.autoHide??dockValue.autoHide};if(e.type==='kin-dock-preference-changed'||JSON.stringify(clean)!==JSON.stringify(dockValue))generation++;dockValue=clean;showDock();}
 
   const status=element('p','',dialog);status.id='reading-appearance-status';status.setAttribute('role','status');
-  const account=element('section','계정 저장 기능을 연결하지 못했습니다. 현재 브라우저 설정은 사용할 수 있습니다.',dialog);
+  const account=element('section',kinSayEn("계정 저장 기능을 연결하지 못했습니다. 현재 브라우저 설정은 사용할 수 있습니다."),dialog);
   account.id='reading-appearance-account';account.style.cssText='border-top:1px solid #819bb7;padding-top:12px;display:flex;flex-wrap:wrap;gap:8px';
-  if(!mprModel)element('p','MPR 설정 구성 요소를 불러오지 못해 계정 표시 설정을 저장하거나 불러올 수 없습니다. 영상 정보 위치는 이 브라우저에만 적용합니다.',dialog).id='reading-appearance-local-only';
+  if(!mprModel)element('p',kinSayEn("MPR 설정 구성 요소를 불러오지 못해 계정 표시 설정을 저장하거나 불러올 수 없습니다. 영상 정보 위치는 이 브라우저에만 적용합니다."),dialog).id='reading-appearance-local-only';
   const footer=element('footer','',dialog),reset=element('button','Reset Sizes',footer),close=element('button','Close',footer);
   reset.type=close.type='button';reset.id='reading-appearance-reset';close.id='reading-appearance-close';
   document.body.append(dialog);window.KinLanguage?.markup?.(dialog);

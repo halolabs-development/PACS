@@ -9,6 +9,11 @@
  */
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
+  const kinError = m => globalThis.KinLanguage?.error ? globalThis.KinLanguage.error(m) : m;
   const LABEL = { matched: 'Matched', no_images: 'No images yet', lookup_failed: 'Not checked', not_checkable: 'Not checked' };
   const ENGINEERING = '권위 있는 병원 오더 출처(HL7/FHIR)가 연결되지 않았습니다. 이 오더 목록과 대사 결과는 엔지니어링 확인 전용이며 예정 환자 목록으로 쓰면 안 됩니다.';
   const pad = n => String(n).padStart(2, '0');
@@ -24,7 +29,7 @@
   let view = null;   // { host, day, orders, selected, loading, error }
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
-    for (const [k, v] of Object.entries(props)) if (v !== undefined && v !== null) { if (k === 'text') node.textContent = v; else if (k === 'className') node.className = v; else node.setAttribute(k, v); }
+    for (const [k, v] of Object.entries(props)) if (v !== undefined && v !== null) { if (k === 'text') kinWrite(node, v); else if (k === 'className') node.className = v; else if (k === 'title') kinWrite(node, v, 'title'); else node.setAttribute(k, v); }
     for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) node.append(c);
     return node;
   };
@@ -99,7 +104,7 @@
     if (o.state === 'lookup_failed' || o.state === 'no_images' || (o.state === 'not_checkable' && o.reason === 'unregistered'))
       box.append(' ', button('Retry Check', () => retry(o.oid)));
     if (view.checked === o.oid) box.append(el('div', { className: 'order-note muted', text: 'Checked again just now.' }));
-    if (view.checkError) { box.append(el('div', { className: 'order-note err', text: 'Retry Check failed: ' + view.checkError })); view.checkError = null; }
+    if (view.checkError) { box.append(el('div', { className: 'order-note err', text: kinSayEn('Retry Check failed: {0}', kinError(view.checkError)) })); view.checkError = null; }
     return box;
   }
   async function openMatch(o, c) {
@@ -117,9 +122,9 @@
     if (!view) return;
     const { element } = view.host;
     const head = el('div', { className: 'order-pane-head' }, el('b', { text: 'Scheduled Studies — ' + view.day }), ' ',
-      el('span', { className: 'order-engineering', title: ENGINEERING, text: 'Engineering Only' }), ' ', button('Refresh', () => load()));
+      el('span', { className: 'order-engineering', title: kinSayEn(ENGINEERING), text: 'Engineering Only' }), ' ', button('Refresh', () => load()));
     if (view.loading && !view.orders) { element.replaceChildren(head, el('p', { className: 'order-note muted', text: 'Checking the archive…' })); return; }
-    if (view.error && !view.orders) { element.replaceChildren(head, el('p', { className: 'order-note err', text: 'Scheduled orders could not be read: ' + view.error })); return; }
+    if (view.error && !view.orders) { element.replaceChildren(head, el('p', { className: 'order-note err', text: kinSayEn('Scheduled orders could not be read: {0}', kinError(view.error)) })); return; }
     const orders = view.orders || [];
     const rows = orders.map(o => {
       const tr = el('tr', { 'data-oid': o.oid, 'data-state': o.state, className: view.selected === o.oid ? 'sel' : '' },
@@ -131,7 +136,7 @@
       el('thead', {}, el('tr', {}, ['Scheduled', 'ID', 'Name', 'Exam', 'Images', 'Reconciliation'].map(h => el('th', { text: h })))),
       el('tbody', {}, rows.length ? rows : el('tr', {}, el('td', { colspan: '6', className: 'empty', text: 'No orders scheduled for today.' }))));
     const picked = orders.find(o => o.oid === view.selected);
-    element.replaceChildren(head, view.error ? el('p', { className: 'order-note err', text: 'Not refreshed: ' + view.error }) : '', tableEl,
+    element.replaceChildren(head, view.error ? el('p', { className: 'order-note err', text: kinSayEn('Not refreshed: {0}', kinError(view.error)) }) : '', tableEl,
       picked ? detail(picked) : el('p', { className: 'order-note muted', text: 'Select a scheduled order to see whether its images have arrived.' }));
   }
 

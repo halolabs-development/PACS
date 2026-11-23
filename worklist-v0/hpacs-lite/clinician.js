@@ -52,6 +52,9 @@
   // anything that is not a sentence are written as they are.
   const kinSayEn = (root.KinLanguage && root.KinLanguage.sayEnglish) || kinSay;
   const isSentence = value => !!(root.KinLanguage && root.KinLanguage.isSentence && root.KinLanguage.isSentence(value));
+  // A product line handed on as a string (the tables of this page): a sentence the glossary knows whole reads in English on an
+  // English screen; anything else, and an empty one, as written. A sentence passes as it is.
+  const kinPhrase = value => typeof value === 'string' && value ? kinSayEn(value) : value;
   function kinPut(el, value, name) {
     if (isSentence(value)) return root.KinLanguage.write(el, value, name);
     if (name) el.setAttribute(name, String(value ?? '')); else el.textContent = value ?? '';
@@ -586,7 +589,7 @@
     const rs = report && OPEN_STATUS[report.rs] ? report.rs : null;
     if (rs === null) return { kind: 'unknown', label: 'Unknown', note: TEXT.unknown };
     const more = rs === 'D' ? '' : rs === 'P' ? STATUS_NOTE.P : STATUS_NOTE.unsigned;
-    return { kind: 'open', label: OPEN_STATUS[rs], note: more ? kinSayEn('{0} {1}', OPEN_NOTE[rs], more) : OPEN_NOTE[rs] };
+    return { kind: 'open', label: OPEN_STATUS[rs], note: more ? kinSayEn('{0} {1}', kinPhrase(OPEN_NOTE[rs]), more) : kinPhrase(OPEN_NOTE[rs]) };
   }
 
   function statusName(report) {
@@ -983,7 +986,10 @@
     const row = byUid.get(selected);
     if (!row) { dropWindow(held); return; }
     const note = $('#viewer-note');
-    const refuse = text => { note.textContent = text; dropWindow(held); };
+    // The note says the words of the page in the language of the screen (a whole known sentence; a sentence as it is).
+    const show = text => { const L = globalThis.KinLanguage, said = L?.phrase ? L.phrase(text) : text;
+      if (L?.write) L.write(note, said ?? ''); else note.textContent = said ?? ''; };
+    const refuse = text => { show(text); dropWindow(held); };
     const other = otherUid === null ? null : byUid.get(otherUid);
     if (otherUid !== null && (!other || other.uid === row.uid || patientKey(row) === null || patientKey(other) !== patientKey(row))) {
       refuse(TEXT.compareGone);
@@ -1026,8 +1032,8 @@
         // the original image to open first (a key image, a cited line), as the server named it.
         popup.name='kin-viewer-entry:'+JSON.stringify({session:expectedSession,name:VIEWER_WINDOW,mode:'physician',...(image?{target:image}:{})});popup.opener=null;
         if(replace)popup.location.replace(root.KinExamScope.viewerUrl(input));root.KinExamScope.raiseWindow(popup);
-        note.textContent=asked||(image?kinSayEn(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked);
-      }catch(error){if(fresh()){note.textContent=describe(error);dropWindow(held);}}
+        show(asked||(image?kinSayEn(TEXT.annotatedAsked):other?TEXT.compareAsked:TEXT.viewerAsked));
+      }catch(error){if(fresh()){show(describe(error));dropWindow(held);}}
     })();
   }
 
@@ -1211,7 +1217,7 @@
     const status = view.final ? { final: true, action: view.action } : { final: false, rs: view.rs };
     $('#report-status').replaceChildren(statusBadge(status));
     if (!view.final) {
-      const said = view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown;
+      const said = kinPhrase(view.rs ? OPEN_NOTE[view.rs] : TEXT.unknown);
       if (view.text || view.drawings.length) {
         // F41: the unsigned text the server sent, said to be not final.
         setReport('open', kinSayEn('{0} {1}', said, TEXT.notFinal));

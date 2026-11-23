@@ -111,7 +111,7 @@
       const at = work.capture("document");
       try { const done = it.act(); refocus(); await done; }
       // 항목이 기다리는 사이 작업 문맥이 바뀌었으면(로그아웃 준비·세션 종료) 그 실패는 알릴 실패가 아니다.
-      catch (err) { work.commit(at, () => toast(`"${it.label}" 실패: ${err?.message ?? err}`, "err")); }
+      catch (err) { work.commit(at, () => toast(String(kinSayEn("\"{0}\" 실패: {e1}", it.label, err?.message ?? err)), "err")); }
       finally { refocus(); }
     });
     document.addEventListener("click", () => ctx.style.display = "none");
@@ -239,7 +239,7 @@
               // 값을 칸에 그리면 다음 목록 읽기에서 말없이 기관명으로 돌아가고, 저장해도 어디에도 보이지 않는다 — 값을 묻지도
               // 그리지도 보내지도 않고 까닭을 말한다. 기관명이 없는 행(서버 없이 연 목록 등)은 지금처럼 바꾼다.
               if (s.institutionName) {
-                toast(`이 검사의 ReqHosp는 서버가 정한 기관명(${s.institutionName})입니다 — 여기서 바꿀 수 없습니다`, "info", 6000);
+                toast(String(kinSayEn("이 검사의 ReqHosp는 서버가 정한 기관명({0})입니다 — 여기서 바꿀 수 없습니다", s.institutionName)), "info", 6000);
                 return;
               }
               const v = prompt("의뢰 병원(ReqHosp):", s.reqHosp);

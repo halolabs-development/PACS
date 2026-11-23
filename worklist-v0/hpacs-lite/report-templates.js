@@ -78,12 +78,20 @@
      * 하나**를 쓴다 — 둘이 각자 검사를 들고 있으면 언젠가 한쪽만 고쳐진다.
      */
     function reportEditorBlock(admission = null) {
+      // The editor head, a toast or a title says it: the reason as a sentence of the screen. The lock on a report another
+      // physician saved or holds names that physician, so it is that sentence (reportLockSay); any other reason is a whole
+      // product sentence.
       const why = reportWriteBlock(admission);
-      if (why) return why;
+      if (why) return appState[selectedUid]?.prelimHidden && typeof reportLockSay === "function" && typeof reportLockText === "function"
+        && why === reportLockText(appState[selectedUid]) ? reportLockSay(appState[selectedUid])
+        : (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why);
       // value 대입은 촬영 중/타인 점유의 readOnly도 우회한다. 타이핑과 같은 관문을 거친다.
       // C-R01-109#2: a field locked because the study is not verified yet says so (loadReport and updateReportButtons set the reason).
       const lockedField = RFIELDS.map(k => $("#" + k)).find(field => field.readOnly);
-      if (lockedField) return lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다";
+      // The field keeps its reason as the sentence it was set with (kinLockReason), so the editor head says it in the
+      // language of its screen; the data attribute holds the same words as written.
+      if (lockedField) return lockedField.kinLockReason
+        || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다");
       return null;
     }
     function templateInsertionBlock(t, emptyMessage = "삽입할 내용이 없습니다") {

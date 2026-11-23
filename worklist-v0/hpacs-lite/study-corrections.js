@@ -56,7 +56,7 @@
           noteIdentityCorrection(s.uid, true);
           reloaded = Promise.all([load(), refreshOrders()]).then(([list, orderList]) => list === true && orderList === true, () => false);
           render(); renderOrders(); renderClinical(); renderRelated();
-          toast(`매칭 완료 — ${o.name} (${o.id})`);
+          toast(String(kinSayEn("매칭 완료 — {0} ({1})", o.name, o.id)));
         });
         return { ok: true, state: st, reloaded };
       } else {
@@ -66,7 +66,7 @@
         saveApp(); saveOrders(); applyState(s);
       }
       render(); renderOrders(); renderClinical(); renderRelated();
-      toast(`매칭 완료 — ${o.name} (${o.id})`);
+      toast(String(kinSayEn("매칭 완료 — {0} ({1})", o.name, o.id)));
       return { ok: true, state: null, reloaded: Promise.resolve(true) };
     }
 
@@ -139,9 +139,9 @@
       const s = studies.find(x => x.uid === uid); if (!s) return;
       const route = studyWriteRoute();
       if (!route) return;
-      const said = () => toast(ss === "Verified"
-        ? "검사를 확인했습니다 — 판독할 수 있습니다"
-        : "확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)", "info");
+      const said = () => toast(String(ss === "Verified"
+        ? kinSayEn("검사를 확인했습니다 — 판독할 수 있습니다")
+        : kinSayEn("확인을 해제했습니다 — Unverified로 표시되고 판독이 잠깁니다 (응급 제외)")), "info");
       if (route === "server") {
         // The row is the accepted answer's (saveApp); the report pane only if that study is still the selected one.
         const at = work.capture("document"), view = uid === selectedUid ? work.capture("study") : null;
@@ -222,7 +222,7 @@
     function drawQcWindow(d, uid, rebase = false) {
       const s = studies.find(x => x.uid === uid), mark = shownQc(uid);
       if (rebase) Object.assign(d.dataset, { uid, revision: mark ? String(mark.revision) : "", epoch: appState[uid]?.draftEpoch ?? "", scope: qcScope(uid) ?? "" });
-      $("#qc-flag-study").textContent = s ? `${s.name} (${s.id}) · ${s.date} · ${shownStudyDesc(s)}` : "";
+      kinWrite($("#qc-flag-study"), s ? kinSayEn("{0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDesc(s) === "(설명 없음)" ? kinSayEn("(설명 없음)") : shownStudyDesc(s)) : "");
       const now = $("#qc-flag-now");
       if (!mark) kinWrite(now, kinSay("QC 상태를 아직 받지 못했습니다. 목록을 새로고침한 뒤 다시 여세요."));
       else if (mark.reason === null) kinWrite(now, kinSay("No QC flag"));

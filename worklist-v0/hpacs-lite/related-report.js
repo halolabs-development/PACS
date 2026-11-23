@@ -37,13 +37,14 @@
      * why the text is not shown (Korean), matching the Related Exam row.
      */
     function relatedNoReportText(s) {
-      return ({
+      const said = ({
         P: "Preliminary · 승인 전 판독문은 여기 보이지 않습니다 (승인본만 열람)",
         T: "In Progress · 판독 중이라 아직 승인된 판독문이 없습니다 (승인본만 열람)",
         H: "On Hold · 보류 중이라 아직 승인된 판독문이 없습니다 (승인본만 열람)",
         W: "Unread · 아직 판독되지 않은 검사입니다 (승인본만 열람)",
         D: "Destroyed · 보존 기간이 끝나 판독문을 파기한 검사입니다",
-      })[s?.rs] || "판독문 없음 · 이 검사에는 승인된 판독문이 없습니다";
+      })[s?.rs];
+      return said ? kinSayEn(said) : kinSayEn("판독문 없음 · 이 검사에는 승인된 판독문이 없습니다");
     }
 
     function relatedReportHead(list) {
@@ -73,9 +74,9 @@
       const at = work.capture("study");
       const stale = () => !work.admits(at) || seq !== relatedReportSeq || uid !== relatedUid || selectedUid !== currentUid;
       const shown = view => relatedMode.showSource({ seq, uid, ...view });
-      $("#prior-report-meta").textContent = relatedReportMeta(s);
-      $("#prior-report-meta").title = $("#prior-report-meta").textContent;
-      $("#prior-report-status").textContent = s.rs === "A" ? "승인 판독문 불러오는 중…" : relatedNoReportText(s);
+      kinWrite($("#prior-report-meta"), relatedReportMeta(s));
+      kinWrite($("#prior-report-meta"), relatedReportMeta(s), "title");
+      kinWrite($("#prior-report-status"), s.rs === "A" ? kinSayEn("승인 판독문 불러오는 중…") : relatedNoReportText(s));
       $("#prior-report-status").style.display = "";
       $("#prior-report-content").style.display = "none";
       shown({ state: s.rs === "A" ? "loading" : "none", message: s.rs === "A" ? null : relatedNoReportText(s) });
@@ -97,8 +98,8 @@
       } catch (e) {
         if (stale()) return;
         const restricted = e?.status === 403 || e?.status === 404;
-        $("#prior-report-status").textContent = restricted
-          ? "이 판독문을 볼 권한이 없습니다 (Access Restricted)" : `판독문 조회 실패: ${e.message}`;
+        kinWrite($("#prior-report-status"), restricted
+          ? kinSayEn("이 판독문을 볼 권한이 없습니다 (Access Restricted)") : kinSayEn("판독문 조회 실패: {e0}", e.message));
         KinReportViews.end("related");
         shown({ state: restricted ? "restricted" : "failed" });
         return;
@@ -106,11 +107,11 @@
       if (stale()) return;
       if (!report) {
         KinReportViews.end("related");
-        $("#prior-report-status").textContent = relatedNoReportText(s); shown({ state: "none", message: relatedNoReportText(s) }); return;
+        kinWrite($("#prior-report-status"), relatedNoReportText(s)); shown({ state: "none", message: relatedNoReportText(s) }); return;
       }
-      $("#prior-report-meta").textContent =
-        `${relatedReportMeta(s)} · 판독의 ${signerName(report) || "-"} · ${KinReportPaper.versionStamp(report) || "-"}`;
-      $("#prior-report-meta").title = $("#prior-report-meta").textContent;
+      const meta = kinSayEn("{0} · 판독의 {1} · {2}", relatedReportMeta(s), signerName(report) || "-", KinReportPaper.versionStamp(report) || "-");
+      kinWrite($("#prior-report-meta"), meta);
+      kinWrite($("#prior-report-meta"), meta, "title");
       $("#prior-findings").textContent = report.findings ?? "";
       $("#prior-conclusion").textContent = report.conclusion ?? "";
       $("#prior-recommendation").textContent = report.recommendation ?? "";

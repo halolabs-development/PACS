@@ -9,6 +9,11 @@
  */
 (function (root) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const STATES = Object.freeze({ pending: 'Queued', running: 'Retrieving', arrived: 'Arrived', held: 'Held', failed: 'Failed' });
   const POLL_MS = 2000;
 
@@ -30,7 +35,7 @@
       if (on) for (const [key, job] of jobs) if (job.jobId && !job.following && !ended(job)) void follow(key, job.jobId);
     }
 
-    function status(text) { $('#qr-status').textContent = text || ''; }
+    function status(text) { kinWrite($('#qr-status'), typeof text === 'string' && text ? kinSayEn(text) : text || ''); }
 
     async function call(path, init = {}) {
       const context = work.capture('document');
@@ -44,8 +49,8 @@
     }
     function failure(error, what) {
       if (error?.said) return error.said;
-      if (error?.status === 403) return '이 계정으로는 Query/Retrieve를 쓸 수 없습니다.';
-      return `${what} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.`;
+      if (error?.status === 403) return kinSayEn("이 계정으로는 Query/Retrieve를 쓸 수 없습니다.");
+      return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", what);
     }
 
     async function loadPeers() {

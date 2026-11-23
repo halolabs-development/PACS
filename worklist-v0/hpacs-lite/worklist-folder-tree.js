@@ -5,6 +5,13 @@
   if (root) root.KinWorklistFolderTree = api;
 })(typeof window === 'object' ? window : null, function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinError = m => globalThis.KinLanguage?.error ? globalThis.KinLanguage.error(m) : m;
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const BASE = ['CT', 'MR', 'CR', 'US', 'SC'];
   let nextMountId = 0;
   // The tree's own words follow the screen language when the page's translator is loaded; names people give stay as written.
@@ -193,7 +200,7 @@
       } catch (error) {
         // 갱신 실패 뒤 이전 건수를 최신 완료 건수로 오인하지 않도록 무효화한다.
         state = { ...state, loadState: 'unknown' };
-        status.textContent = error.message;
+        kinWrite(status, kinError(error.message));
         render();
         throw error;
       }
@@ -243,7 +250,7 @@
     nav.append(content, status, selectionStatus);
     function attempt(action) {
       status.textContent = '';
-      try { action(); } catch (error) { status.textContent = error.message; }
+      try { action(); } catch (error) { kinWrite(status, kinError(error.message)); }
     }
     function render() {
       const focused = [...controls].find(([, node]) => node === doc.activeElement)?.[0];
@@ -291,8 +298,8 @@
         }
       }
       // Asked only when no Modality is chosen, not when the page's other conditions leave no folder describing the list.
-      const guidance = selected.length || narrowed ? '' : '선택된 Modality가 없습니다. All Studies 또는 Modality를 선택해 주세요.';
-      if (selectionStatus.textContent !== guidance) selectionStatus.textContent = guidance;
+      const guidance = selected.length || narrowed ? '' : kinSayEn('선택된 Modality가 없습니다. All Studies 또는 Modality를 선택해 주세요.');
+      if (selectionStatus.textContent !== guidance) kinWrite(selectionStatus, guidance);
       content.replaceChildren(list);
       for (const [key, value] of drafts) {
         const node = controls.get(key);

@@ -735,7 +735,7 @@
         if (dialog.open && focusIndex !== undefined) (list.querySelector('[data-window-index="' + focusIndex + '"][data-window-action="' + focusAction + '"]:not(:disabled)') || $('#viewer-windows-done')).focus();
       }
       function operate(index, action) {
-        if (!viewerWindows?.available()) { status.textContent = viewerWindows?.error() || '현재 계정을 확인한 뒤 다시 여세요.'; return; }
+        if (!viewerWindows?.available()) { kinWrite(status, viewerWindows?.error() || kinSayEn("현재 계정을 확인한 뒤 다시 여세요.")); return; }
         const row = viewerWindows.rows().find(r => r.index === index); if (!row) { render(); return; }
         let popup = row.popup;
         if (!popup) {

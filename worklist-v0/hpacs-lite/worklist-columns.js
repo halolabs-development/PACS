@@ -120,7 +120,7 @@
     document.body.append(dialog);
     window.KinLanguage?.markup?.(dialog);
     const $ = id => dialog.querySelector('#wc-' + id);
-    const status = text => { $('status').textContent = text; };
+    const status = text => { kinWrite($('status'), typeof text === 'string' && text ? kinSayEn(text) : text); };
     const dirty = () => JSON.stringify(draft) !== baseline;
     const mayLeave = () => !dirty() || confirm('적용하지 않은 열 설정 변경을 버릴까요?');
     for (const name of ['font','size','color']) $(name).addEventListener('change', () => {
@@ -137,7 +137,7 @@
     function fit(keys) {
       if (ended || !dialog.open || openedMode !== mode()) return;
       const context = document.createElement('canvas').getContext('2d');
-      if (!context) { status('내용 너비를 계산할 수 없습니다. 직접 입력하거나 빈칸으로 자동 너비를 사용하세요.'); return; }
+      if (!context) { status(kinSayEn("내용 너비를 계산할 수 없습니다. 직접 입력하거나 빈칸으로 자동 너비를 사용하세요.")); return; }
       const part = draft.modes[openedMode], a = part.appearance || appearanceDefault(); let fitted = 0;
       for (const key of keys) {
         const cells = cellsFor(key); if (!cells.length) continue;
@@ -154,7 +154,7 @@
         part.appearance ||= appearanceDefault(); part.appearance.widths[key] = Math.min(600, Math.ceil(width)); fitted++;
       }
       if (fitted) { generation++; renderEditor(); }
-      status(fitted ? `${fitted}개 열의 내용 너비를 준비했습니다. 적용 버튼으로 반영하세요. 다른 페이지의 내용은 포함하지 않았습니다.` : '현재 페이지에 맞출 내용이 없습니다. 기존 너비는 유지했습니다.');
+      status(fitted ? kinSayEn("{0}개 열의 내용 너비를 준비했습니다. 적용 버튼으로 반영하세요. 다른 페이지의 내용은 포함하지 않았습니다.", fitted) : kinSayEn("현재 페이지에 맞출 내용이 없습니다. 기존 너비는 유지했습니다."));
     }
     $('fit-all').addEventListener('click', () => fit(draft.modes[openedMode].order.filter(k => !draft.modes[openedMode].hidden.includes(k))));
     let dragged = null;
@@ -191,7 +191,7 @@
           const order = part.order.filter(k => k !== moving);
           order.splice(order.indexOf(key) + (after ? 1 : 0), 0, moving);
           generation++; part.order = order; renderEditor();
-          status(`${columns[openedMode].find(c => c.k === moving).t} 열을 옮겼습니다. 적용 버튼을 누르면 목록에 반영됩니다.`);
+          status(kinSayEn("{0} 열을 옮겼습니다. 적용 버튼을 누르면 목록에 반영됩니다.", columns[openedMode].find(c => c.k === moving).t));
         });
         row.append(grip);
         const label = document.createElement('label'), input = document.createElement('input');
@@ -234,20 +234,20 @@
     function apply(persist) {
       if (ended) return;
       const next = normalize(draft, columns);
-      if (!next) { status('열 설정을 확인할 수 없습니다. 기본값으로 다시 설정하세요.'); return; }
+      if (!next) { status(kinSayEn("열 설정을 확인할 수 없습니다. 기본값으로 다시 설정하세요.")); return; }
       if (persist) {
         if (!owner) return;
         try {
-          if (storage.getItem(owner) !== lastRaw) { status('다른 창에서 저장값이 변경됐습니다. 다시 불러온 뒤 적용하세요. 편집 내용은 유지했습니다.'); return; }
+          if (storage.getItem(owner) !== lastRaw) { status(kinSayEn("다른 창에서 저장값이 변경됐습니다. 다시 불러온 뒤 적용하세요. 편집 내용은 유지했습니다.")); return; }
           const raw = JSON.stringify(next); storage.setItem(owner, raw); lastRaw = raw;
-        } catch (_) { status('저장하지 못했습니다. 편집 내용은 유지했습니다. 이번 창에만 적용할 수 있습니다.'); return; }
+        } catch (_) { status(kinSayEn("저장하지 못했습니다. 편집 내용은 유지했습니다. 이번 창에만 적용할 수 있습니다.")); return; }
       }
       generation++; state = next; stateRaw = lastRaw; baseline = JSON.stringify(draft); changed(); dialog.close();
       kinWrite(document.querySelector('#columnsettings'), persist ? kinSayEn("열 설정 저장됨 · 이 브라우저·계정별") : kinSayEn("열 설정 · 이번 창에만 적용됨"), "title");
     }
     $('save').addEventListener('click', () => apply(true));
     $('memory').addEventListener('click', () => apply(false));
-    $('reset').addEventListener('click', () => { generation++; draft.modes[openedMode] = defaults(columns).modes[openedMode]; renderEditor(); status('기본 열을 준비했습니다. 적용 버튼을 누르면 반영됩니다.'); });
+    $('reset').addEventListener('click', () => { generation++; draft.modes[openedMode] = defaults(columns).modes[openedMode]; renderEditor(); status(kinSayEn("기본 열을 준비했습니다. 적용 버튼을 누르면 반영됩니다.")); });
     $('reload').addEventListener('click', () => {
       if (!mayLeave()) return;
       generation++; saved = read(); lastRaw = saved.raw; draft = copy(saved.state); baseline = JSON.stringify(draft);
@@ -308,7 +308,7 @@
             format: '서버가 반환한 열 설정 형식을 확인할 수 없습니다. 현재 편집 내용은 유지했습니다.',
             'session-unavailable': '계정 상태를 일시적으로 확인하지 못했습니다. 편집 내용은 유지했습니다. 쓰기는 완료됐을 수 있으니 다시 불러와 확인하세요.',
           };
-          $('server-status').textContent = messages[error?.message] || '계정 설정 응답을 확인할 수 없습니다. 편집 내용은 유지했습니다. 쓰기는 완료됐을 수 있으니 계정 설정을 불러와 확인하세요.';
+          kinWrite($('server-status'), (messages[error?.message] && kinSayEn(messages[error?.message])) || kinSayEn("계정 설정 응답을 확인할 수 없습니다. 편집 내용은 유지했습니다. 쓰기는 완료됐을 수 있으니 계정 설정을 불러와 확인하세요."));
         }
         });
       } finally { clearTimeout(timer); if(request===local){request = null; serverBusy = false;} work.commit(at,()=>{interruptedAction=null;refreshServer();}); }

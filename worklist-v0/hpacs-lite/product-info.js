@@ -9,6 +9,11 @@
  */
 (function (global) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const doc = global.document;
   const STYLE_ID = 'kpi-style';
   const VERSION_TIMEOUT_MS = 8000;
@@ -49,7 +54,7 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
   function el(tag, attrs, text) {
     const node = doc.createElement(tag);
     for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, value);
-    if (text !== undefined && text !== null) node.textContent = String(text);
+    if (text !== undefined && text !== null) kinWrite(node, globalThis.KinLanguage?.isSentence?.(text) ? text : String(text));
     return node;
   }
 
@@ -124,11 +129,11 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
     const head = el('div', { class: 'kpi-head' });
     head.append(el('h2', { id: 'product-info-title' }, 'Product Information'));
     const close = el('button', { type: 'button', id: 'product-info-close', title: '제품 정보를 닫고 하던 화면으로 돌아갑니다.' }, 'Close');
+    kinWrite(close, kinSayEn('제품 정보를 닫고 하던 화면으로 돌아갑니다.'), 'title');
     close.addEventListener('click', () => api.close());
     head.append(close);
     const body = el('div', { class: 'kpi-body' });
-    body.append(el('p', { class: 'kpi-intro' }, '이 제품의 표시·첨부 정보입니다. ‘발급 전’·‘확정 전’ 항목은 아직 정해지지 않은 값이며, '
-      + '이 화면이 인허가 요건의 충족을 뜻하지 않습니다.'));
+    body.append(el('p', { class: 'kpi-intro' }, kinSayEn("이 제품의 표시·첨부 정보입니다. ‘발급 전’·‘확정 전’ 항목은 아직 정해지지 않은 값이며, 이 화면이 인허가 요건의 충족을 뜻하지 않습니다.")));
     for (const section of data.sections) {
       if (section === 'Version') { body.append(el('div', { 'data-version-slot': '' })); continue; }
       body.append(tableNode(section, data.rows.filter((row) => row.section === section)));
@@ -142,7 +147,7 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
       list.append(item);
     }
     notices.append(list);
-    notices.append(el('p', { class: 'kpi-note' }, '고지 문서는 새 탭에서 열리며 지금 화면의 작업은 그대로 남습니다.'));
+    notices.append(el('p', { class: 'kpi-note' }, kinSayEn("고지 문서는 새 탭에서 열리며 지금 화면의 작업은 그대로 남습니다.")));
     body.append(notices);
     shell.append(head, body);
     dialog.append(shell);

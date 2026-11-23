@@ -648,6 +648,7 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
       const API = `${location.origin}/api`;
       const state = { page: 1, pageSize: 25, total: 0, users: [], editing: null, institutions: new Set() };
       let membersEpoch = 0, membersDenied = false;
@@ -657,13 +658,13 @@
 
       function setMessage(value) {
         const box = $("#message");
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 
       function setDialogMessage(selector, value) {
         const box = $(selector);
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 
@@ -724,19 +725,19 @@
         if (user.approvalState === "INVALID") {
           const warning = document.createElement("div");
           warning.className = "warning";
-          warning.textContent = kinSayEn("기관·역할 설정을 확인하세요");
+          kinWrite(warning, kinSayEn("기관·역할 설정을 확인하세요"));
           cell.append(warning);
         }
         if (user.rosterUnconfirmed) {
           const note = document.createElement("div");
-          note.textContent = kinSayEn("명부 반영 미확인");
+          kinWrite(note, kinSayEn("명부 반영 미확인"));
           cell.append(note);
         }
         if (user.identityUnconfirmed) {
           const note = document.createElement("div");
           note.className = "identity-unconfirmed";
-          note.textContent = kinSayEn("이메일·이름 반영 미확인");
-          note.title = kinSayEn("로그인 계정(명부)의 이메일·이름이 이 표와 다릅니다. Change Name / Email에서 값을 확인해 Save하면 맞춰집니다.");
+          kinWrite(note, kinSayEn("이메일·이름 반영 미확인"));
+          kinWrite(note, kinSayEn("로그인 계정(명부)의 이메일·이름이 이 표와 다릅니다. Change Name / Email에서 값을 확인해 Save하면 맞춰집니다."), "title");
           cell.append(note);
         }
         row.append(cell);
@@ -787,7 +788,7 @@
         state.editing.unmanaged.forEach(role => {
           const label = document.createElement("label");
           label.className = "unmanaged";
-          label.title = kinSayEn("이 화면에서 관리하지 않는 역할입니다. 저장해도 그대로 유지되며 여기서는 바꿀 수 없습니다.");
+          kinWrite(label, kinSayEn("이 화면에서 관리하지 않는 역할입니다. 저장해도 그대로 유지되며 여기서는 바꿀 수 없습니다."), "title");
           const input = document.createElement("input");
           input.type = "checkbox";
           input.checked = true;
@@ -832,7 +833,7 @@
           const cell = document.createElement("td");
           cell.colSpan = 6;
           cell.className = "empty";
-          cell.textContent = kinSayEn("조건에 맞는 회원이 없습니다.");
+          kinWrite(cell, kinSayEn("조건에 맞는 회원이 없습니다."));
           row.append(cell);
           body.append(row);
           return;
@@ -858,7 +859,7 @@
           if (user.approvalState === "APPROVED") {
             const revoke = action("Revoke Approval", () => mutate(user, { approvalState: "PENDING" }));
             // What the server does (admin.service.ts unapprove): PENDING, suspended, institution and roles cleared.
-            revoke.title = REVOKE_HINT;
+            kinWrite(revoke, REVOKE_HINT, "title");
             actions.append(revoke);
           }
           actions.append(action("Temp Password", () => resetPassword(user, "temp")));
@@ -881,7 +882,7 @@
         filter.replaceChildren();
         const all = document.createElement("option");
         all.value = "";
-        all.textContent = kinSayEn("전체 기관");
+        kinWrite(all, kinSayEn("전체 기관"));
         filter.append(all);
         const list = $("#institution-options");
         list.replaceChildren();
@@ -1141,6 +1142,7 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
       const API = `${location.origin}/api`;
       const $ = selector => document.querySelector(selector);
       const gateway = { seq: 0, retrySeq: 0, observedAt: null, absentKnown: null, failed: false, rows: [], items: new Map(),
@@ -1151,7 +1153,7 @@
 
       function setGatewayMessage(value) {
         const box = $("#gateway-message");
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 
@@ -1250,13 +1252,14 @@
         item.dataset.status = status.key;
         chip.className = `gstate ${status.key}`;
         chip.textContent = status.text;
-        chip.title = status.title;
+        kinWrite(chip, status.title, "title");
         study.textContent = row.absent ? `Not Observed · ${row.origin} · ${rules.formatTime(row.createdAt)}`
           : [row.name, row.patientId, row.date, row.acc].filter(Boolean).join(" · ") || "—";
         uidLine.textContent = row.uid;
-        detail.textContent = [status.detail, status.reason].filter(Boolean).join(" · ");
+        const notes = [status.detail, status.reason].filter(Boolean).map(v => typeof v === "string" ? kinSayEn(v) : v);
+        kinWrite(detail, kinSayEn(notes.map((_, i) => `{${i}}`).join(" · "), ...notes));
         button.textContent = rules.RETRY_TEXT.button;
-        button.title = retry?.title ?? "";
+        kinWrite(button, typeof retry?.title === "string" && retry.title ? kinSayEn(retry.title) : retry?.title ?? "", "title");
         // D10: the existing technician-or-admin rule (KinAuth.has mirrors need()); never offered over a failed list read.
         button.hidden = !key || !!item.dataset.requested || gateway.failed || !KinAuth.has("technician");
         button.disabled = !!item.dataset.request;
@@ -1293,8 +1296,8 @@
         $("#gateway-counts").textContent = summary.counts;
         const empty = $("#gateway-empty");
         empty.hidden = !gateway.observedAt || gateway.rows.length > 0;
-        empty.textContent = gateway.absentKnown ? kinSayEn("이 기관 Gateway 보고가 있는 검사가 없습니다.")
-          : kinSayEn("목록에 있는 검사에는 Gateway 보고가 없습니다. 영상이 관측되지 않은 검사의 Gateway 보고는 이번 조회로 확인하지 못했습니다.");
+        kinWrite(empty, gateway.absentKnown ? kinSayEn("이 기관 Gateway 보고가 있는 검사가 없습니다.")
+          : kinSayEn("목록에 있는 검사에는 Gateway 보고가 없습니다. 영상이 관측되지 않은 검사의 Gateway 보고는 이번 조회로 확인하지 못했습니다."));
       }
 
       async function refreshGateway() {
@@ -1503,6 +1506,7 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
       const API = `${location.origin}/api`;
       const $ = selector => document.querySelector(selector);
       const hosts = { seq: 0, failed: false, read: null };
@@ -1510,7 +1514,7 @@
 
       function setHostsMessage(value) {
         const box = $("#gateway-hosts-message");
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 
@@ -1915,13 +1919,14 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
       const API = `${location.origin}/api`;
       const $ = selector => document.querySelector(selector);
       const ops = { seq: 0, failed: false, read: null };
 
       function setOpsMessage(value) {
         const box = $("#metrics-message");
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 
@@ -2202,6 +2207,7 @@
       // The panel's own words: read in English on an English screen when they are written, as written otherwise.
       const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
         : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+      const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
       const API = `${location.origin}/api`;
       const $ = selector => document.querySelector(selector);
       const PAGE_SIZE = 25;
@@ -2224,7 +2230,8 @@
 
       function showAccessHistory() {
         const shown = audit.accessSeen ? ACCESS_SEEN : ACCESS_CARD;
-        Object.assign(accessHistory, { textContent: shown.text, title: shown.title });
+        kinWrite(accessHistory, shown.text);
+        kinWrite(accessHistory, shown.title, "title");
       }
 
       function noteAccessRows(rows) {
@@ -2235,7 +2242,7 @@
 
       function setAuditMessage(value) {
         const box = $("#audit-message");
-        box.textContent = value || "";
+        kinWrite(box, value || "");
         box.classList.toggle("show", !!value);
       }
 

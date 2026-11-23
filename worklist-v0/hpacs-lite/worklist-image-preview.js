@@ -1,5 +1,9 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const tag=(row,key)=>row?.[key]?.Value?.[0];
   const uid=value=>typeof value==='string'&&value.length<=64&&/^\d+(?:\.\d+)+$/.test(value);
   function inventory(rows,study){
@@ -53,7 +57,7 @@
     }
     function schedule(initial=false){
       if(work.state()!=='active'||!current())return;const at=work.capture('study');release();scheduled=true;const ticket=epoch,selectedStudy=study,selectedSeries=series,selectedIndex=index,selectedWindow=windowValue;
-      el('[data-status]').textContent='원본 영상을 불러오는 중…';controls();
+      kinWrite(el('[data-status]'), kinSayEn("원본 영상을 불러오는 중…"));controls();
       chain=chain.catch(()=>{}).then(async()=>{
         if(!work.admits(at)||ticket!==epoch||!current())return;
         const abort=controller=new AbortController(),timer=setTimeout(()=>abort.abort(),15000);
@@ -92,7 +96,7 @@
           el('img').alt=`${selectedStudy.name||''} · ${group.label} · SOP ${frame.sop} · Frame ${frame.frame+1}`;
           el('[data-status]').textContent=selectedWindow&&frame.gray?`Rendered · W ${selectedWindow.width} / L ${selectedWindow.center}`:'Rendered · Original Window';
           }))URL.revokeObjectURL(objectUrl);
-        }catch(error){work.commit(at,()=>{if(ticket===epoch&&current()){if(initial){groups=[];el('[data-series]').disabled=true;controls();}el('[data-status]').textContent=abort.signal.aborted?'응답 시간이 초과됐습니다. Retry로 다시 확인하세요.':`${error.message} · Retry로 다시 확인하세요.`;}});}
+        }catch(error){work.commit(at,()=>{if(ticket===epoch&&current()){if(initial){groups=[];el('[data-series]').disabled=true;controls();}kinWrite(el('[data-status]'), abort.signal.aborted?kinSayEn("응답 시간이 초과됐습니다. Retry로 다시 확인하세요."):kinSayEn("{e0} · Retry로 다시 확인하세요.", error.message));}});}
         finally{clearTimeout(timer);if(controller===abort){controller=null;scheduled=false;}}
       });
     }
@@ -103,7 +107,7 @@
       el('[data-series]').onchange=()=>{const next=Number(el('[data-series]').value);if(!current()||!groups[next])return;series=next;index=0;windowValue=null;el('[data-width]').value=el('[data-center]').value='';schedule();};
       const move=next=>{if(!current()||!frameAt(groups[series],next)){controls();return;}index=next;schedule();};
       el('[data-prev]').onclick=()=>move(index-1);el('[data-next]').onclick=()=>move(index+1);el('[data-frame]').onchange=()=>move(Number(el('[data-frame]').value)-1);
-      el('[data-apply]').onclick=()=>{const value=windowing(el('[data-width]').value,el('[data-center]').value);if(!current()||!frameAt(groups[series],index)?.gray)return;if(!value){el('[data-status]').textContent='W는1~10000000, L은유효한 수로 입력하세요.';return;}windowValue=value;schedule();};
+      el('[data-apply]').onclick=()=>{const value=windowing(el('[data-width]').value,el('[data-center]').value);if(!current()||!frameAt(groups[series],index)?.gray)return;if(!value){kinWrite(el('[data-status]'), kinSayEn("W는1~10000000, L은유효한 수로 입력하세요."));return;}windowValue=value;schedule();};
       el('[data-reset]').onclick=()=>{windowValue=null;el('[data-width]').value=el('[data-center]').value='';schedule();};
       el('[data-retry]').onclick=()=>schedule(!groups.length);el('[data-close]').onclick=close;
       dialog.addEventListener('cancel',e=>{e.preventDefault();close();});

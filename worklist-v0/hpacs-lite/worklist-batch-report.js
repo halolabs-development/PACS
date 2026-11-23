@@ -1,5 +1,9 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   /*
    * FC-028 Batch Reading: one of my Reading Templates saved as the report of several selected studies, one study at a time.
    * FC-029 Batch Approve: the saved reports of several selected studies approved, one study at a time, each exactly as shown.
@@ -37,9 +41,9 @@
   const templateTexts=t=>Object.fromEntries(FIELDS.map(k=>[k,typeof t?.[k]==='string'?t[k]:'']));
   const batchReason=t=>`Batch Reading — ${String(t?.title??'').trim()}`;
   function heldText(holder){
-    if(holder==='다른 기관')return '다른 기관 판독의가 판독 중입니다';
-    if(holder==='작성자 비공개')return '비공개 작성자가 판독 중입니다';
-    return `${holder} 님이 판독 중입니다`;
+    if(holder==='다른 기관')return kinSayEn("다른 기관 판독의가 판독 중입니다");
+    if(holder==='작성자 비공개')return kinSayEn("비공개 작성자가 판독 중입니다");
+    return kinSayEn("{0} 님이 판독 중입니다", holder);
   }
   /**
    * Will this study take the batch text? `f` is the page's facts for one study (batchReportFacts), null when the list no
@@ -172,7 +176,7 @@
     const blocked=()=>options.blocked?.()||null;
     const chosen=()=>{if(!picker)return null;const list=state?.templates||[];const i=Number(picker.value);return picker.value!==''&&list[i]?list[i]:null;};
     const pending=()=>state.uids.filter(uid=>state.rows.get(uid).verdict.ok&&!state.rows.get(uid).result);
-    function cell(tr,text){const td=document.createElement('td');td.textContent=text;td.translate=false;tr.append(td);return td;}
+    function cell(tr,text){const td=document.createElement('td');kinWrite(td, text);td.translate=false;tr.append(td);return td;}
     /**
      * Batch Approve's report cell: the first line of Findings and of Conclusion; opening the row shows the three fields in
      * full. It shows the captured text, which is the text sent and signed. Opening it is offered, never required.
@@ -181,7 +185,7 @@
       const td=document.createElement('td');td.dataset.batchReport='';
       const box=document.createElement('details'),head=document.createElement('summary');
       const lines=[['findings',firstLine(texts?.findings)],['conclusion',firstLine(texts?.conclusion)]].filter(([,v])=>v);
-      head.textContent=lines.length?lines.map(([k,v])=>`${LABELS[k]}: ${v}`).join(' · '):'(판독문 없음)';
+      kinWrite(head, lines.length?lines.map(([k,v])=>`${LABELS[k]}: ${v}`).join(' · '):kinSayEn("(판독문 없음)"));
       box.append(head);
       for(const k of FIELDS){
         const v=String(texts?.[k]??'');if(!v)continue;
@@ -198,11 +202,11 @@
       const r=row.result;
       if(r){
         if(r.status==='saved')return M.done;
-        if(r.status==='failed')return `Failed — ${r.reason||M.failed}`;
-        if(r.status==='unknown')return 'Unconfirmed — 결과 미확인 (다시 보내지 않습니다)';
-        return `Skipped — ${r.reason}`;
+        if(r.status==='failed')return kinSayEn('Failed — {0}', r.reason?(typeof r.reason==='string'?kinSayEn(r.reason):r.reason):kinSayEn(M.failed));
+        if(r.status==='unknown')return kinSayEn("Unconfirmed — 결과 미확인 (다시 보내지 않습니다)");
+        return kinSayEn('Skipped — {0}', typeof r.reason==='string'&&r.reason?kinSayEn(r.reason):r.reason);
       }
-      return row.verdict.ok?(state.phase==='running'?'Sending…':M.will):`Skipped — ${row.verdict.reason}`;
+      return row.verdict.ok?(state.phase==='running'?'Sending…':M.will):kinSayEn('Skipped — {0}', typeof row.verdict.reason==='string'&&row.verdict.reason?kinSayEn(row.verdict.reason):row.verdict.reason);
     }
     function render(){
       if(!state)return;
@@ -220,26 +224,26 @@
       save.textContent=M.button(n);
       const idle=state.phase==='ready';
       save.hidden=!idle;
-      if(approve){save.disabled=!idle||!n;save.title=!n?'승인할 검사가 없습니다':'';}
+      if(approve){save.disabled=!idle||!n;kinWrite(save, !n?kinSayEn("승인할 검사가 없습니다"):'', "title");}
       else{save.disabled=!idle||!n||!usableTemplate(t);
-        save.title=!t?'상용구를 고르세요':!usableTemplate(t)?'빈 상용구는 넣지 않습니다':!n?'보낼 검사가 없습니다':'';}
+        kinWrite(save, !t?kinSayEn("상용구를 고르세요"):!usableTemplate(t)?kinSayEn("빈 상용구는 넣지 않습니다"):!n?kinSayEn("보낼 검사가 없습니다"):'', "title");}
       if(picker)picker.disabled=!idle;
       cancel.hidden=!idle;
       const done=state.phase==='done';
       close.hidden=!done;
       // Retry Failed waits for the list read after the run, so a failed row is re-read from the study as it is now.
       retry.hidden=!done||!!state.settling||!retryable(state.results).length;retry.disabled=retry.hidden;
-      if(done)note.textContent=summary(state.uids.map(uid=>({result:state.rows.get(uid).result||{status:'skipped'}})),M.done);
-      else if(state.phase==='running')note.textContent=M.running;
+      if(done)kinWrite(note, summary(state.uids.map(uid=>({result:state.rows.get(uid).result||{status:'skipped'}})),M.done));
+      else if(state.phase==='running')kinWrite(note, kinSayEn(M.running));
     }
     function fillTemplates(){
       if(!picker)return;
       const list=state.templates;
       picker.replaceChildren();
-      const none=document.createElement('option');none.value='';none.textContent=list.length?'— Reading Template —':'상용구 없음';picker.append(none);
+      const none=document.createElement('option');none.value='';kinWrite(none, list.length?'— Reading Template —':kinSayEn("상용구 없음"));picker.append(none);
       list.forEach((t,i)=>{
         const o=document.createElement('option');o.value=String(i);
-        o.textContent=[t.title,t.shortcut,t.modality].map(v=>String(v??'').trim()).filter(Boolean).join(' · ')||'(제목 없음)';
+        kinWrite(o, [t.title,t.shortcut,t.modality].map(v=>String(v??'').trim()).filter(Boolean).join(' · ')||kinSayEn("(제목 없음)"));
         picker.append(o);
       });
     }
@@ -259,7 +263,7 @@
     }
     async function go(uids){
       const at=options.context();
-      if(!options.begin()){note.textContent='진행 중인 저장·확정이 끝난 뒤 다시 누르세요';return;}
+      if(!options.begin()){kinWrite(note, kinSayEn("진행 중인 저장·확정이 끝난 뒤 다시 누르세요"));return;}
       state.phase='running';render();
       const items=uids.map(uid=>state.rows.get(uid).item);
       // Batch Reading sends the chosen template; Batch Approve sends each row's own captured text, the text the dialog shows.
@@ -291,12 +295,12 @@
       if(!live()||state.phase!=='ready')return;
       if(approve)state.reason=APPROVE_REASON;
       else{const t=chosen();if(!usableTemplate(t))return;state.texts=templateTexts(t);state.reason=batchReason(t);}
-      if(!sameSelection()){note.textContent=SELECTION_CHANGED;return;}
+      if(!sameSelection()){kinWrite(note, kinSayEn(SELECTION_CHANGED));return;}
       go(pending());
     };
     retry.onclick=()=>{
       if(!live()||state.phase!=='done'||state.settling)return;
-      if(!sameSelection()){note.textContent=SELECTION_CHANGED;retry.hidden=retry.disabled=true;return;}
+      if(!sameSelection()){kinWrite(note, kinSayEn(SELECTION_CHANGED));retry.hidden=retry.disabled=true;return;}
       const again=[];
       // A failed row is shown as the study is now and sent again only if it still qualifies (text written meanwhile: skipped).
       for(const uid of retryable(state.results)){
@@ -314,7 +318,7 @@
        */
       if(approve){
         state.phase='ready';
-        note.textContent=`실패한 줄을 지금의 판독문으로 다시 보였습니다 — 확인한 뒤 ${M.button(again.length)}를 누르세요.`;
+        kinWrite(note, kinSayEn("실패한 줄을 지금의 판독문으로 다시 보였습니다 — 확인한 뒤 {0}를 누르세요.", M.button(again.length)));
         render();return;
       }
       go(again);

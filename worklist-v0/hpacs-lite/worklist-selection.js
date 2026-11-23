@@ -42,7 +42,7 @@
     const model=create(),host=options.host,tbody=options.tbody,initial=options.owner();
     let ended=false,dialog=null,dialogSignature=null;
     const live=()=>!ended&&initial&&options.owner()===initial;
-    const element=(tag,text,parent)=>{const el=document.createElement(tag);el.textContent=text;if(tag==='button')el.className='chip';parent.append(el);return el;};
+    const element=(tag,text,parent)=>{const el=document.createElement(tag);kinWrite(el, text);if(tag==='button')el.className='chip';parent.append(el);return el;};
     const count=element('span','Selected: 0',host);count.id='multi-selection-count';count.setAttribute('role','status');
     const page=element('button','Select Page',host),inspect=element('button','Selection Details',host),clear=element('button','Clear Selection',host);
     page.type=inspect.type=clear.type='button';page.id='multi-selection-page';inspect.id='multi-selection-details';clear.id='multi-selection-clear';
@@ -66,7 +66,7 @@
     // The hint shares the last button line and gives way (ellipsis, full text in its title): it never adds a line of its own,
     // so the bar does not take the work rows' floor in a narrow window once more buttons stand before it. Where no room is
     // left for it, Selection Details carries the same sentence.
-    const HINT='Ctrl/⌘ 클릭 · Shift 범위 · Space 선택. 작성 대상은 유지합니다.';
+    const HINT=kinSayEn("Ctrl/⌘ 클릭 · Shift 범위 · Space 선택. 작성 대상은 유지합니다.");
     const hint=element('span',HINT,host);
     kinWrite(hint,kinSayEn(HINT));kinWrite(hint,kinSayEn(HINT),'title');hint.style.cssText='flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     // FC-073: the bar also stays shown while the Preload panel has rows (Auto Preload queues with nothing selected).

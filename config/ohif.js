@@ -9622,6 +9622,18 @@ window.KinLanguageTerms = {
     tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
     /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
     isSentence,
+    /** The sentence write() last put in the text of this element (or its attribute `name`) and still owns there, or null — so another
+     *  place that says the same thing (a button copying the title of its neighbour) gets the sentence, not the words of today. */
+    /** A product message handed on as a string to a place that shows only product messages (a toast, a status line): a
+     *  sentence the glossary knows whole reads in English on an English screen, as the known sentence of an error place does;
+     *  anything else, an empty string and a sentence pass as they are. */
+    phrase: value => typeof value === 'string' && value ? sayEnglish(value) : value,
+    said(el, name = '') {
+      if (!el) return null;
+      flush();
+      const node = name ? el : el.firstChild;
+      return (node && records.get(node)?.get(name)) || null;
+    },
     /** A dialog the page opens by itself for one screen (no pointer or key on that screen first, such as the reading
      * workspace opening Tech Note): it opens in that screen's language. */
     opensOn(region, open) {
@@ -10668,6 +10680,40 @@ function kinViewerImageReference(imageId) {
   const m = typeof imageId === 'string' && imageId.match(/\/studies\/([0-9.]+)\/series\/([0-9.]+)\/instances\/([0-9.]+)\/frames\/([1-9][0-9]*)(?:$|[?#])/);
   return m ? { study: m[1], seriesUid: m[2], sopUid: m[3], frame: Number(m[4]) } : null;
 }
+// The image the cell shows. The renderer's own index is not that: it moves to the requested frame when a load starts and
+// stays there when the load fails or is overtaken, while the image before stays on screen. Every decision of the
+// exact-frame move below (already there, arrived, the cell's number, the mark) reads this and never that index.
+function kinViewerShownImageId(v) {
+  try { return v.getCornerstoneImage?.()?.imageId ?? null; } catch (_) { return null; }
+}
+// The cell's image number ("I: n (k/N)") and scroll bar follow STACK_VIEWPORT_SCROLL, which the renderer sends from its own
+// scroll but not from a direct setImageIdIndex() (that sends STACK_NEW_IMAGE only), so a cell moved here kept the old number.
+// The viewer raises its Loading cover on that scroll event and lowers it on STACK_NEW_IMAGE, so the event is sent from a
+// capture listener on the cell's STACK_NEW_IMAGE, which runs before the viewer's own handling of the same event lowers the
+// cover: once, and only when `arrived` says the cell now shows the requested image and it is still the frame asked of it.
+// A load that fails sends no STACK_NEW_IMAGE, so neither the number nor the cover moves. One arrival is numbered once: a
+// later move to the same frame watches the same event, which carries the note. Returns the function that stops it.
+function kinViewerNumberOnArrival(v, index, from, arrived) {
+  const none = () => {};
+  try {
+    const events = typeof window === 'undefined' ? null : window.cornerstone?.Enums?.Events, element = v.element;
+    if (!events?.STACK_NEW_IMAGE || !events.STACK_VIEWPORT_SCROLL || typeof element?.addEventListener !== 'function' ||
+        typeof element.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return none;
+    const stop = () => { try { element.removeEventListener(events.STACK_NEW_IMAGE, seen, true); } catch (_) {} };
+    const seen = event => {
+      if (!arrived()) return;
+      stop();
+      if (event.kinNumbered) return;
+      event.kinNumbered = true;
+      try {
+        element.dispatchEvent(new CustomEvent(events.STACK_VIEWPORT_SCROLL, { cancelable: true, detail: { newImageIdIndex: index,
+          imageId: v.getImageIds()[index], direction: from < 0 ? 0 : index - from } }));
+      } catch (_) {}
+    };
+    element.addEventListener(events.STACK_NEW_IMAGE, seen, true);
+    return stop;
+  } catch (_) { return none; }
+}
 // Exact-frame navigation shared by the Saved Items "Go to Image" button and the Findings section.
 // `env` exposes the live closure state of kinCreateViewerHistory through getters, so every decision
 // after an await is re-taken against the current session and never against a copy. The result is
@@ -10685,7 +10731,9 @@ async function kinViewerNavigateTo(env, target) {
   if (env.busy()) return refusal('busy');
   const ticket = env.generation(), nav = env.beginNavigation();
   const live = () => !env.ended() && env.valid(ticket) && nav === env.navigation() && env.scope() === scope;
-  const identity = { seriesUid: target.seriesUid, sopUid: target.sopUid, frame: target.frame };
+  // The requested frame, by the study this move started in (the panel's own study may change while an image loads).
+  const same = id => { const r = env.reference(id);
+    return !!r && r.study === scope && r.seriesUid === target.seriesUid && r.sopUid === target.sopUid && r.frame === target.frame; };
   let sets;
   try {
     sets = env.services.displaySetService.getActiveDisplaySets().filter(d => d.StudyInstanceUID === scope && d.SeriesInstanceUID === target.seriesUid && kinSeriesSplitHolds(d, target.sopUid, target.frame));
@@ -10696,7 +10744,7 @@ async function kinViewerNavigateTo(env, target) {
   const first = env.viewport();
   // A volume/MPR viewport has no stack image list to index: refuse instead of reslicing or retargeting.
   if (first && !stack(first)) return refusal('viewport-unsupported');
-  if (!(first ? first.getImageIds() : []).some(id => env.matches(env.reference(id), identity))) {
+  if (!(first ? first.getImageIds() : []).some(same)) {
     if (!live()) return refusal('superseded');
     env.services.viewportGridService.setDisplaySetsForViewport({ viewportId, displaySetInstanceUIDs: [sets[0].displaySetInstanceUID] });
   }
@@ -10704,20 +10752,39 @@ async function kinViewerNavigateTo(env, target) {
     if (!live()) return refusal('superseded');
     const v = env.services.cornerstoneViewportService.getCornerstoneViewport(viewportId);
     if (v && !stack(v)) return refusal('viewport-unsupported');
-    const index = (v ? v.getImageIds() : []).findIndex(id => env.matches(env.reference(id), identity));
+    const index = (v ? v.getImageIds() : []).findIndex(same);
     if (index >= 0) {
+      const shows = () => same(kinViewerShownImageId(v));
+      // Still the frame asked of this cell, by the cell's own state: it holds this viewport (the viewer puts a new one in
+      // it with every series it is given) and no wheel, key or later move has put its scroll target elsewhere.
+      const kept = () => env.services.cornerstoneViewportService.getCornerstoneViewport(viewportId) === v &&
+        !(typeof v.targetImageIdIndex === 'number' && v.targetImageIdIndex !== index);
+      let stop = () => {};
       try {
         // The pinned setter preserves its load Promise but leaves the scroll target
         // and an older wheel debounce untouched. Retarget before starting the load;
         // doing this after await would rewind a newer user scroll.
+        const from = v.getImageIds().indexOf(kinViewerShownImageId(v));
         clearTimeout(v.debouncedTimeout);
         v.targetImageIdIndex = index;
+        // The pinned setter loads nothing when its index is already on the frame, which it also is while an earlier load
+        // of that frame still runs and after one failed. A frame the cell does not show is loaded by this move: the
+        // renderer's index goes back to the image shown (-1: none of this stack), and the setter's Promise is then this
+        // move's own load from start to end.
+        if (!shows() && typeof v.currentImageIdIndex === 'number') v.currentImageIdIndex = from;
+        // The number is the cell's own and follows its image: it reads nothing of the panel, which has moved to another
+        // cell or another study (and counted that as a new navigation) when the reader made another cell the active one.
+        stop = kinViewerNumberOnArrival(v, index, from, () => !env.ended() && kept() && shows());
         await v.setImageIdIndex(index);
-      } catch (_) { return live() ? refusal('frame-missing') : refusal('superseded'); }
-      if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId) return refusal('superseded');
-      // The frame actually shown after the await is the only proof; a user scroll or a
-      // display-set change during the load must not be reported as arrival.
-      if (!env.matches(env.reference(v.getCurrentImageId?.()), identity)) return refusal('frame-missing');
+      } catch (_) {
+        return live() ? refusal('frame-missing') : refusal('superseded');
+      } finally { stop(); }
+      // Another study or active cell, a new viewport in the cell, a later move, or a wheel or key that moved the cell on
+      // while this frame loaded is the newer choice: this move does not report arrival.
+      if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId || !kept()) return refusal('superseded');
+      // The image shown after the await is the only proof: the pinned GPU loader settles the setter normally after a failed
+      // load, and the index it leaves on the requested frame says nothing of the image on screen.
+      if (!shows()) return refusal('frame-missing');
       try { v.render(); } catch (_) {}
       env.hydrate();
       return { ok: true, ...env.highlight(target.itemId) };

@@ -32,9 +32,9 @@
       const s = cur(), why = templateInsertionBlock(templatePreview.template);
       $("#tpl-preview-target").dataset.uid = selectedUid ?? "";
       kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
-      $("#tpl-preview-status").textContent = why ?? (s?.rs === "A"
-        ? "삽입은 개인 초안에 반영됩니다. 승인본에 추가하려면 Addendum을 사용하세요."
-        : "삽입은 개인 초안에 반영됩니다. 확정하려면 Save 또는 Approve를 사용하세요.");
+      kinWrite($("#tpl-preview-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? (s?.rs === "A"
+        ? kinSayEn("삽입은 개인 초안에 반영됩니다. 승인본에 추가하려면 Addendum을 사용하세요.")
+        : kinSayEn("삽입은 개인 초안에 반영됩니다. 확정하려면 Save 또는 Approve를 사용하세요.")));
       $("#tpl-preview-insert").disabled = !!why;
     }
     $("#tplrows").addEventListener("click", e => {
@@ -47,7 +47,7 @@
       const snapshot = templatePreview.template;
       kinWrite($("#tpl-preview-title"), kinSayEn("상용구 미리보기 — {0}", snapshot.title));
       kinWrite($("#tpl-preview-meta"), kinSayEn("단축어: {0} · Modality: {1} · Bodypart: {2}", snapshot.shortcut || kinSayEn("없음"), snapshot.modality || kinSayEn("전체"), snapshot.bodypart || kinSayEn("미지정")));
-      for (const k of RFIELDS) $("#tpl-preview-" + k).textContent = snapshot[k] || "(내용 없음)";
+      for (const k of RFIELDS) kinWrite($("#tpl-preview-" + k), snapshot[k] || kinSayEn("(내용 없음)"));
       updateTemplatePreview();
       $("#tpl-preview").classList.add("show");
       $("#tpl-preview-close").focus();
@@ -98,7 +98,7 @@
       if (!text) return false;
       // 단축어 자리를 그 칸의 문장으로 바꾼다. 표시·점유·자동 저장은 편집기의 한 자리(`editReport`)가 챙긴다.
       if (!editReport([{ field: el.id, start: pos - word.length, end: pos, text }])) return false;
-      toast(`상용구 "${t.title}" 삽입`, "info");
+      toast(String(kinSayEn("상용구 \"{0}\" 삽입", t.title)), "info");
       return true;
     }
     // 단축어 Tab(아래 등록)이 부르는 편집기의 한 자리다. 분할된 script 사이의 Tab이 미정의를 만나지 않게 등록보다 앞에 둔다(S9-U0a-PRE).
@@ -155,7 +155,7 @@
       const why = reportWriteBlock();
       if (why) return why;
       if (!cur()) return "출처 검사를 확인할 수 없습니다. Refresh로 다시 확인하세요";
-      if (RFIELDS.some(k => $("#" + k).readOnly)) return "현재 판독문은 편집할 수 없습니다";
+      if (RFIELDS.some(k => $("#" + k).readOnly)) return kinSayEn("현재 판독문은 편집할 수 없습니다");
       return null;
     }
     function reportTemplateBlock() {
@@ -177,9 +177,9 @@
       $("#tpl-cancel").disabled = session.pending;
       $("#tpl-save").disabled = session.pending || !!why;
       kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
-      $("#tpl-save").title = why ?? "";
-      if (session.source) $("#tpl-source").textContent = session.source.label + "\n"
-        + (why ?? "재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.");
+      kinWrite($("#tpl-save"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? "", "title");
+      if (session.source) kinWrite($("#tpl-source"), kinSayEn("{0}\n{1}", session.source.label,
+        why ?? kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
     }
     function closeTemplateEditor(returnFocus = true) {
       const session = templateEditor;
@@ -215,7 +215,7 @@
     }
     $("#b-report-template").addEventListener("click", () => {
       const why = reportTemplateBlock();
-      if (why) { toast(kinSayEn(why), why === "상용구로 저장할 내용이 없습니다" ? "info" : "err"); return; }
+      if (why) { toast(String(kinSayEn(why)), why === "상용구로 저장할 내용이 없습니다" ? "info" : "err"); return; }
       const s = cur(), text = currentTemplateText();
       const modalities = String(s.modality ?? "").split(",").map(value => value.trim()).filter(Boolean);
       // 환자 식별은 출처 확인에만 쓴다. 재사용 문장/제목에 검사 식별을 자동으로 섞지 않는다.
@@ -250,7 +250,7 @@
       const shortcut = $("#tpl-s").value.trim();
       // 단축어가 겹치면 어느 쪽이 나올지 모른다 — 먼저 등록된 것이 이기고, 뒤엣것은 죽는다.
       const dup = shortcut && templates.find(x => x !== t && x.shortcut === shortcut);
-      if (dup) { toast(`단축어 "${shortcut}" 은(는) "${dup.title}" 이(가) 쓰고 있습니다`, "err"); return; }
+      if (dup) { toast(String(kinSayEn("단축어 \"{0}\" 은(는) \"{1}\" 이(가) 쓰고 있습니다", shortcut, dup.title)), "err"); return; }
       const body = { id: t?.id, title, shortcut,
                      modality: $("#tpl-m").value.trim(),
                      bodypart: $("#tpl-b").value.trim(),
@@ -272,7 +272,7 @@
           saveTemplatesLocal();
         }
       } catch (e) {
-        work.commit(at, () => { if (templateEditor === session) toast("상용구 저장 실패: " + e.message, "err"); });
+        work.commit(at, () => { if (templateEditor === session) toast(String(kinSayEn("상용구 저장 실패: {e0}", e.message)), "err"); });
         return;
       } finally {
         // 이 저장이 건 대기 표시는 이 저장이 푼다(자기 것만). 그리는 일은 문맥이 그대로일 때만 한다.
@@ -283,7 +283,7 @@
       if (!work.commit(at, () => {
         if (templateEditor === session) closeTemplateEditor();
         renderTemplates();
-        toast(`상용구 "${body.title}" 저장`);
+        toast(String(kinSayEn("상용구 \"{0}\" 저장", body.title)));
       })) return;
       // POST 성공과 목록 갱신 실패를 합치면 '저장 실패' 재시도로 같은 문장을 두 번 만든다.
       if (serverMode) {
@@ -302,11 +302,11 @@
         { label: "수정", dis: !t, act: () => editTemplate(t) },
         { sep: 1 },
         { label: "삭제", dis: !t, act: async () => {
-            if (!confirm(`상용구 "${t.title}" 을(를) 삭제할까요?`)) return;
+            if (!confirm(kinSayEn("상용구 \"{0}\" 을(를) 삭제할까요?", t.title))) return;
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/templates/${t.id}`, undefined, undefined, at); await reloadPrefs(at); }
-              catch (err) { work.commit(at, () => toast("삭제 실패: " + err.message, "err")); return; }
+              catch (err) { work.commit(at, () => toast(String(kinSayEn("삭제 실패: {e0}", err.message)), "err")); return; }
             } else {
               templates.splice(templates.indexOf(t), 1); saveTemplatesLocal(); renderTemplates();
             }

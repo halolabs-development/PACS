@@ -441,6 +441,7 @@ window.synImage = () => `wadors:${location.origin}/dicom-web/studies/${window.sy
 const element = document.createElement('div'); document.body.append(element);
 const viewport = { id: 'syn-vp', renderingEngineId: 'syn-engine', type: 'stack', element,
   getCurrentImageId: () => window.synFrameless ? undefined : window.synImage(), getImageIds: () => [window.synImage()], setImageIdIndex: async () => {},
+  getCornerstoneImage: () => window.synFrameless ? undefined : { imageId: window.synImage() },
   getCamera: () => ({ viewPlaneNormal: [0, 0, -1], viewUp: [0, -1, 0] }), render() {} };
 const annotations = new Map(), locks = new Map();
 window.synEdits = [];
@@ -2023,6 +2024,185 @@ class ClinicianViewerDOMTest(unittest.TestCase):
                                                            self.page.evaluate('synIndexed.length'), self.page.evaluate(holds)))
         finally:
             self.viewer_mode, self.viewer_target, self.viewer_handoff = None, None, True
+            self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
+
+    def test_06c_the_cell_number_follows_the_frame_a_cited_line_opens(self):
+        """The cell's image number ("I: n (k/N)") and scroll bar follow STACK_VIEWPORT_SCROLL, which the renderer sends from its
+        own scroll and not from a direct setImageIdIndex(). Opening the frame a cited line names (the same exact-frame move as
+        Go to Image and the Findings section) sends that event on the cell, once, when the requested image arrives: from the
+        capture phase of its STACK_NEW_IMAGE, before the viewer's own handling of that event lowers the Loading cover the
+        scroll event raised. Every decision of the move reads the image the cell shows, never the renderer's index (which is
+        on the requested frame while its load runs and after it failed): a frame not shown is loaded by this move, a frame
+        that never shows is said as not opened with no mark, and the number names the image shown at every end."""
+        cell = """([series, sop, at, plan, fresh, item]) => { const v = synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp');
+          const id = s => `wadors:${location.origin}/dicom-web/studies/${window.synStudy}/series/${series}/instances/${s}/frames/1`;
+          // The study of the document is known once it boots: the image ids are made when asked for.
+          const sops = [0, 1, 2, 3, 4, 5].map(i => i === at ? sop : sop + '.9' + i), ids = () => sops.map(id);
+          window.synScrolls = []; window.synOrder = []; window.synHeld = {}; window.synSecond = null;
+          // The viewer around the cell: its number follows the scroll event, its Loading cover goes up on the scroll event
+          // and down on the cell's STACK_NEW_IMAGE (listeners of the target, not capture).
+          window.synNumber = 0; window.synLoading = false;
+          cornerstone.Enums.Events.STACK_VIEWPORT_SCROLL = 'syn-stack-scroll';
+          v.element.addEventListener('syn-stack-scroll', e => { window.synScrolls.push(e.detail); window.synOrder.push('scroll');
+            window.synNumber = e.detail.newImageIdIndex; window.synLoading = true; });
+          v.element.addEventListener('syn-stack-new-image', () => { window.synOrder.push('lowered'); window.synLoading = false; });
+          // The loader and its cache: one load of an image at a time, shared by everyone who asks while it runs; a loaded
+          // image is there at once; a failed load is forgotten. plan[i]: 'fail', 'hold' (the test ends it) or a list, one
+          // entry per load of that image.
+          const running = new Map(), loaded = new Set([0, ...(plan.loaded || [])]);
+          const load = index => { if (loaded.has(index)) return Promise.resolve();
+            let job = running.get(index); if (job) return job;
+            window.synOrder.push('load ' + index);
+            const mode = Array.isArray(plan[index]) ? plan[index].shift() : plan[index];
+            job = new Promise((resolve, reject) => { const end = ok => { running.delete(index);
+                if (ok) { loaded.add(index); resolve(); } else reject(new Error('SYN load')); };
+              if (mode === 'hold') window.synHeld[index] = end; else setTimeout(() => end(mode !== 'fail'), 0); });
+            running.set(index, job); return job; };
+          // As the pinned stack viewport: the index moves when a load starts and stays there when the load fails; an image
+          // that arrives while the index is elsewhere is dropped; the setter loads nothing when its index is already on
+          // the frame, and after a failed load it settles normally (the GPU path) unless plan.reject (the CPU path). Its
+          // own scroll moves the target, announces it and asks for a loaded image at once, else 40 ms later.
+          // `shown` is the place of the image on screen (-1: an image of the series shown before).
+          Object.assign(v, { currentImageIdIndex: 0, targetImageIdIndex: 0, shown: 0, debouncedTimeout: 0,
+            getImageIds: ids, getCurrentImageIdIndex: () => v.currentImageIdIndex, getCurrentImageId: () => ids()[v.currentImageIdIndex],
+            getCornerstoneImage: () => ({ imageId: v.shown < 0 ? id(sop + '.8').replace('/series/' + series + '/', '/series/' + series + '.8/') : ids()[v.shown] }),
+            setImageIdIndex(index) { window.synOrder.push('asked ' + index);
+              return v.currentImageIdIndex === index ? Promise.resolve(ids()[index]) : v._setImageIdIndex(index); },
+            _setImageIdIndex(index) { v.currentImageIdIndex = index;
+              return load(index).then(() => { if (v.currentImageIdIndex !== index) return;
+                v.shown = index; window.synOrder.push('arrived');
+                v.element.dispatchEvent(new CustomEvent('syn-stack-new-image', { detail: { imageId: ids()[index], imageIdIndex: index } }));
+              }, error => { window.synOrder.push('failed'); if (plan.reject) throw error; }).then(() => ids()[index]); },
+            scroll(delta) { const before = v.targetImageIdIndex, next = Math.max(0, Math.min(sops.length - 1, before + delta));
+              v.targetImageIdIndex = next;
+              if (loaded.has(next)) v.setImageIdIndex(next).catch(() => {});
+              else { clearTimeout(v.debouncedTimeout); v.debouncedTimeout = setTimeout(() => v.setImageIdIndex(next).catch(() => {}), 40); }
+              if (next !== before) v.element.dispatchEvent(new CustomEvent('syn-stack-scroll', { detail: { newImageIdIndex: next,
+                imageId: ids()[next], direction: delta } })); } });
+          // A series just put in the cell: its list is there, the index is on its first image, that load runs, and the
+          // image on screen is still one of the series shown before.
+          if (fresh) { v.shown = -1; loaded.delete(0); v._setImageIdIndex(0).catch(() => {}); }
+          window.synShown = () => synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp').shown;
+          window.synGo = (index, marked) => window.kinViewerHistoryNavigate({ studyUid: window.synStudy, seriesUid: series,
+            sopUid: sops[index], frame: 1, ...(marked ? { itemId: item } : {}) }).then(r => r.ok ? 'ok' : r.reason);
+          window.synWait = ms => new Promise(resolve => setTimeout(resolve, ms));
+          synServices.displaySetService.getActiveDisplaySets = () => [{ StudyInstanceUID: window.synStudy, SeriesInstanceUID: series,
+            displaySetInstanceUID: 'syn-ds', images: sops.map(s => ({ SOPInstanceUID: s })) }]; }"""
+        entry_note = "() => { const n = document.getElementById('kin-viewer-entry-note'); return n && !n.hidden ? n.textContent : null; }"
+        highlighted = "() => cornerstoneTools.annotation.state.getAllAnnotations().filter(a => a.highlighted).map(a => a.data.label)"
+        moved = '요청한 원본 영상(프레임 1)으로 이동했습니다. 표식을 강조했습니다.'
+        missing = '요청한 원본 영상으로 이동하지 못했습니다. 원본 프레임을 열지 못했습니다.'
+        overtaken = '요청한 원본 영상으로 이동하지 못했습니다. 다른 영상 칸을 골라 이동을 멈췄습니다.'
+        mark = ['SYN-A length']
+        # `during` runs once the opening move has asked for its frame (the load is held); `after` runs when the opening has
+        # said its end and returns the answers of the moves it made. `shown` is the place of the image on screen and
+        # `number` what the cell's number says.
+        cases = (
+            dict(name='the frame is shown already', at=0, said=moved, scrolls=[], number=0, shown=0, lit=mark, order=['asked 0']),
+            dict(name='another frame', at=4, said=moved, scrolls=[(4, 4)], number=4, shown=4, lit=mark,
+                 order=['asked 4', 'load 4', 'arrived', 'scroll', 'lowered']),
+            # The image never came: the cell keeps image 1 under its number 1, no Loading cover was raised, no mark.
+            dict(name='the load fails', at=4, plan={'4': 'fail'}, said=missing, scrolls=[], number=0, shown=0, lit=[],
+                 order=['asked 4', 'load 4', 'failed']),
+            dict(name='the load is rejected', at=4, plan={'4': 'fail', 'reject': True}, said=missing, scrolls=[], number=0, shown=0, lit=[]),
+            # A wheel step while the image loads is the newer choice: no arrival is claimed for the older move and the
+            # cell ends on the wheel's image under the wheel's number.
+            dict(name='a wheel step while the frame loads', at=4, plan={'4': 'hold'}, during="v.scroll(1); synHeld[4](true);",
+                 said=overtaken, scrolls=[(5, 1)], number=5, shown=5, lit=[]),
+            dict(name='a wheel step to a loaded neighbour while the frame loads', at=4, plan={'4': 'hold', 'loaded': [5]},
+                 during="v.scroll(1); synHeld[4](true);", said=overtaken, scrolls=[(5, 1)], number=5, shown=5, lit=[]),
+            dict(name='another line while the frame loads', at=4, plan={'4': 'hold'},
+                 during="window.synSecond = synGo(2); setTimeout(() => synHeld[4](true), 0);",
+                 said=overtaken, answers=['ok'], scrolls=[(2, 2)], number=2, shown=2, lit=[]),
+            # Another cell made the active one while the frame loads: the move is not reported as arrival and no mark is
+            # lit, but the image still arrives in its own cell and that cell's number follows it.
+            dict(name='another cell made active while the frame loads', at=4, plan={'4': 'hold'},
+                 during="synServices.viewportGridService.getActiveViewportId = () => 'syn-other'; synHeld[4](true);",
+                 said=overtaken, scrolls=[(4, 4)], number=4, shown=4, lit=[]),
+            # The other cell shows another study: the panel moves to that study (and counts it as a new navigation). The
+            # first cell's number still follows the image that arrives in it.
+            dict(name="another study's cell made active while the frame loads", at=4, plan={'4': 'hold'},
+                 during="const image = 'wadors:' + location.origin + '/dicom-web/studies/%s/series/1.2.3/instances/1.2.3.4/frames/1';"
+                        " const other = { type: 'stack', element: document.createElement('div'), getImageIds: () => [image],"
+                        " getCurrentImageId: () => image, getCornerstoneImage: () => ({ imageId: image }), setImageIdIndex: async () => {},"
+                        " getCamera: v.getCamera, render() {} };"
+                        " synServices.viewportGridService.getActiveViewportId = () => 'syn-other';"
+                        " synServices.cornerstoneViewportService.getCornerstoneViewport = id => id === 'syn-other' ? other : v;"
+                        " document.dispatchEvent(new Event('syn-stack-new-image')); synHeld[4](true);" % VP,
+                 said=overtaken, scrolls=[(4, 4)], number=4, shown=4, lit=[]),
+            # The cell given another series while the frame loads: the viewer puts a new viewport in the cell, on the same
+            # element. The older viewport's late image is not this cell's: no arrival, and the new viewport's number stays.
+            dict(name='the cell given a new viewport while the frame loads', at=4, plan={'4': 'hold'},
+                 during="const twin = Object.assign({}, v); synServices.cornerstoneViewportService.getCornerstoneViewport = () => twin; synHeld[4](true);",
+                 said=overtaken, scrolls=[], number=0, shown=0, lit=[]),
+            # The same line pressed again while its frame loads: the later move takes part in that one load, arrives with
+            # it and numbers the cell (the renderer's index was on the frame already, the image was not).
+            dict(name='the same line again while the frame loads', at=4, plan={'4': 'hold'},
+                 during="window.synSecond = synGo(4, true); setTimeout(() => synHeld[4](true), 0);",
+                 said=overtaken, answers=['ok'], scrolls=[(4, 4)], number=4, shown=4, lit=mark,
+                 order=['asked 4', 'load 4', 'asked 4', 'arrived', 'scroll', 'lowered', 'arrived', 'lowered']),
+            dict(name='the same line again while a load that fails runs', at=4, plan={'4': 'hold'},
+                 during="window.synSecond = synGo(4, true); setTimeout(() => synHeld[4](false), 0);",
+                 said=overtaken, answers=['frame-missing'], scrolls=[], number=0, shown=0, lit=[]),
+            # The first image of a series just put in the cell: the index is on it while its load runs.
+            dict(name='the first image of a new stack, still loading', at=0, fresh=True, plan={'0': 'hold'}, during="synHeld[0](true);",
+                 said=moved, scrolls=[(0, 0)], number=0, shown=0, lit=mark),
+            dict(name='the first image of a new stack cannot be loaded', at=0, fresh=True, plan={'0': 'fail'},
+                 said=missing, scrolls=[], number=0, shown=-1, lit=[]),
+            dict(name='the third image of a new stack', at=2, fresh=True, plan={'0': 'hold'}, after="synHeld[0](true); await synWait(30); return [];",
+                 said=moved, scrolls=[(2, 0)], number=2, shown=2, lit=mark),
+            # After a failed load the renderer's index stays on the requested frame: the same line again is a new load.
+            dict(name='the load fails, then the same line again', at=4, plan={'4': 'fail'}, after="return [await synGo(4, true)];",
+                 said=missing, answers=['frame-missing'], scrolls=[], number=0, shown=0, lit=[],
+                 order=['asked 4', 'load 4', 'failed', 'asked 4', 'load 4', 'failed']),
+            dict(name='the load fails, then the same line again once the image can be read', at=4, plan={'4': ['fail', None]},
+                 after="return [await synGo(4, true)];", said=missing, answers=['ok'], scrolls=[(4, 4)], number=4, shown=4, lit=mark),
+            dict(name='the load fails, then another line', at=4, plan={'4': 'fail'}, after="return [await synGo(2)];",
+                 said=missing, answers=['ok'], scrolls=[(2, 2)], number=2, shown=2, lit=[]),
+            # The renderer's own wheel after a failed load starts at the failed frame's place (as after any failed load of
+            # the pinned viewer); number and image agree.
+            dict(name='the load fails, then a wheel step down', at=4, plan={'4': 'fail'}, after="v.scroll(1); await synWait(90); return [];",
+                 said=missing, scrolls=[(5, 1)], number=5, shown=5, lit=[]),
+            dict(name='the load fails, then a wheel step up', at=4, plan={'4': 'fail'}, after="v.scroll(-1); await synWait(90); return [];",
+                 said=missing, scrolls=[(3, -1)], number=3, shown=3, lit=[]),
+            # A wheel step whose load failed left the number (and the cover) on the next frame; the line of the image
+            # shown puts the number back on it.
+            dict(name='a failed wheel step, then the line of the image shown', at=0, plan={'1': 'fail'},
+                 after="v.scroll(1); await synWait(90); return [await synGo(0, true)];",
+                 said=moved, answers=['ok'], scrolls=[(1, 1), (0, 0)], number=0, shown=0, lit=mark),
+            dict(name='arrived, then a wheel step', at=4, after="v.scroll(1); await synWait(90); return [];",
+                 said=moved, scrolls=[(4, 4), (5, 1)], number=5, shown=5, lit=mark),
+        )
+        try:
+            for case in cases:
+                with self.subTest(case=case['name']):
+                    at, plan = case['at'], dict(case.get('plan') or {})
+                    self.me, self.viewer_mode = CLINICIAN, 'physician'
+                    self.viewer_target = {'studyUid': VA, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)}
+                    self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
+                    self.open_viewer(before_boot=f"() => ({cell})({json.dumps([SERIES, SOP, at, plan, bool(case.get('fresh')), item_id(2)])})")
+                    self.wait_panel('ready', VA)
+                    v = "const v = synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp');"
+                    if case.get('during'):
+                        self.wait_until(lambda: self.page.evaluate(f"() => synOrder.includes('asked {at}')"), 'the opening move asked for its frame')
+                        self.page.evaluate("() => { %s %s }" % (v, case['during']))
+                    self.wait_until(lambda: self.page.evaluate(entry_note) is not None, 'the target opened')
+                    answers = self.page.evaluate("async () => { %s %s }" % (v, case['after'])) if case.get('after') else []
+                    if case.get('during'):
+                        answers = self.page.evaluate("async () => window.synSecond ? [await window.synSecond] : []")
+                    self.wait_until(lambda: self.page.evaluate('synShown()') == case['shown'], 'the cell shows the expected image')
+                    self.settle()
+                    self.assertEqual(case['said'], self.page.evaluate(entry_note))
+                    self.assertEqual(case.get('answers', []), answers)
+                    self.assertEqual([list(pair) for pair in case['scrolls']], self.page.evaluate(
+                        "() => synScrolls.map(d => [d.newImageIdIndex, d.direction])"))
+                    if 'order' in case:
+                        self.assertEqual(case['order'], self.page.evaluate("() => synOrder"))
+                    self.assertEqual((case['shown'], case['number'], False), tuple(self.page.evaluate("() => [synShown(), synNumber, synLoading]")),
+                                     'the image shown, the number that names it, and no Loading cover left')
+                    self.assertEqual(case['lit'], self.page.evaluate(highlighted))
+        finally:
+            self.viewer_mode, self.viewer_target = None, None
             self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
 
     def test_07_a_b_a_across_the_comparison_study(self):

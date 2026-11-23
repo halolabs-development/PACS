@@ -1,6 +1,10 @@
 /* Move existing study tools into a non-modal drawer without losing their state or the opener's focus. */
 (function (root) {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // Text Size steps Normal / Large / Larger (pilot D1160). The moved tools keep their own pixel font sizes, so the
   // tabs and tab contents are zoomed as a whole; the header, the report editor and the worklist never are.
   const TEXT_SCALES = Object.freeze([1, 1.2, 1.4]);
@@ -33,10 +37,10 @@
     node('h2', 'Study Panel', header);
     const tools = node('div', '', header); tools.className = 'study-panel-tools';
     const textSize = node('select', '', tools); textSize.setAttribute('aria-label', 'Text Size');
-    textSize.title = 'Study Panel 글자 크기입니다(기본·크게·더 크게). 판독문과 워크리스트 글자는 바뀌지 않습니다.';
+    kinWrite(textSize, kinSayEn("Study Panel 글자 크기입니다(기본·크게·더 크게). 판독문과 워크리스트 글자는 바뀌지 않습니다."), "title");
     TEXT_LABELS.forEach((label, step) => { node('option', label, textSize).value = String(step); });
     const resetButton = node('button', 'Default', tools); resetButton.type = 'button';
-    resetButton.title = '이 방향(가로·세로) 화면의 Study Panel 크기와 글자 크기를 기본값으로 되돌립니다.';
+    kinWrite(resetButton, kinSayEn("이 방향(가로·세로) 화면의 Study Panel 크기와 글자 크기를 기본값으로 되돌립니다."), "title");
     const closeButton = node('button', 'Close', tools); closeButton.type = 'button';
     const tablist = node('div', '', drawer); tablist.setAttribute('role', 'tablist');
     tablist.setAttribute('aria-label', 'Study Panel'); tablist.setAttribute('aria-orientation', 'horizontal');
@@ -56,7 +60,7 @@
     const grip = node('div', '', drawer); grip.className = 'study-panel-resize';
     grip.setAttribute('role', 'separator'); grip.tabIndex = 0; grip.setAttribute('aria-controls', drawer.id);
     grip.setAttribute('aria-label', 'Study Panel Size');
-    grip.title = '드래그하거나 화살표 키로 Study Panel 크기를 조절합니다. 두 번 클릭하면 기본 크기와 글자로 돌아갑니다.';
+    kinWrite(grip, kinSayEn("드래그하거나 화살표 키로 Study Panel 크기를 조절합니다. 두 번 클릭하면 기본 크기와 글자로 돌아갑니다."), "title");
     let text = 0, size = null, drag = null, notice = null;
     const snapshot = () => ({ ...state });
     // Layout records keep the preference even while the current mode hides it.

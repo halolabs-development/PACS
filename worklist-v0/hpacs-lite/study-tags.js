@@ -20,7 +20,7 @@ window.KinStudyTags=function(app){
   $('name').oninput=()=>{if(selected)names.set(nameKey(),$('name').value);};
   $('new').oninput=()=>newNames.set(scope,$('new').value);
   const label=uid=>{const s=app.study(uid);return s?[s.name,s.id,s.date,s.desc,uid].filter(Boolean).join(' · '):uid;};
-  const message=text=>kinWrite($('status'),text);
+  const message=text=>kinWrite($('status'),typeof text==='string'&&text?kinSayEn(text):text);
   function controls(){d.querySelectorAll('button,input,select').forEach(x=>x.disabled=busy||!!pending||!same());
     $('retry').hidden=!pending;$('retry').disabled=busy;$('reload').disabled=busy;$('close').disabled=busy;
     for(const id of ['create','rename','delete'])$(id).disabled=busy||!!pending||!same()||!manages()||(id!=='create'&&!tag());

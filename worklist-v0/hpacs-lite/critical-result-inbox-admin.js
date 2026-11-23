@@ -1,5 +1,9 @@
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // Critical result hospital inbox: the administrator names the one member the hospital uses as its shared receiving point
   // for critical results (GET/PATCH /api/admin/critical-result-inbox). The Send Critical Result dialog checks that member
   // by default; a delivery to it is an ordinary record of that member. Like DICOM Peers, opening the page reads nothing:
@@ -12,7 +16,7 @@
 
   function message(text) {
     const box = $('#cr-inbox-message');
-    box.textContent = text || '';
+    kinWrite(box, typeof text === 'string' && text ? kinSayEn(text) : text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -35,8 +39,8 @@
   // The server's input checks are worded for this screen (400); other refusals get fixed sentences.
   function failure(error, what) {
     if (error?.status === 400 && error.said) return error.said;
-    if (error?.status === 403) return '이 계정으로는 병원 공용 수신을 정할 수 없습니다.';
-    return `${what} 결과를 확인하지 못했습니다. 지금 값을 다시 불러왔습니다.`;
+    if (error?.status === 403) return kinSayEn("이 계정으로는 병원 공용 수신을 정할 수 없습니다.");
+    return kinSayEn("{0} 결과를 확인하지 못했습니다. 지금 값을 다시 불러왔습니다.", what);
   }
 
   function render(body) {
@@ -56,7 +60,7 @@
     chip.textContent = !inbox ? 'Not Set' : inbox.member ? 'Set' : 'Not Reachable';
     const current = $('#cr-inbox-current');
     if (!inbox) current.textContent = 'Current: Not Set';
-    else if (!inbox.member) current.textContent = 'Current: 지정한 회원이 지금 중요 결과를 받을 수 없습니다(정지·다른 기관·역할 변경). 다른 회원을 고르거나 None으로 해제하세요.';
+    else if (!inbox.member) kinWrite(current, kinSayEn("Current: 지정한 회원이 지금 중요 결과를 받을 수 없습니다(정지·다른 기관·역할 변경). 다른 회원을 고르거나 None으로 해제하세요."));
     else {
       const name = document.createElement('span');
       name.setAttribute('translate', 'no');

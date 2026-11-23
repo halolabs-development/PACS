@@ -1,5 +1,10 @@
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // FC-070 DICOM Peers: the administrator registers the hospital's other PACS or modalities (name, AE Title, host, port)
   // that the worklist's Query/Retrieve searches and pulls from, and removes them (GET/POST /api/admin/dicom-peers,
   // DELETE /api/admin/dicom-peers/:id). Like Held Studies, opening the page reads nothing: Refresh Peers (or arriving at
@@ -14,7 +19,7 @@
 
   function message(text) {
     const box = $('#dicom-peers-message');
-    box.textContent = text || '';
+    kinWrite(box, typeof text === 'string' && text ? kinSayEn(text) : text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -37,10 +42,10 @@
   // The server's input checks are worded for this screen (400, 409); other refusals get fixed sentences.
   function failure(error, what) {
     if ((error?.status === 400 || error?.status === 409) && error.said) return error.said;
-    if (error?.status === 403) return '이 계정으로는 상대 PACS를 관리할 수 없습니다.';
-    if (error?.status === 404) return '이미 지워진 상대 PACS입니다. 목록을 다시 불러왔습니다.';
-    if (error?.status === 503) return `${what} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.`;
-    return `${what} 결과를 확인하지 못했습니다. 페이지를 다시 열어 지금 목록을 확인하세요.`;
+    if (error?.status === 403) return kinSayEn("이 계정으로는 상대 PACS를 관리할 수 없습니다.");
+    if (error?.status === 404) return kinSayEn("이미 지워진 상대 PACS입니다. 목록을 다시 불러왔습니다.");
+    if (error?.status === 503) return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", what);
+    return kinSayEn("{0} 결과를 확인하지 못했습니다. 페이지를 다시 열어 지금 목록을 확인하세요.", what);
   }
 
   function cell(tr, value) {

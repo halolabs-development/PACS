@@ -15,8 +15,14 @@
  */
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
   // A sentence of the page built from its template and its parts ({t: words}, {e: message}); written so the screen language reads it.
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // A product line handed on as a string (the status tables below): a sentence the glossary knows whole reads in English on an
+  // English screen; anything else, and an empty one, as written. A sentence passes as it is.
+  const phrase = v => typeof v === 'string' && v ? kinSayEn(v) : v;
   const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
 
   // 요청 하나의 제한 시간. 넘으면 멈추고, 쓰기라면 결과를 모르는 답이다.
@@ -58,7 +64,7 @@
       none: '판독 대상 검사를 고르면 중요 결과(CVR)를 보낼 수 있는지 서버에 확인합니다.',
       loading: '중요 결과(CVR)를 보낼 수 있는지 서버에 확인하는 중입니다…',
       unknown: '지금 확인할 수 없습니다',
-      ready: version => `이 검사의 판독 판 v${version}으로 중요 결과(CVR)를 보냅니다. 받는 사람이 HALO PACS 화면에서 직접 확인(Acknowledge)해야 완료됩니다.`,
+      ready: version => kinSayEn('이 검사의 판독 판 v{n0}으로 중요 결과(CVR)를 보냅니다. 받는 사람이 HALO PACS 화면에서 직접 확인(Acknowledge)해야 완료됩니다.', version),
       ended: '세션이 끝났습니다.',
     },
     // 계약 §16.1 비활성 이유(#1 reason).
@@ -140,9 +146,9 @@
       failed: '보낸 목록을 불러오지 못했습니다.',
       empty: '이 조건의 보낸 전달이 없습니다.',
       offline: '서버 연결이 끊겼습니다. 표시된 보낸 중요 결과는 최신이 아닐 수 있습니다.',
-      ready: (n, more) => `보낸 전달 ${n}건을 최신순으로 표시합니다.${more ? ' More로 이어서 읽습니다.' : ''}`,
-      unknownCount: n => `적용 여부를 확인하지 못한 요청 ${n}건`,
-      cancelReason: reason => `취소 사유: ${reason}`,
+      ready: (n, more) => kinSayEn('보낸 전달 {n0}건을 최신순으로 표시합니다.{t1}', n, more ? kinSayEn(' More로 이어서 읽습니다.') : ''),
+      unknownCount: n => kinSayEn('적용 여부를 확인하지 못한 요청 {n0}건', n),
+      cancelReason: reason => kinSayEn('취소 사유: {0}', reason),
     },
     // 계약 §16.1 상태명 설명과 표지 설명. not_eligible의 원인은 발신자에게 나누어 보이지 않는다.
     states: {
@@ -158,7 +164,7 @@
     },
     form: {
       cancelHint: '취소 사유는 이 전달 기록에 남고, 수신자가 이 기록을 읽을 수 있으면 함께 보입니다. 취소한 전달은 되돌리지 않습니다.',
-      supersedeHint: name => `같은 받는 사람(${name})에게 지금 판으로 새 기록을 보내고 이 기록은 Superseded가 됩니다.`,
+      supersedeHint: name => kinSayEn('같은 받는 사람({0})에게 지금 판으로 새 기록을 보내고 이 기록은 Superseded가 됩니다.', name),
       loading: '지금 보낼 판을 서버에서 확인하는 중입니다…',
       failed: '지금 보낼 판을 확인하지 못했습니다.',
       notCandidate: '이 받는 사람은 지금 판을 읽을 수 있는 후보에 없습니다. 보내면 서버가 거절할 수 있습니다.',
@@ -354,7 +360,7 @@
     const make = (tag, className, content) => {
       const element = document.createElement(tag);
       if (className) element.className = className;
-      if (content !== undefined) element.textContent = content;
+      if (content !== undefined) kinWrite(element, content);
       return element;
     };
     const button = (label, onClick) => {
@@ -486,7 +492,7 @@
         title = TEXT.entry.ready(entryView.data.source.version);
       }
       entry.disabled = !enabled;
-      kinWrite(entry, title, 'title');
+      kinWrite(entry, phrase(title), 'title');
     }
 
     /** #1을 읽어 단추를 정한다. 답을 받기 전·거절·오류에는 꺼 두고 그 이유를 툴팁에 쓴다. */
@@ -627,7 +633,7 @@
       if (lock !== null) return { line: TEXT.dialog.locked, detail: lock.detail };
       if (view.phase === 'loading') return { line: TEXT.moved.loading, detail: '' };
       if (view.phase === 'failed') return { line: TEXT.dialog.failed, detail: view.detail };
-      if (view.phase === 'unavailable') return { line: `${TEXT.reasons[view.data.reason]}. ${TEXT.dialog.unavailable}`, detail: '' };
+      if (view.phase === 'unavailable') return { line: kinSayEn('{0}. {1}', phrase(TEXT.reasons[view.data.reason]), phrase(TEXT.dialog.unavailable)), detail: '' };
       const { from, dropped } = view.moved;
       return { line: [TEXT.moved.ready(from, view.data.source.version), dropped ? TEXT.moved.dropped(dropped) : ''].filter(Boolean).join('\n'),
         detail: '' };
@@ -656,7 +662,7 @@
         line = TEXT.recipients.each;
       }
       if (again) {
-        line = `${line}\n${again.line}`;
+        line = kinSayEn('{0}\n{1}', phrase(line), phrase(again.line));
         detail = [detail, again.detail].filter(Boolean).join('\n');
       }
       if (!list.length) {
@@ -666,7 +672,7 @@
           detail = lock.detail;
         } else if (phase === 'loading') line = TEXT.dialog.loading;
         else if (phase === 'failed') { line = TEXT.dialog.failed; detail = view.detail; }
-        else if (phase === 'unavailable') line = `${TEXT.reasons[view.data.reason]}. ${TEXT.dialog.unavailable}`;
+        else if (phase === 'unavailable') line = kinSayEn('{0}. {1}', phrase(TEXT.reasons[view.data.reason]), phrase(TEXT.dialog.unavailable));
         else line = dialogNote || TEXT.dialog.ready;
       }
       const locked = list.length > 0 && lock !== null && !allRefused();
@@ -680,8 +686,9 @@
       kinWrite(statusWord, kinSay(word));
       statusWord.hidden = !word;
       if ((attempt?.body.recipientSubs && attempt.state === 'delivered') || line === TEXT.recipients.each) kinWrite(statusText, kinSay(line));
-      else statusText.textContent = line;
-      statusDetail.textContent = [detail, waiting].filter(Boolean).join('\n');
+      else kinWrite(statusText, phrase(line));
+      const notes = [detail, waiting].filter(Boolean);
+      kinWrite(statusDetail, kinSayEn(notes.map((_, i) => `{${i}}`).join('\n'), ...notes.map(phrase)));
       statusDetail.hidden = !detail && !waiting;
       if (attempt?.result && !locked) {
         statusWho.replaceChildren(...dispatchLines(attempt));
@@ -743,9 +750,9 @@
         const entry = make('li');
         entry.dataset.state = item.state;
         entry.dataset.request = item.requestId;
-        entry.append(kinWrite(make('strong', 'cvr-word'), word || kinSay('Sending')), make('span', null, ' · '), sentTo(item, make('span')),
-          make('span', 'cvr-text', `\n${line}`));
-        if (detail) entry.append(make('span', 'cvr-detail', `\n${detail}`));
+        entry.append(kinWrite(make('strong', 'cvr-word'), phrase(word) || kinSay('Sending')), make('span', null, ' · '), sentTo(item, make('span')),
+          make('span', 'cvr-text', kinSayEn('\n{0}', phrase(line))));
+        if (detail) entry.append(make('span', 'cvr-detail', kinSayEn('\n{0}', phrase(detail))));
         return entry;
       }));
     }
@@ -1125,7 +1132,7 @@
         kinWrite(element.querySelector('.cvr-word'), kinSay(word || 'Sending'));
         element.querySelector('.cvr-line-what').textContent = ` · ${action} · ${attempt.label}`;
         if (attempt.result) kinWrite(element.querySelector('.cvr-text'), kinSay(line));
-        else element.querySelector('.cvr-text').textContent = line;
+        else kinWrite(element.querySelector('.cvr-text'), phrase(line));
         const extra = element.querySelector('.cvr-detail');
         if (attempt.result) extra.replaceChildren(...dispatchLines(attempt));
         else extra.textContent = detail;
@@ -1243,9 +1250,9 @@
       const unknownCount = lined().filter(attempt => unsettled(attempt)).length;
       let line;
       if (lock !== null) line = lock.text;
-      else if (!online()) line = TEXT.list.offline;
+      else if (!online()) line = kinSayEn(TEXT.list.offline);
       else if (listPhase === 'failed') line = kinSay(TEXT.list.failed);
-      else if (pending === null) line = listPhase === 'loading' ? TEXT.list.loading : '';
+      else if (pending === null) line = listPhase === 'loading' ? kinSayEn(TEXT.list.loading) : '';
       else line = kinSay('{t0}{t1}', { t: kinSay('Pending ACK {n0}', pending) }, { t: unknownCount ? kinSay(' · {0}', TEXT.list.unknownCount(unknownCount)) : '' });
       panel.dataset.state = lock !== null ? 'locked' : listPhase;
       kinWrite(summary, line);

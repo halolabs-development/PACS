@@ -621,8 +621,8 @@
       const absent = summary.notObserved ?? [], box = $("#not-observed");
       if (box) {
         box.hidden = !absent.length;
-        $("#not-observed-summary").textContent = absent.length
-          ? `Not Observed (${absent.length})` + (summary.key === "observation_unavailable" ? " · 마지막 관측 기준" : "") : "";
+        kinWrite($("#not-observed-summary"), absent.length
+          ? kinSayEn("Not Observed ({n0}){t1}", absent.length, summary.key === "observation_unavailable" ? kinSayEn(" · 마지막 관측 기준") : "") : "");
         // S4-F01V: every item is an own study (axis A assigned) and its own receipt adds the Gateway text and Now Retry.
         // Items are kept per UID so a request in flight survives a redraw. An item that leaves the list drops its
         // token, so a late answer is never written anywhere, and one that comes back is built new (A->B->A).
@@ -648,7 +648,7 @@
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
           text.textContent = `${row.uid} · ${row.origin} · ${KinStudyArrivals.formatTime(row.createdAt)}`
             + (gateway === null ? "" : ` · ${labels.gateway.text}`);
-          text.title = gateway === null ? "" : labels.gateway.title;
+          kinWrite(text, gateway === null ? "" : labels.gateway.title, "title");
           drawRetry(row, labels.retry, button, note);
           return item;
         });
