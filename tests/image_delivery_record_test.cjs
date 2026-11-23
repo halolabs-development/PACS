@@ -958,6 +958,8 @@ test('CD10 STOW commits accepted patient-linked entries before sending identical
   const controller = new ImageRelayController({ authzDicom: async (uri, method, caller) => {
     assert.equal(uri, '/dicom-web/studies/1.2.3'); assert.equal(method, 'POST'); assert.equal(caller.kind, 'gateway');
   } }, { connectStudyIdentity: async uid => { assert.equal(uid, '1.2.3'); return { patientId: 'SYN-CD10' }; },
+    // The archive holds this study already; this body is not a DICOM object the relay can read, so it is not judged.
+    studyIdentityResources: async uid => [{ '0020000D': { Value: [uid] }, '00100020': { Value: ['SYN-CD10'] } }],
     studyRevision: async () => ({ id: 'synthetic-study', lastUpdate: '20261102T020000' }) }, {}, records);
   const server = http.createServer(async (req, res) => {
     Object.assign(req, { sub: 'service-account-gw-a', roles: ['gateway'], kind: 'gateway', institution: 'inst-a' });
@@ -993,6 +995,210 @@ test('CD10 STOW commits accepted patient-linked entries before sending identical
   assert.equal((await send({})).status, 503); assert.equal(events.length, 2);
   fail = false; answer = { '00081199': { Value: [{}] } };
   assert.equal((await send({})).status, 503); assert.equal(events.length, 2, 'unknown accepted object is not an unrecorded success');
+});
+
+// ---- Gateway STOW: a copy of a stored study under another PatientID is refused before the archive is written --------
+// The archive keys a study by (PatientID, StudyInstanceUID): such a copy used to be written first, after which the study
+// was two patients' and left every list. The objects below are built here from the PS3.5 / PS3.10 encodings (no file,
+// no patient data); every expected value is what a vector wrote or what the synthetic archive was told to hold.
+const { createHash } = require('node:crypto');
+const { readStowHead, STOW_HEAD_LIMIT } = require('/app/dist/gateway-stow-identity');
+const le16 = n => { const b = Buffer.alloc(2); b.writeUInt16LE(n); return b; };
+const le32 = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
+const padded = (text, pad) => { const b = Buffer.from(text, 'latin1'); return b.length % 2 ? Buffer.concat([b, Buffer.from([pad])]) : b; };
+/** One data element: Explicit VR LE (PS3.5 7.1.2, long form for OB/OW) or, with no VR, Implicit VR LE (7.1.3). */
+function element(group, number, vr, value) {
+  const tag = Buffer.concat([le16(group), le16(number)]);
+  if (vr === null) return Buffer.concat([tag, le32(value.length), value]);
+  if (vr === 'OB' || vr === 'OW') return Buffer.concat([tag, Buffer.from(vr), Buffer.alloc(2), le32(value.length), value]);
+  return Buffer.concat([tag, Buffer.from(vr), le16(value.length), value]);
+}
+const EXPLICIT_LE = '1.2.840.10008.1.2.1', IMPLICIT_LE = '1.2.840.10008.1.2', JPEG_LOSSLESS = '1.2.840.10008.1.2.4.70', BIG_ENDIAN = '1.2.840.10008.1.2.2';
+const CT_STORAGE = '1.2.840.10008.5.1.4.1.1.2';
+/**
+ * A Part-10 object of study 1.2.3: preamble, DICM, File Meta, the header up to the series UID and a Pixel Data element.
+ * `patientId` null leaves (0010,0020) out; `before` puts that many private bytes ahead of the patient group; `pixel` is
+ * the size of the Pixel Data value.
+ */
+function part10({ patientId, sop, syntax = EXPLICIT_LE, before = 0, pixel = 64 }) {
+  const explicit = syntax !== IMPLICIT_LE, e = (group, number, vr, value) => element(group, number, explicit ? vr : null, value);
+  const meta = Buffer.concat([element(2, 2, 'UI', padded(CT_STORAGE, 0)), element(2, 3, 'UI', padded(sop, 0)), element(2, 0x10, 'UI', padded(syntax, 0))]);
+  return Buffer.concat([Buffer.alloc(128), Buffer.from('DICM'), element(2, 0, 'UL', le32(meta.length)), meta,
+    e(8, 0x16, 'UI', padded(CT_STORAGE, 0)), e(8, 0x18, 'UI', padded(sop, 0)),
+    ...(before ? [e(9, 0x10, 'LO', padded('KIN SYNTHETIC', 0x20)), e(9, 0x1001, 'OB', Buffer.alloc(before, 0x5a))] : []),
+    e(0x10, 0x10, 'PN', padded('SYNTHETIC^PATIENT', 0x20)),
+    ...(patientId === null ? [] : [e(0x10, 0x20, 'LO', padded(patientId, 0x20))]),
+    e(0x20, 0x0d, 'UI', padded('1.2.3', 0)), e(0x20, 0x0e, 'UI', padded('1.2.3.1', 0)),
+    e(0x7fe0, 0x10, 'OW', Buffer.alloc(pixel, 0x11))]);
+}
+// The body a Gateway sends: one multipart/related part per object.
+const BOUNDARY = 'kin-gateway-0123456789abcdef0123456789abcdef';
+const STOW_TYPE = `multipart/related; type="application/dicom"; boundary=${BOUNDARY}`;
+const multipart = objects => Buffer.concat([...objects.flatMap(object => [Buffer.from(`--${BOUNDARY}\r\nContent-Type: application/dicom\r\n\r\n`), object, Buffer.from('\r\n')]),
+  Buffer.from(`--${BOUNDARY}--\r\n`)]);
+const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+/**
+ * The shipped handler behind a real HTTP server, a synthetic archive that records every body it is sent, and a ledger
+ * that records every entry. `state.resources`: the PatientID of each study resource the archive holds for the UID (null:
+ * the archive cannot be read); `state.status` and `state.answer`: the archive's STOW answer.
+ */
+async function stowHarness(t, resources) {
+  const events = [], received = [], state = { resources, observed: 0, status: 200, answer: success };
+  const records = { begin: () => ({ resolveRequestIdentity: async () => randomUUID(), end() {},
+    transactionWithRecords: async task => {
+      const staged = [];
+      await task({}, async (event, effect) => { const reference = await effect(); staged.push(parseAccessEvent(event)); return reference; });
+      events.push(...staged);
+    } }) };
+  const upstream = http.createServer(async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    received.push(Buffer.concat(chunks));
+    res.statusCode = state.status; res.setHeader('Content-Type', 'application/dicom+json'); res.end(JSON.stringify(state.answer));
+  });
+  const previous = { ORTHANC_URL: process.env.ORTHANC_URL, ORTHANC_USER: process.env.ORTHANC_USER, ORTHANC_PASS: process.env.ORTHANC_PASS };
+  Object.assign(process.env, { ORTHANC_URL: await listen(upstream), ORTHANC_USER: 'synthetic', ORTHANC_PASS: 'synthetic' });
+  t.after(async () => { await close(upstream); for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value; });
+  const controller = new ImageRelayController({ authzDicom: async () => {} }, {
+    studyIdentityResources: async uid => {
+      state.observed += 1;
+      if (state.resources === null) throw new Error('synthetic archive failure');
+      return state.resources.map(patientId => ({ '0020000D': { Value: [uid] }, ...(patientId === null ? {} : { '00100020': { Value: [patientId] } }) }));
+    },
+    connectStudyIdentity: async () => ({ patientId: 'SYN-A' }),
+    studyRevision: async () => ({ id: 'synthetic-study', lastUpdate: '20261102T020000' }) }, {}, records);
+  const server = http.createServer(async (req, res) => {
+    Object.assign(req, { sub: 'service-account-gw-a', roles: ['gateway'], kind: 'gateway', institution: 'inst-a' });
+    res.status = code => { res.statusCode = code; return res; };
+    try { await controller.stow('1.2.3', req, res); }
+    catch (error) {
+      res.statusCode = error.getStatus?.() || 500; res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(error.getResponse?.() ?? {}));
+    }
+  });
+  const origin = await listen(server); t.after(() => close(server));
+  const send = (body, type = STOW_TYPE) => fetch(origin, { method: 'POST', body, duplex: 'half', headers: { 'content-type': type } });
+  /** The same body in pieces of `size` bytes, one write each, so the boundary and the tags fall across chunks. */
+  const sendInPieces = (body, size) => {
+    let at = 0;
+    return send(new ReadableStream({ async pull(stream) {
+      if (at >= body.length) return stream.close();
+      stream.enqueue(body.subarray(at, at += size));
+      await new Promise(resolve => setImmediate(resolve));
+    } }));
+  };
+  /** A refusal: its status and code, with nothing sent to the archive and nothing recorded by this request. */
+  const refused = async (response, code, label) => {
+    const sent = received.length, recorded = events.length;
+    assert.deepEqual([(await response).status, await (await response).json()], [409, { code }], label);
+    assert.equal(received.length, sent, `${label}: nothing reaches the archive`);
+    assert.equal(events.length, recorded, `${label}: nothing is recorded`);
+  };
+  /** A relay: the archive's own answer, and the archive received exactly the bytes that were sent, once. */
+  const relayed = async (response, body, label) => {
+    const sent = received.length;
+    assert.equal((await response).status, state.status, label);
+    assert.equal(received.length, sent + 1, `${label}: one archive request`);
+    assert.equal(sha256(received[sent]), sha256(body), `${label}: the bytes that were sent`);
+  };
+  return { state, events, received, send, sendInPieces, refused, relayed };
+}
+
+test('Gateway STOW: a copy of a stored study under another PatientID is refused 409 before the archive is written; the same patient is relayed byte for byte', async t => {
+  const h = await stowHarness(t, ['SYN-A']);
+  for (const syntax of [EXPLICIT_LE, IMPLICIT_LE, JPEG_LOSSLESS]) {
+    // The patient corrected at the modality and the study sent again: the same Study UID, new SOP instances.
+    await h.refused(h.send(multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.9', syntax }), part10({ patientId: 'SYN-B', sop: '1.2.3.10', syntax })])),
+      'PATIENT_ID_CONFLICT', syntax);
+    const more = multipart([part10({ patientId: 'SYN-A', sop: '1.2.3.4', syntax }), part10({ patientId: 'SYN-A', sop: '1.2.3.5', syntax })]);
+    await h.relayed(h.send(more), more, syntax);
+  }
+  assert.equal(h.events.length, 3, 'each relayed batch recorded its accepted object, the refused ones none');
+  assert.ok(h.events.every(event => event.targets[0].recordId.value === '1.2.3.4'));
+  // The archive's own refusal (a body of another study) is its answer, relayed as before: no code of this gate.
+  h.state.status = 409; h.state.answer = { '00081198': { vr: 'SQ', Value: [{ '00081155': { vr: 'UI', Value: ['1.2.3.4'] } }] } };
+  const own = multipart([part10({ patientId: 'SYN-A', sop: '1.2.3.4' })]);
+  const answered = h.send(own);
+  await h.relayed(answered, own, 'the archive\'s own 409');
+  assert.deepEqual(await (await answered).json(), h.state.answer);
+});
+
+test('Gateway STOW: the identifier is compared as the archive keys it - as written, less trailing padding', async t => {
+  const h = await stowHarness(t, ['SYN-A']);
+  const one = patientId => multipart([part10({ patientId, sop: '1.2.3.4' })]);
+  for (const same of ['SYN-A', 'SYN-A   ']) await h.relayed(h.send(one(same)), one(same), JSON.stringify(same));
+  // A leading space, another case, no identifier at all: other patients in the archive, so refused here.
+  for (const other of [' SYN-A', 'syn-a', 'SYN-A1', '', null]) await h.refused(h.send(one(other)), 'PATIENT_ID_CONFLICT', JSON.stringify(other));
+  h.state.resources = ['0012'];
+  await h.relayed(h.send(one('0012')), one('0012'), 'leading zeros kept');
+  await h.refused(h.send(one('12')), 'PATIENT_ID_CONFLICT', 'leading zeros are part of the identifier');
+  // A study stored without a PatientID: only a copy without one is the same patient resource.
+  for (const stored of ['', null]) {
+    h.state.resources = [stored];
+    await h.refused(h.send(one('SYN-B')), 'PATIENT_ID_CONFLICT', 'an identifier against none');
+    await h.relayed(h.send(one(null)), one(null), 'none against none');
+  }
+});
+
+test('Gateway STOW: a UID two patients already answer is refused whatever the body; an archive that cannot be observed is 503 before any write; a first arrival is not read', async t => {
+  const h = await stowHarness(t, ['SYN-A', 'SYN-B']);
+  for (const body of [multipart([part10({ patientId: 'SYN-A', sop: '1.2.3.4' })]), Buffer.from(`--${BOUNDARY}\r\nContent-Type: application/dicom\r\n\r\nORIGINAL\r\n--${BOUNDARY}--`)])
+    await h.refused(h.send(body), 'EXISTING_STUDY_IDENTITY_UNRESOLVED', 'already unresolved');
+  h.state.resources = null;
+  const unobserved = await h.send(multipart([part10({ patientId: 'SYN-A', sop: '1.2.3.4' })]));
+  assert.equal(unobserved.status, 503);
+  assert.equal(h.received.length, 0); assert.equal(h.events.length, 0);
+  // The first objects of a study: nothing is stored to compare with, whoever the patient is.
+  h.state.resources = [];
+  for (const patientId of ['SYN-A', 'SYN-B']) {
+    const first = multipart([part10({ patientId, sop: '1.2.3.4' })]);
+    await h.relayed(h.send(first), first, 'first arrival');
+  }
+  assert.equal(h.state.observed, 5, 'every request observes the archive once');
+});
+
+test('Gateway STOW: a first object whose PatientID cannot be read is not judged and is relayed as before', async t => {
+  const h = await stowHarness(t, ['SYN-A']);
+  const bodies = {
+    'not a DICOM object': Buffer.from(`--${BOUNDARY}\r\nContent-Type: application/dicom\r\n\r\nORIGINAL\r\n--${BOUNDARY}--`),
+    'a big-endian dataset': multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.4', syntax: BIG_ENDIAN })]),
+    'a header longer than the bytes held': multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.4', before: 2 * STOW_HEAD_LIMIT })]),
+    'an identifier that is neither ASCII nor UTF-8': multipart([part10({ patientId: 'SYN-é', sop: '1.2.3.4' })]),
+    'no multipart boundary': multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.4' })]),
+  };
+  for (const [label, body] of Object.entries(bodies))
+    await h.relayed(h.send(body, label === 'no multipart boundary' ? 'application/dicom' : STOW_TYPE), body, label);
+});
+
+test('Gateway STOW: the decision holds when the boundary and the tags arrive across chunks, and for one object far larger than the bytes held', async t => {
+  const h = await stowHarness(t, ['SYN-A']);
+  const other = multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.9', before: 5000 })]);
+  const same = multipart([part10({ patientId: 'SYN-A', sop: '1.2.3.4', before: 5000 }), part10({ patientId: 'SYN-A', sop: '1.2.3.5' })]);
+  for (const size of [1, 7, 1000]) {
+    await h.refused(h.sendInPieces(other, size), 'PATIENT_ID_CONFLICT', `pieces of ${size}`);
+    await h.relayed(h.sendInPieces(same, size), same, `pieces of ${size}`);
+  }
+  // One object of 12 MiB (three times what the relay may hold): judged by its head, relayed whole.
+  const large = patientId => multipart([part10({ patientId, sop: '1.2.3.4', pixel: 3 * STOW_HEAD_LIMIT })]);
+  await h.refused(h.send(large('SYN-B')), 'PATIENT_ID_CONFLICT', 'a large object of another patient');
+  await h.relayed(h.send(large('SYN-A')), large('SYN-A'), 'a large object of the same patient');
+  // The head read itself: it stops at the PatientID and hands back exactly the bytes it took, in order.
+  const body = large('SYN-A');
+  let at = 0, reads = 0;
+  const next = async () => { reads += 1; return at >= body.length ? { done: true, value: undefined } : { done: false, value: body.subarray(at, at += 4096) }; };
+  const head = await readStowHead(next, STOW_TYPE);
+  assert.deepEqual(head.identity, { kind: 'known', patientId: 'SYN-A' });
+  assert.equal(reads, 1, 'known from the first chunk');
+  assert.deepEqual(Buffer.concat(head.chunks), body.subarray(0, 4096));
+  assert.equal(head.ended, false);
+  // A header that never reaches PatientID is given up at the limit, with every byte taken handed back.
+  const hidden = multipart([part10({ patientId: 'SYN-B', sop: '1.2.3.4', before: 2 * STOW_HEAD_LIMIT })]);
+  at = 0;
+  const far = await readStowHead(async () => at >= hidden.length ? { done: true, value: undefined } : { done: false, value: hidden.subarray(at, at += 65536) }, STOW_TYPE);
+  assert.deepEqual(far.identity, { kind: 'unreadable' });
+  const held = Buffer.concat(far.chunks);
+  assert.ok(held.length >= STOW_HEAD_LIMIT && held.length <= 2 * STOW_HEAD_LIMIT, `held ${held.length}`);
+  assert.deepEqual(held, hidden.subarray(0, held.length));
 });
 
 }
