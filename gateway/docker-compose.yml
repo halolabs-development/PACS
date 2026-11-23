@@ -2,7 +2,8 @@ name: ${GW_PROJECT_NAME:-kin-gateway}
 
 services:
   gw-orthanc:
-    image: orthancteam/orthanc:24.12.0
+    # orthancteam/orthanc:24.12.0 with Debian's security updates (orthanc/Dockerfile).
+    build: ./orthanc
     container_name: ${GW_ORTHANC_CONTAINER:-kin-gw-orthanc}
     restart: unless-stopped
     environment:

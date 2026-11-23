@@ -141,6 +141,12 @@ docker compose exec gw-agent python /app/update.py rollback
 `orthanc-data`)과 로컬 Orthanc는 그대로 두며, `.env`의 `GW_UPDATE_KEYS`·`GW_REMOTE_SUPPORT`는 agent를 다시 만들 때 반영된다.
 compose의 `stop_grace_period: 6m`은 agent가 진행 중인 전송 한 회를 마치고 멈추게 한다.
 
+**운영체제 보안 업데이트**: 로컬 Orthanc는 `orthanc/Dockerfile`로 짓는다 — `orthancteam/orthanc:24.12.0`과 같은 Orthanc에
+Debian 보안 업데이트만 더한 이미지다. 위의 `--build gw-agent`는 로컬 Orthanc를 바꾸지 않으므로, 보안 업데이트를 들이는 판에서는
+`docker compose build --pull --no-cache gw-agent gw-orthanc` 뒤 `docker compose up -d gw-agent gw-orthanc`로 둘을 함께 바꾼다.
+짓는 동안에는 Debian·Docker Hub·PyPI 저장소(HTTPS 443)에 닿아야 한다. 두 볼륨(`orthanc-data`의 받은 검사, `agent-data`의 대기 건)은
+그대로 둔다. 바꾸기 전과 뒤에 `docker compose exec gw-agent python /app/agent.py status`로 대기 건을 견주어 본다.
+
 **릴리스 서명**(릴리스 담당자의 컴퓨터에서; 개인 키 파일은 저장소·서버·Gateway에 두지 않는다):
 
 ```bash

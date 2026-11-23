@@ -1,6 +1,7 @@
 """Known-vulnerability check: target discovery, scanner results and the verdict. Offline: scanners are faked."""
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -105,11 +106,22 @@ class TargetTests(unittest.TestCase):
         names = {t["name"]: t for t in audit.targets()}
         for name in ("npm api (production)", "pip api/print/requirements.txt", "pip gateway/agent/requirements.txt",
                      "image built from api/Dockerfile", "image built from proxy/Dockerfile",
-                     "image built from gateway/agent/Dockerfile"):
+                     "image built from gateway/agent/Dockerfile", "image built from gateway/orthanc/Dockerfile"):
             self.assertIn(name, names)
             self.assertTrue(names[name]["shipped"], name)
+        # Every Orthanc runs the image built from that Dockerfile, so it is what gets checked: no Compose file runs
+        # the upstream image as it is, and each Orthanc service builds from the one file.
+        self.assertEqual([n for n in names if n.startswith("image orthancteam/")], [])
+        for path, service, context in (("docker-compose.yml", "orthanc", "./gateway/orthanc"),
+                                       ("docker-compose.qr-peer.yml", "qr-peer", "./gateway/orthanc"),
+                                       ("gateway/docker-compose.yml", "gw-orthanc", "./orthanc")):
+            text = (audit.ROOT / path).read_text(encoding="utf-8")
+            block = re.search(r"^  " + re.escape(service) + r":\n((?:    .*\n|\s*\n)*)", text, re.M)
+            self.assertIsNotNone(block, path)
+            self.assertRegex(block.group(1), r"(?m)^    build: " + re.escape(context) + r"$", path)
+            self.assertNotRegex(block.group(1), r"(?m)^    image:", path)
         # By image name, not tag: a security update of an engine image must not fail this test.
-        for prefix in ("image orthancteam/orthanc:", "image postgres:", "image quay.io/keycloak/keycloak:"):
+        for prefix in ("image postgres:", "image quay.io/keycloak/keycloak:"):
             self.assertTrue(any(n.startswith(prefix) and names[n]["shipped"] for n in names), prefix)
         # Today every shipped Compose image is pinned by name; a variable one would make every run incomplete.
         self.assertEqual([n for n, t in names.items() if t.get("unresolved")], [])
