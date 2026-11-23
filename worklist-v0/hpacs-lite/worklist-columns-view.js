@@ -493,7 +493,7 @@
         const tokens = value.split(/[,\\]/).map(v => v.trim().toUpperCase());
         const allowed = KinWorklistFolderTree.defaultModalities(studies);
         const error = value && tokens.some(v => !v || !allowed.includes(v))
-          ? '사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.' : '';
+          ? kinSayEn('사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.') : '';
         el.setCustomValidity(error);
         // Incomplete tokens keep the last applied criteria while the doctor types.
         if (error) return;

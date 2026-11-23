@@ -332,7 +332,7 @@
   function gatewayStatus(receipt,requestedKey=null,format=localTime){
     const pick=(key,detail,reason,retry)=>({key,text:GATEWAY_STATUS[key].text,title:GATEWAY_STATUS[key].title,detail,reason,retry});
     if(!readableReceipt(receipt))return pick('unknown','Gateway 보고 형식을 확인할 수 없습니다','',null);
-    const detail='Gateway 보고('+format(receipt.serverReceivedAt)+'): Gateway가 집계한 '+receipt.localCount+'건 중 '+receipt.successCount+'건 전송';
+    const detail=kinSayEn('Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송',format(receipt.serverReceivedAt),receipt.localCount,receipt.successCount);
     const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?['오류 코드 '+receipt.errorCode]:[];
     const retry=gatewayRetryAction(receipt);
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.

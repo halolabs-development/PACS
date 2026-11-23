@@ -125,16 +125,19 @@ class ReportStateTablePage(unittest.TestCase):
         self.pick(h.PATIENT_B)
         self.wait(lambda: self.selected() == h.PATIENT_B, "the study opens")
         buttons = [self.page.locator(b) for b in ("#b-save", "#b-approve", "#b-prelim")]
-        hold = self.page.locator("#holdmsg")
-        korean = [b.get_attribute("title") for b in buttons] + [hold.text_content()]
+        hold, why = self.page.locator("#holdmsg"), self.page.locator("#report-editor-why")
+        read = lambda: [b.get_attribute("title") for b in buttons] + [hold.text_content(), why.text_content()]
+        korean = read()
         self.assertEqual([f"{WRITER} 님이 판독 중입니다"] * 3, korean[:3])
+        self.assertEqual("현재 판독문은 편집할 수 없습니다", korean[4])
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
         for b in buttons:
             expect(b).to_have_attribute("title", f"{WRITER} is reading")
         expect(hold).to_contain_text(f"✎ {WRITER} is reading — you can continue reading once the lock is released")
-        self.assertIsNone(re.search("[가-힣]", hold.text_content()))
+        expect(why).to_have_text("The current report can't be edited")
+        self.assertIsNone(re.search("[가-힣]", hold.text_content() + why.text_content()))
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
-        self.assertEqual(korean, [b.get_attribute("title") for b in buttons] + [hold.text_content()])
+        self.assertEqual(korean, read())
 
     def test_a_korean_report_screen_keeps_its_lock_reason_when_the_list_is_english(self):
         # The list in English, the report screen in Korean, the study picked from the list: every lock reason on the

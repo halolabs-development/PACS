@@ -114,7 +114,7 @@
       if (closed || busy || unknown || !view) return;
       if (!form.reportValidity()) return;
       const reason = form.elements.reason.value;
-      if (action === 'revoke' && !confirm('이 회원의 서명키를 폐기하면 새 키를 만들기 전까지 온라인 승인이 거절됩니다. 폐기하시겠습니까?')) return;
+      if (action === 'revoke' && !confirm(kinSayEn('이 회원의 서명키를 폐기하면 새 키를 만들기 전까지 온라인 승인이 거절됩니다. 폐기하시겠습니까?'))) return;
       const token = ++generation; busy = true; controls(); status.textContent = 'Saving';
       try {
         const result = await request('POST', { action, expectedKid: action === 'provision' ? null : view.current, reason });

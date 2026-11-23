@@ -54,7 +54,7 @@ dialog.kpi-dialog :focus-visible { outline: 2px solid #9cc3ff; outline-offset: 2
   function el(tag, attrs, text) {
     const node = doc.createElement(tag);
     for (const [key, value] of Object.entries(attrs || {})) node.setAttribute(key, value);
-    if (text !== undefined && text !== null) kinWrite(node, String(text));
+    if (text !== undefined && text !== null) kinWrite(node, globalThis.KinLanguage?.isSentence?.(text) ? text : String(text));
     return node;
   }
 

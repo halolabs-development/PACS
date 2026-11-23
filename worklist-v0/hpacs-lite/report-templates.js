@@ -90,7 +90,8 @@
       const lockedField = RFIELDS.map(k => $("#" + k)).find(field => field.readOnly);
       // The field keeps its reason as the sentence it was set with (kinLockReason), so the editor head says it in the
       // language of its screen; the data attribute holds the same words as written.
-      if (lockedField) return lockedField.kinLockReason || lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다";
+      if (lockedField) return lockedField.kinLockReason
+        || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다");
       return null;
     }
     function templateInsertionBlock(t, emptyMessage = "삽입할 내용이 없습니다") {

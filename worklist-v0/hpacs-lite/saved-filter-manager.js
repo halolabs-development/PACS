@@ -128,7 +128,7 @@
           const tokens = Array.isArray(cols[key]) ? cols[key] : [cols[key]];
           const error = (editedModalities.has(input) || input.value !== String(original ?? '')) && input.value.trim() !== ''
             && tokens.some(v => !v || !allowed.includes(v))
-            ? '사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.' : '';
+            ? kinSayEn('사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.') : '';
           input.setCustomValidity(error);
           if (error) cols[key] = original ?? '';
         }

@@ -10694,7 +10694,9 @@ function kinViewerAnnounceScroll(v, index, from, imageId, live) {
         || v.getImageIds()[index] !== imageId) return;
     element.dispatchEvent(new CustomEvent(name, { cancelable: true, detail: { newImageIdIndex: index,
       imageId, direction: Number.isInteger(from) ? index - from : 0 } }));
+    return true;
   } catch (_) {}
+  return false;
 }
 // Exact-frame navigation shared by the Saved Items "Go to Image" button and the Findings section.
 // `env` exposes the live closure state of kinCreateViewerHistory through getters, so every decision
@@ -10734,20 +10736,36 @@ async function kinViewerNavigateTo(env, target) {
     if (v && !stack(v)) return refusal('viewport-unsupported');
     const index = (v ? v.getImageIds() : []).findIndex(id => env.matches(env.reference(id), identity));
     if (index >= 0) {
+      const cell = () => live() && env.services.viewportGridService.getActiveViewportId() === viewportId;
+      let from = null, announced = false;
       try {
         // The pinned setter preserves its load Promise but leaves the scroll target
         // and an older wheel debounce untouched. Retarget before starting the load;
         // doing this after await would rewind a newer user scroll.
-        const from = typeof v.getCurrentImageIdIndex === 'function' ? v.getCurrentImageIdIndex() : null;
+        from = typeof v.getCurrentImageIdIndex === 'function' ? v.getCurrentImageIdIndex() : null;
         const imageId = v.getImageIds()[index];
         clearTimeout(v.debouncedTimeout);
         v.targetImageIdIndex = index;
         const loading = v.setImageIdIndex(index);
-        kinViewerAnnounceScroll(v, index, from, imageId,
-          () => live() && env.services.viewportGridService.getActiveViewportId() === viewportId);
+        announced = kinViewerAnnounceScroll(v, index, from, imageId, cell);
         await loading;
-      } catch (_) { return live() ? refusal('frame-missing') : refusal('superseded'); }
-      if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId) return refusal('superseded');
+      } catch (_) {
+        // The image never came and the cell still shows the one it showed (the setter has already moved its index): put
+        // the number and the index back the renderer's way, a scroll to that image and its load, so neither the number nor
+        // the Loading cover stays on the frame that did not arrive. Not when the user moved the cell meanwhile.
+        if (announced && cell() && Number.isInteger(from) && v.getCurrentImageIdIndex?.() === index && v.targetImageIdIndex === index) {
+          try {
+            v.targetImageIdIndex = from;
+            const back = v.setImageIdIndex(from);
+            kinViewerAnnounceScroll(v, from, index, v.getImageIds()[from], cell);
+            Promise.resolve(back).catch(() => {});
+          } catch (_) {}
+        }
+        return live() ? refusal('frame-missing') : refusal('superseded');
+      }
+      if (!cell()) return refusal('superseded');
+      // A wheel or key that moved the cell on while this frame loaded is the newer choice: this move does not report arrival.
+      if (typeof v.targetImageIdIndex === 'number' && v.targetImageIdIndex !== index) return refusal('superseded');
       // The frame actually shown after the await is the only proof; a user scroll or a
       // display-set change during the load must not be reported as arrival.
       if (!env.matches(env.reference(v.getCurrentImageId?.()), identity)) return refusal('frame-missing');

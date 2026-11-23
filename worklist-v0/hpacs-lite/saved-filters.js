@@ -401,7 +401,7 @@
           } },
         { sep: 1 },
         { label: "Delete", act: async () => {
-            if (!confirm(`필터 "${f.name}" 을(를) 삭제할까요?`)) return;
+            if (!confirm(kinSayEn("필터 \"{0}\" 을(를) 삭제할까요?", f.name))) return;
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/filters/${f.id}`, undefined, undefined, at); await reloadPrefs(at); }

@@ -462,7 +462,8 @@
       const lockedField = RFIELDS.map(k => $("#" + k)).find(field => field.readOnly);
       // The field keeps its reason as the sentence it was set with (kinLockReason), so the editor head says it in the
       // language of its screen; the data attribute holds the same words as written.
-      if (lockedField) return lockedField.kinLockReason || lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다";
+      if (lockedField) return lockedField.kinLockReason
+        || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(lockedField.dataset.lockReason || "현재 판독문은 편집할 수 없습니다");
       return null;
     }
     function templateInsertionBlock(t, emptyMessage = "삽입할 내용이 없습니다") {
@@ -897,7 +898,7 @@
         { label: "수정", dis: !t, act: () => editTemplate(t) },
         { sep: 1 },
         { label: "삭제", dis: !t, act: async () => {
-            if (!confirm(`상용구 "${t.title}" 을(를) 삭제할까요?`)) return;
+            if (!confirm(kinSayEn("상용구 \"{0}\" 을(를) 삭제할까요?", t.title))) return;
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/templates/${t.id}`, undefined, undefined, at); await reloadPrefs(at); }
@@ -1403,7 +1404,7 @@
         const tokens = value.split(/[,\\]/).map(v => v.trim().toUpperCase());
         const allowed = KinWorklistFolderTree.defaultModalities(studies);
         const error = value && tokens.some(v => !v || !allowed.includes(v))
-          ? '사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.' : '';
+          ? kinSayEn('사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.') : '';
         el.setCustomValidity(error);
         // Incomplete tokens keep the last applied criteria while the doctor types.
         if (error) return;
@@ -16728,7 +16729,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
           } },
         { sep: 1 },
         { label: "Delete", act: async () => {
-            if (!confirm(`필터 "${f.name}" 을(를) 삭제할까요?`)) return;
+            if (!confirm(kinSayEn("필터 \"{0}\" 을(를) 삭제할까요?", f.name))) return;
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/filters/${f.id}`, undefined, undefined, at); await reloadPrefs(at); }

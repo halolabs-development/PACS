@@ -302,7 +302,7 @@
         { label: "수정", dis: !t, act: () => editTemplate(t) },
         { sep: 1 },
         { label: "삭제", dis: !t, act: async () => {
-            if (!confirm(`상용구 "${t.title}" 을(를) 삭제할까요?`)) return;
+            if (!confirm(kinSayEn("상용구 \"{0}\" 을(를) 삭제할까요?", t.title))) return;
             const at = work.capture("document");
             if (serverMode) {
               try { await api("DELETE", `/templates/${t.id}`, undefined, undefined, at); await reloadPrefs(at); }

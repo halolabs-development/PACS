@@ -775,7 +775,7 @@
     const current = ++rightsSequence, context = KinWorkContext.capture('document');
     const admits = () => current === rightsSequence && id === rightsEl('id').value.trim() && KinWorkContext.admits(context);
     rightsPending = true; rightsControls(); kinWrite(rightsEl('message'), kinSayEn("요구를 처리하고 있습니다."));
-    const say = text => { rightsEl('message').textContent = text; };
+    const say = text => statusLine(rightsEl('message'), text);
     const close = () => { rightsSnapshot = null; rightsEl('detail').hidden = true; };
     const call = async (route, method, json) => {
       let answer;

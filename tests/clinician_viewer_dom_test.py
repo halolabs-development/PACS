@@ -2030,29 +2030,45 @@ class ClinicianViewerDOMTest(unittest.TestCase):
         own scroll and not from a direct setImageIdIndex(). Opening the frame a cited line names (the same exact-frame move as
         Go to Image and the Findings section) sends that event on the cell, once, as soon as the move is asked and before its
         image arrives, naming the new index; a frame already shown sends nothing."""
-        six = """([series, sop, at]) => { const v = synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp');
+        six = """([series, sop, at, mode]) => { const v = synServices.cornerstoneViewportService.getCornerstoneViewport('syn-vp');
           const id = s => `wadors:${location.origin}/dicom-web/studies/${window.synStudy}/series/${series}/instances/${s}/frames/1`;
           const sops = [0, 1, 2, 3, 4, 5].map(i => i === at ? sop : sop + '.9' + i);
-          let current = 0; window.synScrolls = []; window.synOrder = [];
+          let current = 0, asked = 0; window.synScrolls = []; window.synOrder = [];
           cornerstone.Enums.Events.STACK_VIEWPORT_SCROLL = 'syn-stack-scroll';
           v.element.addEventListener('syn-stack-scroll', e => { window.synScrolls.push(e.detail); window.synOrder.push('scroll'); });
           v.getImageIds = () => sops.map(id); v.getCurrentImageIdIndex = () => current; v.getCurrentImageId = () => id(sops[current]);
-          v.setImageIdIndex = index => { current = index; window.synOrder.push('asked ' + index);
-            return new Promise(resolve => setTimeout(() => { window.synOrder.push('loaded'); resolve(); }, 0)); };
+          // As the pinned setter: the index moves at once; 'fail' rejects the first load, 'wheel' is a wheel step taken while
+          // the first image loads (the renderer's own scroll sets the target).
+          v.setImageIdIndex = index => { current = index; window.synOrder.push('asked ' + index); const first = asked++ === 0;
+            return new Promise((resolve, reject) => setTimeout(() => {
+              if (first && mode === 'wheel') v.targetImageIdIndex = index + 1;
+              window.synOrder.push(first && mode === 'fail' ? 'failed' : 'loaded');
+              first && mode === 'fail' ? reject(new Error('SYN load')) : resolve(); }, 0)); };
           synServices.displaySetService.getActiveDisplaySets = () => [{ StudyInstanceUID: window.synStudy, SeriesInstanceUID: series,
             displaySetInstanceUID: 'syn-ds', images: sops.map(s => ({ SOPInstanceUID: s })) }]; }"""
         entry_note = "() => { const n = document.getElementById('kin-viewer-entry-note'); return n && !n.hidden ? n.textContent : null; }"
         try:
-            for at, scrolls, order in ((4, [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'scroll', 'loaded']),
-                                       (0, [], ['asked 0', 'loaded'])):
-                with self.subTest(at=at):
+            moved = '요청한 원본 영상(프레임 1)으로 이동했습니다. 표식을 강조했습니다.'
+            cases = ((4, None, [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'scroll', 'loaded'], moved),
+                     (0, None, [], ['asked 0', 'loaded'], moved),
+                     # The image never came: the cell keeps showing image 1, so its number and index go back there (the
+                     # renderer's scroll and load lower the Loading cover) and the failure is said.
+                     (4, 'fail', [{'newImageIdIndex': 4, 'direction': 4}, {'newImageIdIndex': 0, 'direction': -4}],
+                      ['asked 4', 'scroll', 'failed', 'asked 0', 'scroll', 'loaded'],
+                      '요청한 원본 영상으로 이동하지 못했습니다. 원본 프레임을 열지 못했습니다.'),
+                     # A wheel step while the image loads is the newer choice: no arrival is claimed for the older move.
+                     (4, 'wheel', [{'newImageIdIndex': 4, 'direction': 4}], ['asked 4', 'scroll', 'loaded'],
+                      '요청한 원본 영상으로 이동하지 못했습니다. 다른 영상 칸을 골라 이동을 멈췄습니다.'))
+            for at, mode, scrolls, order, said in cases:
+                with self.subTest(at=at, mode=mode):
                     self.me, self.viewer_mode = CLINICIAN, 'physician'
                     self.viewer_target = {'studyUid': VA, 'seriesUid': SERIES, 'sopUid': SOP, 'frame': 1, 'itemId': item_id(2)}
                     self.items, self.item_requests, self.cursors = (copy.deepcopy(ITEMS), [], {})
-                    self.open_viewer(before_boot=f"() => ({six})({json.dumps([SERIES, SOP, at])})")
+                    self.open_viewer(before_boot=f"() => ({six})({json.dumps([SERIES, SOP, at, mode])})")
                     self.wait_panel('ready', VA)
                     self.wait_until(lambda: self.page.evaluate(entry_note) is not None, 'the target opened')
-                    self.assertEqual('요청한 원본 영상(프레임 1)으로 이동했습니다. 표식을 강조했습니다.', self.page.evaluate(entry_note))
+                    self.settle()
+                    self.assertEqual(said, self.page.evaluate(entry_note))
                     self.assertEqual(scrolls, self.page.evaluate(
                         "() => synScrolls.map(d => ({ newImageIdIndex: d.newImageIdIndex, direction: d.direction }))"))
                     if scrolls:
