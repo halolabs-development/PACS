@@ -367,6 +367,17 @@
       Object.assign(ov, {
         id: $("#m-id").value.trim(), name: $("#m-name").value.trim(), sex: $("#m-sex").value,
         birth, age: ageOf(birth, s.date), desc: $("#m-desc").value.trim(), ward: $("#m-ward").value.trim() });
+      // A blank Patient ID or Name would draw this study with no patient on every screen. A value the row shows is never
+      // cleared here; a study that has none keeps its own (no overlay value), so its other fields can still be corrected.
+      const cleared = ["id", "name"].find(key => !ov[key] && String(s[key] ?? "").trim());
+      if (cleared) {
+        const guidance = $("#m-guidance");
+        kinWrite(guidance, kinSayEn("Patient ID와 Name은 비워 둘 수 없습니다."));
+        guidance.hidden = false;
+        $("#m-" + cleared).focus();
+        return;
+      }
+      for (const key of ["id", "name"]) if (!ov[key]) delete ov[key];
       const route = studyWriteRoute();
       if (!route) return;   // disconnected: nothing sent or painted; the modal keeps what was typed
       if (route === "server") {

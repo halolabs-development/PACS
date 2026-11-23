@@ -9,7 +9,7 @@ import type { StudyAccessService } from '../study-access.service';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import type { PrismaService } from '../prisma.service';
-import { overlayShape, OVERLAY_RULE_TEXT } from '../study-identity';
+import { overlayIdentityBlank, OVERLAY_IDENTITY_BLANK_TEXT, overlayShape, OVERLAY_RULE_TEXT } from '../study-identity';
 import { closeReaderAssignments } from '../reader-assignment.service';
 import { parse, dump, toClient, noteTransactionError, refuseDestroyed, shownPreReviewer } from './values';
 import { withWriters } from '../member-rights';
@@ -193,6 +193,7 @@ export class PacsStudyState {
       if (!overlayShape(body.ov))
         throw new BadRequestException(`환자·검사 정보(ov) 형식이 잘못되었습니다 — ${OVERLAY_RULE_TEXT}`);
       await requireUngroupedSource(tx,this.studyAccess,c,uid);
+      if (overlayIdentityBlank(body.ov)) throw new BadRequestException(OVERLAY_IDENTITY_BLANK_TEXT);
     }
 
     // S7-U3a (D-S7-09 a): an institution this write takes the tele channel away from (cancel, or a new teleTo) loses its

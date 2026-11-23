@@ -425,6 +425,30 @@ class CorrectionDOMTest(Browser):
         self.page.evaluate("row=>applyStudyIdentity({studies:[row],owner:['hallym','sub'],observation:{observedAt:'2026-09-25T01:00:00.000Z'}})",
                            {**QIDO_ROW, "orderIdentity": identity, "state": {"matched": matched, "oid": oid}})
 
+    def test_modify_does_not_send_a_blank_patient_id_or_name(self):
+        said = "Patient ID와 Name은 비워 둘 수 없습니다."
+        for field, typed in (("#m-id", ""), ("#m-name", ""), ("#m-id", "   "), ("#m-name", "　")):
+            with self.subTest(field=field, typed=typed):
+                self.start({"rs": "W", "matched": "U", "oid": None, "ov": None, "ts": "none"})
+                self.page.evaluate("openModify()")
+                self.page.fill(field, typed)
+                self.page.click("#m-save")
+                seen = self.page.evaluate("""f=>({calls:apiCalls.length,toasts:toasts.length,open:$('#modal').classList.contains('show'),
+                  shown:!$('#m-guidance').hidden,said:$('#m-guidance').textContent,focus:document.activeElement===$(f),
+                  id:studies[0].id,name:studies[0].name})""", field)
+                self.assertEqual({"calls": 0, "toasts": 0, "open": True, "shown": True, "said": said, "focus": True,
+                                  "id": "QIDO-ID", "name": "QIDO NAME"}, seen)
+
+    def test_modify_of_a_study_with_no_name_saves_its_other_fields_and_leaves_the_name_to_the_study(self):
+        self.start({"rs": "W", "matched": "U", "oid": None, "ov": None, "ts": "none"})
+        self.page.evaluate("()=>{studies[0].name='';openModify()}")
+        self.page.fill("#m-ward", "SYN-WARD")
+        self.page.click("#m-save")
+        self.page.wait_for_function("()=>apiCalls.length===1")
+        sent = self.page.evaluate("apiCalls[0].body.ov")
+        self.assertNotIn("name", sent)
+        self.assertEqual(("QIDO-ID", "SYN-WARD"), (sent["id"], sent["ward"]))
+
     def test_s4u5_05_modify_refusal_paints_nothing_keeps_the_input_and_says_the_next_step(self):
         self.start({"rs": "W", "matched": "U", "oid": None, "ov": None, "ts": "none"})
         self.page.evaluate("openModify()")

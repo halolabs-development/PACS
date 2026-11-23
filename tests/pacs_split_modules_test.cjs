@@ -567,6 +567,20 @@ test('SPLIT-06 PATCH refuses report-owned fields without writing anything; techn
 
 // ── SPLIT-25 의료법 제23조④ study writes ──
 
+test('A correction with a blank patient ID or name is refused and writes nothing; other corrections and clearing the overlay still work', async () => {
+  const w = world();
+  await w.boot();
+  const s = w.study();
+  const patch = body => w.workflow(workflow => w.studyState.patchState(s.uid, body, TECH_A, workflow));
+  for (const ov of [{ id: '' }, { name: '' }, { name: '   ' }, { id: '　', name: 'SYN' }, { id: 'SYN', name: '\t' }])
+    await refused(() => patch({ ov }), 400);
+  assert.equal(w.audits('state.patch').length, 0);
+  await patch({ ov: { ward: 'SYN-WARD', desc: '' } });
+  await patch({ ov: { id: 'SYN-ID', name: 'SYN NAME' } });
+  await patch({ ov: null });
+  assert.equal(w.audits('state.patch').length, 3);
+});
+
 test('SPLIT-25 PATCH, DELETE, match and unmatch each commit one 수정 record of the study, versioned by the audit row that holds the change; a refusal records none', async () => {
   const w = world();
   await w.boot();
