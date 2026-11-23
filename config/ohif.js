@@ -10691,7 +10691,8 @@ function kinViewerShownImageId(v) {
 // The viewer raises its Loading cover on that scroll event and lowers it on STACK_NEW_IMAGE, so the event is sent from a
 // capture listener on the cell's STACK_NEW_IMAGE, which runs before the viewer's own handling of the same event lowers the
 // cover: once, and only when `arrived` says the cell now shows the requested image and it is still the frame asked of it.
-// A load that fails sends no STACK_NEW_IMAGE, so neither the number nor the cover moves. Returns the function that stops it.
+// A load that fails sends no STACK_NEW_IMAGE, so neither the number nor the cover moves. One arrival is numbered once: a
+// later move to the same frame watches the same event, which carries the note. Returns the function that stops it.
 function kinViewerNumberOnArrival(v, index, from, arrived) {
   const none = () => {};
   try {
@@ -10699,9 +10700,11 @@ function kinViewerNumberOnArrival(v, index, from, arrived) {
     if (!events?.STACK_NEW_IMAGE || !events.STACK_VIEWPORT_SCROLL || typeof element?.addEventListener !== 'function' ||
         typeof element.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return none;
     const stop = () => { try { element.removeEventListener(events.STACK_NEW_IMAGE, seen, true); } catch (_) {} };
-    const seen = () => {
+    const seen = event => {
       if (!arrived()) return;
       stop();
+      if (event.kinNumbered) return;
+      event.kinNumbered = true;
       try {
         element.dispatchEvent(new CustomEvent(events.STACK_VIEWPORT_SCROLL, { cancelable: true, detail: { newImageIdIndex: index,
           imageId: v.getImageIds()[index], direction: from < 0 ? 0 : index - from } }));
@@ -10752,10 +10755,9 @@ async function kinViewerNavigateTo(env, target) {
     const index = (v ? v.getImageIds() : []).findIndex(same);
     if (index >= 0) {
       const shows = () => same(kinViewerShownImageId(v));
-      // Still the frame asked of this cell: the cell holds this viewport (the viewer puts a new one in it with every series
-      // it is given), no wheel or key has moved its scroll target on, and no later move was asked of the viewer.
-      const asked = () => nav === env.navigation() && !env.ended() &&
-        env.services.cornerstoneViewportService.getCornerstoneViewport(viewportId) === v &&
+      // Still the frame asked of this cell, by the cell's own state: it holds this viewport (the viewer puts a new one in
+      // it with every series it is given) and no wheel, key or later move has put its scroll target elsewhere.
+      const kept = () => env.services.cornerstoneViewportService.getCornerstoneViewport(viewportId) === v &&
         !(typeof v.targetImageIdIndex === 'number' && v.targetImageIdIndex !== index);
       let stop = () => {};
       try {
@@ -10770,15 +10772,16 @@ async function kinViewerNavigateTo(env, target) {
         // renderer's index goes back to the image shown (-1: none of this stack), and the setter's Promise is then this
         // move's own load from start to end.
         if (!shows() && typeof v.currentImageIdIndex === 'number') v.currentImageIdIndex = from;
-        // The number follows the image in its own cell, also when the reader has made another cell the active one since.
-        stop = kinViewerNumberOnArrival(v, index, from, () => asked() && shows());
+        // The number is the cell's own and follows its image: it reads nothing of the panel, which has moved to another
+        // cell or another study (and counted that as a new navigation) when the reader made another cell the active one.
+        stop = kinViewerNumberOnArrival(v, index, from, () => !env.ended() && kept() && shows());
         await v.setImageIdIndex(index);
       } catch (_) {
         return live() ? refusal('frame-missing') : refusal('superseded');
       } finally { stop(); }
       // Another study or active cell, a new viewport in the cell, a later move, or a wheel or key that moved the cell on
       // while this frame loaded is the newer choice: this move does not report arrival.
-      if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId || !asked()) return refusal('superseded');
+      if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId || !kept()) return refusal('superseded');
       // The image shown after the await is the only proof: the pinned GPU loader settles the setter normally after a failed
       // load, and the index it leaves on the requested frame says nothing of the image on screen.
       if (!shows()) return refusal('frame-missing');

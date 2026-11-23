@@ -2119,6 +2119,17 @@ class ClinicianViewerDOMTest(unittest.TestCase):
             dict(name='another cell made active while the frame loads', at=4, plan={'4': 'hold'},
                  during="synServices.viewportGridService.getActiveViewportId = () => 'syn-other'; synHeld[4](true);",
                  said=overtaken, scrolls=[(4, 4)], number=4, shown=4, lit=[]),
+            # The other cell shows another study: the panel moves to that study (and counts it as a new navigation). The
+            # first cell's number still follows the image that arrives in it.
+            dict(name="another study's cell made active while the frame loads", at=4, plan={'4': 'hold'},
+                 during="const image = 'wadors:' + location.origin + '/dicom-web/studies/%s/series/1.2.3/instances/1.2.3.4/frames/1';"
+                        " const other = { type: 'stack', element: document.createElement('div'), getImageIds: () => [image],"
+                        " getCurrentImageId: () => image, getCornerstoneImage: () => ({ imageId: image }), setImageIdIndex: async () => {},"
+                        " getCamera: v.getCamera, render() {} };"
+                        " synServices.viewportGridService.getActiveViewportId = () => 'syn-other';"
+                        " synServices.cornerstoneViewportService.getCornerstoneViewport = id => id === 'syn-other' ? other : v;"
+                        " document.dispatchEvent(new Event('syn-stack-new-image')); synHeld[4](true);" % VP,
+                 said=overtaken, scrolls=[(4, 4)], number=4, shown=4, lit=[]),
             # The cell given another series while the frame loads: the viewer puts a new viewport in the cell, on the same
             # element. The older viewport's late image is not this cell's: no arrival, and the new viewport's number stays.
             dict(name='the cell given a new viewport while the frame loads', at=4, plan={'4': 'hold'},
