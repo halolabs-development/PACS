@@ -4811,7 +4811,7 @@ class LiveInvariantTests(unittest.TestCase):
         # count of test_agent.py, so neither can move without the other.
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
         # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
-        self.assertIn("Ran 118 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 119 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(

@@ -43,7 +43,7 @@
           "2026-09-25T00:03:12.500000000Z {\"at\":\"2026-09-25T00:03:12Z\",\"event\":\"study.complete\",\"uid\":\"2.25.300\",\"sops\":1}",
           "2026-09-25T00:03:22.000000000Z {\"at\":\"2026-09-25T00:03:22Z\",\"event\":\"study.queued\",\"uid\":\"2.25.300\"}",
           "2026-09-25T00:03:26.000000000Z {\"at\":\"2026-09-25T00:03:26Z\",\"event\":\"agent.started\",\"byteBudget\":25165824,\"version\":\"2026.11.1\"}",
-          "2026-09-25T00:03:57.000000000Z {\"at\":\"2026-09-25T00:03:57Z\",\"event\":\"study.retry\",\"uid\":\"2.25.300\",\"attempt\":1,\"afterSeconds\":90.0,\"error\":\"cloud request ReadTimeout\"}",
+          "2026-09-25T00:03:57.000000000Z {\"at\":\"2026-09-25T00:03:57Z\",\"event\":\"study.retry\",\"uid\":\"2.25.300\",\"attempt\":1,\"afterSeconds\":90.0,\"error\":\"STOW HTTP 503\"}",
           "2026-09-25T00:04:28.000000000Z {\"at\":\"2026-09-25T00:04:28Z\",\"event\":\"study.retry_now\",\"uid\":\"2.25.300\",\"attempt\":1}",
           "2026-09-25T00:04:29.000000000Z {\"at\":\"2026-09-25T00:04:29Z\",\"event\":\"batch.stored\",\"uid\":\"2.25.300\",\"batch\":3,\"sops\":1,\"failed\":0,\"bytes\":132000}",
           "2026-09-25T00:04:29.500000000Z {\"at\":\"2026-09-25T00:04:29Z\",\"event\":\"study.complete\",\"uid\":\"2.25.300\",\"sops\":2}",
@@ -146,7 +146,7 @@
         "retry_audit": ["study.announce", "gateway.receipt.first", "gateway.receipt.transition"],
         "t_unpause": "2026-09-25T00:04:00.000000Z",
         "unpaused": true,
-        "retry_list": {"uid": "2.25.300", "count": 1, "institutionName": "KIN 판독센터", "ss": "Unverified", "gatewayReceipt": {"phase": "retry", "successCount": 1, "localCount": 2, "attempt": 1, "errorCode": "cloud_unreachable", "serverReceivedAt": "2026-09-25T00:03:58.100Z", "agentSeq": 12, "epoch": "11111111-2222-4333-8444-555555555555"}},
+        "retry_list": {"uid": "2.25.300", "count": 1, "institutionName": "KIN 판독센터", "ss": "Unverified", "gatewayReceipt": {"phase": "retry", "successCount": 1, "localCount": 2, "attempt": 1, "errorCode": "stow_http", "serverReceivedAt": "2026-09-25T00:03:58.100Z", "agentSeq": 12, "epoch": "11111111-2222-4333-8444-555555555555"}},
         "request": {"t": "2026-09-25T00:04:03.000000Z", "status": 200, "body": {"studyUid": "2.25.300", "result": "requested", "requestedAt": "2026-09-25T00:04:03.100Z"}},
         "request_audits": 1,
         "final": {
@@ -309,7 +309,7 @@
     {"id": "R-2", "patch": [{"op": "set", "path": ["scenario", "R", "stall", "paused"], "value": false}]},
     {"id": "R-3", "patch": [{"op": "set", "path": ["scenario", "R", "crash", "started_after"], "value": "2026-09-25T00:01:21.800000000Z"}]},
     {"id": "R-4", "patch": [{"op": "set", "path": ["scenario", "R", "retry_audit"], "value": ["study.announce", "study.announce", "gateway.receipt.first"]}]},
-    {"id": "R-5", "patch": [{"op": "set", "path": ["scenario", "R", "retry_list", "gatewayReceipt", "errorCode"], "value": "stow_http"}]},
+    {"id": "R-5", "patch": [{"op": "set", "path": ["scenario", "R", "retry_list", "gatewayReceipt", "errorCode"], "value": "cloud_unreachable"}]},
     {"id": "R-6", "patch": [{"op": "set", "path": ["scenario", "R", "request_audits"], "value": 2}]},
     {"id": "R-7", "patch": [{"op": "append", "path": ["scenario", "agent_log", "stdout"], "value": "2026-09-25T00:04:30.000000000Z {\"at\":\"2026-09-25T00:04:30Z\",\"event\":\"study.retry_now\",\"uid\":\"2.25.300\",\"attempt\":1}"}]},
     {"id": "R-8", "patch": [{"op": "set", "path": ["scenario", "R", "final", "cloud"], "value": ["2.25.3001"]}]},
@@ -346,6 +346,10 @@
     {"why": "R-5: the STOW killed by the crash may still be stored once kin-orthanc resumes, so the listed count is 2", "patch": [
       {"op": "set", "path": ["scenario", "R", "retry_list", "count"], "value": 2}]},
     {"why": "R-3: the restarted process re-announces the row at once, so the snapshot after the crash may read announcing", "patch": [
-      {"op": "set", "path": ["scenario", "R", "crash", "status", "phase"], "value": "announcing"}]}
+      {"op": "set", "path": ["scenario", "R", "crash", "status", "phase"], "value": "announcing"}]},
+    {"why": "R-3: a late snapshot may already show the restarted process's first refused attempt", "patch": [
+      {"op": "set", "path": ["scenario", "R", "crash", "status", "phase"], "value": "retry"},
+      {"op": "set", "path": ["scenario", "R", "crash", "status", "attempt"], "value": 1},
+      {"op": "set", "path": ["scenario", "R", "crash", "status", "lastError"], "value": "STOW HTTP 503"}]}
   ]
 }
