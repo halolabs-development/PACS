@@ -143,7 +143,9 @@ test('C4 first request binds the stored retry receipt with one audit at server t
 
 test('C5 only retry is eligible: none/pending/announcing/sending/complete are NOT_RETRY, failed is F-01, nothing written',async()=>{
   for(const [rows,code] of [[[],'GATEWAY_RETRY_NOT_RETRY'],...['pending','announcing','sending','complete'].map(p=>[[receipt('2.25.1',p)],'GATEWAY_RETRY_NOT_RETRY']),
-      [[receipt('2.25.1','retry',{institutionId:'kin-center'})],'GATEWAY_RETRY_NOT_RETRY'],[[receipt('2.25.1','failed')],'GATEWAY_RETRY_UNSUPPORTED_F01']]){
+      [[receipt('2.25.1','retry',{institutionId:'kin-center'})],'GATEWAY_RETRY_NOT_RETRY'],[[receipt('2.25.1','failed')],'GATEWAY_RETRY_UNSUPPORTED_F01'],
+      // A transfer KIN refused for its patient ID is failed too, but it is not the size limit: there is nothing to retry.
+      [[receipt('2.25.1','failed',{errorCode:'stow_patient_conflict'})],'GATEWAY_RETRY_NOT_RETRY']]){
     const s=store({receipts:rows});
     assert.deepEqual(await status(ask(s,'2.25.1')),{status:409,body:{code}},JSON.stringify(rows.map(r=>[r.phase,r.institutionId])));
     assert.deepEqual([s.writes(),s.audits.length,s.requests.size],[0,0,0]);

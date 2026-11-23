@@ -48,6 +48,8 @@
     {"id": "sending", "receipt": {"phase": "sending"}, "expect": "not_retry"},
     {"id": "retry is the only eligible phase", "receipt": {"phase": "retry"}, "expect": "eligible"},
     {"id": "failed is F-01, never eligible", "receipt": {"phase": "failed"}, "expect": "unsupported_f01"},
+    {"id": "failed for the size limit is F-01", "receipt": {"phase": "failed", "errorCode": "instance_exceeds_budget"}, "expect": "unsupported_f01"},
+    {"id": "failed because KIN refused the patient ID is not F-01 and has no retry to bind", "receipt": {"phase": "failed", "errorCode": "stow_patient_conflict"}, "expect": "not_retry"},
     {"id": "complete", "receipt": {"phase": "complete"}, "expect": "not_retry"}
   ],
   "pending": [
