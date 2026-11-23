@@ -12,6 +12,7 @@ no stack, no product file is modified. AmendSite adds what the server sends on t
 Button descriptions are not pinned; the cases assert behaviour (enabled, the action sent, the RS word, the move).
 """
 import datetime as dt
+import re
 import sys
 import time
 import unittest
@@ -157,6 +158,34 @@ class AmendApprovePage(unittest.TestCase):
         expect(self.page.locator("#report-editor-rs")).to_contain_text("수정됨")
         expect(self.approve()).to_be_disabled()            # the editor shows the amended report: nothing corrected
         self.assertEqual(h.PATIENT, self.selected(), "Approve stays on the study")
+
+    def test_the_window_head_and_both_approve_titles_follow_a_language_chosen_after_the_screen_is_drawn(self):
+        """The editor head (state, the end of the window, its tooltip) and the titles of Approve and Approve & Next are
+        sentences of the reading screen: English chosen after they are drawn (the account choice arrives late) repaints
+        them, the times stay as written, and Korean or no choice reads exactly as before."""
+        self.site.approve(h.UID)
+        self.open()
+        rs, approve, nxt = self.page.locator("#report-editor-rs"), self.approve(), self.page.locator("#b-approve-next")
+        read = lambda: (rs.text_content(), rs.get_attribute("title"), approve.get_attribute("title"), nxt.get_attribute("title"))
+        before = read()
+        self.assertIn("수정 가능", before[0])
+        until = before[0].split("수정 가능 ")[1].split("까지")[0]
+        hangul = re.compile("[가-힣]")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(rs).to_have_text(f"Approved · Editable until {until}")
+        expect(rs).to_have_attribute("title", f"Approved · Editable until {until} — The approving reader can edit the text and re-approve until this time")
+        expect(approve).to_have_attribute("title", f"Approved — if you edit the body, you can Approve again (until {until})")
+        expect(nxt).to_have_attribute("title", f"Approved — if you edit the body, you can Approve again (until {until})")
+        self.edit("SYN approved, corrected")
+        expect(approve).to_have_attribute("title", re.compile(r"^Within 24 hours of approval — you can edit the body and Approve again \(until " + re.escape(until) + r"\)"))
+        expect(nxt).to_have_attribute("title", approve.get_attribute("title"))
+        for value in read():
+            self.assertIsNone(hangul.search(value or ""), value)
+        self.edit("SYN approved")
+        for choice in ({"version": 1, "worklist": "ko", "reading": "ko"}, {"version": 1, "worklist": None, "reading": None}):
+            self.page.evaluate("choice => KinLanguage.restore(choice)", choice)
+            expect(rs).to_have_text(before[0])
+            self.assertEqual(before, read(), choice)
 
     def test_approve_and_next_sends_amend_and_moves_after_the_accepted_answer(self):
         self.site.approve(h.UID)

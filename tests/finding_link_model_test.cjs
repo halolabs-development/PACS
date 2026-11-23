@@ -64,6 +64,7 @@ function harness(options) {
   const state = { ended: false, scope: A, generation: 1, navigation: 0, busy: false, hydrated: 0, highlight: [] };
   const ids = o.ids || [imageId(A, SERIES, SOP + '.1', 1), imageId(A, SERIES, SOP, 1), imageId(A, SERIES, SOP + '.2', 1)];
   const viewport = o.viewport || { type: 'stack', index: 0, getImageIds: () => ids, getCurrentImageId() { return ids[this.index]; },
+    getCornerstoneImage() { return { imageId: this.getCurrentImageId() }; },
     async setImageIdIndex(index) { calls.push(['setImageIdIndex', index]); if (o.during) await o.during(state, this); if (o.reject) throw new Error('load failed'); this.index = o.landOn ?? index; },
     render() { calls.push(['render']); } };
   const sets = o.sets || [{ displaySetInstanceUID: 'ds-1', StudyInstanceUID: A, SeriesInstanceUID: SERIES, instances: [{ SOPInstanceUID: SOP }, { SOPInstanceUID: SOP + '.1' }, { SOPInstanceUID: SOP + '.2' }] }];
@@ -118,6 +119,7 @@ test('one multi-frame file split into a set per time point: the cited frame pick
   // The active cell shows the first time point; the cited frame 5 is in the second: that set (only) is loaded, then frame 5.
   let current = shown;
   const kit = harness({ sets: parts, viewport: { type: 'stack', index: 0, getImageIds: () => current, getCurrentImageId() { return current[this.index]; },
+    getCornerstoneImage() { return { imageId: this.getCurrentImageId() }; },
     async setImageIdIndex(index) { kit.calls.push(['setImageIdIndex', index]); this.index = index; }, render() { kit.calls.push(['render']); } } });
   const loaded = kit.env.services.viewportGridService.setDisplaySetsForViewport;
   kit.env.services.viewportGridService.setDisplaySetsForViewport = args => { loaded(args); current = ids; };
@@ -228,6 +230,7 @@ async function mounted(options) {
   const viewport = { type: 'stack', index: 0, pending: [], renders: 0, active: 'viewport',
     getImageIds: () => study === '1.1' ? ids : ['/studies/2.2/series/9.9/instances/9.9/frames/1'],
     getCurrentImageId() { return study === '1.1' ? ids[this.index] : '/studies/2.2/series/9.9/instances/9.9/frames/1'; },
+    getCornerstoneImage() { return { imageId: this.getCurrentImageId() }; },
     setImageIdIndex(index) { return new Promise(resolve => this.pending.push(() => { this.index = index; resolve(); })); },
     render() { this.renders++; } };
   const services = {
@@ -1800,6 +1803,7 @@ async function paired() {
   const shows = new Map([['vp-x', XS], ['vp-p', PS]]);
   const views = new Map([...shows.keys()].map(id => [id, { id, type: 'stack', index: 0, pending: [], renders: 0,
     getImageIds() { return images[shows.get(id)]; }, getCurrentImageId() { return images[shows.get(id)][this.index]; },
+    getCornerstoneImage() { return { imageId: this.getCurrentImageId() }; },
     setImageIdIndex(index) { return new Promise(resolve => this.pending.push(() => { this.index = index; resolve(); })); }, render() { this.renders++; } }]));
   const grid = { active: 'vp-x', activations: [], handlers: [] };
   const services = {

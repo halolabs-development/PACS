@@ -28,7 +28,9 @@
       return `${span} ${target.date < current.date ? "before" : "after"}`;
     }
     function relatedReportMeta(s) {
-      return `${relatedDateLabel(s)} · ${s.name} (${s.id}) · ${s.date || "날짜 없음"} · ${s.modality} · ${shownStudyDesc(s)}`;
+      const desc = shownStudyDesc(s);
+      return kinSayEn("{0} · {1} ({2}) · {3} · {4} · {5}", relatedDateLabel(s), s.name, s.id, s.date || kinSayEn("날짜 없음"), s.modality,
+        desc === "(설명 없음)" ? kinSayEn("(설명 없음)") : desc);
     }
     /**
      * W5 Related Report mode의 두 식별 카드(설계 v5 §1.4): 같은 환자의 다른 검사를 헷갈리지 않게 두 검사를 같은 항목으로 나란히 보인다.

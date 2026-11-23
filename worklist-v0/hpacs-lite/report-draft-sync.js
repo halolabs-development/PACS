@@ -614,7 +614,7 @@
         const named = writerName(holderName, holder);
         const writer = named === '다른 기관' ? '다른 기관 판독의가'
           : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
-        toast(`${writer} 판독 중입니다 — 저장되지 않았습니다`, "err");
+        toast(String(kinSayEn("{0} 판독 중입니다 — 저장되지 않았습니다", writer)), "err");
       }
     }
 
@@ -644,12 +644,12 @@
         if (uid === selectedUid) renderDraftBar();
         if (quiet) return;
         // 버리기의 실패는 저장의 실패가 아니다 — 무엇이 되지 않았는지를 그대로 말한다. 화면의 글은 어느 쪽이든 그대로다.
-        if (discard) toast(result.outcome === "unknown"
-          ? "초안을 버렸는지 확인하지 못했습니다 — 화면은 그대로 두었습니다. 서버의 상태는 다음 새로 고침에 반영됩니다"
-          : "초안을 버리지 못했습니다: " + draftFailureText(result), "err");
-        else toast(result.outcome === "unknown"
-          ? "초안 저장을 확인하지 못했습니다 — 입력한 내용은 그대로 있고, 다음 저장이 서버 상태부터 확인합니다"
-          : "서버 저장 실패: " + draftFailureText(result), "err");
+        if (discard) toast(String(result.outcome === "unknown"
+          ? kinSayEn("초안을 버렸는지 확인하지 못했습니다 — 화면은 그대로 두었습니다. 서버의 상태는 다음 새로 고침에 반영됩니다")
+          : kinSayEn("초안을 버리지 못했습니다: {0}", draftFailureText(result))), "err");
+        else toast(String(result.outcome === "unknown"
+          ? kinSayEn("초안 저장을 확인하지 못했습니다 — 입력한 내용은 그대로 있고, 다음 저장이 서버 상태부터 확인합니다")
+          : kinSayEn("서버 저장 실패: {e0}", draftFailureText(result))), "err");
       });
     }
 

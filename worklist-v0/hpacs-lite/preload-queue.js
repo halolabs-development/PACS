@@ -101,15 +101,15 @@
       if (raw !== null && raw !== undefined && raw !== false) {
         const saved = typeof raw === 'string' && raw.length <= 400 && normalizeAuto(JSON.parse(raw));
         if (saved) setting = saved;
-        else note = '저장된 자동 미리 받기 설정을 확인할 수 없어 Off로 둡니다.';
+        else note = kinSayEn("저장된 자동 미리 받기 설정을 확인할 수 없어 Off로 둡니다.");
       }
-    } catch (_) { note = '자동 미리 받기 설정을 불러오지 못했습니다. Off로 둡니다.'; }
+    } catch (_) { note = kinSayEn("자동 미리 받기 설정을 불러오지 못했습니다. Off로 둡니다."); }
     const live = () => !ended && bound && o.owner() === bound;
     // The worker's setup failure can arrive after the add (the key read is slower than the list): the line follows each report.
     let base = '', sending = false;
     const paint = () => {
       const session = o.session(), own = state && session && state.session === session ? state : null;
-      o.status.textContent = base + (sending && own?.unavailable ? ' ' + own.unavailable : '');
+      kinWrite(o.status, kinSayEn('{0}{1}', base, sending && own?.unavailable ? kinSayEn(' {0}', kinSayEn(own.unavailable)) : ''));
     };
     const unwatch = watch(() => { if (live()) paint(); });
     function fill() {
@@ -129,25 +129,25 @@
       sending = false;
       if (!setting.search) { base = note || 'Auto Preload: Off'; paint(); return; }
       const search = o.searches().find(s => s.id === setting.search);
-      if (!search) { base = '고른 저장 검색을 찾을 수 없어 자동 미리 받기를 하지 않습니다. 다른 저장 검색을 고르거나 Off로 두세요.'; paint(); return; }
+      if (!search) { base = kinSayEn("고른 저장 검색을 찾을 수 없어 자동 미리 받기를 하지 않습니다. 다른 저장 검색을 고르거나 Off로 두세요."); paint(); return; }
       const session = o.session();
-      if (!o.allowed() || !session) { base = '서버에 연결된 동안에만 자동 미리 받기를 합니다.'; paint(); return; }
+      if (!o.allowed() || !session) { base = kinSayEn("서버에 연결된 동안에만 자동 미리 받기를 합니다."); paint(); return; }
       const list = pick(o.match(search.filter), o.rows(), { priors: setting.priors, label: o.label });
       if (list.length) add(list, session, { auto: true });
       const urgent = list.filter(s => s.urgent).length;
-      base = `Auto Preload: ${search.name} · 대상 ${list.length}건${urgent ? ` (응급 ${urgent}건 먼저)` : ''} · 진행은 PF 열과 Preload 패널에서 봅니다.`;
+      base = kinSayEn("Auto Preload: {0} · 대상 {n1}건{2} · 진행은 PF 열과 Preload 패널에서 봅니다.", search.name, list.length, urgent ? kinSayEn(" (응급 {0}건 먼저)", urgent) : '');
       sending = true; paint();
     }
     const changed = () => {
       if (!live()) { o.select.disabled = o.priors.disabled = true; return; }
       setting = { version: 1, search: o.select.value || null, priors: o.priors.checked };
-      note = save() ? '' : '설정을 저장하지 못했습니다. 현재 창에만 적용합니다.';
+      note = save() ? '' : kinSayEn("설정을 저장하지 못했습니다. 현재 창에만 적용합니다.");
       run();
     };
     o.select.addEventListener('change', changed);
     o.priors.addEventListener('change', changed);
     root.addEventListener('pagehide', () => { ended = true; unwatch(); o.select.disabled = o.priors.disabled = true; }, { once: true });
-    fill(); o.status.textContent = note;
+    fill(); kinWrite(o.status, note);
     return {
       afterList() { if (!live()) return; fill(); run(); },
       // The session ended and the document may stay (Recover Draft): no saved search name, choice or status line is kept.
@@ -241,9 +241,9 @@
       for (const s of list) {
         const tr = document.createElement('tr');
         tr.dataset.uid = s.uid;
-        const cell = text => { const td = document.createElement('td'); td.textContent = text; tr.append(td); return td; };
+        const cell = text => { const td = document.createElement('td'); kinWrite(td, text); tr.append(td); return td; };
         cell(s.label || s.uid).translate = false;
-        cell(s.status + (s.status === 'Ready' && s.expiresAt ? ' · ' + new Date(s.expiresAt).toLocaleString() + '까지' : '') + (s.open ? ' (Open)' : ''));
+        cell(kinSayEn('{0}{1}{2}', s.status, s.status === 'Ready' && s.expiresAt ? kinSayEn(' · {0}까지', new Date(s.expiresAt).toLocaleString()) : '', s.open ? ' (Open)' : ''));
         // Retry beside the status, so it stays in view however long the note is.
         const act = cell('');
         cell(s.total ? `${s.done}/${s.total}` : '');

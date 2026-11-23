@@ -1,5 +1,10 @@
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   // FA-090 EMR Link: the administrator sets or clears the own institution's EMR address template (PATCH /api/admin/emr-link).
   // The current value comes with the session (/api/me emrLink) and then from each save's answer. The example below the
   // field fills the template with sample values through the same builder the worklist's Open EMR uses (emr-link.js).
@@ -11,7 +16,7 @@
 
   function message(text) {
     const box = $('#emr-link-message');
-    box.textContent = text || '';
+    kinWrite(box, typeof text === 'string' && text ? kinSayEn(text) : text || '');
     box.classList.toggle('show', !!text);
   }
 
@@ -34,8 +39,8 @@
     const text = $('#emr-link-template').value.trim();
     if (!text) { $('#emr-link-preview').textContent = ''; return; }
     const built = KinEmrLink.build(text, SAMPLE);
-    $('#emr-link-preview').textContent = built.error ? built.error
-      : `Example (${SAMPLE.patientId} · ${SAMPLE.accession} · ${SAMPLE.studyUid}): ${built.url}`;
+    kinWrite($('#emr-link-preview'), built.error ? kinSayEn(String(built.error))
+      : `Example (${SAMPLE.patientId} · ${SAMPLE.accession} · ${SAMPLE.studyUid}): ${built.url}`);
   }
 
   async function save(template) {

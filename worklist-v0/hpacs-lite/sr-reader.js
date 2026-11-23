@@ -144,7 +144,7 @@
               const details = document.createElement('details'), summary = document.createElement('summary');
               kinWrite(summary, kinSayEn("{0} · {n1}개", title, entry.values.length)); details.append(summary); details.open = depth < 2;
               entry.values.forEach((item, i) => { const group = document.createElement('div'); group.style.marginLeft = '16px'; const heading = document.createElement('strong'); heading.textContent = 'Item ' + (i + 1); group.append(heading); render(item,group,depth+1); details.append(group); }); parent.append(details);
-            } else { const line = document.createElement('div'); line.translate = false; line.textContent = title + ' = ' + (entry.values.length ? entry.values.join(' \\ ') : '(빈 값)'); parent.append(line); }
+            } else { const line = document.createElement('div'); line.translate = false; kinWrite(line, kinSayEn('{0} = {1}', title, entry.values.length ? entry.values.join(' \\ ') : kinSayEn('(빈 값)'))); parent.append(line); }
           }
         }
         const primary = new Set(['0040A040','0040A043','0040A050','0040A491','0040A493','0040A730']);

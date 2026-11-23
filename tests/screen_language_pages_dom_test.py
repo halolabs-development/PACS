@@ -58,6 +58,8 @@ class ScreenLanguagePages(unittest.TestCase):
                 return route.fulfill(path=ROOT / "config/ohif.js", content_type="application/javascript; charset=utf-8")
             if path.startswith("/worklist/hpacs-lite/") and (ASSETS / file).is_file():
                 return route.fulfill(path=ASSETS / file)
+            if path == "/api/emr-audit/intake-context" and getattr(self, "scope_denied", False):
+                return route.fulfill(status=403, json={"code": "AuditScopeNotGranted", "message": "SYN scope"})
             if path == "/api/me" and role:
                 return route.fulfill(json={"sub": "syn", "user": "SYN", "institution": "SYN",
                                            "kind": "member", "sessionId": "S1", "roles": [role]})
@@ -132,6 +134,20 @@ class ScreenLanguagePages(unittest.TestCase):
                 self.assertEqual("en", page.evaluate("KinLanguage.lang(document.body)"))
                 page.evaluate("KinLanguage.restore({version:1, worklist:null, reading:null})")
                 self.assertEqual('{"version":1,"worklist":"en","reading":"en","session":"S1"}', page.evaluate("localStorage.getItem('kin-language:v1')"))
+
+    def test_an_auditor_without_the_disclosure_scope_is_told_so_in_english(self):
+        # The copy and rights workspaces close with their reasons; both are the page's sentences.
+        self.scope_denied = True
+        self.addCleanup(lambda: setattr(self, "scope_denied", False))
+        rights, copies = "#audit-rights-message", "#audit-disclosure-message"
+        page, _ = self.open("audit.html", "auditor", "en")
+        page.wait_for_function("document.querySelector('#audit-rights-message')?.textContent")
+        self.assertEqual("This account does not have permission to handle correction, deletion, or processing suspension requests.",
+                         page.locator(rights).text_content())
+        self.assertEqual("This account does not have permission to issue medical record copies.", page.locator(copies).text_content())
+        page, _ = self.open("audit.html", "auditor", "ko")
+        page.wait_for_function("document.querySelector('#audit-rights-message')?.textContent")
+        self.assertEqual("이 계정에는 정정·삭제·처리정지 요구 처리 권한이 없습니다.", page.locator(rights).text_content())
 
     def test_an_administration_sentence_reads_in_english(self):
         page, _ = self.open("admin.html", "admin", "en")

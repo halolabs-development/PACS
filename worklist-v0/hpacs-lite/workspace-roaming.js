@@ -2,7 +2,7 @@
 (function (root) {
   'use strict';
   // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
-  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name === 'title' || name === 'placeholder') el[name] = value; else if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   /*
    * A read of the account copy that fails (Load, the check at start, Retry) never says anything about a write, and it
@@ -66,7 +66,7 @@
       });
       if (loadButton) {
         loadButton.textContent = access ? 'Retry' : loadLabel;
-        loadButton.title = access ? '화면을 바꾸지 않고 계정 배치를 다시 확인합니다.' : loadTitle || '';
+        kinWrite(loadButton, access ? kinSayEn("화면을 바꾸지 않고 계정 배치를 다시 확인합니다.") : loadTitle || '', "title");
       }
     };
     const kept = () => { try { return localKept?.() !== false; } catch (_) { return true; } };
@@ -101,12 +101,12 @@
       const snapshot = model.normalize(read());
       const local = request = new AbortController(); const timer = setTimeout(() => local.abort(), 10000);
       const rechecking = access && action !== 'load' ? access : null;
-      status.textContent = rechecking ? READ_FAILED[rechecking].recheck : '서버 배치 확인 중…';
+      kinWrite(status, rechecking ? READ_FAILED[rechecking].recheck : kinSayEn("서버 배치 확인 중…"));
       // A failed read: the account copy is not known any more, so neither is the revision a write would replace.
       const readFailed = (kind, text) => work.commit(at, () => {
         if (ended) return;
         revision = null; access = kind; remember(kind);
-        status.textContent = text || readFailedText(kind);
+        kinWrite(status, (typeof text === 'string' && text ? kinSayEn(text) : text) || (said => typeof said === 'string' && said ? kinSayEn(said) : said)(readFailedText(kind)));
       });
       try {
         const method = action === 'save' ? 'PUT' : action === 'clear' ? 'DELETE' : 'GET';
@@ -153,7 +153,7 @@
         } else if (confirmed) {
           // The account copy is known again after a failure. Nothing is applied or uploaded: the reader chooses.
           const differs = saved.layout && JSON.stringify(model.normalize(saved.layout)) !== JSON.stringify(snapshot);
-          kinWrite(status, differs ? DIFFERENT : saved.layout ? kinSayEn("계정 배치를 다시 확인했습니다. 현재 배치와 같습니다.") : kinSayEn("계정 배치를 다시 확인했습니다. 계정에 저장한 배치가 없으며 현재 창의 배치를 유지합니다."));
+          kinWrite(status, differs ? kinSayEn(DIFFERENT) : saved.layout ? kinSayEn("계정 배치를 다시 확인했습니다. 현재 배치와 같습니다.") : kinSayEn("계정 배치를 다시 확인했습니다. 계정에 저장한 배치가 없으며 현재 창의 배치를 유지합니다."));
         } else {
           kinWrite(status, saved.layout ? kinSayEn("서버에 저장된 배치가 있습니다. 불러오기를 누르면 적용합니다.") : kinSayEn("계정에 저장한 배치가 없습니다. 현재 창의 배치를 유지합니다."));
         }
@@ -164,7 +164,7 @@
         // transport never sent says so in its own words; a refusal the server answered was thrown above with its sentence.
         const lost = error?.transport ? error.sent !== false : error?.name === 'AbortError' || error instanceof TypeError;
         work.commit(at, () => {
-        if (!ended) status.textContent = lost ? WRITE_UNKNOWN[action] : error?.message || WRITE_UNKNOWN[action];
+        if (!ended) kinWrite(status, (said => typeof said === 'string' && said ? kinSayEn(said) : said)(lost ? WRITE_UNKNOWN[action] : error?.message || WRITE_UNKNOWN[action]));
         });
       } finally {
         clearTimeout(timer);

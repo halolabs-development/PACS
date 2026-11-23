@@ -131,10 +131,11 @@
     const rows=TAGS.map(tag=>{
       const value=row.tags[tag.key];
       let relation='',title='';
-      if(identity&&tag.field==='not_compared'){relation=RELATION_TEXT.not_compared;title=RELATION_TITLE.not_compared;}
+      if(identity&&tag.field==='not_compared'){relation=RELATION_TEXT.not_compared;title=kinSayEn(RELATION_TITLE.not_compared);}
       else if(identity&&tag.field){
         relation=RELATION_TEXT[identity[tag.field]];
-        title=tag.key==='name'?kinSay('{t0} {t1}',{t:RELATION_TITLE[identity[tag.field]]},{t:kinSay(NAME_SCOPE)}):RELATION_TITLE[identity[tag.field]];
+        const said=RELATION_TITLE[identity[tag.field]]?kinSayEn(RELATION_TITLE[identity[tag.field]]):'';
+        title=tag.key==='name'?kinSay('{t0} {t1}',{t:said},{t:kinSay(NAME_SCOPE)}):said;
       }
       return {key:tag.key,tag:tag.tag,label:tag.label,value:value===''?tag.absent:value,valueTitle:tag.title,relation,title};
     });

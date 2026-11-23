@@ -1,5 +1,10 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   /* FA-066 (Minhoon M-101, 10-05: keep #19 "selected studies or the search results, in the columns I choose, as a file for
      Excel"). Export List writes the worklist rows the browser already holds; nothing is read from or written to the server.
      The file is UTF-8 with a BOM (Excel reads Korean names) and CRLF lines; the first line is the column titles the list shows.
@@ -28,7 +33,7 @@
     const button=options.button,initial=options.owner();
     let ended=false,dialog=null;
     const live=()=>!ended&&!!initial&&options.owner()===initial;
-    const el=(tag,text,parent)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(parent)parent.append(e);return e;};
+    const el=(tag,text,parent)=>{const e=document.createElement(tag);if(text!=null)kinWrite(e, text);if(parent)parent.append(e);return e;};
     function open(){
       if(!live())return;
       // One snapshot per opening: the counts shown are the rows written, and No keeps each study's place in the search result.
@@ -47,7 +52,7 @@
         lab.append(' ',label,` (${count})`);if(note)el('small',' '+note,line);return input;
       };
       const pickSelected=radio('selected','Selected Studies',selected.length,null);
-      const pickAll=radio('all','All Search Results',listed.length,'현재 불러온 목록의 모든 페이지');
+      const pickAll=radio('all','All Search Results',listed.length,kinSayEn("현재 불러온 목록의 모든 페이지"));
       (selected.length?pickSelected:pickAll).checked=true;
       const cols=el('fieldset',null,dialog);el('legend','Columns',cols);
       const boxes=order.map(c=>{
@@ -56,7 +61,7 @@
       });
       const formatLabel=el('label','Format ',dialog),format=el('select',null,formatLabel);format.dataset.exportFormat='';
       for(const [v,t] of [['csv','CSV (Excel)'],['txt','Text (Tab-Delimited)']]){const o=el('option',t,format);o.value=v;}
-      el('p','Excel에서 열리는 UTF-8 파일로 내려받습니다. =, +, @, 탭·캐리지 리턴(CR) 문자로 시작하거나 -로 시작하지만 숫자(-3, -0.5 등)가 아닌 값은 앞에 \'를 붙이고, Text 형식은 값 안의 탭·줄바꿈을 공백으로 바꿉니다.',dialog).style.fontSize='12px';
+      el('p',kinSayEn("Excel에서 열리는 UTF-8 파일로 내려받습니다. =, +, @, 탭·캐리지 리턴(CR) 문자로 시작하거나 -로 시작하지만 숫자(-3, -0.5 등)가 아닌 값은 앞에 '를 붙이고, Text 형식은 값 안의 탭·줄바꿈을 공백으로 바꿉니다."),dialog).style.fontSize='12px';
       const actions=el('p',null,dialog),run=el('button','Export',actions);actions.append(' ');const cancel=el('button','Cancel',actions);
       run.type=cancel.type='button';run.className=cancel.className='chip';run.dataset.exportRun='';
       const rowsFor=()=>pickSelected.checked?selected:pickAll.checked?listed:[];

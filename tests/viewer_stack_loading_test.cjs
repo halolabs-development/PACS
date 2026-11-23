@@ -45,12 +45,18 @@ async function fixture(imageIds = ['frame:1', 'frame:2', 'frame:3', 'frame:4']) 
     getImageIds() { return this.imageIds; },
     getCurrentImageId() { return this.imageIds[this.currentImageIdIndex]; },
     getCurrentImageIdIndex() { return this.currentImageIdIndex; },
+    getCornerstoneImage() { return this.shown ? { imageId: this.shown } : undefined; },
     getTargetImageIdIndex() { return this.targetImageIdIndex; },
     _throwIfDestroyed() {},
     setViewPresentation(value) { this.camera = value; },
+    // As the loader's cache: whoever asks for an image while its load runs waits for that one load. A load settled
+    // with 'unread' ends as the pinned GPU path ends a failed load: nothing is shown and the Promise settles normally.
     _loadAndDisplayImage(imageId) {
       requests.push(imageId);
-      return new Promise((resolve, reject) => pending.set(imageId, { resolve, reject })).then(() => {
+      let load = pending.get(imageId);
+      if (!load) { load = {}; load.promise = new Promise((resolve, reject) => Object.assign(load, { resolve, reject })); pending.set(imageId, load); }
+      return load.promise.then(read => {
+        if (read === false) return imageId;
         cached.add(imageId);
         if (this.getCurrentImageId() === imageId) {
           this.shown = imageId;
@@ -85,7 +91,7 @@ async function fixture(imageIds = ['frame:1', 'frame:2', 'frame:3', 'frame:4']) 
   extension.onModeEnter();
   const settle = async (imageId, error) => {
     const entry = pending.get(imageId); assert.ok(entry, `requested ${imageId}`);
-    pending.delete(imageId); error ? entry.reject(error) : entry.resolve();
+    pending.delete(imageId); error === 'unread' ? entry.resolve(false) : error ? entry.reject(error) : entry.resolve();
     await new Promise(setImmediate);
   };
   let navigation = 0;
@@ -136,6 +142,54 @@ test('Go to Image supersedes an older deferred scroll without a late rewind', as
     f.viewport.scroll(1); f.timers(40);
     await f.settle(images[4]);
     assert.equal(f.viewport.shown, images[4]);
+  } finally { f.extension.onModeExit(); }
+});
+
+test('Go to Image pressed again while its frame loads waits for that one load and arrives with it', async () => {
+  const f = await fixture(images);
+  try {
+    const first = f.goTo(3), second = f.goTo(3);
+    let said = false; second.then(() => { said = true; });
+    await new Promise(setImmediate);
+    assert.equal(said, false, 'the index is on the frame already, the image is not: nothing is reported yet');
+    await f.settle(images[2]);
+    assert.deepEqual([(await first).reason, (await second).ok], ['superseded', true]);
+    assert.equal(f.viewport.shown, images[2]);
+  } finally { f.extension.onModeExit(); }
+});
+
+test('after a load that failed, Go to Image for the same frame loads it anew and reports the image shown', async () => {
+  const f = await fixture(images);
+  try {
+    const failed = f.goTo(3);
+    await f.settle(images[2], 'unread');
+    assert.equal((await failed).reason, 'frame-missing');
+    assert.deepEqual([f.viewport.currentImageIdIndex, f.viewport.shown], [2, images[0]], 'the pinned index stays on the failed frame');
+    const again = f.goTo(3);
+    await f.settle(images[2], 'unread');
+    assert.equal((await again).reason, 'frame-missing', 'the frame is still not shown');
+    const read = f.goTo(3);
+    await f.settle(images[2]);
+    assert.equal((await read).ok, true);
+    assert.equal(f.viewport.shown, images[2]);
+    assert.deepEqual(f.requests, [images[2], images[2], images[2]]);
+  } finally { f.extension.onModeExit(); }
+});
+
+test('Go to Image for the first frame of a stack whose first load still runs waits for the image', async () => {
+  const f = await fixture(images);
+  try {
+    // As a stack just put in the cell: the index is on its first frame, that load runs, nothing of it is shown yet.
+    f.viewport.shown = undefined; f.cached.delete(images[0]);
+    const stack = f.viewport._setImageIdIndex(0);
+    const arrived = f.goTo(1);
+    let said = false; arrived.then(() => { said = true; });
+    await new Promise(setImmediate);
+    assert.equal(said, false);
+    await f.settle(images[0]);
+    assert.equal((await arrived).ok, true);
+    assert.equal(await stack, images[0]);
+    assert.equal(f.viewport.shown, images[0]);
   } finally { f.extension.onModeExit(); }
 });
 

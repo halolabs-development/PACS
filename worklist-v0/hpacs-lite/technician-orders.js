@@ -17,6 +17,8 @@
  */
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinError = m => globalThis.KinLanguage?.error ? globalThis.KinLanguage.error(m) : m;
   // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
   const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
@@ -141,7 +143,7 @@
     rights();
     actions.hidden = false;
     function setStatus(message, undo) {
-      status.replaceChildren(message || '');
+      status.replaceChildren(kinWrite(document.createTextNode(''), message || ''));
       if (undo) status.append(' ', button('Undo', undo));
     }
 
@@ -245,7 +247,7 @@
         if (!why) { reason.focus(); return; }
         go.disabled = true; result.textContent = 'Deleting…';
         try { await ctx.api('POST', '/orders/' + encodeURIComponent(o.oid) + '/remove', { reason: why }, undefined, ctx.work('document')); }
-        catch (error) { if (error?.name === 'AbortError') return; result.textContent = 'Not deleted: ' + (error?.message || error); result.className = 'order-note err'; go.disabled = false; return; }
+        catch (error) { if (error?.name === 'AbortError') return; kinWrite(result, kinSayEn('Not deleted: {e0}', kinError(String(error?.message || error)))); result.className = 'order-note err'; go.disabled = false; return; }
         w.close();
         await ctx.orders.refresh();
         setStatus(`Order ${o.oid} removed from the list.`, () => restore(o.oid));
@@ -258,7 +260,7 @@
     async function restore(oid) {
       setStatus('Restoring…');
       try { await ctx.api('POST', '/orders/' + encodeURIComponent(oid) + '/restore', undefined, undefined, ctx.work('document')); }
-      catch (error) { if (error?.name !== 'AbortError') setStatus('Undo failed: ' + (error?.message || error)); return; }
+      catch (error) { if (error?.name !== 'AbortError') setStatus(kinSayEn('Undo failed: {e0}', kinError(String(error?.message || error)))); return; }
       await ctx.orders.refresh();
       setStatus(`Order ${oid} is back on the list.`);
     }
@@ -311,7 +313,7 @@
         go.disabled = true; result.textContent = 'Matching…';
         const r = await ctx.orders.match(s.uid, o.oid);
         if (!w.dialog.isConnected) return;
-        if (!r.ok) { result.textContent = 'Not matched: ' + (r.message || 'refused'); result.className = 'order-note err'; go.disabled = false; return; }
+        if (!r.ok) { kinWrite(result, kinSayEn('Not matched: {0}', r.message ? kinError(r.message) : 'refused')); result.className = 'order-note err'; go.disabled = false; return; }
         w.body.replaceChildren(note(`Matched: ${s.name} (${s.id}) ↔ ${o.oid}. Reading the result back…`, 'ok'));
         w.buttons(w.closeButton());
         const confirmed = await r.reloaded;
@@ -351,7 +353,7 @@
         go.disabled = true; reason.disabled = true; result.textContent = 'Unmatching…';
         const r = await ctx.orders.unmatch(s.uid, why);
         if (!w.dialog.isConnected) return;
-        if (!r.ok) { result.textContent = 'Not unmatched: ' + (r.message || 'refused'); result.className = 'order-note err'; go.disabled = false; reason.disabled = false; return; }
+        if (!r.ok) { kinWrite(result, kinSayEn('Not unmatched: {0}', r.message ? kinError(r.message) : 'refused')); result.className = 'order-note err'; go.disabled = false; reason.disabled = false; return; }
         w.body.replaceChildren(note(`Unmatched: ${s.name} (${s.id}). Reading the result back…`, 'ok'));
         w.buttons(w.closeButton());
         const confirmed = await r.reloaded;

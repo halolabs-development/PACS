@@ -223,7 +223,7 @@
     let toastTimer;
     function toast(msg, kind = "ok", ms = kind === "err" ? 4000 : 1900) {
       const el = $("#toast");
-      kinWrite(el, msg);
+      kinWrite(el, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(msg));
       el.className = "show " + kind;
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => { el.className = kind; }, ms);

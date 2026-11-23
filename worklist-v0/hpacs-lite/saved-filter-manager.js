@@ -2,7 +2,7 @@
 (function () {
   'use strict';
   // Product words through the page's screen language (worklist-language.js), or as written when it is not loaded.
-  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  const kinWrite = (el, value, name) => { if (typeof window !== 'undefined' && window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name === 'title' || name === 'placeholder') el[name] = value; else if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   window.KinSavedFilterManager = { mount };
 
@@ -107,7 +107,7 @@
       lte: 'On or Before', between: 'Between (Inclusive)', withinLastDays: 'Within Last N Days' };
     const named = name => options.list().find(f => f.name === name);
     const status = (message, error = false) => {
-      $('status').textContent = message;
+      kinWrite($('status'), message);
       $('status').classList.toggle('sfm-error', error);
       if (error && dialog.open) $('status').scrollIntoView({ block: 'nearest' });
     };
@@ -128,7 +128,7 @@
           const tokens = Array.isArray(cols[key]) ? cols[key] : [cols[key]];
           const error = (editedModalities.has(input) || input.value !== String(original ?? '')) && input.value.trim() !== ''
             && tokens.some(v => !v || !allowed.includes(v))
-            ? '사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.' : '';
+            ? kinSayEn('사용할 수 없는 Modality입니다. 빈 값 없이 목록의 Modality를 쉼표로 구분해 입력하세요.') : '';
           input.setCustomValidity(error);
           if (error) cols[key] = original ?? '';
         }
@@ -243,7 +243,7 @@
         const relative = operator.value === 'withinLastDays';
         if (field?.type === 'date') input.type = relative ? 'number' : 'date';
         if (relative) { input.min = '0'; input.max = '365'; input.step = '1'; kinWrite(input, kinSayEn("오늘을 포함해 로컬 자정부터 계산합니다. 0은 오늘, 1은 어제부터입니다 (0~365)."), "title"); }
-        else { input.removeAttribute('min'); input.removeAttribute('max'); input.removeAttribute('step'); input.title = modalityList ? modalityHelp[operator.value] || '' : ''; }
+        else { input.removeAttribute('min'); input.removeAttribute('max'); input.removeAttribute('step'); kinWrite(input, modalityList && modalityHelp[operator.value] ? kinSayEn(modalityHelp[operator.value]) : '', "title"); }
         preset.parentElement.hidden = !relative;
         input.parentElement.hidden = ['empty', 'notEmpty'].includes(operator.value);
         end.parentElement.hidden = operator.value !== 'between';
@@ -288,7 +288,7 @@
       if ($('rules').querySelectorAll('.sfm-rule,.sfm-group').length >= 40
         || (kind === 'rule' && $('rules').querySelectorAll('.sfm-rule').length >= 20)
         || (kind === 'group' && depth > 5)) {
-        status('조건 20개·항목/그룹 합계 40개·중첩 5단계 제한을 확인하세요.', true); return;
+        status(kinSayEn("조건 20개·항목/그룹 합계 40개·중첩 5단계 제한을 확인하세요."), true); return;
       }
       const row = nodeRow(kind === 'group' ? { join:'or', rules:[] } : { field:'id', op:'contains', value:'' }, depth);
       container.append(row); row.querySelector('select').focus(); count();
@@ -308,7 +308,7 @@
         $('body-parts-load').textContent = state.failed ? 'Retry Body Parts' : state.verified ? 'Resume Body Parts' : 'Read Body Parts';
         $('body-parts-refresh').disabled = !state.allowed || state.busy || !state.total;
         $('body-parts-cancel').hidden = !state.busy;
-        $('body-parts-status').textContent = state.note || `부위 ${state.verified}/${state.total}건 확인 · 실패 ${state.failed}건`;
+        kinWrite($('body-parts-status'), state.note || kinSayEn("부위 {0}/{n1}건 확인 · 실패 {n2}건", state.verified, state.total, state.failed));
       }
     }
     function edit(filter, isNew = false) {
@@ -318,13 +318,13 @@
       // Reject unsupported stored modes instead of presenting an editable substitute.
       if (!filter || !Array.isArray(options.columns[filter.mode])) {
         editable = false; selected = null; $('fields').hidden = true; lock(busy); list();
-        status('이 검색이 변경됐거나 업무 화면을 확인할 수 없습니다. ‘Reload List’로 다시 불러오거나 ‘New from Current’로 새 검색을 만드세요.', true);
+        status(kinSayEn("이 검색이 변경됐거나 업무 화면을 확인할 수 없습니다. ‘Reload List’로 다시 불러오거나 ‘New from Current’로 새 검색을 만드세요."), true);
         return false;
       }
       const error = compound.validate(filter.cols?.[compound.KEY], options.columns[filter.mode]);
       if (error) {
         editable = false; selected = null; $('fields').hidden = true; lock(busy); list();
-        status('저장된 복합 조건을 확인할 수 없습니다: ' + error + ' ‘New from Current’로 새 검색을 만들거나 ‘Reload List’로 다시 불러오세요.', true);
+        status(kinSayEn("저장된 복합 조건을 확인할 수 없습니다: {0} ‘New from Current’로 새 검색을 만들거나 ‘Reload List’로 다시 불러오세요.", error), true);
         return false;
       }
       editable = true; $('fields').hidden = false;
@@ -446,7 +446,7 @@
       if (work.state()!=='active'||busy) return;
       const at=work.capture('document');interruptedAction=repeatRead?action:'reconcile';
       const requestFocus = document.activeElement, requestFocusId = requestFocus?.id;
-      lock(true); status('처리 중…');
+      lock(true); status(kinSayEn("처리 중…"));
       // Disabling the active control can blur it to the document body. Keep busy
       // keyboard events inside the modal until the original control is available.
       focusAvailable($('status'));
@@ -454,8 +454,8 @@
       const timeout = setTimeout(() => controller.abort(), 15000);
       try { await action(controller.signal,at); }
       catch (error) { work.commit(at,()=>status(controller.signal.aborted
-        ? '응답 시간이 초과되었습니다. 입력은 유지했습니다. 서버 처리 여부는 목록을 다시 불러와 확인하세요.'
-        : error.message || '처리하지 못했습니다. 입력을 유지했습니다.', true)); }
+        ? kinSayEn("응답 시간이 초과되었습니다. 입력은 유지했습니다. 서버 처리 여부는 목록을 다시 불러와 확인하세요.")
+        : error.message || kinSayEn("처리하지 못했습니다. 입력을 유지했습니다."), true)); }
       finally {
         clearTimeout(timeout);if(operation===controller)operation=null;
         work.commit(at,()=>{interruptedAction=null;lock(false);
@@ -482,7 +482,7 @@
     }
     $('load-folders').addEventListener('click', () => run(async (signal,at) => {
       const snapshot = await options.readFolders(signal,at);
-      work.commit(at,()=>{acceptCollection(snapshot); status('검색 모음을 불러왔습니다. 선택과 편집 내용은 유지했습니다.');});
+      work.commit(at,()=>{acceptCollection(snapshot); status(kinSayEn("검색 모음을 불러왔습니다. 선택과 편집 내용은 유지했습니다."));});
     }, true));
     $('folder-path').addEventListener('change', () => {
       const initial = JSON.parse(folderBaseline);
@@ -507,7 +507,7 @@
           'move-searches': [3], 'delete-searches': [] }[command.action];
         for (const index of acknowledged) initial[index] = current[index];
         folderBaseline = JSON.stringify(initial);
-        status('검색 모음 변경을 저장했습니다. 현재 목록 조건과 판독문은 유지됩니다.');});
+        status(kinSayEn("검색 모음 변경을 저장했습니다. 현재 목록 조건과 판독문은 유지됩니다."));});
       });
     }
     $('folder-save').addEventListener('click', () => folderCommand({ action: 'save-folder', path: $('folder-path').value,
@@ -518,7 +518,7 @@
       `폴더 "${$('folder-path').value}"와 하위 폴더를 제거할까요? 포함된 검색은 모두 부모 폴더로 옮기며 검색 자체는 삭제하지 않습니다.`));
     function bulk(action) {
       const filters = options.list().filter(filter => checked.has(filter.id));
-      if (!filters.length || filters.length > 200) { status('검색을 1~200개 선택하세요.', true); return; }
+      if (!filters.length || filters.length > 200) { status(kinSayEn("검색을 1~200개 선택하세요."), true); return; }
       const command = { action, ids: filters.map(filter => filter.id) };
       if (action === 'move-searches') command.to = $('folder-destination').value;
       folderCommand(command, `${filters.length}개 검색을 ${action === 'delete-searches' ? '삭제' : '"' + (command.to || '미분류') + '"로 이동'}할까요?\n${filters.map(filter => filter.name).join('\n')}\n검사와 판독문은 변경하지 않습니다.`);
@@ -534,10 +534,10 @@
       if (applyAfterSave && organizerDirty() && !confirm('검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?')) return;
       const next = value();
       const error = compound.validate(next.cols[compound.KEY], options.columns[next.mode]);
-      if (error) { status('복합 조건을 저장하지 못했습니다: ' + error, true); return; }
-      if (!next.name) { status('검색 이름을 입력하세요.', true); $('name').focus(); return; }
+      if (error) { status(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", error), true); return; }
+      if (!next.name) { status(kinSayEn("검색 이름을 입력하세요."), true); $('name').focus(); return; }
       const existing = selected === null ? named(next.name) : null;
-      if (copying && existing) { status('같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 원본 검색은 유지됩니다.', true); $('name').focus(); return; }
+      if (copying && existing) { status(kinSayEn("같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 원본 검색은 유지됩니다."), true); $('name').focus(); return; }
       if (copying) next.createOnly = true;
       if (existing) {
         // Starting from current criteria must not erase classification merely
@@ -552,7 +552,7 @@
         const saved = await options.save(next, signal,at);
         if(!work.admits(at))return;
         if (!applyAfterSave) {
-          work.commit(at,()=>{if (edit(saved)) status(`"${saved.name}" 저장 완료. 목록에 적용하려면 ‘Apply Saved’를 누르세요.`);});
+          work.commit(at,()=>{if (edit(saved)) status(kinSayEn("\"{0}\" 저장 완료. 목록에 적용하려면 ‘Apply Saved’를 누르세요.", saved.name));});
           return;
         }
         try {
@@ -565,7 +565,7 @@
         } catch (error) {
           // Save can merge existing folder metadata. Retry from that acknowledged
           // value so the previous new-search defaults cannot erase it afterward.
-          work.commit(at,()=>{if (edit(saved)) status(`"${saved.name}"은 저장됐지만 목록에 적용하지 못했습니다. ${error.message || ''} 저장된 조건을 유지했습니다. 조건을 확인하고 다시 적용하세요.`, true);});
+          work.commit(at,()=>{if (edit(saved)) status(kinSayEn("\"{0}\"은 저장됐지만 목록에 적용하지 못했습니다. {e1} 저장된 조건을 유지했습니다. 조건을 확인하고 다시 적용하세요.", saved.name, error.message || ''), true);});
           return;
         }
         work.commit(at,()=>{baseline = JSON.stringify(value()); dialog.close();});
@@ -583,23 +583,23 @@
       $('name').value = candidate;
       $('heading').textContent = 'Save As New';
       kinWrite($('name-hint'), kinSayEn("새 이름으로 저장합니다. 원본 검색과 기존 기본 검색은 유지하며, 같은 이름은 덮어쓰지 않습니다."));
-      status('편집 중인 조건을 복사했습니다. 이름과 조건을 확인한 뒤 ‘Save’를 누르세요.');
+      status(kinSayEn("편집 중인 조건을 복사했습니다. 이름과 조건을 확인한 뒤 ‘Save’를 누르세요."));
       $('name').focus(); $('name').select();
     });
     $('delete').addEventListener('click', () => {
       if (busy || selected === null) return;
       const filter = named(selected);
-      if (!filter) { status('저장 검색이 변경됐습니다. 목록을 다시 불러오세요.', true); list(); return; }
+      if (!filter) { status(kinSayEn("저장 검색이 변경됐습니다. 목록을 다시 불러오세요."), true); list(); return; }
       if (!confirm(`저장 검색 "${filter.name}"을 삭제할까요? 검사와 판독문은 삭제되지 않습니다.`)) return;
       run(async (signal,at) => {
-        await options.remove(filter, signal,at); work.commit(at,()=>{edit(options.snapshot(), true); status('저장 검색을 삭제했습니다.');});
+        await options.remove(filter, signal,at); work.commit(at,()=>{edit(options.snapshot(), true); status(kinSayEn("저장 검색을 삭제했습니다."));});
       });
     });
     $('apply').addEventListener('click', () => {
       if (selected === null || !mayLeave()) return;
       const filter = named(selected);
-      if (!filter) { status('저장 검색이 변경됐습니다. 목록을 다시 불러오세요.', true); return; }
-      if (options.apply(filter) === false) { status('저장 검색을 적용하지 못했습니다. 조건을 확인하세요.', true); return; }
+      if (!filter) { status(kinSayEn("저장 검색이 변경됐습니다. 목록을 다시 불러오세요."), true); return; }
+      if (options.apply(filter) === false) { status(kinSayEn("저장 검색을 적용하지 못했습니다. 조건을 확인하세요."), true); return; }
       baseline = JSON.stringify(value()); dialog.close();
     });
     $('preview').addEventListener('click', () => {
@@ -609,8 +609,8 @@
       if (organizerDirty() && !confirm('검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?')) return;
       const next = value();
       const error = compound.validate(next.cols[compound.KEY], options.columns[next.mode]);
-      if (error) { status('복합 조건을 적용하지 못했습니다: ' + error, true); return; }
-      if (options.apply(next) === false) { status('검색 조건을 적용하지 못했습니다.', true); return; }
+      if (error) { status(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", error), true); return; }
+      if (options.apply(next) === false) { status(kinSayEn("검색 조건을 적용하지 못했습니다."), true); return; }
       baseline = JSON.stringify(next); dialog.close();
     });
     $('add-rule').addEventListener('click', () => {
@@ -639,10 +639,10 @@
         work.commit(at,()=>{
         if (name !== null && !named(name)) {
           edit(undefined); missingName = name;
-          status(`저장 검색 "${name}"을 찾을 수 없습니다. 목록에서 검색을 선택하거나 ‘New from Current’로 새 검색을 만드세요.`, true);
+          status(kinSayEn("저장 검색 \"{0}\"을 찾을 수 없습니다. 목록에서 검색을 선택하거나 ‘New from Current’로 새 검색을 만드세요.", name), true);
           return;
         }
-        if (edit(name === null ? options.snapshot() : named(name), name === null)) status('저장 검색 목록을 불러왔습니다.');});
+        if (edit(name === null ? options.snapshot() : named(name), name === null)) status(kinSayEn("저장 검색 목록을 불러왔습니다."));});
       }, true);
     });
     $('body-parts-load').addEventListener('click', () => options.bodyParts?.load(false));
@@ -688,7 +688,7 @@
         const action=interruptedAction;interruptedAction=null;operation=null;lock(false);
         if(action&&dialog.open)run(typeof action==='function'?action:async(signal,at)=>{
           const snapshot=await options.readFolders(signal,at);
-          work.commit(at,()=>{acceptCollection(snapshot);status('최신 검색 목록을 확인했습니다. 편집 내용은 유지했습니다.');});
+          work.commit(at,()=>{acceptCollection(snapshot);status(kinSayEn("최신 검색 목록을 확인했습니다. 편집 내용은 유지했습니다."));});
           await sharing.refresh(signal,at);
         },true);
       }
@@ -711,7 +711,7 @@
       edit(filter, name === undefined); dialog.showModal();
       if (name !== undefined && !filter) {
         missingName = name;
-        status(`저장 검색 "${name}"을 찾을 수 없습니다. ‘Reload List’로 다시 불러오거나 목록에서 검색을 선택하세요.`, true);
+        status(kinSayEn("저장 검색 \"{0}\"을 찾을 수 없습니다. ‘Reload List’로 다시 불러오거나 목록에서 검색을 선택하세요.", name), true);
       }
       $('search').focus();
     } };

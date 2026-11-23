@@ -85,9 +85,10 @@
       if (saved) rememberStudyPanelSession();
       const kept = workspaceLocalKept;
       workspaceLocalKept = !!saved;
-      const said = saved ? "배치 저장됨 · 이 브라우저" : "배치 저장 안 됨 · 이 창에서만 유지";
-      if (!fromStudyPanel) $("#layout-status").textContent = said;
-      else if (!saved || !kept) studyPanel?.setNotice(said);
+      const said = saved ? kinSayEn("배치 저장됨 · 이 브라우저") : kinSayEn("배치 저장 안 됨 · 이 창에서만 유지");
+      if (!fromStudyPanel) kinWrite($("#layout-status"), said);
+      // The notice of the panel takes words (study-panel.js setNotice): the sentence in the language of now.
+      else if (!saved || !kept) studyPanel?.setNotice(String(said));
     }
     function rememberPanelSize(selector) {
       if (!workspaceEditable()) return;

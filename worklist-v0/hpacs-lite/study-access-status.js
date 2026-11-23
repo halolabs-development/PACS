@@ -16,7 +16,7 @@
       kinWrite(button, kinSayEn("현재 사용자에게 적용되는 검사 접근 조건 상태"), "title");
       if(dialog){
         kinWrite(dialog.querySelector('[data-status]'), !last ? kinSayEn("접근 조건을 확인하지 못했습니다.") : `Revision ${last.revision} · ${!last.restricted?'No Additional Restriction':last.denied?'Denied':'Restricted'}`);
-        dialog.querySelector('[data-period]').textContent=last?.needsInstitutionReview?'기관이 변경되어 새 기관 관리자의 접근 설정이 필요합니다.':last?.restricted?`UTC ${last.startsAt||'Open Start'} → ${last.endsAt||'Open End'}`:'';
+        kinWrite(dialog.querySelector('[data-period]'), last?.needsInstitutionReview?kinSayEn("기관이 변경되어 새 기관 관리자의 접근 설정이 필요합니다."):last?.restricted?`UTC ${last.startsAt||'Open Start'} → ${last.endsAt||'Open End'}`:'');
       }
     }
     async function check(refresh=false){

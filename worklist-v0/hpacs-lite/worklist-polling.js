@@ -106,7 +106,7 @@
       function arrivalNames(rows) {
         const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
           .map(value => String(value ?? "").trim()).filter(Boolean).join(" · ") || s.uid);
-        return named.join(", ") + (rows.length > 3 ? ` 외 ${rows.length - 3}건` : "");
+        return kinSayEn("{0}{1}", named.join(", "), rows.length > 3 ? kinSayEn(" 외 {n0}건", rows.length - 3) : "");
       }
       // A reader typing a report misses a toast of a few seconds. The last notice also stays under the list (no focus is
       // taken) until the next notice replaces it or Dismiss hides it.
@@ -193,7 +193,7 @@
           // The notice names what came (patient · study · EM E), not only how many: the rows of the answer already carry them.
           const arrivalChanged = arrivals?.ok ? [...new Set(arrivals.changes.flatMap(change => r.studies.filter(s=>KinExamScope.read(s)?.sources.some(source=>source.studyUid===change.uid))))] : [];
           const arrivalNotice = arrivalChanged.length
-            ? `기존 검사 ${arrivalChanged.length}건에 영상 또는 시리즈가 추가됐습니다(${arrivalNames(arrivalChanged)}). 현재 영상 화면은 자동 교체하지 않습니다.` : '';
+            ? kinSayEn("기존 검사 {n0}건에 영상 또는 시리즈가 추가됐습니다({1}). 현재 영상 화면은 자동 교체하지 않습니다.", arrivalChanged.length, arrivalNames(arrivalChanged)) : '';
           const known = new Map(studies.map(x => [x.uid, x]));
           const knownOriginals=new Set(KinExamScope.originals(studies).map(s=>s.uid));
           const fresh = KinExamScope.originals(r.studies).filter(s=>!knownOriginals.has(s.uid));
@@ -223,7 +223,7 @@
             autoPreload?.afterList();   // FC-073: a study that just arrived is queued without a manual Refresh
             if (fresh.length || arrivalNotice) {
               const arrived = [fresh.length ? kinSay("새 검사 {n0}건이 도착했습니다: {1}{t2}", fresh.length, arrivalNames(fresh),
-                { t: fresh.some(s => (s.state?.ss??s.ss) === "Unverified") ? " — Technician 탭에서 확인(Verify)하세요" : "" }) : '', arrivalNotice].filter(Boolean);
+                { t: fresh.some(s => (s.state?.ss??s.ss) === "Unverified") ? kinSayEn(" — Technician 탭에서 확인(Verify)하세요") : "" }) : '', arrivalNotice].filter(Boolean);
               announceArrivals(arrived.length > 1 ? kinSay("{t0} · {t1}", { t: arrived[0] }, { t: arrived[1] }) : arrived[0] || '');
             }
             return;

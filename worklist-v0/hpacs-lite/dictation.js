@@ -9,6 +9,10 @@
  */
 (function () {
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
+  const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
   const TEXT_CAP = 16384;          // JS UTF-16 code units, identical to the server's ASR_TEXT_CAP
   // The largest file RIFF's 32-bit size field can describe. The real limit is the server's bootstrap
   // maxBytes (KIN_ASR_MAX_BYTES); this only refuses a value the wire format cannot carry.
@@ -516,8 +520,13 @@
   function mount(controller, el, hooks = {}) {
     const work = globalThis.KinWorkContext;
     const doc = el.pane.ownerDocument;
-    // The unavailable title is the markup's own text, never a second copy of it (DI-13).
-    const unavailableTitle = el.button.getAttribute('title');
+    // The unavailable title is the markup's own text, never a second copy of it (DI-13): the words it was written with.
+    const unavailableTitle = window.KinLanguage?.source?.(el.button, 'title') ?? el.button.getAttribute('title');
+    // Product words reach the button and the pane through the screen-language write path (English on an English screen,
+    // otherwise as written): a whole known sentence, or one that ends in " — 판독문은 그대로입니다".
+    const phrase = v => typeof v === 'string' && v ? kinSayEn(v) : v;
+    const said = v => typeof v === 'string' && v.endsWith(UNCHANGED) && v !== UNCHANGED
+      ? kinSayEn('{0}{1}', phrase(v.slice(0, -UNCHANGED.length)), kinSayEn(UNCHANGED)) : phrase(v);
     let paneFocus = false, lastState = null;
     const names = ['stop', 'cancel', 'retry', 'repin', 'insert', 'close'];
     function primary(v) {
@@ -535,9 +544,9 @@
       else if (v.serverAvailable && v.active) title = TITLES.active;
       else if (v.serverAvailable) { disabled = !!v.block; title = v.block || TITLES.ready; }
       if (el.button.disabled !== disabled) el.button.disabled = disabled;
-      if (el.button.getAttribute('title') !== title) el.button.setAttribute('title', title);
+      kinWrite(el.button, phrase(title), 'title');
       el.pane.hidden = !v.visible;
-      el.status.textContent = v.status;
+      kinWrite(el.status, said(v.status));
       el.text.textContent = v.text;
       el.text.hidden = !v.text;
       el.place.textContent = v.placement;
