@@ -222,7 +222,8 @@ class AdminGatewaySupportDOMTest(unittest.TestCase):
         self.line(Q2).get_by_role("button", name="Restart Gateway").click()
         self.wait_until(lambda: len(self.support_calls("GET")) == 2, "the read after the request")
         self.assertEqual(json.loads(self.support_calls("POST")[-1]["body"]), {"queueInstance": Q2, "action": "restart", "version": None})
-        self.assertIn("요청을 남겼습니다", self.message())
+        # The note is written once that read has been answered, not when it is sent.
+        self.wait_until(lambda: "요청을 남겼습니다" in (self.message() or ""), "the request note after the read")
         self.line(Q1).locator("select").select_option("2026.12.1")
         self.replies += [(200, {"request": req(R2, "update", "requested", "2026.12.1")}), (200, answer())]
         self.line(Q1).get_by_role("button", name="Update Gateway").click()

@@ -35,7 +35,7 @@ METHODS = ['test_eg1_1_normal_transfer_and_late_delta', 'test_eg1_2_multibatch_o
 BLOCKS = ['N', 'B', 'R', 'F', 'X', 'G']
 # The live step binds every source the run depends on (contract section 7, Binding).
 BOUND = ['gateway/agent/agent.py', 'gateway/agent/Dockerfile', 'gateway/agent/requirements.txt',
-         'gateway/docker-compose.yml', 'gateway/orthanc.json', 'scripts/send_cstore.py', 'scripts/run-tests.py',
+         'gateway/docker-compose.yml', 'gateway/orthanc.json', 'gateway/orthanc/Dockerfile', 'scripts/send_cstore.py', 'scripts/run-tests.py',
          'tests/live_test_gate.py', 'tests/invariants_live.py', 'tests/measurement_ci.py',
          'tests/gateway_pipeline_live.py', 'tests/gateway_pipeline_judge.py', 'proxy/nginx.conf.template',
          'docker-compose.yml', 'config/orthanc.json', 'api/src/pacs.service.ts', 'api/src/pacs.controller.ts',
