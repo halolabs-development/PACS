@@ -4419,6 +4419,26 @@ class LiveInvariantTests(unittest.TestCase):
             self.assertEqual(arrived[sop_uid], original[sop_uid])
             self.assertEqual(file_sha256(original[sop_uid]), original_sha256)
 
+            # The patient corrected at the modality and the study sent again: the same Study UID, a new SOP, another
+            # PatientID. Written, it would make the UID two patients' and take the study off every list. It is refused
+            # before the archive is written, with the code the agent reads to stop repeating the transfer.
+            from types import SimpleNamespace
+            other_patient = "SYN-OTHER-" + uuid.uuid4().hex[:8]
+            self.assertNotEqual(str(first_ds.PatientID), other_patient)
+            refused = stow(rewrite("2.25." + str(uuid.uuid4().int), PatientID=other_patient))
+            self.assertEqual((refused.status, refused.body), (409, {"code": "PATIENT_ID_CONFLICT"}), refused.text[:500])
+            self.assertIn(agent.stow_refusal_code(SimpleNamespace(json=lambda: refused.body)), agent.STOW_IDENTITY_REFUSALS)
+            self.assertEqual(stored(), arrived)   # one Orthanc study still, holding exactly what it held
+            listed = self.stack.request("GET", "/studies", "kdoctor")
+            self.assertEqual(listed.status, 200, listed.text[:500])
+            self.assertIn(announced_uid, [row["uid"] for row in listed.body["studies"]])
+            self.assertNotIn(announced_uid, [issue["uid"] for issue in listed.body.get("identityIssues") or []])
+            self.assertEqual(owner_and_origin(), expected_state)
+            # The same patient's next image still arrives after the refusal.
+            after_uid = "2.25." + str(uuid.uuid4().int)
+            agent_accepts(stow(rewrite(after_uid)), "the same patient after a refusal")
+            self.assertEqual(set(stored()), {sop_uid, late_uid, after_uid})
+
     def test_s4u3_gateway_receipt_route_rules(self) -> None:
         """S4-U3 (stage4 contract §4 U3, P8/P9, H-1 interim) with real Gateway credentials.
 
@@ -4791,7 +4811,7 @@ class LiveInvariantTests(unittest.TestCase):
         # count of test_agent.py, so neither can move without the other.
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
         # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
-        self.assertIn("Ran 115 tests", completed.stderr + completed.stdout)
+        self.assertIn("Ran 118 tests", completed.stderr + completed.stdout)
 
     def test_production_gateway_contract_is_declared(self) -> None:
         completed = subprocess.run(
