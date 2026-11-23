@@ -1141,7 +1141,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
           const unreadable = [r('mystery'), r('sending', {successCount: 5}), r('sending', {serverReceivedAt: 'soon'}), null, 'SYN',
             r('sending', {localCount: -1})].map(x => A.gatewayStatus(x, null, same).key);
           const echo = A.gatewayStatus(r('failed', {errorCode: '<b>SYN</b>'}), null, same).reason;
-          const otherCode = A.gatewayStatus(r('failed', {errorCode: 'stow_http'}), null, same).reason;
+          const otherCode = String(A.gatewayStatus(r('failed', {errorCode: 'stow_http'}), null, same).reason);
           const rows = A.gatewayStatusRows;
           const valid = {studies: [], observedAt: '2026-09-24T01:06:00.000Z', notObserved: []};
           const malformed = [null, [], {}, {...valid, studies: 'SYN'}, {...valid, observedAt: 'soon'},

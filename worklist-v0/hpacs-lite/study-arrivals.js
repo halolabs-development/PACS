@@ -341,17 +341,19 @@
     const pick=(key,detail,reason,retry)=>({key,text:GATEWAY_STATUS[key].text,title:GATEWAY_STATUS[key].title,detail,reason,retry});
     if(!readableReceipt(receipt))return pick('unknown','Gateway 보고 형식을 확인할 수 없습니다','',null);
     const detail=kinSayEn('Gateway 보고({0}): Gateway가 집계한 {1}건 중 {2}건 전송',format(receipt.serverReceivedAt),receipt.localCount,receipt.successCount);
-    const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?['오류 코드 '+receipt.errorCode]:[];
+    const code=typeof receipt.errorCode==='string'&&ERROR_CODE.test(receipt.errorCode)?[kinSayEn('오류 코드 {0}',receipt.errorCode)]:[];
+    // One line of product words, each its own sentence, so an English screen reads every part (the values stay as sent).
+    const together=parts=>parts.length?kinSayEn(parts.map((_,i)=>'{'+i+'}').join(' · '),...parts):'';
     const retry=gatewayRetryAction(receipt);
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.
     // A refused patient ID is its own reason, with no F-01 note beside it.
     if(receipt.phase==='failed'){
       if(receipt.errorCode===IDENTITY_REFUSED_CODE)
         return pick('failed',detail,kinSayEn('{0} · {1}',kinSayEn(IDENTITY_REFUSED),kinSayEn('오류 코드 {0}',receipt.errorCode)),null);
-      return pick('failed',detail,[...(receipt.errorCode==='instance_exceeds_budget'?[OVERSIZED]:[]),...code].join(' · '),retry);
+      return pick('failed',detail,together([...(receipt.errorCode==='instance_exceeds_budget'?[kinSayEn(OVERSIZED)]:[]),...code]),retry);
     }
     if(receipt.phase==='retry'){
-      const reason=['Gateway 자동 재시도 대기',...(count(receipt.attempt)?['시도 '+receipt.attempt+'회']:[]),...code].join(' · ');
+      const reason=together([kinSayEn('Gateway 자동 재시도 대기'),...(count(receipt.attempt)?[kinSayEn('시도 {n0}회',receipt.attempt)]:[]),...code]);
       if(retry&&retry.kind==='now_retry'&&requestedKey===retry.key)return pick('retry_requested',detail,reason,null);
       return pick('failed',detail,reason,retry);
     }
