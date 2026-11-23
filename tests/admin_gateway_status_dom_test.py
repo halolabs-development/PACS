@@ -1152,7 +1152,7 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
           const summaries = [A.gatewayStatusSummary(null, same), A.gatewayStatusSummary({failed: true}, same),
             A.gatewayStatusSummary({observedAt: '2026-09-24T01:06:00.000Z', absentKnown: true, statuses: ['failed', 'received', 'SYN']}, same),
             A.gatewayStatusSummary({observedAt: '2026-09-24T01:06:00.000Z', failed: true, absentKnown: false, statuses: []}, same)]
-            .map(s => [s.key, s.text, s.counts]);
+            .map(s => [s.key, String(s.text), s.counts]);
           return {phases, requested, otherKey, requestedFailed, unbindable: [unbindable.key, unbindable.retry], unreadable, echo,
             otherCode, malformed, undecided: [undecided.absentKnown, undecided.rows.length], absent: absent.absentKnown, summaries,
             frozen: Object.isFrozen(A.GATEWAY_STATUS) && Object.values(A.GATEWAY_STATUS).every(Object.isFrozen)}; }""", EPOCH)
@@ -1356,6 +1356,26 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         self.assertEqual("No Gateway of this institution has contacted this server since it started (T0).", result["empty"])
         self.assertTrue(result["frozen"])
 
+    def test_14_the_list_line_and_the_retry_words_follow_an_english_screen(self):
+        # The list line's title (the time of the successful query), each row's Now Retry help and a failed row's F-01 note are
+        # product sentences drawn after Refresh: English on an English screen, the same words as drawn with no choice.
+        self.open()
+        self.refresh((200, FIVE))
+        words = """() => { const q = s => [...document.querySelectorAll(s)];
+          return [document.querySelector('#gateway-list-state').title,
+            ...q('#gateway-rows button').map(b => b.title), ...q('#gateway-rows .gw-note').flatMap(n => [n.textContent, n.title])]; }"""
+        korean = self.page.evaluate(words)
+        self.assertTrue(korean[0].startswith("이 시각에 성공한 검사 목록 조회 기준입니다."), korean[0])
+        self.assertTrue(any(has_hangul(w) for w in korean[1:]), "a Now Retry help or an F-01 note is drawn")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        english = self.page.evaluate(words)
+        self.assertTrue(english[0].startswith("Based on the study list query that succeeded at this time."), english[0])
+        self.assertEqual([], [w for w in english if has_hangul(w)])
+        # Drawn again while English (another Refresh): still English.
+        self.refresh((200, FIVE))
+        self.assertEqual([], [w for w in self.page.evaluate(words) if has_hangul(w)])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, self.page.evaluate(words))
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
