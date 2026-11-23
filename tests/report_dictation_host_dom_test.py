@@ -280,6 +280,7 @@ function inProgressReset(s) { if (!s || !["W", "T", "H"].includes(s.rs)) return 
 // The report editor's status line (FC-034) is drawn by the worklist columns module, outside this fixture: no line here.
 function reportStatusLine() { return ''; }
 function shownStudyDesc(s) { return s?.desc ?? ""; }
+function shownStudyDescSaid(s) { return shownStudyDesc(s); }
 function today() { return "2026-09-23"; }
 function saveApp() {}
 function syncStudy() {}

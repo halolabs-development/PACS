@@ -413,9 +413,8 @@
     function discardAndLogOut(prep) {
       if (logoutPrep !== prep || prep.state !== "failed") return;
       const pending = prep.reports.filter(report => !report.safe);
-      if (!confirm(`저장하지 못한 ${pending.length}건의 판독문 초안을 버리고 로그아웃할까요?\n` +
-          pending.map(report => `${report.label || report.uid} (${report.uid})`).join("\n") +
-          "\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.")) return;
+      if (!confirm(kinSayEn("저장하지 못한 {n0}건의 판독문 초안을 버리고 로그아웃할까요?\n{1}\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.",
+          pending.length, pending.map(report => `${report.label || report.uid} (${report.uid})`).join("\n")))) return;
       for (const report of pending) {
         reportConverge.delete(report.uid);
         if (appState[report.uid]) appState[report.uid].draft = null;
@@ -477,8 +476,8 @@
     function dropEndedDraft(prep) {
       // 무엇을 버리는지 말한다: 저장을 확인한 검사는 여기 없다. 세션이 끝난 뒤이므로 검사는 식별값으로만 부른다.
       const pending = (prep.reports || []).filter(report => !report.safe);
-      if (!confirm(`저장하지 못한 ${pending.length}건의 판독문 초안을 버릴까요?\n` + pending.map(report => report.uid).join("\n") +
-          "\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.")) return;
+      if (!confirm(kinSayEn("저장하지 못한 {n0}건의 판독문 초안을 버릴까요?\n{1}\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.", pending.length,
+          pending.map(report => report.uid).join("\n")))) return;
       if (logoutPrep !== prep || prep.state !== "ended") return;
       forgetCapture(prep);
       prep.state = "done";
@@ -503,20 +502,20 @@
       const at = work.capture("lifecycle");
       const ended = () => logoutPrep === prep && prep.state === "ended";
       const say = text => work.commit(at, () => { if (ended()) logoutStatus(prep, text); });
-      const kept = " 입력한 내용은 이 창에 그대로 있습니다.";
+      const kept = kinSayEn(" 입력한 내용은 이 창에 그대로 있습니다.");
       const noSession = "로그인한 세션이 없습니다. 다른 창에서 같은 계정으로 로그인한 뒤 다시 누르세요.";
       const otherAccount = "같은 계정·기관으로 로그인했을 때만 저장합니다. 지금 세션으로는 저장하지 않았습니다.";
       // 어느 검사에나 같은 답이 올 실패의 안내(아래 everyStudy). 검사 하나의 거절은 그 검사의 사유로 목록에 적힌다.
       const explain = result => result.outcome === "auth" ? noSession
         : result.outcome === "owner" ? otherAccount
-        : result.outcome === "unsent" ? "요청을 보내지 못했습니다." + kept
-        : "서버의 답을 확인하지 못했습니다." + kept;
+        : result.outcome === "unsent" ? kinSayEn("요청을 보내지 못했습니다.{0}", kept)
+        : kinSayEn("서버의 답을 확인하지 못했습니다.{0}", kept);
       try {
         say("로그인 상태를 확인하는 중입니다…");
         const binding = await KinAuth.recoveryBinding();
         if (!ended()) return;
         if (binding.status === "none") { say(noSession); return; }
-        if (binding.status !== "ok") { say("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
+        if (binding.status !== "ok") { say(kinSayEn("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요.{0}", kept)); return; }
         const owner = prep.owner ?? {};
         // Another account is another institution or account id (the login email of the same account may have changed).
         if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)) { say(otherAccount); return; }
@@ -550,7 +549,7 @@
             say("서버의 판독 상태를 확인하는 중입니다…");
             const learned = await learnCommitOutcome(report.uid, at, binding.session);
             if (!ended()) return;
-            if (learned.outcome === "unknown") { say("서버의 판독 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
+            if (learned.outcome === "unknown") { say(kinSayEn("서버의 판독 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요.{0}", kept)); return; }
             if (learned.outcome === "landed") {
               if (!learned.later) { if (!work.commit(at, () => { report.safe = true; })) return; continue; }
               if (!work.commit(at, () => { prep.texts = report.texts = Object.freeze({ ...report.texts, baseVersion: learned.version }); })) return;
@@ -641,7 +640,8 @@
 
     function logoutStatus(prep, text) {
       const line = prep.panel?.querySelector("[role=status]");
-      if (line) kinWrite(line, text);
+      // A line of this panel's own table is said as the page's sentence (a whole sentence the glossary knows reads in English).
+      if (line) kinWrite(line, typeof text === "string" && text ? kinSayEn(text) : text);
     }
 
     /**

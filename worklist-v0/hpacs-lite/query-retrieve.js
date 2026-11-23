@@ -50,7 +50,7 @@
     function failure(error, what) {
       if (error?.said) return error.said;
       if (error?.status === 403) return kinSayEn("이 계정으로는 Query/Retrieve를 쓸 수 없습니다.");
-      return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", what);
+      return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", kinSayEn(what));
     }
 
     async function loadPeers() {

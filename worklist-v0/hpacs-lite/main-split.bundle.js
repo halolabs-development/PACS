@@ -441,6 +441,15 @@
           <td translate="no">${esc(t.title)}${repeatedTitles.has(t.title) && Number.isInteger(t.id) ? ` (#${t.id})` : ""}</td><td translate="no">${esc(t.shortcut)}</td><td>${esc(t.modality)}</td>
           <td><button type="button" class="chip" data-tpl-preview aria-label="상용구 미리보기: ${esc(t.title)}">View</button></td>
         </tr>`).join("") || `<tr><td class="empty" colspan="4">${templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"}</td></tr>`;
+      // Each row's help and its View button name a template (its title and shortcut are data): one sentence each, so an
+      // English screen reads them in English and a Korean one exactly as drawn.
+      for (const row of $("#tplrows").querySelectorAll("tr[data-i]")) {
+        const t = templates[Number(row.dataset.i)];
+        if (!t) continue;
+        kinWrite(row, kinSayEn("더블클릭: 판독문에 삽입{0} / 우클릭: 편집", t.shortcut ? kinSayEn(' / 판독문에서 "{0}" 입력 후 Tab', t.shortcut) : ""), "title");
+        const view = row.querySelector("[data-tpl-preview]");
+        if (view) kinWrite(view, kinSayEn("상용구 미리보기: {0}", t.title), "aria-label");
+      }
       const emptyTemplates = $("#tplrows td.empty");
       if (emptyTemplates) kinWrite(emptyTemplates, kinSayEn(templates.length ? "조건에 맞는 상용구가 없습니다" : "상용구 없음 — 우클릭해서 추가하세요"));
       updateTemplatePreview();
@@ -627,7 +636,7 @@
       if (templatePreview.uid !== selectedUid) { closeTemplatePreview(false); return; }
       const s = cur(), why = templateInsertionBlock(templatePreview.template);
       $("#tpl-preview-target").dataset.uid = selectedUid ?? "";
-      kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
+      kinWrite($("#tpl-preview-target"), s ? kinSayEn("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDescSaid(s), s.acc || kinSayEn("없음")) : kinSayEn("삽입 대상: 검사 미선택"));
       kinWrite($("#tpl-preview-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? (s?.rs === "A"
         ? kinSayEn("삽입은 개인 초안에 반영됩니다. 승인본에 추가하려면 Addendum을 사용하세요.")
         : kinSayEn("삽입은 개인 초안에 반영됩니다. 확정하려면 Save 또는 Approve를 사용하세요.")));
@@ -760,7 +769,10 @@
     function updateReportTemplateButton() {
       const why = reportTemplateBlock();
       $("#b-report-template").disabled = !!why;
-      kinWrite($("#b-report-template"), kinSayEn(why ?? "현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
+      // The lock on a report another physician saved names that physician: its sentence, not the words already filled in.
+      const said = why && (typeof reportLockSay === "function" && typeof reportLockText === "function" && appState[selectedUid]?.prelimHidden
+        && why === reportLockText(appState[selectedUid]) ? reportLockSay(appState[selectedUid]) : kinSayEn(why));
+      kinWrite($("#b-report-template"), said || kinSayEn("현재 세 칸을 새 개인 상용구 편집창으로 가져옵니다"), "title");
       if (templateEditor?.source && templateEditor.source.uid !== selectedUid) closeTemplateEditor(false);
       updateTemplateEditor();
     }
@@ -773,9 +785,11 @@
       $("#tpl-cancel").disabled = session.pending;
       $("#tpl-save").disabled = session.pending || !!why;
       kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
-      kinWrite($("#tpl-save"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? "", "title");
+      const said = why && (typeof reportLockSay === "function" && typeof reportLockText === "function" && appState[selectedUid]?.prelimHidden
+        && why === reportLockText(appState[selectedUid]) ? reportLockSay(appState[selectedUid]) : kinSayEn(why));
+      kinWrite($("#tpl-save"), said || "", "title");
       if (session.source) kinWrite($("#tpl-source"), kinSayEn("{0}\n{1}", session.source.label,
-        why ?? kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
+        said || kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
     }
     function closeTemplateEditor(returnFocus = true) {
       const session = templateEditor;
@@ -816,7 +830,7 @@
       const modalities = String(s.modality ?? "").split(",").map(value => value.trim()).filter(Boolean);
       // 환자 식별은 출처 확인에만 쓴다. 재사용 문장/제목에 검사 식별을 자동으로 섞지 않는다.
       editTemplate(null, { uid: selectedUid,
-        label: `가져온 검사: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}` },
+        label: kinSayEn("가져온 검사: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDescSaid(s), s.acc || kinSayEn("없음")) },
         { ...text, modality: modalities.length === 1 ? modalities[0] : "" });
     });
     // 취소는 아무것도 안 한다. 저장을 누른 것만이 저장이다.
@@ -894,10 +908,10 @@
       const tr = e.target.closest("tr[data-i]");
       const t = tr ? templates[+tr.dataset.i] : null;
       showCtx(e, [
-        { label: "＋ 새 상용구", act: () => editTemplate(null) },
-        { label: "수정", dis: !t, act: () => editTemplate(t) },
+        { label: kinSayEn("＋ 새 상용구"), act: () => editTemplate(null) },
+        { label: kinSayEn("수정"), dis: !t, act: () => editTemplate(t) },
         { sep: 1 },
-        { label: "삭제", dis: !t, act: async () => {
+        { label: kinSayEn("삭제"), dis: !t, act: async () => {
             if (!confirm(kinSayEn("상용구 \"{0}\" 을(를) 삭제할까요?", t.title))) return;
             const at = work.capture("document");
             if (serverMode) {
@@ -995,6 +1009,21 @@
         || String(s?.modality ?? "").trim()
         || "(설명 없음)";
     }
+    const studyDescIsEmpty = s => !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim();
+    /** The same, as a part of a sentence: the placeholder is the page's word (English on an English screen), a description is data. */
+    function shownStudyDescSaid(s) {
+      const desc = shownStudyDesc(s);
+      return studyDescIsEmpty(s) ? kinSayEn(desc) : desc;
+    }
+    /** The same for a data cell's markup: only the placeholder is marked, so paintStudyDesc can write it as the page's word. */
+    function studyDescMarkup(s) {
+      const desc = esc(shownStudyDesc(s));
+      return studyDescIsEmpty(s) ? `<span data-desc-placeholder>${desc}</span>` : desc;
+    }
+    function paintStudyDesc(root, s) {
+      const placeholder = root?.querySelector?.("[data-desc-placeholder]");
+      if (placeholder) kinWrite(placeholder, shownStudyDescSaid(s));
+    }
     /** A server time (ISO) as this screen's local "YYYY-MM-DD HH:mm"; anything unreadable is blank. */
     function localStamp(iso) {
       const d = typeof iso === "string" && iso ? new Date(iso) : null;
@@ -1084,6 +1113,41 @@
       return { typing: false, by: saved, mine: appState[s.uid]?.savedByMine, label: saved ? writerName(appState[s.uid]?.savedByName, saved) : "" };
     }
 
+    /** The RS cell's word and its product help (the stored hold reason, which is data, is the cell's own business). */
+    function rsWords(s) {
+      const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
+      const on = reportOnIt(s);
+      const help = finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
+        : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
+        : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
+        : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "";
+      return { word, on, help };
+    }
+    /**
+     * The titles of a drawn row that join a product sentence with a name (the name is data, written as given): the row's
+     * markup registers whole sentences only, so these are written as one sentence each after the row is drawn — English on
+     * an English screen, the same words as drawn otherwise. A title with no product words (a hold reason, a bare name) is
+     * left as drawn.
+     */
+    function paintRowWords(row, s) {
+      if (!row || !s) return;
+      paintStudyDesc(row, s);
+      const rs = row.querySelector("span.rs");
+      if (rs && !s.holdReason) {
+        const { on, help } = rsWords(s);
+        if (help && on.by && !on.mine) kinWrite(rs, kinSayEn("{0} — {1}", kinSayEn(help), on.label), "title");
+      }
+      // The missing-images mark's words are a sentence with its counts: written as one, as the panel repaints it.
+      const gapMark = row.querySelector(".receipt-gap[data-gap-uid]");
+      if (gapMark && typeof paintReceiptGap === "function") paintReceiptGap(gapMark, s);
+      const held = row.querySelector("span.hold.other");
+      if (held && s.holder && !s.holderMine) {
+        const heldBy = writerName(s.holderName, s.holder);
+        kinWrite(held, kinSayEn("{0} 작성 중", heldBy === '다른 기관' ? kinSayEn('다른 기관 판독의가') : heldBy === '작성자 비공개' ? kinSayEn('비공개 작성자가')
+          : kinSayEn('{0} 님이', heldBy)), "title");
+      }
+    }
+
     // 특수 렌더링이 필요한 칸만 함수로
     let studyPriority = null;
     const viewingNames = new Map();
@@ -1099,12 +1163,8 @@
       qc: s => `<span data-qc-uid="${esc(s.uid)}">${qcCellHtml(s)}</span>`,
       em: s => {const phase=studyPriority?.get(s.uid)?.phase;return phase?`<span title="${phase==='saving'?'응급 상태를 저장 중입니다':'저장 결과 미확인 — 문맥 메뉴의 Refresh Status로 확인하세요'}">${phase==='saving'?'Saving':'Unverified'}</span>`:s.em === "E" ? `<span class="em-e">E</span>` : "";},
       // 판독 상태 이름은 목록과 건수 줄에서 같은 계약을 따른다. 승인(A) 뒤 24시간이 지난 판독문은 낱말만 Finalized다(값은 A).
-      rs: s => { const finalized = reportFinalized({ rs: s.rs, amendUntil: appState[s.uid]?.amendUntil }), word = finalized ? "Finalized" : RS_WORD[s.rs] ?? s.rs;
-        const on = reportOnIt(s), shown = on.typing ? "In Progress" : word;
-        const help = s.holdReason || (finalized ? "승인 후 24시간이 지나 확정된 판독문 — Addendum으로만 덧붙일 수 있습니다"
-          : on.typing ? "판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다"
-          : s.rs === "D" ? "보존 기간이 끝나 판독문을 파기한 검사입니다"
-          : word !== s.rs ? ({ W: "아직 판독하지 않은 검사", T: "저장했지만 아직 승인하지 않은 판독문", P: "상급 판독의 승인 대기", H: "판독 보류", A: "승인된 판독문" }[s.rs] || "") : "");
+      rs: s => { const { word, on, help: product } = rsWords(s), shown = on.typing ? "In Progress" : word;
+        const help = s.holdReason || product;
         // "In Progress by <name>": who is on it, for the other readers (the writer's own row needs no name). The name is data.
         const by = on.by && !on.mine ? ` <span class="rs-by">by <span translate="no">${esc(on.label)}</span></span>` : "";
         return `<span class="rs ${esc(on.typing ? "T" : s.rs)}"${s.holdReason ? ' data-kin-keep="title"' : ''} title="${esc(help + (by ? (help ? " — " : "") + on.label : ""))}">${esc(shown)}${by}</span>`; },
@@ -1119,7 +1179,7 @@
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
-      desc: s => esc(shownStudyDesc(s)),
+      desc: s => studyDescMarkup(s),
       preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
       preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
@@ -1456,7 +1516,7 @@
       $("#related-return").disabled = !s || !relatedUid;
       // The study's own data in one sentence of the page: no other glossary template reads its parts as page words.
       const currentLine = s
-        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDesc(s))
+        ? kinSay("판독 대상 · {t0} · {1} · {2} ({3}) · {4}", s.date || kinSay("날짜 없음"), s.modality, s.name, s.id, shownStudyDescSaid(s))
         : kinSay("판독 대상을 선택하세요");
       kinWrite($("#related-current"), currentLine);
       kinWrite($("#related-current"), currentLine, "title");
@@ -1578,7 +1638,7 @@
       if (!KinCompoundFilter.usesField(filter?.cols?.[KinCompoundFilter.KEY], 'bodyPart', columns)) return '';
       worklistBodyParts.sync(studies);
       const missing = studies.filter(s => worklistBodyParts.get(s.uid) === undefined).length;
-      return missing ? `Partial · 부위 미확인 ${missing}건이 있어 결과가 아직 완전하지 않습니다. Read Body Parts로 조회하세요.` : '';
+      return missing ? kinSayEn("Partial · 부위 미확인 {0}건이 있어 결과가 아직 완전하지 않습니다. Read Body Parts로 조회하세요.", missing) : '';
     }
     function renderBodyParts() {
       const state = worklistBodyParts.sync(studies);
@@ -2237,6 +2297,8 @@
       // The words the rows' own cells write (states, their help, chips) follow the worklist's language, as the page's markup
       // does; the cells and parts that hold a study's data are marked translate="no" above and stay as written.
       window.KinLanguage?.markup?.($("#rows"));
+      const drawn = new Map(list.slice(offset, offset + resultPageSize).map(s => [s.uid, s]));
+      if (typeof paintRowWords === "function") for (const row of $("#rows").querySelectorAll("tr[data-uid]")) paintRowWords(row, drawn.get(row.dataset.uid));
       const emptyCell = $("#rows td.empty");
       if (emptyCell) kinWrite(emptyCell, kinSay(bodyPartNote ? '부위 확인 전인 검사가 있어 검색 결과가 아직 완전하지 않습니다.' : 'No records found'));
       columnPrefs?.decorate(mode);
@@ -2562,7 +2624,7 @@
       if(state?.phase==='unknown')return {label:'Refresh Status',dis:offline||!serverMode,act:()=>load()};
       return {label:state?.phase==='saving'?'Saving Emergency Status':s?.em==='E'?'Switch to Normal':'Switch to Emergency',
         dis:!!state||!studyPriority.active()||!serverMode||offline||demoMode||commitInFlight||!technicianWork()||!s||s.tele,
-        ...(technicianWork()?{}:{title:TECHNICIAN_WORK_REASON}),
+        ...(technicianWork()?{}:{title:kinSayEn(TECHNICIAN_WORK_REASON)}),
         act:()=>studyPriority.set(uid,desired)};
     }
     // While a list read is out the folder counts say 'Partial'. A read that ends without its answer applied (Stop Loading,
@@ -2978,7 +3040,7 @@
       } finally { apply(() => { $('#sr-read').disabled = !srDocuments.some(d => srVal(d,'00080018') === $('#sr-document').value); }); }
     }
     function srOptions(select, rows, tag, label) {
-      select.replaceChildren(new Option('선택하세요', ''), ...rows.map(ds => new Option(label(ds), srVal(ds,tag))));
+      select.replaceChildren(kinWrite(new Option('', ''), kinSayEn('선택하세요')), ...rows.map(ds => kinWrite(new Option('', srVal(ds,tag)), label(ds))));
     }
     function srList() {
       srSeries = []; srDocuments = []; $('#sr-series').replaceChildren(); $('#sr-document').replaceChildren();
@@ -2991,12 +3053,12 @@
           if (srVal(ds,'0020000D') !== srUid || srVal(ds,'00080060') !== 'SR' || !srValidUid(id) || seen.has(id)) throw new Error('SR 시리즈 식별이 일치하지 않습니다.');
           seen.add(id);
         }
-        srSeries = rows; srOptions($('#sr-series'), rows, '0020000E', d => (srVal(d,'00200011') || '번호 없음') + ' · ' + (srVal(d,'0008103E') || '설명 없음') + ' · ' + srVal(d,'0020000E'));
+        srSeries = rows; srOptions($('#sr-series'), rows, '0020000E', d => kinSayEn('{0} · {1} · {2}', srVal(d,'00200011') || kinSayEn('번호 없음'), srVal(d,'0008103E') || kinSayEn('설명 없음'), srVal(d,'0020000E')));
       });
     }
     $('#sr-open').addEventListener('click', () => {
       closeSR(); const s = viewed(); if (!s || demoMode || !srValidUid(s.uid)) return;
-      srUid = s.uid; kinWrite($('#sr-context'), kinSayEn("열람 검사 · {0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDesc(s)));
+      srUid = s.uid; kinWrite($('#sr-context'), kinSayEn("열람 검사 · {0} ({1}) · {2} · {3}", s.name, s.id, s.date, shownStudyDescSaid(s)));
       srDialog.showModal(); srList();
     });
     $('#sr-series').addEventListener('change', () => {
@@ -3010,7 +3072,7 @@
           if (srVal(ds,'0020000D') !== srUid || srVal(ds,'0020000E') !== series || !srValidUid(id) || seen.has(id)) throw new Error('SR 문서 식별이 일치하지 않습니다.');
           seen.add(id);
         }
-        srDocuments = rows; srOptions($('#sr-document'), rows, '00080018', d => (srVal(d,'00200013') || '번호 없음') + ' · ' + srVal(d,'00080018'));
+        srDocuments = rows; srOptions($('#sr-document'), rows, '00080018', d => kinSayEn('{0} · {1}', srVal(d,'00200013') || kinSayEn('번호 없음'), srVal(d,'00080018')));
       });
     });
     $('#sr-document').addEventListener('change', () => { srClear(); $('#sr-read').disabled = !srDocuments.some(d => srVal(d,'00080018') === $('#sr-document').value); });
@@ -3347,7 +3409,7 @@
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
           <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Study</td><td translate="no">${studyDescMarkup(s)}</td></tr>
           <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
           <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
@@ -3357,6 +3419,7 @@
         </table>` : "";
       if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
+      if (s) paintStudyDesc($("#clinical"), s);
       renderStudyIdentity();
       renderQcInfo();
       renderAcquisition();
@@ -3920,8 +3983,8 @@
     function paintReceiptGap(mark, s) {
       const gap = studyReceiptGap(s), value = mark.previousElementSibling;
       if (s && value) value.textContent = String(s.count ?? "");
-      mark.hidden = !gap; mark.title = gap?.text ?? "";
-      if (gap) mark.setAttribute("aria-label", gap.text); else mark.removeAttribute("aria-label");
+      mark.hidden = !gap; kinWrite(mark, gap?.text ?? "", "title");
+      if (gap) kinWrite(mark, gap.text, "aria-label"); else mark.removeAttribute("aria-label");
     }
     function renderObservation() {
       if (!studyObservationModel) return;
@@ -3940,7 +4003,7 @@
         }
         retryButton.hidden = !retryKey || retryButton.dataset.requested === "1"
           || !(serverMode && !offline && !demoMode && KinAuth.has("technician"));
-        retryButton.disabled = !!retryButton.dataset.request; retryButton.title = retry?.title ?? "";
+        retryButton.disabled = !!retryButton.dataset.request; kinWrite(retryButton, retry?.title ? kinSayEn(retry.title) : "", "title");
         // Without a bindable retry the note is labels.retry itself: the F-01 sentence for failed, else nothing.
         if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }
       };
@@ -3968,7 +4031,7 @@
           const gateway = row.gatewayReceipt ?? null, [text, button, note, gapText] = item.children;
           // An own study the observation did not see at all while its Gateway reported images sent: the same answer.
           const gap = studyReceiptGap(row);
-          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); gapText.title = gap?.title ?? "";
+          gapText.hidden = !gap; kinWrite(gapText, gap?.text ?? ""); kinWrite(gapText, gap?.title ? kinSayEn(gap.title) : "", "title");
           const labels = KinStudyArrivals.receiptLabels({ assignment: "assigned",
             observation: KinStudyArrivals.studyObservation(studyObservationModel, row.uid), gateway });
           // Without a receipt the text stays the U1b item text; no No Gateway Report is added to this list.
@@ -4014,7 +4077,7 @@
       const gapLine = $("#receipt-gap");
       if (gapLine) {
         const gap = studyReceiptGap(s);
-        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); gapLine.title = gap?.title ?? "";
+        gapLine.hidden = !gap; kinWrite(gapLine, gap?.text ?? ""); kinWrite(gapLine, gap?.title ? kinSayEn(gap.title) : "", "title");
       }
       const receiptScope=scope?.groupId?KinExamScope.stamp(s):'';
       if(originals.dataset.scope!==receiptScope){
@@ -4043,7 +4106,7 @@
           // This original's own missing-images answer (Technician tab), the one the exam's line counts.
           const gap=KinStudyArrivals.originalGap(studyObservationModel,source.uid),short=gap?.missing&&mode==='Technician'?gap:null;
           const gapWords=short?kinWrite(document.createElement('span'),short.text):null;
-          if(gapWords){gapWords.className='receipt-gap-line';gapWords.title=short.title;}
+          if(gapWords){gapWords.className='receipt-gap-line';kinWrite(gapWords,kinSayEn(short.title),'title');}
           text.replaceChildren(accession,...[own.observation.text,own.change?.text,
             source.gatewayReceipt===undefined?kinSay('Gateway 영수증 정보가 이 목록에 제공되지 않았습니다.'):own.gateway.text].filter(Boolean)
             .flatMap(words=>[' · ',kinWrite(document.createElement('span'),words)]),...(gapWords?[' · ',gapWords]:[]));
@@ -4075,7 +4138,7 @@
         const shown = KinStudyArrivals.gatewayRetryAnswer(uid, answer, error);
         Object.assign(button.dataset, { request: "", requested: shown.requested ? "1" : "" });
         const note = button.nextElementSibling;
-        note.textContent = shown.text; note.title = shown.title;
+        kinWrite(note, kinSayEn(shown.text)); kinWrite(note, shown.title ? kinSayEn(shown.title) : "", "title");
         renderObservation();
       });
     }
@@ -4097,11 +4160,11 @@
       if (!box || !orderReconciliationModel) return;
       const summary = KinOrderReconciliation.summary(orderReconciliationModel);
       box.hidden = summary.hidden;
-      $("#order-reconciliation-summary").textContent = summary.text;
+      kinWrite($("#order-reconciliation-summary"), summary.text);
       kinWrite($("#order-reconciliation-summary"), summary.title || "", "title");
       $("#order-reconciliation-list").replaceChildren(...summary.rows.map(row => {
         const item = document.createElement("div");
-        item.textContent = row.text; kinWrite(item, row.title || "", "title");
+        kinWrite(item, row.text); kinWrite(item, row.title || "", "title");
         return item;
       }));
     }
@@ -4247,6 +4310,7 @@
         return;
       }
       wrap.innerHTML = `<div style="color:#556;padding:20px">로딩…</div>`;
+      window.KinLanguage?.markup?.(wrap);
       // 이전 fetch뿐 아니라 body 소비까지 끝내야 빠른 전환에도 worker 수가 누적되지 않는다.
       thumbDone = thumbDone.then(async () => {
         if (stale() || !work.admits(at)) return;
@@ -4284,6 +4348,9 @@
               <option value="source">원래 순서</option><option value="number-asc">번호 오름차순</option><option value="number-desc">번호 내림차순</option>
             </select></label>
             </div><div class="thumbs" style="grid-template-columns:repeat(${n},1fr)"></div>`;
+          // The bar's own words (sort label, choices) follow the screen language; the range line is a sentence with its counts.
+          window.KinLanguage?.markup?.(wrap);
+          kinWrite(wrap.querySelector("#thumb-range"), kinSayEn("시리즈 {0}–{1} / {n2}", batch.length ? start + 1 : 0, start + batch.length, reps.length));
           const sort = wrap.querySelector("#thumb-sort");
           sort.value = thumbSort;
           sort.onchange = () => {
@@ -4328,7 +4395,7 @@
             images.onclick=()=>{if(!stale()&&!images.disabled){const study=viewed();if(study?.uid!==uid)return;cancelThumbs(true);if(!imageThumbnails?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid}))renderThumbs();}};
             cell.append(label, disclosure, preview, open, inspect, images);
             grid.appendChild(cell);
-            return { preview, open, inspect, images, alt: `${heading} · ${description}` };
+            return { preview, open, inspect, images, alt: kinSayEn("{0} · {1}", heading, description) };
           });
           }) || !cells) return;
           let next = 0, stopped = false;
@@ -4347,7 +4414,7 @@
                   const url = URL.createObjectURL(blob);
                   thumbUrls.push(url);
                   const img = document.createElement("img");
-                  img.alt = cells[index].alt;
+                  kinWrite(img, cells[index].alt, "alt");
                   img.onerror = () => apply(() => { cells[index].open.disabled = cells[index].inspect.disabled = cells[index].images.disabled = true; kinWrite(cells[index].preview, kinSayEn("썸네일 표시 실패")); });
                   img.ondblclick = () => { if (!stale()) openFilmbox(uid, null, batch[index].seriesUid); };
                   img.src = url;
@@ -4413,6 +4480,8 @@
     function renderOrders() {
       // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+      // The words this list adds read in English on an English screen only (otherwise exactly as written).
+      const sayEn = globalThis.KinLanguage?.sayEnglish || kinSay;
       if (mode !== "Technician") return;
       const list = filteredOrders();
       // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
@@ -4425,11 +4494,13 @@
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      const emptyOrders = $("#orderrows td.empty");
+      if (emptyOrders) kinWrite(emptyOrders, sayEn("오더 없음"));
       if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
-      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
-          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" }));
+      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : sayEn("(없음)"), o ? o.name + " / " + o.sched : sayEn("(없음)"),
+          { t: s && o && s.matched === "U" && o.matched === "U" ? sayEn("  → 우클릭 Match 가능") : "" }));
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {
@@ -4626,8 +4697,8 @@
         const parts = [];
         if (error && error.status) parts.push(`HTTP ${error.status}`);
         if (error && error.code) parts.push(error.code);
-        const message = error && error.message ? error.message : TEXT.rejected;
-        return parts.length ? `${message} (${parts.join(' · ')})` : message;
+        const message = error && error.message ? error.message : kinSayEn(TEXT.rejected);
+        return parts.length ? kinSayEn('{0} ({1})', message, parts.join(' · ')) : message;
       };
       // The page's sentence, and under it what failed (its own words or the server's message).
       const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.notFound) }, { e: describe(error) }) : describe(error);
@@ -5434,7 +5505,7 @@
        */
       function lockPanel(text, detail, account = false) {
         if (ended || (lock !== null && (lock.account || !account))) return;
-        lock = { text, detail: detail || '', account };
+        lock = { text: typeof text === 'string' ? kinSayEn(text) : text, detail: detail || '', account };
         queueSeq++;
         detailSeq++;
         readSeq++;
@@ -5576,11 +5647,11 @@
     // ── Match / Unmatch (8.1.2.1.1 ~ 2) ──
     async function doMatch() {
       const s = cur(), o = curOrder();
-      if (!s || !o) { alert("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요."); return; }
-      if (s.matched === "M" || o.matched === "M") { alert("이미 매칭된 항목입니다."); return; }
+      if (!s || !o) { alert(kinSayEn("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요.")); return; }
+      if (s.matched === "M" || o.matched === "M") { alert(kinSayEn("이미 매칭된 항목입니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
-      if (!confirm(`아래 오더 정보를 검사에 덮어씁니다.\n\n검사: ${s.name} (${s.id}) ${s.date}\n오더: ${o.name} (${o.id}) ${o.sched}\n\n진행할까요?`)) return;
-      await runMatch(s, o, message => alert("매칭 실패: " + message));
+      if (!confirm(kinSayEn("아래 오더 정보를 검사에 덮어씁니다.\n\n검사: {0} ({1}) {2}\n오더: {3} ({4}) {5}\n\n진행할까요?", s.name, s.id, s.date, o.name, o.id, o.sched))) return;
+      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", message)));
     }
 
     /**
@@ -5645,9 +5716,9 @@
 
     async function doUnmatch() {
       const s = cur();
-      if (!s || s.matched !== "M") { alert("매칭(M)된 검사를 선택하세요."); return; }
+      if (!s || s.matched !== "M") { alert(kinSayEn("매칭(M)된 검사를 선택하세요.")); return; }
       if (!studyWriteRoute()) return;
-      await runUnmatch(s, undefined, message => alert("매칭 해제 실패: " + message));
+      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", message)));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */
@@ -5729,8 +5800,8 @@
       if (uid === selectedUid) { loadReport(); updateReportButtons(); }
       said();
     }
-    $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
-    $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
+    $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert(kinSayEn("검사를 선택하세요.")));
+    $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert(kinSayEn("검사를 선택하세요.")));
 
     /**
      * ── QC Flag (Technician bar) ──
@@ -5824,7 +5895,7 @@
     function openQcFlag() {
       if (!technicianWork()) return;
       const s = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
-      if (!s) { alert("검사를 선택하세요."); return; }
+      if (!s) { alert(kinSayEn("검사를 선택하세요.")); return; }
       if (!serverMode || offline || demoMode) { toast(kinSay("QC 표시는 서버에 연결된 동안에만 바꿀 수 있습니다"), "err"); return; }
       if (s.tele) { toast(kinSay("원격판독으로 받은 검사의 QC 표시는 보유 기관에서만 바꿀 수 있습니다"), "err"); return; }
       if (qcScope(s.uid) === null) { toast(kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."), "err"); return; }
@@ -5916,8 +5987,8 @@
     // ── Modify Exam (8.1.2.1.5) ──
     function openModify() {
       const s = cur();
-      if (!s) { alert("검사를 선택하세요."); return; }
-      if (s.rs !== "W") { alert("판독 전(RS: W)인 검사만 수정할 수 있습니다.\n현재 RS: " + s.rs); return; }
+      if (!s) { alert(kinSayEn("검사를 선택하세요.")); return; }
+      if (s.rs !== "W") { alert(kinSayEn("판독 전(RS: W)인 검사만 수정할 수 있습니다.\n현재 RS: {0}", s.rs)); return; }
       $("#m-id").value = s.id; $("#m-name").value = s.name; $("#m-sex").value = s.sex || "O";
       $("#m-birth").value = s.birth; $("#m-desc").value = s.desc; $("#m-ward").value = s.ward;
       $("#m-guidance").hidden = true; $("#m-guidance").textContent = "";
@@ -5940,6 +6011,17 @@
       Object.assign(ov, {
         id: $("#m-id").value.trim(), name: $("#m-name").value.trim(), sex: $("#m-sex").value,
         birth, age: ageOf(birth, s.date), desc: $("#m-desc").value.trim(), ward: $("#m-ward").value.trim() });
+      // A blank Patient ID or Name would draw this study with no patient on every screen. A value the row shows is never
+      // cleared here; a study that has none keeps its own (no overlay value), so its other fields can still be corrected.
+      const cleared = ["id", "name"].find(key => !ov[key] && String(s[key] ?? "").trim());
+      if (cleared) {
+        const guidance = $("#m-guidance");
+        kinWrite(guidance, kinSayEn("Patient ID와 Name은 비워 둘 수 없습니다."));
+        guidance.hidden = false;
+        $("#m-" + cleared).focus();
+        return;
+      }
+      for (const key of ["id", "name"]) if (!ov[key]) delete ov[key];
       const route = studyWriteRoute();
       if (!route) return;   // disconnected: nothing sent or painted; the modal keeps what was typed
       if (route === "server") {
@@ -5954,7 +6036,7 @@
           if (!ok) {
             if (!serverMode) return;
             noteIdentityCorrection(uid, false);
-            guidance.textContent = window.KinStudyIdentity?.guidance(appState[uid]?.rs ?? "W", true, s.tele === true) ?? "";
+            kinWrite(guidance, window.KinStudyIdentity?.guidanceSaid?.(appState[uid]?.rs ?? "W", true, s.tele === true) ?? "");
             guidance.hidden = !guidance.textContent;
             return;
           }
@@ -5984,14 +6066,14 @@
     // ── Delete (8.1.2.1.8) ──
     async function doDelete(uid) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
-      if (s.rs !== "W") { alert("RS가 W(Wait)인 검사만 삭제할 수 있습니다."); return; }
+      if (s.rs !== "W") { alert(kinSayEn("RS가 W(Wait)인 검사만 삭제할 수 있습니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       // 영상 자체(Orthanc)를 지우는 것은 아직 안 한다. 되돌릴 수 없는 동작이라
       // 권한·감사로그·연쇄 해제를 갖춰야 한다 (교훈 §5). 지금 지울 수 있는 건
       // "영상에 대한 사람의 결정"뿐이고, 그러면 다음 목록 조회 때 그 검사는
       // **막 도착한 검사처럼 다시 나타난다.** 그게 이 동작의 진짜 의미다.
-      if (!confirm(`이 검사의 판독 상태·매칭 기록을 지웁니다.\n${s.name} (${s.id}) ${s.date}\n` +
-                   `영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?`)) return;
+      if (!confirm(kinSayEn("이 검사의 판독 상태·매칭 기록을 지웁니다.\n{0} ({1}) {2}\n영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?", s.name, s.id, s.date))) return;
+
       // 서버가 거절했는데 화면부터 지우면 검사가 사라진 것처럼 거짓말한다.
       // 응답을 기다려야 판독 이력·다른 사람의 초안 때문에 거절된 이유도 메뉴의 catch가 보여준다.
       const route = studyWriteRoute();
@@ -6397,7 +6479,7 @@
         const row = document.createElement("div"), message = document.createElement("span");
         const open = document.createElement("button"), dismiss = document.createElement("button");
         row.className = "leftnote";
-        message.textContent = text;
+        kinWrite(message, text);
         open.type = dismiss.type = "button";
         kinWrite(open, kinSay("Open Study"));
         kinWrite(dismiss, kinSay("Dismiss"));
@@ -6902,7 +6984,7 @@
       const label = saved ? (appState[n.uid]?.draft ? `Draft Saved${draftAt ? " " + draftAt : ""}` : "Saved")
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
-        : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
+        : n.status === "conflict" ? kinSayEn("Save Failed — 서버의 초안이 이 화면과 다릅니다")
         : kinSay("Save Failed — {0}", { e: n.reason ?? kinSay("서버가 저장을 받지 않았습니다") });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
@@ -7086,7 +7168,7 @@
       // In the report window the question does not block the page: the answer counts only for the same study, selection,
       // text and work context it was asked about.
       const askedSeq = selectionSeq, askedEdits = reportEdits, askedAt = work.capture("document");
-      const question = "쓰다 만 초안을 버리고 저장된 판독문으로 돌아갑니다.\n계속할까요?";
+      const question = kinSayEn("쓰다 만 초안을 버리고 저장된 판독문으로 돌아갑니다.\n계속할까요?");
       const reportWindowNow = window.KinReportPopout?.current?.();
       if (!asked && !(await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question)))) return;
       if (uid !== selectedUid || selectionSeq !== askedSeq || reportEdits !== askedEdits || !work.admits(askedAt)
@@ -7281,9 +7363,9 @@
         loadReport({ force: true });
         updateReportButtons();
         const s = studies.find(x => x.uid === uid), state = appState[uid] ?? {};
-        const study = s ? [s.name, s.id, shownStudyDesc(s)].filter(Boolean).join(" · ") : uid;
+        const study = s ? [s.name, s.id, shownStudyDescSaid(s)].filter(Boolean).join(" · ") : uid;
         // The draft read carries no reading state; this is the state the worklist last received from the server, said as such.
-        const server = `목록이 마지막으로 받은 판독 상태: ${reportStatusWord(state) ?? "—"} (v${state.version ?? 0})`;
+        const server = kinSayEn("목록이 마지막으로 받은 판독 상태: {0} (v{1})", reportStatusWord(state) ?? "—", state.version ?? 0);
         toast(String(read.present
           ? kinSayEn("Recover Draft — 내 초안을 편집기에 놓았습니다: {0} · 저장 {1} · {2}", study, draftTime(read.updatedAt) || kinSayEn("시각 모름"), server)
           : kinSayEn("Recover Draft — 서버에 이 계정의 초안이 없습니다: {0} · {1}", study, server)), "info", 15000);
@@ -7349,18 +7431,18 @@
       stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, action };
       drawApprovedPane(head, {
         title: "Approved Report Changed",
-        message: `이 초안은 v${head.draftBaseVersion ?? "?"}을 기준으로 씁니다. 그 뒤 v${head.version}이 승인됐습니다 — ` +
-          `아래 승인본을 확인한 뒤 정하세요. 쓰던 내용은 그대로 두었습니다.`,
-        mine: "지금 쓰던 내용 (저장되지 않음)", rebase: true });
+        message: kinSayEn("이 초안은 v{0}을 기준으로 씁니다. 그 뒤 v{n1}이 승인됐습니다 — 아래 승인본을 확인한 뒤 정하세요. 쓰던 내용은 그대로 두었습니다.",
+          head.draftBaseVersion ?? "?", head.version),
+        mine: kinSayEn("지금 쓰던 내용 (저장되지 않음)"), rebase: true });
       toast(String(kinSayEn("승인본이 v{n0}으로 바뀌어 추가기재를 붙이지 못했습니다 — 승인본을 확인하세요", head.version)), "err");
     }
     /** 승인본(서버가 준 다섯 칸)과 편집기의 지금 글을 나란히 그린다. 두 쓰임(재기준, 승인본 보기)이 같은 창을 쓴다. */
     function drawApprovedPane(head, { title, message, mine, rebase }) {
-      $("#stale-title").textContent = title;
-      $("#stale-msg").textContent = message;
-      $("#stale-head-title").textContent =
-        `승인본 v${head.version}` + (head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : "");
-      $("#stale-draft-title").textContent = mine;
+      kinWrite($("#stale-title"), title);
+      kinWrite($("#stale-msg"), message);
+      kinWrite($("#stale-head-title"), kinSayEn("승인본 v{n0}{1}", head.version,
+        head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : ""));
+      kinWrite($("#stale-draft-title"), mine);
       for (const k of RFIELDS) {
         $("#stale-head-" + k).textContent = head[k];
         $("#stale-draft-" + k).textContent = $("#" + k).value;
@@ -7414,9 +7496,9 @@
         stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, view: true };
         drawApprovedPane(head, {
           title: "Approved Report",
-          message: `왼쪽이 승인된 판독문(v${head.version})입니다. 오른쪽은 지금 이 화면의 글이고, 승인된 판독문에 포함되지 않았습니다.` +
-            ($("#b-addendum").disabled ? `` : ` 승인본에 덧붙이려면 닫고 More ▸ Addendum을 누르세요.`),
-          mine: "이 화면의 글 (승인본에 포함되지 않음)", rebase: false });
+          message: kinSayEn("왼쪽이 승인된 판독문(v{n0})입니다. 오른쪽은 지금 이 화면의 글이고, 승인된 판독문에 포함되지 않았습니다.{t1}", head.version,
+            { t: $("#b-addendum").disabled ? "" : kinSayEn(" 승인본에 덧붙이려면 닫고 More ▸ Addendum을 누르세요.") }),
+          mine: kinSayEn("이 화면의 글 (승인본에 포함되지 않음)"), rebase: false });
       });
     }
     $("#b-approved-view").addEventListener("click", viewApprovedReport);
@@ -7522,7 +7604,7 @@
       staleBusy = false;
       if (stalePane === pane) $("#stale-rebase").disabled = false;
       if (result.outcome !== "saved") {
-        work.commit(at, () => { kinWrite($("#stale-status"), kinSayEn("기준을 다시 잡지 못했습니다: {0}", draftFailureText(result))); });
+        work.commit(at, () => { kinWrite($("#stale-status"), kinSayEn("기준을 다시 잡지 못했습니다: {0}", draftFailureSaid(result))); });
         draftNotSaved(pane.uid, at, result, { quiet: true });
         return;
       }
@@ -8174,8 +8256,8 @@
       if (warnedFor !== uid) {
         warnedFor = uid;
         const named = writerName(holderName, holder);
-        const writer = named === '다른 기관' ? '다른 기관 판독의가'
-          : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
+        const writer = named === '다른 기관' ? kinSayEn('다른 기관 판독의가')
+          : named === '작성자 비공개' ? kinSayEn('비공개 작성자가') : kinSayEn('{0} 님이', named);
         toast(String(kinSayEn("{0} 판독 중입니다 — 저장되지 않았습니다", writer)), "err");
       }
     }
@@ -8185,6 +8267,11 @@
         : result.outcome === "conflict" ? "서버의 초안이 이 화면과 다릅니다"
         : result.outcome === "owner" ? "이 화면의 계정으로 쓴 초안이 아니라고 서버가 답했습니다"
         : "요청을 보내지 못했습니다");
+    }
+    // The same words as a part of a sentence on the screen: the server's own message is put in as written; only the words
+    // this page made (its fallback, or a refusal the draft client made itself) are its sentence (English on an English screen).
+    function draftFailureSaid(result) {
+      return result.message != null && !result.madeHere ? result.message : kinSayEn(draftFailureText(result));
     }
 
     /**
@@ -8208,10 +8295,10 @@
         // 버리기의 실패는 저장의 실패가 아니다 — 무엇이 되지 않았는지를 그대로 말한다. 화면의 글은 어느 쪽이든 그대로다.
         if (discard) toast(String(result.outcome === "unknown"
           ? kinSayEn("초안을 버렸는지 확인하지 못했습니다 — 화면은 그대로 두었습니다. 서버의 상태는 다음 새로 고침에 반영됩니다")
-          : kinSayEn("초안을 버리지 못했습니다: {0}", draftFailureText(result))), "err");
+          : kinSayEn("초안을 버리지 못했습니다: {0}", draftFailureSaid(result))), "err");
         else toast(String(result.outcome === "unknown"
           ? kinSayEn("초안 저장을 확인하지 못했습니다 — 입력한 내용은 그대로 있고, 다음 저장이 서버 상태부터 확인합니다")
-          : kinSayEn("서버 저장 실패: {e0}", draftFailureText(result))), "err");
+          : kinSayEn("서버 저장 실패: {e0}", draftFailureSaid(result))), "err");
       });
     }
 
@@ -8405,7 +8492,7 @@
       $("#struct-removed-label").style.display = removing ? "" : "none";
       const label = KinReportCitation.FIELD_LABEL[pane.field] ?? pane.field;
       kinWrite($("#struct-place"), !pane.plan ? "" : pane.plan.mode2 === "replace" ? kinSayEn("{0} {1}번째 줄의 위 문장을 지우고 이 문장으로 바꿉니다.", label, pane.plan.removedLine) : kinSayEn("{0} {1}번째 줄부터 넣습니다. 기존 내용은 지우지 않습니다.", label, pane.plan.line));
-      kinWrite($("#struct-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(pane.status) || why || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(plan && plan.message) || "");
+      kinWrite($("#struct-status"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(pane.status) || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) || (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(plan && plan.message) || "");
       // 다른 판의 서식으로 적힌 값은 보여주기만 한다. 지금 서식으로 다시 렌더해 보내면 서명된
       // 판의 문장을 새 문면으로 조용히 바꾸는 일이 된다.
       $("#struct-apply").disabled = !pane.plan || !!pane.busy || !!pane.readOnly;
@@ -8536,7 +8623,7 @@
           // 없으면 표시는 적용 전 그대로다.
           if (untouched) reportConverge.delete(epoch.uid); else markConverge(epoch.uid);
           invalidateStructure(epoch.uid);
-          pane.status = "적용하지 못했습니다: " + draftFailureText(result) + " — 판독문은 그대로입니다.";
+          pane.status = kinSayEn("적용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureSaid(result));
           // 그 사이 이 창이 닫히고 다른 창이 열렸다면 남의 창에 이 실패를 그리지 않는다.
           if (structPane === pane) renderStructure();
         });
@@ -8870,7 +8957,7 @@
       const s = cur();
       const why = citationInsertBlock();
       kinWrite($("#cite-preview-target"), s
-        ? kinSay("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSay("없음"))
+        ? kinSay("삽입 대상: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDescSaid(s), s.acc || kinSay("없음"))
         : kinSay("삽입 대상: 검사 미선택"));
       const m = citePane.measure, ready = m.state === "ready";
       if (citePane.items.length === 1) {
@@ -9186,7 +9273,7 @@
             invalidateCitations(epoch.uid);
             // 이 요청이 서버에 닿았는지 모르는 것은 구조화 쪽도 같다. 같은 자리에서 같이 되돌린다.
             invalidateStructure(epoch.uid);
-            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureText(result));
+            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureSaid(result));
             renderCitePreview();
             if (result.code === "REPORT_CITATION_STALE" || result.code === "REPORT_CITATION_SOURCE")
               toast("소견이 그 사이 바뀌었습니다 — Image Findings에서 Reload Findings를 누른 뒤 다시 인용하세요", "err");
@@ -9659,15 +9746,15 @@
       // 점유자가 곧 저장 글을 쓴 사람이고 임시글이 있으면 아래 저장 글 문장이 같은 사실을 말한다.
       if (r.holder && r.holderDraft && !r.sameWriter) {
         const who = writerName(r.holderName, r.holder);
-        parts.push(`${who} 선생님이 쓰던 글이 있습니다 — 그 글은 ${who} 선생님의 개인 임시글로 남아 있습니다.`);
+        parts.push(kinSayEn("{0} 선생님이 쓰던 글이 있습니다 — 그 글은 {1} 선생님의 개인 임시글로 남아 있습니다.", who, who));
       }
       if (r.savedBy) {
         const who = writerName(r.savedByName, r.savedBy);
-        parts.push(r.savedKept ? `${who} 선생님이 저장해 둔 글은 ${who} 선생님의 개인 임시글로 옮겼습니다.`
-          : `${who} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.`);
+        parts.push(r.savedKept ? kinSayEn("{0} 선생님이 저장해 둔 글은 {1} 선생님의 개인 임시글로 옮겼습니다.", who, who)
+          : kinSayEn("{0} 선생님의 개인 임시글은 그대로 두었고, 저장해 둔 글은 이력(History)에 남겼습니다.", who));
       }
-      return parts.length ? parts.join(" ") + " 판독 상태를 Unread로 되돌렸습니다."
-        : `${writerName(r.holderName, r.holder)} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.`;
+      return parts.length ? kinSayEn("{0} 판독 상태를 Unread로 되돌렸습니다.", kinSayEn(parts.map((part, i) => "{" + i + "}").join(" "), ...parts))
+        : kinSayEn("{0} 님의 판독 점유를 풀고 Unread로 되돌렸습니다.", writerName(r.holderName, r.holder));
     }
 
     /** 받아들여진 확정의 완료 안내. `lateText`는 그 확정이 싣지 않은, 누른 뒤에 친 글이 남았다는 뜻이다. */
@@ -9675,13 +9762,13 @@
       const told = action === "reset" && released ? releasedText(released) : null;
       // FC-040: the reader who took it back had text of their own; it was not touched (applyAcceptedCommit, keepCallerDraft).
       const done = told ? (ownKept ? kinSay("{0} {1}", told, kinSay("내가 쓰던 글은 지우지 않았습니다 — 편집기에 그대로 있습니다.")) : told) : {
-        save: "임시 저장했습니다 (RS: T)",
-        defer: `보류했습니다 (RS: H)${reason ? ' — ' + reason : ''}`,
-        approve: "판독문을 승인했습니다 (RS: A)",
-        amend: "수정한 판독문을 다시 승인했습니다 — 이전 승인본은 이력에 남습니다",
-        addendum: "추가기재를 저장했습니다 — 이전 승인본은 그대로 남습니다",
-        reset: "판독을 취소했습니다 (RS: W). 사유가 이력에 기록됐습니다",
-        preliminary: "예비 판독으로 넘겼습니다 (RS: P) — 지정한 상급 판독의만 내용을 볼 수 있습니다",
+        save: kinSayEn("임시 저장했습니다 (RS: T)"),
+        defer: kinSayEn("보류했습니다 (RS: H){0}", reason ? ' — ' + reason : ''),
+        approve: kinSayEn("판독문을 승인했습니다 (RS: A)"),
+        amend: kinSayEn("수정한 판독문을 다시 승인했습니다 — 이전 승인본은 이력에 남습니다"),
+        addendum: kinSayEn("추가기재를 저장했습니다 — 이전 승인본은 그대로 남습니다"),
+        reset: kinSayEn("판독을 취소했습니다 (RS: W). 사유가 이력에 기록됐습니다"),
+        preliminary: kinSayEn("예비 판독으로 넘겼습니다 (RS: P) — 지정한 상급 판독의만 내용을 볼 수 있습니다"),
       }[action];
       if (!lateText) { toast(done, action === "reset" ? "info" : "ok", released ? 9000 : undefined); return; }
       /**
@@ -9690,15 +9777,15 @@
        * 시간을 준다. 그 뒤로는 초안 표시줄이 같은 사실을 계속 말한다. 그 검사를 떠나 있었으면 어느 검사인지부터 말한다
        * (로그아웃 창과 같은 표기).
        */
-      const missed = action === "approve" || action === "amend" ? "Approve를 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다"
-        : action === "addendum" ? "Addendum을 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다"
-        : "단추를 누른 뒤 입력한 글은 저장된 판독문에 포함되지 않았습니다";
+      const missed = action === "approve" || action === "amend" ? kinSayEn("Approve를 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다")
+        : action === "addendum" ? kinSayEn("Addendum을 누른 뒤 입력한 글은 승인된 판독문에 포함되지 않았습니다")
+        : kinSayEn("단추를 누른 뒤 입력한 글은 저장된 판독문에 포함되지 않았습니다");
       if (uid === selectedUid) {
         toast(String(kinSayEn("{n0}. {1} — 그 글은 초안으로 화면에 남아 있습니다.", done, missed)), "info", 12000);
         return;
       }
       // 그 검사를 떠나 있다: 그 검사의 표시줄이 보일 때까지 이 안내가 유일한 자리이므로 사라지게 두지 않는다(U5CLI-F13).
-      noteLeftStudy(uid, `${studyLabel(uid)} — ${done}. ${missed} — 그 검사를 열면 초안으로 남아 있습니다.`);
+      noteLeftStudy(uid, kinSayEn("{0} — {n1}. {2} — 그 검사를 열면 초안으로 남아 있습니다.", studyLabel(uid), done, missed));
     }
 
     /**
@@ -10002,7 +10089,7 @@
             toast(e.message, "err");
             const askedEdits = reportEdits;
             // While the report is in its separate window the question is asked there (KinReportPopout), else as before.
-            const question = e.message + "\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)";
+            const question = kinSayEn("{e0}\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)", e.message);
             const reportWindowNow = window.KinReportPopout?.current?.();
             if (await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question))) {
               // Asked in the report window, the page went on meanwhile: a yes counts only for the same study, selection,
@@ -10414,7 +10501,7 @@
      * 아무도 못 여는 판독문이 생긴다.
      */
     async function doPreliminary() {
-      if (!selectedUid) { alert("검사를 선택하세요."); return; }
+      if (!selectedUid) { alert(kinSayEn("검사를 선택하세요.")); return; }
       /**
        * **uid를 여기서 잡는다.**
        *
@@ -10430,12 +10517,11 @@
       try { peers = await api("GET", "/colleagues", undefined, undefined, at); }
       catch (e) { work.commit(at, () => toast(String(kinSayEn("판독의 목록을 불러오지 못했습니다: {e0}", e.message)), "err")); return; }
       if (!work.admits(at)) return;
-      if (!peers.length) { alert("이 기관에 지정할 다른 판독의가 없습니다."); return; }
+      if (!peers.length) { alert(kinSayEn("이 기관에 지정할 다른 판독의가 없습니다.")); return; }
 
       const s = studies.find(x => x.uid === uid);
       const pick = prompt(
-        `${s?.name ?? ""} (${s?.id ?? ""}) — 최종 판독을 맡길 상급 판독의 번호:\n` +
-        peers.map((u, i) => `${i + 1}. ${u.name} (${u.username})`).join("\n"), "1");
+        kinSayEn("{0} ({1}) — 최종 판독을 맡길 상급 판독의 번호:\n{2}", s?.name ?? "", s?.id ?? "", peers.map((u, i) => `${i + 1}. ${u.name} (${u.username})`).join("\n")), "1");
       const n = +pick;
       if (!n || !peers[n - 1]) return;
       if (uid !== selectedUid) {
@@ -10468,6 +10554,8 @@
       kinWrite($("#reason-title"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(title));
       $("#reason-choices").innerHTML = choices.map(choice =>
         `<label style="display:block"><input type="radio" name="reason-choice" value="${esc(choice)}"> ${esc(choice)}</label>`).join("");
+      // The choices' words follow the screen language; the value sent (and kept in the history) stays the choice as written.
+      window.KinLanguage?.markup?.($("#reason-choices"));
       extra.value = "";
       const value = () => {
         const choice = modal.querySelector('input[name="reason-choice"]:checked')?.value;
@@ -10589,8 +10677,8 @@
           if (warnedFor !== uid) {
             warnedFor = uid;
             const named = writerName(r.holderName, r.holder);
-            const writer = named === '다른 기관' ? '다른 기관 판독의가'
-              : named === '작성자 비공개' ? '비공개 작성자가' : `${named} 님이`;
+            const writer = named === '다른 기관' ? kinSayEn('다른 기관 판독의가')
+              : named === '작성자 비공개' ? kinSayEn('비공개 작성자가') : kinSayEn('{0} 님이', named);
             toast(String(kinSayEn("{0} 먼저 판독을 시작했습니다 — 잠금이 풀리면 이어서 할 수 있습니다", writer)), "err");
           }
           return;
@@ -11087,9 +11175,8 @@
     function discardAndLogOut(prep) {
       if (logoutPrep !== prep || prep.state !== "failed") return;
       const pending = prep.reports.filter(report => !report.safe);
-      if (!confirm(`저장하지 못한 ${pending.length}건의 판독문 초안을 버리고 로그아웃할까요?\n` +
-          pending.map(report => `${report.label || report.uid} (${report.uid})`).join("\n") +
-          "\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.")) return;
+      if (!confirm(kinSayEn("저장하지 못한 {n0}건의 판독문 초안을 버리고 로그아웃할까요?\n{1}\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.",
+          pending.length, pending.map(report => `${report.label || report.uid} (${report.uid})`).join("\n")))) return;
       for (const report of pending) {
         reportConverge.delete(report.uid);
         if (appState[report.uid]) appState[report.uid].draft = null;
@@ -11151,8 +11238,8 @@
     function dropEndedDraft(prep) {
       // 무엇을 버리는지 말한다: 저장을 확인한 검사는 여기 없다. 세션이 끝난 뒤이므로 검사는 식별값으로만 부른다.
       const pending = (prep.reports || []).filter(report => !report.safe);
-      if (!confirm(`저장하지 못한 ${pending.length}건의 판독문 초안을 버릴까요?\n` + pending.map(report => report.uid).join("\n") +
-          "\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.")) return;
+      if (!confirm(kinSayEn("저장하지 못한 {n0}건의 판독문 초안을 버릴까요?\n{1}\n버린 내용은 되돌릴 수 없습니다. 저장을 확인한 검사는 그대로 보존됩니다.", pending.length,
+          pending.map(report => report.uid).join("\n")))) return;
       if (logoutPrep !== prep || prep.state !== "ended") return;
       forgetCapture(prep);
       prep.state = "done";
@@ -11177,20 +11264,20 @@
       const at = work.capture("lifecycle");
       const ended = () => logoutPrep === prep && prep.state === "ended";
       const say = text => work.commit(at, () => { if (ended()) logoutStatus(prep, text); });
-      const kept = " 입력한 내용은 이 창에 그대로 있습니다.";
+      const kept = kinSayEn(" 입력한 내용은 이 창에 그대로 있습니다.");
       const noSession = "로그인한 세션이 없습니다. 다른 창에서 같은 계정으로 로그인한 뒤 다시 누르세요.";
       const otherAccount = "같은 계정·기관으로 로그인했을 때만 저장합니다. 지금 세션으로는 저장하지 않았습니다.";
       // 어느 검사에나 같은 답이 올 실패의 안내(아래 everyStudy). 검사 하나의 거절은 그 검사의 사유로 목록에 적힌다.
       const explain = result => result.outcome === "auth" ? noSession
         : result.outcome === "owner" ? otherAccount
-        : result.outcome === "unsent" ? "요청을 보내지 못했습니다." + kept
-        : "서버의 답을 확인하지 못했습니다." + kept;
+        : result.outcome === "unsent" ? kinSayEn("요청을 보내지 못했습니다.{0}", kept)
+        : kinSayEn("서버의 답을 확인하지 못했습니다.{0}", kept);
       try {
         say("로그인 상태를 확인하는 중입니다…");
         const binding = await KinAuth.recoveryBinding();
         if (!ended()) return;
         if (binding.status === "none") { say(noSession); return; }
-        if (binding.status !== "ok") { say("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
+        if (binding.status !== "ok") { say(kinSayEn("로그인 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요.{0}", kept)); return; }
         const owner = prep.owner ?? {};
         // Another account is another institution or account id (the login email of the same account may have changed).
         if (binding.owner.sub !== owner.sub || (binding.owner.institution ?? null) !== (owner.institution ?? null)) { say(otherAccount); return; }
@@ -11224,7 +11311,7 @@
             say("서버의 판독 상태를 확인하는 중입니다…");
             const learned = await learnCommitOutcome(report.uid, at, binding.session);
             if (!ended()) return;
-            if (learned.outcome === "unknown") { say("서버의 판독 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요." + kept); return; }
+            if (learned.outcome === "unknown") { say(kinSayEn("서버의 판독 상태를 확인하지 못했습니다. 잠시 뒤 다시 누르세요.{0}", kept)); return; }
             if (learned.outcome === "landed") {
               if (!learned.later) { if (!work.commit(at, () => { report.safe = true; })) return; continue; }
               if (!work.commit(at, () => { prep.texts = report.texts = Object.freeze({ ...report.texts, baseVersion: learned.version }); })) return;
@@ -11315,7 +11402,8 @@
 
     function logoutStatus(prep, text) {
       const line = prep.panel?.querySelector("[role=status]");
-      if (line) kinWrite(line, text);
+      // A line of this panel's own table is said as the page's sentence (a whole sentence the glossary knows reads in English).
+      if (line) kinWrite(line, typeof text === "string" && text ? kinSayEn(text) : text);
     }
 
     /**
@@ -11406,7 +11494,7 @@
       for (const row of $('#rows').querySelectorAll('tr[data-uid]')) {
         const cell = row.cells[index], study = byUid.get(row.dataset.uid);
         // Keep the saved width container and render the writing lock alongside presence.
-        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.viewing(study); window.KinLanguage?.markup?.(target); }
+        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.viewing(study); window.KinLanguage?.markup?.(target); if (typeof paintRowWords === "function") paintRowWords(target, study); }
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
@@ -11501,7 +11589,7 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       // Up to three arrivals by name (patient · study · EM E when the row says emergency), then the rest as a count.
       function arrivalNames(rows) {
-        const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
+        const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? kinSayEn("EM E(응급)") : ""]
           .map(value => String(value ?? "").trim()).filter(Boolean).join(" · ") || s.uid);
         return kinSayEn("{0}{1}", named.join(", "), rows.length > 3 ? kinSayEn(" 외 {n0}건", rows.length - 3) : "");
       }
@@ -11805,7 +11893,7 @@
       const box = document.createElement("div");
       box.className = "vcite";
       const title = document.createElement("h5");
-      title.textContent = part.heading;
+      kinWrite(title, kinSayEn(part.heading));
       box.append(title);
       // 줄은 전부 텍스트 노드다. 작성자 표시명은 사용자 입력이고 이 화면은 기록이다.
       for (const line of part.lines) {
@@ -11846,7 +11934,7 @@
       : "Saved image" + (d.source?.frame ? " · frame " + d.source.frame : "");
     async function showHistory(requestedUid = null) {
       const uid = typeof requestedUid === "string" ? requestedUid : selectedUid;
-      if (!uid) { alert("검사를 선택하세요."); return; }
+      if (!uid) { alert(kinSayEn("검사를 선택하세요.")); return; }
       const box = $("#hist-body");
       const epoch = ++historyEpoch;
       historyUid = uid;
@@ -11855,8 +11943,10 @@
       KinReportViews.end("history");
       $("#histmodal").classList.add("show");
       box.innerHTML = "<div style='color:#667;padding:10px'>불러오는 중…</div>";
+      window.KinLanguage?.markup?.(box);
       if (!serverMode) {
         box.innerHTML = "<div style='color:#d8b24a;padding:10px'>서버에 연결돼 있을 때만 이력이 남습니다.</div>";
+        window.KinLanguage?.markup?.(box);
         return;
       }
       const at = work.capture("document");
@@ -11893,6 +11983,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
           : "<div style='color:#667;padding:10px'>아직 확정된 판이 없습니다. Save 또는 Approve를 누르면 여기 쌓입니다.</div>";
+        // The list's own words (actions, labels, notes) follow the screen language; names, reasons and report text stay data.
+        window.KinLanguage?.markup?.(box);
         // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
         const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
         list.filter(v => v.group).forEach((v, i) => {
@@ -11986,15 +12078,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       const has = $("#findings").value || $("#conclusion").value || $("#recommendation").value;
       // Image Report: a draft holding drawings is cleared whole - the three fields and the drawings - through the draft discard.
       if (Array.isArray(drawn)) {
-        if (!confirm((drawn.length ? "쓰고 있던 판독문 세 칸과 붙인 그림 " + drawn.length + "장을 모두 비웁니다.\n"
-                     : "쓰고 있던 판독문 세 칸과 그림 변경(뺀 그림)을 모두 되돌립니다.\n") +
-                     "저장된 판독문은 그대로 남습니다. 계속할까요?")) return;
+        if (!confirm(kinSayEn("{0}저장된 판독문은 그대로 남습니다. 계속할까요?", drawn.length ? kinSayEn("쓰고 있던 판독문 세 칸과 붙인 그림 {n0}장을 모두 비웁니다.\n", drawn.length)
+                     : kinSayEn("쓰고 있던 판독문 세 칸과 그림 변경(뺀 그림)을 모두 되돌립니다.\n")))) return;
         void discardDraft(null, { asked: true });
         return;
       }
       if (!has) return;
-      if (!confirm("쓰고 있던 판독문 세 칸(Findings/Conclusion/Recommendation)을 모두 비웁니다.\n" +
-                   "저장된 판독문은 그대로 남습니다. 계속할까요?")) return;
+      if (!confirm(kinSayEn("쓰고 있던 판독문 세 칸(Findings/Conclusion/Recommendation)을 모두 비웁니다.\n저장된 판독문은 그대로 남습니다. 계속할까요?"))) return;
       // 비운 것도 이 문서의 편집이다: 표시가 서야 다음 폴링이 옛 글을 되살리지 않고, 비운 초안이 서버에 닿는다.
       if (!editReport(RFIELDS.map(field => ({ field, start: 0, end: $("#" + field).value.length, text: "" })))) return;
       notifyAddOns("draftEnd", [selectedUid]);
@@ -12628,7 +12718,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         toast(message, kind, duration);
       };
       const outcome = (status, message = null) => ({ status, message });
-      if (demoMode) { alert("데모 모드에서는 뷰어를 열 수 없습니다.\n(실제 구동은 Orthanc 연결 환경에서)"); return outcome('refused', '데모 모드에서는 뷰어를 열 수 없습니다.'); }
+      if (demoMode) { alert(kinSayEn("데모 모드에서는 뷰어를 열 수 없습니다.\n(실제 구동은 Orthanc 연결 환경에서)")); return outcome('refused', '데모 모드에서는 뷰어를 열 수 없습니다.'); }
       // 썸네일에 Series 식별이 없으면 기본 시리즈를 대신 열어 선택이 맞는 것처럼 보이지 않는다.
       if (initialSeriesUid !== null && (typeof initialSeriesUid !== "string" || initialSeriesUid.length > 64 ||
           !/^\d+(?:\.\d+)+$/.test(initialSeriesUid))) {
@@ -13225,7 +13315,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         operate(rows[next].index, 'focus');
       }
       $('#viewer-windows-prev').onclick = () => cycle(-1); $('#viewer-windows-next').onclick = () => cycle(1);
-      button.onclick = () => { viewerWindows.refresh(); render(); status.textContent = viewerWindows.error() || ''; dialog.showModal(); $('#viewer-windows-done').focus(); };
+      button.onclick = () => { viewerWindows.refresh(); render(); kinWrite(status, viewerWindows.error() || ''); dialog.showModal(); $('#viewer-windows-done').focus(); };
       $('#viewer-windows-done').onclick = () => dialog.close(); dialog.addEventListener('close', () => { ++displaySequence;if (!button.disabled) button.focus(); });
       // 주기마다 그때의 문맥으로 지난다: 로그아웃 준비 중에는 다시 그리지 않고, 편집으로 돌아오면 다음 주기가 이어 간다.
       const timer = setInterval(() => { work.commit(work.capture('document'), () => { viewerWindows.refresh(); render(); multiStudyView?.refresh(); }); }, 2000);
@@ -16634,7 +16724,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     function applyFilter(f, folderId) {
       if (!f || !Array.isArray(COLS[f.mode])) { toast('저장 검색의 업무 화면을 확인할 수 없습니다.', 'err'); return false; }
       const compoundError = KinCompoundFilter.validate(f.cols?.[KinCompoundFilter.KEY], COLS[f.mode]);
-      if (compoundError) { toast(String(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", compoundError)), 'err'); return false; }
+      if (compoundError) { toast(String(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", kinSayEn(compoundError))), 'err'); return false; }
       activeFilterName = userFilters.some(saved => saved.name === f.name) ? f.name : null;
       const source = folderId && folderSearches().find(saved => saved.treeId === (f.treeId || 'own:' + f.id));
       folderAppliedSearch = source ? { id: source.treeId, name: source.name, criteria: filterCriteriaKey(f) } : null;
@@ -16692,7 +16782,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     $("#savefilter").addEventListener("click", () => {
       const current = snapshotFilter();
       const error = KinCompoundFilter.validate(current.cols[KinCompoundFilter.KEY], COLS[current.mode]);
-      if (error) { toast(String(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", error)), 'err'); return; }
+      if (error) { toast(String(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", kinSayEn(error))), 'err'); return; }
       savedFilterManager.open();
     });
 
@@ -16846,11 +16936,11 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       let target = others[0];
       if (others.length > 1) {
         const pick = prompt(
-          "원격판독을 받을 기관 번호:\n" + others.map((i, n) => `${n + 1}. ${i.name}`).join("\n"), "1");
+          kinSayEn("원격판독을 받을 기관 번호:\n{0}", others.map((i, n) => `${n + 1}. ${i.name}`).join("\n")), "1");
         const n = +pick;
         if (!n || !others[n - 1]) return;
         target = others[n - 1];
-      } else if (!confirm(`${target.name} 에 원격판독을 의뢰할까요?`)) return;
+      } else if (!confirm(kinSayEn("{0} 에 원격판독을 의뢰할까요?", target.name))) return;
 
       // 이 의뢰를 시작한 문맥. 뒤따르는 안내와 예약한 단계는 그것이 그대로일 때만 한다 — 로그아웃 준비·세션 종료 뒤의
       // 타이머가 다음 상태를 서버에 보내지 않는다.
@@ -17105,7 +17195,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
                 toast(String(kinSayEn("이 검사의 ReqHosp는 서버가 정한 기관명({0})입니다 — 여기서 바꿀 수 없습니다", s.institutionName)), "info", 6000);
                 return;
               }
-              const v = prompt("의뢰 병원(ReqHosp):", s.reqHosp);
+              const v = prompt(kinSayEn("의뢰 병원(ReqHosp):"), s.reqHosp);
               if (v == null) return;
               s.reqHosp = v.trim() || "KIN";
               appState[uid] = { ...appState[uid], reqHosp: s.reqHosp };
@@ -17145,7 +17235,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             doUnmatch();
           } }),
         { sep: 1 },
-        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
+        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: kinSayEn("새 검사(SC 생성)는 현재 연결되어 있지 않습니다."), act: () => {} },
       ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
       { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     }
@@ -17317,7 +17407,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     const TECHNICIAN_WORK_REASON = "방사선사(technician) 권한이 필요합니다";
     /** A row or order menu item that is technician work: grey with the bar's reason when this account may not do it. */
     function technicianItem(item) {
-      return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
+      return technicianWork() ? item : { ...item, dis: true, title: kinSayEn(TECHNICIAN_WORK_REASON) };
     }
     /**
      * B14: the top bar's mode menu (work-mode.js), opened from the HALO PACS mark; the Radiology / Technician tabs stay as they are. Radiologist
@@ -17479,6 +17569,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
       queryRetrieve?.sync();
       clearInterval(poll); poll = null; ++pollGeneration;
       $("#dbstat").innerHTML = `<span style="color:#ff6b6b">●</span> 서버 연결 끊김 — 저장 불가 (클릭: 재시도)`;
+      window.KinLanguage?.markup?.($("#dbstat"));
       kinWrite($("#dbstat"), kinSayEn("API에 연결하지 못했습니다 ({e0}).\n이 상태에서는 아무것도 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.\ndocker compose up -d 로 API를 띄우면 자동으로 다시 붙습니다.", e?.message ?? ""), "title");
       $("#dbstat").style.cursor = "pointer";
       toast("서버 연결이 끊겼습니다 — 지금부터 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.", "err");
@@ -17587,6 +17678,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
     (() => {
       const user = document.getElementById("user"), roles = document.getElementById("roles");
       const who = document.getElementById("session-who"), details = document.getElementById("session-details");
+      // The role names in this cell are data (translate="no"); its title is a product word, so it is written on the language path.
+      globalThis.KinLanguage?.write(document.getElementById("session-details-roles"), globalThis.KinLanguage.sayEnglish("Keycloak 렐름 롤"), "title");
       const sync = () => {
         document.getElementById("session-details-user").textContent = user.textContent;
         document.getElementById("session-details-roles").textContent = roles.textContent;
@@ -17797,6 +17890,7 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         serverMode = false; offline = false;
         Object.assign(appState, legacyAppState);
         $("#dbstat").innerHTML = `<span style="color:#7f8899">●</span> 데모 모드`;
+        window.KinLanguage?.markup?.($("#dbstat"));
         kinWrite($("#dbstat"), kinSayEn("로그인하지 않은 둘러보기 모드 — 변경 내용은 이 브라우저에만 남습니다"), "title");
         await load();
         return;

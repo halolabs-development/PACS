@@ -689,9 +689,9 @@ def request_problems(main):
         problems.append("one empty POST")
     guard = "if (button.dataset.request !== token || button.dataset.uid !== uid || button.dataset.key !== key) return;"
     try:
-        if not body.index("await api(") < body.index(guard) < body.index("note.textContent = shown.text;"):
+        if not body.index("await api(") < body.index(guard) < body.index("kinWrite(note, kinSayEn(shown.text));"):
             problems.append("written before the stale check")
-        if body.index("note.textContent") < body.index("await api("):
+        if body.index("kinWrite(note") < body.index("await api("):
             problems.append("text before the answer")
     except ValueError:
         problems.append("guard")

@@ -14,6 +14,14 @@
 
   var VALUE_SLOT = '{value}';
   var LIMITS = Object.freeze({ entries: 64, bytes: 65536, renderedText: 512 });
+  // A message with a number in it, as a sentence of the page's screen language when a page has one (English only); the same
+  // words as before otherwise (and in a pure test).
+  function say(template) {
+    var parts = Array.prototype.slice.call(arguments, 1);
+    var language = typeof window === 'object' && window && window.KinLanguage;
+    return language && language.sayEnglish ? language.sayEnglish.apply(null, [template].concat(parts))
+      : template.replace(/\{(\d+)\}/g, function (slot, i) { return String(parts[i]); });
+  }
   var FIELDS = Object.freeze(['findings', 'conclusion', 'recommendation']);
   var VALUE_TYPES = Object.freeze(['choice', 'number', 'text', 'boolean']);
   var SCHEMA = 1;
@@ -130,7 +138,7 @@
     choice: '선택지에서 고르세요',
     number: '숫자를 입력하세요',
     oneLine: '값은 한 줄이어야 합니다',
-    tooLong: '값이 ' + LIMITS.renderedText + '바이트를 넘습니다',
+    tooLong: say('값이 {0}바이트를 넘습니다', LIMITS.renderedText),
     boundary: '이 값은 문장의 경계에서 앞뒤 글자와 합쳐져 다른 항목의 문장과 구분되지 않습니다 — 다른 표현을 쓰세요',
   });
 
@@ -456,9 +464,9 @@
       if (item.valueType === 'boolean') return typeof value === 'boolean' ? null : MSG.empty;
       if (item.valueType === 'number') {
         if (typeof value !== 'number' || !isFinite(value)) return MSG.number;
-        if (value < item.min || value > item.max) return '값은 ' + item.min + '..' + item.max + ' 범위여야 합니다';
+        if (value < item.min || value > item.max) return say('값은 {0}..{1} 범위여야 합니다', item.min, item.max);
         if (Number(value.toFixed(item.decimals || 0)) !== value)
-          return '소수 ' + (item.decimals || 0) + '자리까지 입력할 수 있습니다';
+          return say('소수 {0}자리까지 입력할 수 있습니다', item.decimals || 0);
         return null;
       }
       if (typeof value !== 'string' || !value.length) return MSG.empty;

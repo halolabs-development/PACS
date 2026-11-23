@@ -74,7 +74,7 @@ window.KinConsultations = function(app) {
     catch(e){work.commit(at,()=>{if(ticket===sequence&&same())kinWrite($('status'), kinSayEn("자문 처리 확인 실패: {e0} · 입력은 유지했습니다.", e.message));});}
     finally{clearTimeout(timer);if(ticket===sequence){busy=false;controller=null;work.commit(at,()=>{interruptedTask=null;controls();});}}
   }
-  function mayLeave(){return !busy&&(!pending&&!dirty()||confirm('저장하지 않은 입력이나 결과를 확인하지 못한 요청이 있습니다. 이동할까요?'));}
+  function mayLeave(){return !busy&&(!pending&&!dirty()||confirm(kinSayEn("저장하지 않은 입력이나 결과를 확인하지 못한 요청이 있습니다. 이동할까요?")));}
   function loadList(more=false) {
     if(pending||!same())return;
     const wanted=$('direction').value,next=more?cursor:null;
@@ -140,7 +140,7 @@ window.KinConsultations = function(app) {
     pending={id:row.id,uid:row.studyUid,path:'/consultations/'+encodeURIComponent(row.id),body:{expectedOwner:owner,requestId:crypto.randomUUID(),revision:row.revision,action,note}};send();
   };
   function close(force=false) {
-    if(!force&&(pending||dirty())&&!confirm('저장하지 않은 입력이나 결과를 확인하지 못한 요청이 있습니다. 닫을까요?'))return;sequence++;controller?.abort();controller=null;busy=false;pending=null;owner=null;items=[];cursor=null;clearEditor();$('list').replaceChildren();$('count').textContent=$('status').textContent='';$('search').value=$('state').value='';
+    if(!force&&(pending||dirty())&&!confirm(kinSayEn("저장하지 않은 입력이나 결과를 확인하지 못한 요청이 있습니다. 닫을까요?")))return;sequence++;controller?.abort();controller=null;busy=false;pending=null;owner=null;items=[];cursor=null;clearEditor();$('list').replaceChildren();$('count').textContent=$('status').textContent='';$('search').value=$('state').value='';
     if(dialog.open)dialog.close();if(!force&&opener?.isConnected)opener.focus();opener=null;
   }
   function end(){ended=true;close(true);app.clearFilter();}

@@ -9,7 +9,7 @@
       for (const row of $('#rows').querySelectorAll('tr[data-uid]')) {
         const cell = row.cells[index], study = byUid.get(row.dataset.uid);
         // Keep the saved width container and render the writing lock alongside presence.
-        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.viewing(study); window.KinLanguage?.markup?.(target); }
+        if (cell && study) { const target = cell.querySelector(':scope > .wc-cell') || cell; target.innerHTML = CELL.viewing(study); window.KinLanguage?.markup?.(target); if (typeof paintRowWords === "function") paintRowWords(target, study); }
       }
     }
     // FC-071: the Preload worker reports its queue; only the visible PF cells are rewritten, in place like Viewing.
@@ -104,7 +104,7 @@
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
       // Up to three arrivals by name (patient · study · EM E when the row says emergency), then the rest as a count.
       function arrivalNames(rows) {
-        const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? "EM E(응급)" : ""]
+        const named = rows.slice(0, 3).map(s => [s.name, s.desc || s.modality, s.state?.em === "E" ? kinSayEn("EM E(응급)") : ""]
           .map(value => String(value ?? "").trim()).filter(Boolean).join(" · ") || s.uid);
         return kinSayEn("{0}{1}", named.join(", "), rows.length > 3 ? kinSayEn(" 외 {n0}건", rows.length - 3) : "");
       }

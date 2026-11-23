@@ -311,6 +311,9 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         if user and method == "POST" and found.group(2):
             body = request.post_data_json
             self.resets.append((user["id"], body))
+            if getattr(self, "reset_error", None):
+                route.fulfill(status=self.reset_error[0], json=self.reset_error[1])
+                return
             reply = dict(user, temporaryPassword="SYN-TEMPORARY-VALUE") if body.get("mode") == "temp" else user
             route.fulfill(json=reply)
             return
@@ -1262,6 +1265,43 @@ class AdminMemberRolesDOMTest(unittest.TestCase):
         expect(box).to_be_hidden()
         expect(box).to_have_class("message")
         expect(box).to_have_attribute("role", "alert")
+
+    def test_email_reset_refusal_is_english_only_when_the_whole_sentence_is_known(self):
+        said = "메일 발송 설정이 없어 재설정 메일을 보내지 못했습니다. Temp Password로 임시 비밀번호를 전달하고, 운영 담당자에게 메일 발송 설정을 요청하세요."
+        self.reset_error = (503, {"code": "RESET_MAIL_NOT_CONFIGURED", "message": said})
+        self.load()
+        box = self.page.locator("#message")
+        press = self.row("syn-clinician").get_by_role("button", name="Email Reset Link", exact=True)
+        press.click()
+        expect(box).to_have_text(said)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        expect(box).to_contain_text("Mail sending is not set up, so the reset mail could not be sent.")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(box).to_have_text(said)
+        # Any other sentence of the server stays as written, on an English screen too.
+        other = "SYN 서버가 보낸 다른 문장입니다"
+        self.reset_error = (503, {"code": "SYN_OTHER", "message": other})
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        press.click()
+        expect(box).to_have_text(other)
+
+    def test_product_information_notes_are_english_and_statutory_words_stay(self):
+        self.load()
+        self.page.locator("header").get_by_role("button", name="Product Information", exact=True).click()
+        dialog = self.page.get_by_role("dialog", name="Product Information")
+        note = dialog.locator("tr[data-row='product.model'] .kpi-note")
+        label = dialog.locator("tr[data-row='statutoryLabel']")
+        korean = note.text_content()
+        statutory = label.locator(".kpi-note").text_content()
+        self.assertTrue(korean.startswith("모델명 확정 전"), korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        expect(note).to_have_text("Model name not yet confirmed: the model name for the approval application (P7) has not been set.")
+        # The statutory value, the note that quotes the Act and the legal basis stay in the original.
+        expect(label.locator(".kpi-value")).to_have_text("디지털의료기기소프트웨어")
+        expect(label.locator(".kpi-note")).to_have_text(statutory)
+        expect(label.locator("td").nth(3)).to_have_text("디지털의료제품법 제22조제5호")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(note).to_have_text(korean)
 
     def test_patient_consent_section_shows_only_the_patient_in_the_box(self):
         state = self.consent_server()

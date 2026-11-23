@@ -44,8 +44,8 @@
     if ((error?.status === 400 || error?.status === 409) && error.said) return error.said;
     if (error?.status === 403) return kinSayEn("이 계정으로는 상대 PACS를 관리할 수 없습니다.");
     if (error?.status === 404) return kinSayEn("이미 지워진 상대 PACS입니다. 목록을 다시 불러왔습니다.");
-    if (error?.status === 503) return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", what);
-    return kinSayEn("{0} 결과를 확인하지 못했습니다. 페이지를 다시 열어 지금 목록을 확인하세요.", what);
+    if (error?.status === 503) return kinSayEn("{0} 결과를 확인하지 못했습니다. 잠시 후 다시 시도하세요.", kinSayEn(what));
+    return kinSayEn("{0} 결과를 확인하지 못했습니다. 페이지를 다시 열어 지금 목록을 확인하세요.", kinSayEn(what));
   }
 
   function cell(tr, value) {
@@ -105,7 +105,7 @@
     return run(async () => {
       await request('DELETE', '/admin/dicom-peers/' + encodeURIComponent(peer.id));
       await load();
-      message(`${peer.name} (${peer.aet})를 지웠습니다.`);
+      message(kinSayEn("{0} ({1})를 지웠습니다.", peer.name, peer.aet));
     }, '삭제');
   }
 
@@ -135,7 +135,7 @@
       event.target.reset();
       $('#dicom-peer-film-sizes').hidden = true;
       await load();
-      message(`${body?.peer?.name ?? peer.name} (${body?.peer?.aet ?? peer.aet})를 등록했습니다.`);
+      message(kinSayEn("{0} ({1})를 등록했습니다.", body?.peer?.name ?? peer.name, body?.peer?.aet ?? peer.aet));
     }, '등록');
   });
   // Enabled only for the administrator session the Members console accepts.

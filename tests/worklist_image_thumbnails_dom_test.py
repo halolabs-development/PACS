@@ -250,6 +250,28 @@ class WorklistImageThumbnailsDOMTest(unittest.TestCase):
             self.assertEqual(expected_calls, self.page.evaluate("apiCalls.length"))
             expect(self.page.locator(".thumb-image-preview").nth(4)).to_have_text("Not loaded · Retry Images")
 
+    def test_the_preview_window_reads_its_own_words_in_english(self):
+        # The Image Preview window is built from its template after the page's first markup was read: an English screen reads
+        # its note in English; the study line is data; no choice reads it exactly as built.
+        self.page.close()
+        self.page = self.browser.new_page()
+        self.page.set_content(HARNESS)
+        hp = ROOT / "worklist-v0" / "hpacs-lite"
+        self.page.add_script_tag(content=(hp / "worklist-language-terms.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=(hp / "worklist-language.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=CORE)
+        self.page.evaluate("window.KinAuth={onLifecycle:f=>f({state:'active',session:'SYN-THUMB-SESSION'}),authFailure:()=>{}};KinWorkContext.follow(KinAuth);KinWorkContext.select(currentValue)")
+        self.page.add_script_tag(content=PREVIEW)
+        self.page.evaluate("""() => { window.preview = KinWorklistImagePreview.mount({owner: () => ownerValue, currentUid: () => currentValue, api});
+          preview.open({uid: '2.25.10', sourceUid: '2.25.10', series: '2.25.20', name: 'Literal <patient>', id: 'P&1', date: '20260101'}); }""")
+        note = self.page.locator("#worklist-image-preview > p").nth(1)
+        expect(self.page.locator("#worklist-image-preview")).to_be_visible()
+        korean = note.text_content()
+        self.assertEqual("서버 렌더링 미리보기 · 원본 검사/판독문은 변경하지 않습니다.", korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(note).to_have_text("Server-rendered preview · The source study and report are not changed.")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(note).to_have_text(korean)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

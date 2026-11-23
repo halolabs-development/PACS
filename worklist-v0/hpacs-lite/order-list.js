@@ -29,6 +29,8 @@
     function renderOrders() {
       // Also run on its own (a page test takes this function out of the page): the plain fill stands in then.
       const kinSay = globalThis.kinSayShared || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === "object" ? (v.t ?? v.e ?? "") : v); }));
+      // The words this list adds read in English on an English screen only (otherwise exactly as written).
+      const sayEn = globalThis.KinLanguage?.sayEnglish || kinSay;
       if (mode !== "Technician") return;
       const list = filteredOrders();
       // A redraw keeps the focus on the order row that had it (as the worklist rows do): after a click, a menu item
@@ -41,11 +43,13 @@
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      const emptyOrders = $("#orderrows td.empty");
+      if (emptyOrders) kinWrite(emptyOrders, sayEn("오더 없음"));
       if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
-      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
-          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" }));
+      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : sayEn("(없음)"), o ? o.name + " / " + o.sched : sayEn("(없음)"),
+          { t: s && o && s.matched === "U" && o.matched === "U" ? sayEn("  → 우클릭 Match 가능") : "" }));
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {

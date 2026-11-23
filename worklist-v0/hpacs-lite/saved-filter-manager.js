@@ -158,7 +158,7 @@
     }
     const dirty = () => editable && JSON.stringify(value()) !== baseline;
     const organizerDirty = () => folderDirty() || sharing.dirty();
-    const mayLeave = () => !busy && (!(dirty() || organizerDirty()) || confirm('저장하지 않은 검색 조건 또는 폴더 변경을 버릴까요?'));
+    const mayLeave = () => !busy && (!(dirty() || organizerDirty()) || confirm(kinSayEn("저장하지 않은 검색 조건 또는 폴더 변경을 버릴까요?")));
     function focusAvailable(...targets) {
       if (!dialog.open) return;
       for (const target of targets) {
@@ -298,7 +298,7 @@
       const modalityError = dialog.querySelector('[data-col="modality"]')?.validationMessage;
       const error = modalityError || compound.validate(filter.cols[compound.KEY], options.columns[filter.mode]);
       const note = error ? '' : options.countNote?.(filter) || '';
-      kinWrite($('count'), modalityError ? commitModality ? kinSayEn("Modality 오류: {0}", modalityError) : '' : error ? kinSayEn("복합 조건 오류: {0}", error) : kinSayEn("편집 중 조건: 로드된 목록 기준 {0}건 · 기본 조건 AND 복합 조건을 적용합니다.{1}", options.count(filter), (note ? ' · ' + note : '')));
+      kinWrite($('count'), modalityError ? commitModality ? kinSayEn("Modality 오류: {0}", modalityError) : '' : error ? kinSayEn("복합 조건 오류: {0}", kinSayEn(error)) : kinSayEn("편집 중 조건: 로드된 목록 기준 {0}건 · 기본 조건 AND 복합 조건을 적용합니다.{1}", options.count(filter), (note ? ' · ' + note : '')));
       $('count').classList.toggle('sfm-error', !!error && (!modalityError || commitModality));
       const parts = options.bodyParts;
       $('body-parts').hidden = !parts || !compound.usesField(filter.cols[compound.KEY], 'bodyPart', options.columns[filter.mode]);
@@ -324,7 +324,7 @@
       const error = compound.validate(filter.cols?.[compound.KEY], options.columns[filter.mode]);
       if (error) {
         editable = false; selected = null; $('fields').hidden = true; lock(busy); list();
-        status(kinSayEn("저장된 복합 조건을 확인할 수 없습니다: {0} ‘New from Current’로 새 검색을 만들거나 ‘Reload List’로 다시 불러오세요.", error), true);
+        status(kinSayEn("저장된 복합 조건을 확인할 수 없습니다: {0} ‘New from Current’로 새 검색을 만들거나 ‘Reload List’로 다시 불러오세요.", kinSayEn(error)), true);
         return false;
       }
       editable = true; $('fields').hidden = false;
@@ -511,17 +511,17 @@
       });
     }
     $('folder-save').addEventListener('click', () => folderCommand({ action: 'save-folder', path: $('folder-path').value,
-      description: $('folder-description').value, ordinal: Number($('folder-order').value) }, `폴더 "${$('folder-path').value}"의 설명과 순서를 저장할까요?`));
+      description: $('folder-description').value, ordinal: Number($('folder-order').value) }, kinSayEn("폴더 \"{0}\"의 설명과 순서를 저장할까요?", $('folder-path').value)));
     $('folder-move').addEventListener('click', () => folderCommand({ action: 'move-folder', from: $('folder-path').value,
-      to: $('folder-destination').value }, `폴더 "${$('folder-path').value}"와 하위 검색을 "${$('folder-destination').value}"로 이동할까요?`));
+      to: $('folder-destination').value }, kinSayEn("폴더 \"{0}\"와 하위 검색을 \"{1}\"로 이동할까요?", $('folder-path').value, $('folder-destination').value)));
     $('folder-remove').addEventListener('click', () => folderCommand({ action: 'remove-folder', path: $('folder-path').value },
-      `폴더 "${$('folder-path').value}"와 하위 폴더를 제거할까요? 포함된 검색은 모두 부모 폴더로 옮기며 검색 자체는 삭제하지 않습니다.`));
+      kinSayEn("폴더 \"{0}\"와 하위 폴더를 제거할까요? 포함된 검색은 모두 부모 폴더로 옮기며 검색 자체는 삭제하지 않습니다.", $('folder-path').value)));
     function bulk(action) {
       const filters = options.list().filter(filter => checked.has(filter.id));
       if (!filters.length || filters.length > 200) { status(kinSayEn("검색을 1~200개 선택하세요."), true); return; }
       const command = { action, ids: filters.map(filter => filter.id) };
       if (action === 'move-searches') command.to = $('folder-destination').value;
-      folderCommand(command, `${filters.length}개 검색을 ${action === 'delete-searches' ? '삭제' : '"' + (command.to || '미분류') + '"로 이동'}할까요?\n${filters.map(filter => filter.name).join('\n')}\n검사와 판독문은 변경하지 않습니다.`);
+      folderCommand(command, kinSayEn("{n0}개 검색을 {1}할까요?\n{2}\n검사와 판독문은 변경하지 않습니다.", filters.length, action === 'delete-searches' ? kinSayEn("삭제") : kinSayEn("\"{0}\"로 이동", command.to || kinSayEn("미분류")), filters.map(filter => filter.name).join('\n')));
     }
     $('bulk-move').addEventListener('click', () => bulk('move-searches'));
     $('bulk-delete').addEventListener('click', () => bulk('delete-searches'));
@@ -531,10 +531,10 @@
     $('form').addEventListener('submit', e => {
       e.preventDefault(); if (busy || !editable || !$('form').reportValidity()) return;
       const applyAfterSave = e.submitter === $('save-apply');
-      if (applyAfterSave && organizerDirty() && !confirm('검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?')) return;
+      if (applyAfterSave && organizerDirty() && !confirm(kinSayEn("검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?"))) return;
       const next = value();
       const error = compound.validate(next.cols[compound.KEY], options.columns[next.mode]);
-      if (error) { status(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", error), true); return; }
+      if (error) { status(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", kinSayEn(error)), true); return; }
       if (!next.name) { status(kinSayEn("검색 이름을 입력하세요."), true); $('name').focus(); return; }
       const existing = selected === null ? named(next.name) : null;
       if (copying && existing) { status(kinSayEn("같은 이름의 검색이 있습니다. 다른 이름으로 저장하세요. 원본 검색은 유지됩니다."), true); $('name').focus(); return; }
@@ -546,7 +546,7 @@
         for (const key of ['folder', 'description', 'ordinal']) {
           if (next[key] === initial[key]) next[key] = existing[key] ?? initial[key];
         }
-        if (!confirm(`저장 검색 "${next.name}"을 덮어쓸까요? 검색 조건과 변경한 폴더·설명·순서를 저장합니다.\n저장할 폴더: ${next.folder || '미분류'} · 순서: ${next.ordinal}\n설명: ${next.description || '(없음)'}`)) return;
+        if (!confirm(kinSayEn("저장 검색 \"{0}\"을 덮어쓸까요? 검색 조건과 변경한 폴더·설명·순서를 저장합니다.\n저장할 폴더: {1} · 순서: {2}\n설명: {3}", next.name, next.folder || kinSayEn("미분류"), next.ordinal, next.description || kinSayEn("(없음)")))) return;
       }
       run(async (signal,at) => {
         const saved = await options.save(next, signal,at);
@@ -590,7 +590,7 @@
       if (busy || selected === null) return;
       const filter = named(selected);
       if (!filter) { status(kinSayEn("저장 검색이 변경됐습니다. 목록을 다시 불러오세요."), true); list(); return; }
-      if (!confirm(`저장 검색 "${filter.name}"을 삭제할까요? 검사와 판독문은 삭제되지 않습니다.`)) return;
+      if (!confirm(kinSayEn("저장 검색 \"{0}\"을 삭제할까요? 검사와 판독문은 삭제되지 않습니다.", filter.name))) return;
       run(async (signal,at) => {
         await options.remove(filter, signal,at); work.commit(at,()=>{edit(options.snapshot(), true); status(kinSayEn("저장 검색을 삭제했습니다."));});
       });
@@ -606,10 +606,10 @@
       if (busy || !editable) return;
       count(true);
       if (dialog.querySelector('[data-col="modality"]')?.validationMessage) return;
-      if (organizerDirty() && !confirm('검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?')) return;
+      if (organizerDirty() && !confirm(kinSayEn("검색을 적용하고 닫으면 저장하지 않은 폴더 변경은 버립니다. 계속할까요?"))) return;
       const next = value();
       const error = compound.validate(next.cols[compound.KEY], options.columns[next.mode]);
-      if (error) { status(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", error), true); return; }
+      if (error) { status(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", kinSayEn(error)), true); return; }
       if (options.apply(next) === false) { status(kinSayEn("검색 조건을 적용하지 못했습니다."), true); return; }
       baseline = JSON.stringify(next); dialog.close();
     });

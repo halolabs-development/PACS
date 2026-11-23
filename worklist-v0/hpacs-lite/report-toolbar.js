@@ -40,15 +40,13 @@
       const has = $("#findings").value || $("#conclusion").value || $("#recommendation").value;
       // Image Report: a draft holding drawings is cleared whole - the three fields and the drawings - through the draft discard.
       if (Array.isArray(drawn)) {
-        if (!confirm((drawn.length ? "쓰고 있던 판독문 세 칸과 붙인 그림 " + drawn.length + "장을 모두 비웁니다.\n"
-                     : "쓰고 있던 판독문 세 칸과 그림 변경(뺀 그림)을 모두 되돌립니다.\n") +
-                     "저장된 판독문은 그대로 남습니다. 계속할까요?")) return;
+        if (!confirm(kinSayEn("{0}저장된 판독문은 그대로 남습니다. 계속할까요?", drawn.length ? kinSayEn("쓰고 있던 판독문 세 칸과 붙인 그림 {n0}장을 모두 비웁니다.\n", drawn.length)
+                     : kinSayEn("쓰고 있던 판독문 세 칸과 그림 변경(뺀 그림)을 모두 되돌립니다.\n")))) return;
         void discardDraft(null, { asked: true });
         return;
       }
       if (!has) return;
-      if (!confirm("쓰고 있던 판독문 세 칸(Findings/Conclusion/Recommendation)을 모두 비웁니다.\n" +
-                   "저장된 판독문은 그대로 남습니다. 계속할까요?")) return;
+      if (!confirm(kinSayEn("쓰고 있던 판독문 세 칸(Findings/Conclusion/Recommendation)을 모두 비웁니다.\n저장된 판독문은 그대로 남습니다. 계속할까요?"))) return;
       // 비운 것도 이 문서의 편집이다: 표시가 서야 다음 폴링이 옛 글을 되살리지 않고, 비운 초안이 서버에 닿는다.
       if (!editReport(RFIELDS.map(field => ({ field, start: 0, end: $("#" + field).value.length, text: "" })))) return;
       notifyAddOns("draftEnd", [selectedUid]);

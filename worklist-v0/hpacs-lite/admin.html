@@ -819,7 +819,8 @@
           else setMessage(kinSayEn("비밀번호 변경 메일을 보냈습니다."));
         } catch (error) {
           if (KinConsoleSession.ended() || error.stale || membersDenied) return;
-          setMessage(error.message);
+          // The server's sentence reads in English only when the whole of it is a glossary entry; any other stays as written.
+          setMessage(globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(error.message) : error.message);
         }
       }
 
@@ -1265,8 +1266,8 @@
         button.disabled = !!item.dataset.request;
         // Without a bindable retry the note is the status action itself: the F-01 sentence for failed, else nothing.
         if (!key) {
-          note.textContent = status.retry?.text ?? "";
-          note.title = status.retry?.title ?? "";
+          kinWrite(note, status.retry?.text ? kinSayEn(status.retry.text) : "");
+          kinWrite(note, status.retry?.title ? kinSayEn(status.retry.title) : "", "title");
         }
         return status;
       }
@@ -1291,8 +1292,8 @@
           absentKnown: gateway.absentKnown, statuses });
         const state = $("#gateway-list-state");
         state.className = `gstate ${summary.key}`;
-        state.textContent = summary.text;
-        state.title = summary.title;
+        kinWrite(state, summary.text);
+        kinWrite(state, summary.title, "title");
         $("#gateway-counts").textContent = summary.counts;
         const empty = $("#gateway-empty");
         empty.hidden = !gateway.observedAt || gateway.rows.length > 0;
@@ -1349,8 +1350,8 @@
         const shown = window.KinStudyArrivals.gatewayRetryAnswer(uid, answer, error);
         Object.assign(item.dataset, { request: "", requested: shown.requested ? key : "" });
         const note = item.querySelector(".gw-note");
-        note.textContent = shown.text;
-        note.title = shown.title;
+        kinWrite(note, kinSayEn(shown.text));
+        kinWrite(note, shown.title ? kinSayEn(shown.title) : "", "title");
         drawGateway();
       }
 
@@ -2068,6 +2069,9 @@
      */
     (function (root) {
       "use strict";
+      // The panel line's words: a sentence of the page's screen language (English only), the same words as before otherwise.
+      const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+        : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
       const NOT_RECORDED = "not recorded";
       const WITHHELD = "withheld: other institution";
       const TITLES = Object.freeze({
@@ -2167,7 +2171,7 @@
             ? Object.keys(value).map(field => ({ label: field, text: `${value[field].from} → ${value[field].to}`, state: "value", title: "" }))
             : [valueLine(key, value)])]
           : Object.keys(row.detail).filter(key => key !== "reason").map(key => valueLine(key, row.detail[key]));
-        return { time: format(row.at), timeTitle: `기록한 서버 시각 ${row.at}`, actor: row.actor, action: row.action,
+        return { time: format(row.at), timeTitle: kinSayEn("기록한 서버 시각 {0}", row.at), actor: row.actor, action: row.action,
           target: row.target, previous, reason, detail: detail.length ? detail : [notRecorded(null)] };
       }
 
@@ -2175,19 +2179,19 @@
       function summary(view, format = localTime) {
         const observedAt = view?.observedAt ?? null;
         if (view?.failed) return observedAt
-          ? { key: "query_failed", text: `Query Failed · 마지막 조회 기준 ${format(observedAt)}`,
-              title: "마지막으로 성공한 조회의 행을 흐리게 두었습니다. 지금 기록이 아닐 수 있습니다." }
-          : { key: "query_failed", text: "Query Failed · 아직 성공한 조회가 없습니다",
-              title: "성공한 조회가 없어 행을 보이지 않습니다. 기록이 없다는 뜻이 아닙니다." };
-        if (!observedAt) return { key: "not_loaded", text: "Not Loaded", title: "아직 조회하지 않았습니다." };
-        return { key: "observed", text: `Loaded ${format(observedAt)}`, title: "서버가 이 기관의 감사 기록을 읽은 시각입니다." };
+          ? { key: "query_failed", text: kinSayEn("Query Failed · 마지막 조회 기준 {0}", format(observedAt)),
+              title: kinSayEn("마지막으로 성공한 조회의 행을 흐리게 두었습니다. 지금 기록이 아닐 수 있습니다.") }
+          : { key: "query_failed", text: kinSayEn("Query Failed · 아직 성공한 조회가 없습니다"),
+              title: kinSayEn("성공한 조회가 없어 행을 보이지 않습니다. 기록이 없다는 뜻이 아닙니다.") };
+        if (!observedAt) return { key: "not_loaded", text: "Not Loaded", title: kinSayEn("아직 조회하지 않았습니다.") };
+        return { key: "observed", text: `Loaded ${format(observedAt)}`, title: kinSayEn("서버가 이 기관의 감사 기록을 읽은 시각입니다.") };
       }
 
       /** Counts of the rows this institution sees; nothing else is counted, so nothing else can be told. */
       function counts(view) {
-        if (!view) return { text: "Events Unknown", title: "아직 성공한 조회가 없어 건수를 모릅니다." };
+        if (!view) return { text: "Events Unknown", title: kinSayEn("아직 성공한 조회가 없어 건수를 모릅니다.") };
         const events = n => `${n} ${n === 1 ? "Event" : "Events"}`;
-        return { text: `Showing ${view.shown} of ${events(view.total)}`, title: "이 기관에 귀속되어 보이는 행만 셉니다." };
+        return { text: `Showing ${view.shown} of ${events(view.total)}`, title: kinSayEn("이 기관에 귀속되어 보이는 행만 셉니다.") };
       }
 
       root.KinAdminAudit = Object.freeze({ NOT_RECORDED, WITHHELD, TITLES, SNAPSHOT_FIELDS, readAnswer, display, summary, counts,
@@ -2282,7 +2286,7 @@
           const value = document.createElement("span");
           value.className = `aval ${item.state}`;
           value.textContent = item.text;
-          if (item.title) value.title = item.title;
+          if (item.title) kinWrite(value, kinSayEn(item.title), "title");
           line.append(value);
           return line;
         });
@@ -2294,7 +2298,7 @@
         for (const [value, title] of [[shown.time, shown.timeTitle], [shown.actor], [shown.action], [shown.target]]) {
           const cell = document.createElement("td");
           cell.textContent = value;
-          if (title) cell.title = title;
+          if (title) kinWrite(cell, title, "title");
           tr.append(cell);
         }
         for (const lines of [shown.previous, shown.reason, shown.detail]) {
@@ -2315,10 +2319,11 @@
         const line = M.summary({ observedAt: read ? read.observedAt : null, failed: audit.failed });
         const state = $("#audit-state");
         state.className = `astate ${line.key}`;
-        state.textContent = line.text;
-        state.title = line.title;
+        kinWrite(state, line.text);
+        kinWrite(state, line.title, "title");
         const shown = M.counts(read ? { shown: audit.rows.length, total: read.total } : null);
-        Object.assign($("#audit-counts"), { textContent: shown.text, title: shown.title });
+        kinWrite($("#audit-counts"), shown.text);
+        kinWrite($("#audit-counts"), shown.title, "title");
         $("#audit-busy").hidden = !audit.pending && !audit.loadingMore;
         const more = $("#audit-more");
         more.hidden = !read || !audit.next;

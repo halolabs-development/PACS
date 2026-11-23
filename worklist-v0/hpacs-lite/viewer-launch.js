@@ -199,7 +199,7 @@
         toast(message, kind, duration);
       };
       const outcome = (status, message = null) => ({ status, message });
-      if (demoMode) { alert("데모 모드에서는 뷰어를 열 수 없습니다.\n(실제 구동은 Orthanc 연결 환경에서)"); return outcome('refused', '데모 모드에서는 뷰어를 열 수 없습니다.'); }
+      if (demoMode) { alert(kinSayEn("데모 모드에서는 뷰어를 열 수 없습니다.\n(실제 구동은 Orthanc 연결 환경에서)")); return outcome('refused', '데모 모드에서는 뷰어를 열 수 없습니다.'); }
       // 썸네일에 Series 식별이 없으면 기본 시리즈를 대신 열어 선택이 맞는 것처럼 보이지 않는다.
       if (initialSeriesUid !== null && (typeof initialSeriesUid !== "string" || initialSeriesUid.length > 64 ||
           !/^\d+(?:\.\d+)+$/.test(initialSeriesUid))) {
@@ -796,7 +796,7 @@
         operate(rows[next].index, 'focus');
       }
       $('#viewer-windows-prev').onclick = () => cycle(-1); $('#viewer-windows-next').onclick = () => cycle(1);
-      button.onclick = () => { viewerWindows.refresh(); render(); status.textContent = viewerWindows.error() || ''; dialog.showModal(); $('#viewer-windows-done').focus(); };
+      button.onclick = () => { viewerWindows.refresh(); render(); kinWrite(status, viewerWindows.error() || ''); dialog.showModal(); $('#viewer-windows-done').focus(); };
       $('#viewer-windows-done').onclick = () => dialog.close(); dialog.addEventListener('close', () => { ++displaySequence;if (!button.disabled) button.focus(); });
       // 주기마다 그때의 문맥으로 지난다: 로그아웃 준비 중에는 다시 그리지 않고, 편집으로 돌아오면 다음 주기가 이어 간다.
       const timer = setInterval(() => { work.commit(work.capture('document'), () => { viewerWindows.refresh(); render(); multiStudyView?.refresh(); }); }, 2000);

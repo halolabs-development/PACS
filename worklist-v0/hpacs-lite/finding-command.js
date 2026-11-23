@@ -7,6 +7,8 @@
   'use strict';
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // The sentences added for the screen language read in English on an English screen only (otherwise exactly as written).
+  const kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
   const links = typeof module === 'object' && module.exports ? require('./finding-link-model.js') : root.kinFindingLinkModel;
   const VIEWER_REASONS = links.NAVIGATION_REASONS;
   const PAGE = 100;
@@ -44,7 +46,7 @@
   // `source` (the pressed copy) adds the S2-C notes from the viewer's live entry.
   function arrivalText(result, where, source) {
     const note = links.annotationText(result && result.annotation), live = source ? links.liveText(result, source.revision) : '';
-    return kinSay('영상 이동 확인 · {t0}{t1}{t2}{t3}', { t: where }, { t: result && result.phase ? ' · 비교 검사 영상 칸' : '' }, { t: note ? kinSay(' · {t0}', { t: note }) : '' }, { t: live ? kinSay(' · {t0}', { t: live }) : '' });
+    return kinSay('영상 이동 확인 · {t0}{t1}{t2}{t3}', { t: where }, { t: result && result.phase ? kinSayEn(' · 비교 검사 영상 칸') : '' }, { t: note ? kinSay(' · {t0}', { t: note }) : '' }, { t: live ? kinSay(' · {t0}', { t: live }) : '' });
   }
   // A saved-location outcome from the viewer, in the worklist's words.
   function locationText(result, source, where) {

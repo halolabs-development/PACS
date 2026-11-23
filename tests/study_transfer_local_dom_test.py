@@ -3942,6 +3942,24 @@ class TransferPanelPage(rf.ReportFlowPage):
     def refusal(self, code="PATIENT_ID_MISSING", message=None, **fields):
         return lambda r: {**file_result(r["operation"], int(r["index"]), "rejected", code, message=message or self.PATIENT_ID_MISSING), **fields}
 
+    def test_u04_a_refusal_reads_in_english_only_when_the_whole_server_sentence_is_known(self):
+        # The code is shown as is. A sentence of the glossary follows the screen; any other sentence stays as the server wrote it.
+        said = "DICOM 파일 형식이 아닙니다. 이 파일은 저장되지 않았습니다."
+        other = "SYN 서버가 보낸 다른 문장입니다"
+        language = lambda lang: self.assertTrue(self.page.evaluate("l => KinLanguage.restore({version: 1, worklist: l, reading: l})", lang))
+        self.open_as(TECH, "Technician")
+        for code, message, english in (("DICOM_NOT_PART10", said, "Not a DICOM file. This file was not saved."),
+                                       ("DICOM_MALFORMED", other, other)):
+            with self.subTest(code=code):
+                language(None)
+                self.site.import_answers = [self.refusal(code=code, message=message)]
+                self.choose(self.files(1))
+                self.observed(lambda: self.reason_of(0) == f"{code} · {message}", "the refusal read back")
+                language("en")
+                self.wait(lambda: self.reason_of(0) == f"{code} · {english}", "the sentence on an English screen")
+                language(None)
+                self.wait(lambda: self.reason_of(0) == f"{code} · {message}", "the sentence as written")
+
     def test_u04_a_final_no_write_refusal_is_rejected_with_its_reason_and_counted_refused(self):
         self.open_as(TECH, "Technician")
         self.page.evaluate(self.WATCH)

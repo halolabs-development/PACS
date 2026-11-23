@@ -99,7 +99,7 @@
       const checks=new Map(),bases=new Map(),captured=new Map(list.map(s=>[s.uid,scopes.stamp(s)]));
       const summary=el('div',{className:'order-status exam-merge-result',role:'status','aria-live':'polite'});
       let busy=false;
-      const go=button(kinSay('Merge'),submit,'체크한 검사를 기준 검사 하나로 합칩니다.');
+      const go=kinWrite(button(kinSay('Merge'),submit),kinSay('체크한 검사를 기준 검사 하나로 합칩니다.'),'title');
       const picked=()=>list.filter(s=>checks.get(s.uid).checked);
       function recompute() {
         const rows=picked(),base=rows.find(s=>bases.get(s.uid).checked),ids=[...new Set(rows.map(s=>s.id))];

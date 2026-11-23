@@ -115,7 +115,7 @@
     function fill() {
       const list = o.searches();
       const options = [new Option('Off', ''), ...list.map(s => Object.assign(new Option(s.name, s.id), { translate: false }))];
-      if (setting.search && !list.some(s => s.id === setting.search)) options.push(new Option('(저장 검색 없음)', setting.search));
+      if (setting.search && !list.some(s => s.id === setting.search)) options.push(kinWrite(new Option('', setting.search), kinSayEn('(저장 검색 없음)')));
       o.select.replaceChildren(...options);
       o.select.value = setting.search || '';
       o.priors.checked = setting.priors;

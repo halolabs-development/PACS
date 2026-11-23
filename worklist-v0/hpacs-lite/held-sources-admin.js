@@ -145,7 +145,7 @@
       if (KinConsoleSession.ended()) return;
       $('#held-dialog').close();
       const outcome = result?.changed === false ? '이미 이 기관에 등록된 값입니다.'
-        : `등록했습니다. 보류 검사 ${Number.isInteger(result?.attached) ? result.attached : 0}건이 이 기관에 연결되었습니다.`;
+        : kinSayEn("등록했습니다. 보류 검사 {0}건이 이 기관에 연결되었습니다.", Number.isInteger(result?.attached) ? result.attached : 0);
       message(outcome);
       void refresh(outcome);
     } catch (error) {

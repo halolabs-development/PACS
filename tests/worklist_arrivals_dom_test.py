@@ -698,6 +698,32 @@ class WorklistArrivalsDOMTest(unittest.TestCase):
                 self.assertEqual((state["hidden"], state["note"]), (True, ""))
         self.assertEqual(self.retry_state()["calls"], [])
 
+    def test_s4u4_now_retry_help_and_the_f01_note_read_in_english_on_an_english_screen(self):
+        # The same page with the screen language loaded first (as main.html does): the Now Retry help, the F-01 note and its
+        # help are product sentences; an English screen reads them in English, no choice exactly as before.
+        self.page.close()
+        self.page = self.browser.new_page()
+        self.page.set_content(HARNESS)
+        hp = ROOT / "worklist-v0" / "hpacs-lite"
+        self.page.add_script_tag(content=(hp / "worklist-language-terms.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=(hp / "worklist-language.js").read_text(encoding="utf-8"))
+        self.page.add_script_tag(content=fixture_block(ROOT / "worklist-v0/hpacs-lite/main.html", {"say": ("kinSay",)}, "say"))
+        self.page.add_script_tag(content=ARRIVALS)
+        self.page.evaluate("()=>{studyObservationModel=KinStudyArrivals.observationStart();grants=['technician']}")
+        self.poll(reply(self.receipt_row(self.retry_receipt(), 12), at=self.at(1)))
+        help_text = lambda: self.page.evaluate("() => $('#receipt-retry').title")
+        korean = help_text()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'ko', reading: 'ko'})")
+        self.assertEqual(korean, help_text())
+        self.assertTrue(korean.startswith("HALO PACS에 재시도 요청을 남깁니다."), korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.assertIsNone(re.search("[가-힣]", help_text()), help_text())
+        self.poll(reply(self.receipt_row(self.retry_receipt("failed", 8, 2), 12), at=self.at(2)))
+        state = self.retry_state()
+        self.assertIsNone(re.search("[가-힣]", state["note"] + state["noteTitle"]), state)
+        self.assertTrue(state["note"])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(self.F01, self.retry_state()["note"])
     def test_s4u4_one_empty_post_nothing_before_the_answer_and_a_stale_answer_is_never_written(self):
         texts = self.page.evaluate("KinStudyArrivals.RETRY_TEXT")
         self.page.evaluate("()=>{grants=['technician']}")

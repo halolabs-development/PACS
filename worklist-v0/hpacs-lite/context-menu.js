@@ -242,7 +242,7 @@
                 toast(String(kinSayEn("이 검사의 ReqHosp는 서버가 정한 기관명({0})입니다 — 여기서 바꿀 수 없습니다", s.institutionName)), "info", 6000);
                 return;
               }
-              const v = prompt("의뢰 병원(ReqHosp):", s.reqHosp);
+              const v = prompt(kinSayEn("의뢰 병원(ReqHosp):"), s.reqHosp);
               if (v == null) return;
               s.reqHosp = v.trim() || "KIN";
               appState[uid] = { ...appState[uid], reqHosp: s.reqHosp };
@@ -282,7 +282,7 @@
             doUnmatch();
           } }),
         { sep: 1 },
-        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: "새 검사(SC 생성)는 현재 연결되어 있지 않습니다.", act: () => {} },
+        { label: kinSay("New Exam (SC 생성)"), dis: 1, title: kinSayEn("새 검사(SC 생성)는 현재 연결되어 있지 않습니다."), act: () => {} },
       ], fromKey ? rowKeyboard(() => $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(oid)}"]`)) : null,
       { uid: selectedUid, seq: selectionSeq, oid: selectedOid });
     }
