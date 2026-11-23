@@ -6,7 +6,7 @@
 # study in (tests/e2e/test_query_retrieve.py). The main and production compose files are unchanged.
 services:
   qr-peer:
-    image: orthancteam/orthanc:24.12.0
+    build: ./gateway/orthanc
     container_name: kin-qr-peer
     restart: "no"
     environment:
