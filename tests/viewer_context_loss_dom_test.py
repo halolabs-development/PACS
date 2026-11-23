@@ -465,6 +465,51 @@ class ViewerContextLossDOMTest(unittest.TestCase):
         p.evaluate('''() => {lose(0);const element=views.get('0').element;element.dispatchEvent(new CustomEvent('IMAGE_RENDERED',{bubbles:true,detail:{element,viewportId:'0'}}));}''')
         self.assertEqual(p.evaluate('kinViewerFrameCoverageState().shown'), 0)
 
+    def test_frame_coverage_counts_each_drawn_cell_and_no_covered_one(self):
+        p = self.page
+        def metadata(route):
+            study = route.request.url.split('/studies/')[1].split('/')[0]
+            sops = ['1.2.6.1', '1.2.6.2', '1.2.6.3'] if study == '1.2.3' else ['1.2.7.1']
+            route.fulfill(json=[{'0020000D': {'Value': [study]}, '0020000E': {'Value': ['1.2.5']}, '00080018': {'Value': [sop]},
+                                 '00080016': {'Value': ['1.2.840.10008.5.1.4.1.1.2']}, '00280010': {'Value': [2]}, '00280011': {'Value': [2]}} for sop in sops])
+        self.context.route(BASE + '/dicom-web/**', metadata)
+        p.add_script_tag(url=BASE + '/worklist/hpacs-lite/viewer-frame-coverage.js')
+        p.evaluate('''() => {
+          const host=document.createElement('div');host.id='kin-viewer-layout';document.body.append(host);
+          localStorage.setItem('kin-frame-warning:v1:'+JSON.stringify(['hospital','reader']),'true');
+          // The pinned grid's nesting: a parent, then the pane, with pointer events off on the pane that is not active.
+          window.panes={};
+          for(const id of ['0','1']){
+            const image=document.getElementById('image'+id),parent=document.createElement('div'),pane=document.createElement('div');
+            parent.style.cssText='display:inline-block;position:relative;overflow:hidden;width:480px;height:520px';
+            pane.dataset.cy='viewport-pane';pane.style.cssText='position:relative;width:480px;height:520px'+(id==='1'?';pointer-events:none':'');
+            image.replaceWith(parent);pane.append(image);parent.append(pane);panes[id]={parent,pane};
+          }
+          cornerstone.getEnabledElements=()=>[];
+          cornerstone.metaData={get:(_,image)=>({StudyInstanceUID:'1.2.3',SeriesInstanceUID:'1.2.5',SOPInstanceUID:image.match(/instances\\/([\\d.]+)/)[1]})};
+          window.paint=(id,sop)=>{const v=views.get(id),image='/studies/1.2.3/series/1.2.5/instances/'+sop+'/frames/1';
+            Object.assign(v,{viewportStatus:'rendered',getCurrentImageId:()=>image,csImage:{imageId:image},stackInvalidated:false});
+            v.element.dispatchEvent(new CustomEvent('IMAGE_RENDERED',{bubbles:true,detail:{element:v.element,viewportId:id}}));
+            return kinViewerFrameCoverageState().shown;};
+          window.coverage=KinFrameCoverage.mount(services);
+        }''')
+        p.wait_for_function('kinViewerFrameCoverageState().phase==="ready"')
+        self.assertEqual(p.evaluate('paint("0","1.2.6.1")'), 1)
+        # A drawn cell that is not the active one counts.
+        self.assertEqual(p.evaluate('paint("1","1.2.6.2")'), 2)
+        # A tile layer keeps its own pointer events over that cell: what is under it was not shown.
+        self.assertEqual(p.evaluate('''() => {const t=document.createElement('div');t.style.cssText='position:absolute;inset:0;pointer-events:auto;z-index:1';
+          panes['1'].pane.append(t);const n=paint('1','1.2.6.3');t.remove();return n;}'''), 2)
+        # The centre of the cell clipped away: the hit is no longer that cell's own parent.
+        self.assertEqual(p.evaluate('''() => {const box=panes['1'].parent;box.style.width='100px';const n=paint('1','1.2.6.3');box.style.width='480px';return n;}'''), 2)
+        self.assertEqual(p.evaluate('paint("1","1.2.6.3")'), 3)
+        state = p.evaluate('kinViewerFrameCoverageState()')
+        self.assertEqual((state['total'], state['remaining']), (4, 1))
+        asked = []
+        p.evaluate('window.asked=[];kinViewerFrameCoverageConfirm(m=>{asked.push(m);return false})')
+        asked = p.evaluate('asked')
+        self.assertEqual(len(asked), 1); self.assertIn('1개', asked[0])
+
     def test_tech_note_real_input_busy_and_unknown_are_preserved(self):
         p = self.page
         p.add_script_tag(url=BASE + '/worklist/hpacs-lite/tech-note.js')

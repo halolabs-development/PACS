@@ -61,10 +61,15 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
       const s=snapshot();status.textContent=!live()?kinText("세션이 종료되었습니다."):preferenceKnown&&!enabled?'Off':phase==='ready'?'Displayed '+s.shown+' / '+s.total+' · Not Displayed '+s.remaining+' · Documents '+s.documents:phase==='loading'?'Checking Original List': 'Unverified · '+message;
       feedback.textContent=preferenceMessage;
     }
+    // The viewer grid turns pointer events off on every pane but the active one, so a hit test at such a cell answers the
+    // pane's own parent. Only that exact parent means nothing is on top; a tile or tool layer keeps its own pointer events.
+    const restingPane=(e,hit,w)=>{const pane=e.closest('[data-cy="viewport-pane"]');return !!pane&&w.getComputedStyle(pane).pointerEvents==='none'&&hit===pane.parentElement;};
     function visible(element){
       try{
         if(document.hidden||!element?.isConnected)return false;
-        let w=root,e=element;
+        // One point decides: the centre of the image cell, followed up through any embedding frame.
+        const cell=element.getBoundingClientRect();if(cell.width<=0||cell.height<=0)return false;
+        let w=root,e=element,x=cell.left+cell.width/2,y=cell.top+cell.height/2;
         while(e){
           if(e.closest('[hidden],[inert]')||!e.getClientRects().length)return false;
           const modal=[...w.document.querySelectorAll('dialog[open],[role="dialog"][aria-modal="true"],.modal.show')].some(m=>{
@@ -73,9 +78,11 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
           });
           if(modal)return false;
           for(let a=e;a;a=a.parentElement){const s=w.getComputedStyle(a);if(s.visibility==='hidden'||s.visibility==='collapse'||s.display==='none'||Number(s.opacity)===0)return false;}
-          const rect=e.getBoundingClientRect(),left=Math.max(0,rect.left),right=Math.min(w.innerWidth,rect.right),top=Math.max(0,rect.top),bottom=Math.min(w.innerHeight,rect.bottom);
-          if(right<=left||bottom<=top||!e.contains(w.document.elementFromPoint((left+right)/2,(top+bottom)/2)))return false;
-          if(w===w.top)break;e=w.frameElement;w=w.parent;if(w.document.hidden)return false;
+          const hit=w.document.elementFromPoint(x,y);
+          if(!hit||!e.contains(hit)&&!(e===element&&restingPane(e,hit,w)))return false;
+          if(w===w.top)break;
+          const frame=w.frameElement,box=frame.getBoundingClientRect();x+=box.left+frame.clientLeft;y+=box.top+frame.clientTop;
+          e=frame;w=w.parent;if(w.document.hidden)return false;
         }
         return true;
       }catch(_){return false;}
