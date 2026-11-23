@@ -346,8 +346,9 @@
     // failed keeps the U4 F-01 sentence as its note and never a control; the size reason is shown only for its code.
     // A refused patient ID is its own reason, with no F-01 note beside it.
     if(receipt.phase==='failed'){
-      const refused=receipt.errorCode===IDENTITY_REFUSED_CODE;
-      return pick('failed',detail,[...(receipt.errorCode==='instance_exceeds_budget'?[OVERSIZED]:refused?[IDENTITY_REFUSED]:[]),...code].join(' · '),refused?null:retry);
+      if(receipt.errorCode===IDENTITY_REFUSED_CODE)
+        return pick('failed',detail,kinSayEn('{0} · {1}',kinSayEn(IDENTITY_REFUSED),kinSayEn('오류 코드 {0}',receipt.errorCode)),null);
+      return pick('failed',detail,[...(receipt.errorCode==='instance_exceeds_budget'?[OVERSIZED]:[]),...code].join(' · '),retry);
     }
     if(receipt.phase==='retry'){
       const reason=['Gateway 자동 재시도 대기',...(count(receipt.attempt)?['시도 '+receipt.attempt+'회']:[]),...code].join(' · ');

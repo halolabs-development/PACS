@@ -1380,10 +1380,14 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
           const r = code => ({phase: 'failed', successCount: 3, localCount: 6, attempt: 0, errorCode: code,
             serverReceivedAt: '2026-09-24T01:05:00.000Z', agentSeq: 8, epoch});
           const status = A.gatewayStatus(r('stow_patient_conflict'), epoch + '|8', same), action = A.gatewayRetryAction(r('stow_patient_conflict'));
-          return {status: [status.key, status.reason, status.retry], action: [action.kind, action.text, action.title],
+          return {status: [status.key, window.KinLanguage.tr(status.reason, 'ko'), status.retry],
+            english: window.KinLanguage.tr(status.reason, 'en'), action: [action.kind, action.text, action.title],
             size: A.gatewayRetryAction(r('instance_exceeds_budget')).kind,
             answer: A.gatewayRetryAnswer('1.2.30', null, {status: 409, code: 'GATEWAY_RETRY_NOT_RETRY'}, same).text}; }""", EPOCH)
         self.assertEqual(["failed", IDENTITY_REFUSED + " · 오류 코드 stow_patient_conflict", None], result["status"])
+        # On an English screen the reason and the label read in English; the code is a value and stays as sent.
+        self.assertEqual("The original patient ID of this study UID could not be confirmed as one, so the images were not received"
+                         " · Error code stow_patient_conflict", result["english"])
         # The same action is the note the worklist's Info panel draws for the study: the reason, never a control.
         self.assertEqual(["identity_refused", IDENTITY_REFUSED], result["action"][:2])
         self.assertEqual("unsupported_f01", result["size"])

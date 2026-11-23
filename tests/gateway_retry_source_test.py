@@ -710,7 +710,7 @@ def render_problems(main):
                    'if (retryButton.dataset.uid !== s.uid || retryButton.dataset.key !== retryKey) {',
                    'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                    '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
-                   'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                   'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
         if needle not in render:
             problems.append(needle[:40])
     for banned in ("api(", "fetch(", "toast(", "localStorage", "sessionStorage", "innerHTML"):
@@ -811,7 +811,7 @@ def f01v_problems(main, arrivals):
                        'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                        '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
                        'retryButton.disabled = !!retryButton.dataset.request;',
-                       'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                       'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
             if needle not in arrow:
                 problems.append("drawRetry " + needle[:40])
         if render.index(F01V_ARROW) > render.index('$("#not-observed-list")'):
