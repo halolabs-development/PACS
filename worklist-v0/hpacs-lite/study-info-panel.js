@@ -616,7 +616,7 @@
           || !(serverMode && !offline && !demoMode && KinAuth.has("technician"));
         retryButton.disabled = !!retryButton.dataset.request; retryButton.title = retry?.title ?? "";
         // Without a bindable retry the note is labels.retry itself: the F-01 sentence for failed, else nothing.
-        if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }
+        if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }
       };
       const absent = summary.notObserved ?? [], box = $("#not-observed");
       if (box) {

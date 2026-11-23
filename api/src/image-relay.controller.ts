@@ -13,9 +13,11 @@
  * (StudyImageDeliveryRecorder.describe), durable before their first byte; QIDO and DICOMweb metadata reuse a session read or prepare one through ViewingRecordService. The auth_request route refuses every image read
  * (pacs.controller.ts), so an image byte has no unrecorded way out.
  */
-import { Controller, Get, Inject, NotFoundException, Param, Post, Req, Res, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, Controller, Get, Inject, NotFoundException, Param, Post, Req, Res, ServiceUnavailableException } from '@nestjs/common';
 import { EMR_RECORD_PORT, EmrRecordPort } from './emr-runtime/record-port';
 import { recordGatewayStow } from './pacs/dicom-gateway';
+import { gatewayStowRefusal, readStowHead } from './gateway-stow-identity';
+import type { GatewayStowRefusal } from './gateway-stow-identity';
 import { archiveRead, imageRead, RECORDED_STUDY_HEADER, StudyImageDeliveryRecorder } from './image-delivery-record';
 import { PrismaService } from './prisma.service';
 import { REQUEST_CONTEXT_SOURCE, RequestContextSource } from './emr-runtime/request-context';
@@ -51,28 +53,55 @@ export class ImageRelayController {
     prisma: PrismaService, @Inject(REQUEST_CONTEXT_SOURCE) requests: RequestContextSource,
     viewing: ViewingRecordService) { this.metadata = new DicomwebReadRecorder(prisma, requests, viewing); }
 
+  /**
+   * Gateway STOW. Before any byte reaches the archive, the archive's study of this UID is observed and, when it holds
+   * one, the body is read as far as its first object's PatientID (gateway-stow-identity.ts): a copy under another
+   * PatientID, or any copy of a UID two patients already answer, is refused 409 with its code and nothing is sent. The
+   * Gateway reads the code and stops repeating the transfer. Everything else is relayed as the bytes arrived.
+   */
   @Post('gateway/stow/:uid')
   async stow(@Param('uid') uid: string, @Req() req: any, @Res() res: any) {
     await this.pacs.authzDicom('/dicom-web/studies/' + uid, 'POST', member(req));
     const abort = new AbortController(), stop = () => abort.abort();
     req.once('aborted', stop);
+    let refusal: GatewayStowRefusal | null = null;
     try {
       const user = process.env.ORTHANC_USER, pass = process.env.ORTHANC_PASS;
       if (!user || !pass) throw new Error('Orthanc credentials unavailable');
-      const upstream = await orthancFetch((process.env.ORTHANC_URL ?? 'http://orthanc:8042').replace(/\/$/, '') + '/dicom-web/studies/' + uid, {
-        method: 'POST', redirect: 'error', body: req, duplex: 'half', signal: abort.signal,
-        headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'),
-          'Content-Type': String(req.headers['content-type'] ?? ''), Accept: 'application/dicom+json' },
-      } as RequestInit, 'body');
-      const bytes = Buffer.from(await upstream.arrayBuffer());
-      if (upstream.ok) await recordGatewayStow(this.records, this.orthanc, req, uid, JSON.parse(bytes.toString('utf8')));
-      res.status(upstream.status);
-      const type = upstream.headers.get('content-type');
-      if (type) res.setHeader('Content-Type', type);
-      res.end(bytes);
+      const contentType = String(req.headers['content-type'] ?? '');
+      const stored = (await this.orthanc.studyIdentityResources(uid, abort.signal)).map(row => OrthancService.tag(row, '00100020'));
+      // One reader of the request for the head and for the relay: the bytes held for the decision are sent first.
+      const body: AsyncIterator<Buffer> = req[Symbol.asyncIterator]();
+      const head = stored.length === 1 ? await readStowHead(() => body.next(), contentType) : null;
+      refusal = gatewayStowRefusal(stored, head ? head.identity : null, String(req.institution ?? ''));
+      if (refusal) {
+        // The refusal is answered once the request has been read to its end, so the proxy delivers it as it is.
+        for (let step = await body.next(); !step.done; step = await body.next());
+      } else {
+        const relayed = async function* (): AsyncGenerator<Buffer> {
+          if (head) yield* head.chunks;
+          if (head?.ended) return;
+          try { for (let step = await body.next(); !step.done; step = await body.next()) yield step.value; }
+          finally { await body.return?.(); }
+        };
+        const upstream = await orthancFetch((process.env.ORTHANC_URL ?? 'http://orthanc:8042').replace(/\/$/, '') + '/dicom-web/studies/' + uid, {
+          // Node's fetch sends an async iterable of bytes as the request stream (as it did the request itself).
+          method: 'POST', redirect: 'error', body: relayed() as any, duplex: 'half', signal: abort.signal,
+          headers: { Authorization: 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'),
+            'Content-Type': contentType, Accept: 'application/dicom+json' },
+        } as RequestInit, 'body');
+        const bytes = Buffer.from(await upstream.arrayBuffer());
+        if (upstream.ok) await recordGatewayStow(this.records, this.orthanc, req, uid, JSON.parse(bytes.toString('utf8')));
+        res.status(upstream.status);
+        const type = upstream.headers.get('content-type');
+        if (type) res.setHeader('Content-Type', type);
+        res.end(bytes);
+      }
     } catch {
       throw new ServiceUnavailableException('영상 수신 또는 기재 기록을 확인하지 못했습니다. 같은 전송을 다시 확인하세요.');
     } finally { req.off('aborted', stop); }
+    // The code is the whole answer: the Gateway reads nothing else, and no person reads this response.
+    if (refusal) throw new ConflictException({ code: refusal });
   }
 
   @Get('image-relay/*')

@@ -57,8 +57,9 @@ EPOCH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F-01)"
 # U3 surfaces this unit must not touch, as they are at 9152f43 (LF-normalised sha256). The rule moved once since, for the
 # receipt's optional series count (successSeries, bff24d48…27510 before); its behaviour is gateway_receipt_server_test.cjs
-# over tests/gateway_receipt_vectors.json, which this pin runs.
-U3_RULE_SHA256 = "e038ba9382b21d536aa5a27a717b10dfd111fef1429abb51325cb7886e57ffe1"
+# over tests/gateway_receipt_vectors.json, which this pin runs. It moved again for one more error code in its closed
+# list: a transfer KIN refused for its patient ID (stow_patient_conflict; e038ba93…7ffe1 before).
+U3_RULE_SHA256 = "d55656a7be6ac78ecc33feeb20ae794835e99fcfcd0e12c01623346f0611c24e"
 # The Gateway label pin moved once for the product rename: its one visible "KIN 보유" now reads "HALO PACS 보유"
 # (the 9152f43 text with only that name put back hashes to 4b1b003b…aad79); logic and keys are unchanged.
 # It moved again for missing images: the K<M and Not Observed reasons now come from receiptGap (the one answer the
@@ -151,7 +152,11 @@ def decide(receipt, wrong=None):
         return "eligible" if wrong == "no receipt is eligible" else "not_retry"
     phase = receipt["phase"]
     if phase == "failed":
-        return "eligible" if wrong == "failed is eligible" else "unsupported_f01"
+        if wrong == "failed is eligible":
+            return "eligible"
+        # A transfer KIN refused for its patient ID is not the size limit: no retry state exists, and it is not F-01.
+        refused = receipt.get("errorCode") == "stow_patient_conflict" and wrong != "a refused patient ID is F-01"
+        return "not_retry" if refused or wrong == "no failed is F-01" else "unsupported_f01"
     if phase == "complete" and wrong == "complete is eligible":
         return "eligible"
     if wrong == "any error-free phase is eligible" and phase in ("pending", "announcing", "sending"):
@@ -213,7 +218,8 @@ WRONG = {
                   ["extra keys tolerated", "the first array element is taken", "an object value is read",
                    "epoch case-insensitive", "epoch trimmed"]),
     "decide": (lambda c, w: decide(c["receipt"], w), lambda c: c["expect"],
-               ["no receipt is eligible", "failed is eligible", "complete is eligible", "any error-free phase is eligible"]),
+               ["no receipt is eligible", "failed is eligible", "complete is eligible", "any error-free phase is eligible",
+                "a refused patient ID is F-01", "no failed is F-01"]),
     "pending": (lambda c, w: pending(c, w), lambda c: c["expect"],
                 ["the stored epoch is ignored", "the stored seq is ignored", "any phase is delivered",
                  "the receipt institution is ignored", "the study institution is ignored", "the poller's epoch is ignored"]),
@@ -461,7 +467,8 @@ class ServerPins(unittest.TestCase):
         epoch = "const EPOCH = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;"
         self.assertEqual((RULE.count(epoch), RECEIPT_RULE.count(epoch)), (1, 1), "a byte-equal copy of the U3 epoch literal")
         decide = between(RULE, "export function decideGatewayRetryRequest(", "\n}\n")
-        self.assertLess(decide.index("if (!receipt) return 'not_retry';"), decide.index("if (receipt.phase === 'failed') return 'unsupported_f01';"))
+        self.assertLess(decide.index("if (!receipt) return 'not_retry';"), decide.index(
+            "if (receipt.phase === 'failed') return receipt.errorCode === 'stow_patient_conflict' ? 'not_retry' : 'unsupported_f01';"))
         self.assertIn("return receipt.phase === 'retry' ? 'eligible' : 'not_retry';", decide)
         poll = between(RULE, "export function parseGatewayRetryPoll(", "\n}\n")
         self.assertIn("if (keys.length !== 1 || keys[0] !== 'epoch')", poll)
@@ -703,7 +710,7 @@ def render_problems(main):
                    'if (retryButton.dataset.uid !== s.uid || retryButton.dataset.key !== retryKey) {',
                    'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                    '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
-                   'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                   'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
         if needle not in render:
             problems.append(needle[:40])
     for banned in ("api(", "fetch(", "toast(", "localStorage", "sessionStorage", "innerHTML"):
@@ -804,7 +811,7 @@ def f01v_problems(main, arrivals):
                        'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                        '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
                        'retryButton.disabled = !!retryButton.dataset.request;',
-                       'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                       'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
             if needle not in arrow:
                 problems.append("drawRetry " + needle[:40])
         if render.index(F01V_ARROW) > render.index('$("#not-observed-list")'):

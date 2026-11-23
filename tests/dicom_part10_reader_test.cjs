@@ -620,3 +620,110 @@ test('R-FUZZ: random byte damage never throws and always yields a well-formed re
     else assert.ok(CODES.includes(result.code), `round ${round}: ${result.code}`);
   }
 });
+
+// ---- readPatientIdPrefix: the PatientID of an object from its leading bytes ----------------------------------------
+// The Gateway STOW relay must decide before it holds a whole object (one object may be far larger than what it keeps),
+// so it reads only as far as PatientID. Expected values are what the vectors wrote; nothing reads the reader's source.
+const { readPatientIdPrefix } = require(TARGET);
+const BIG_ENDIAN = '1.2.840.10008.1.2.2';
+const DEFLATED = '1.2.840.10008.1.2.1.99';
+const JPEG_EXTENDED = '1.2.840.10008.1.2.4.51';   // a syntax outside the reader's list
+
+function prefix(bytes, complete) {
+  const before = sha256(bytes);
+  let result;
+  assert.doesNotThrow(() => { result = readPatientIdPrefix(bytes, complete); });
+  assert.equal(sha256(bytes), before, 'the prefix read must not alter the input bytes');
+  assert.ok(['known', 'more', 'unreadable'].includes(result.kind));
+  return result;
+}
+const known = patientId => ({ kind: 'known', patientId });
+
+test('P-PREFIX-CUT: at every cut the PatientID is not yet known before its value ends and is the object\'s own from there on', () => {
+  for (const vector of sweepVectors()) {
+    const ends = new Set(vector.boundaries);
+    let first = -1;
+    for (let length = 0; length <= vector.bytes.length; length += 1) {
+      const cut = vector.bytes.subarray(0, length);
+      const open = prefix(cut, false), whole = prefix(cut, true);
+      if (first < 0 && open.kind === 'known') first = length;
+      if (first < 0) {
+        assert.deepEqual(open, { kind: 'more' }, `${vector.label} cut at ${length}`);
+        // The same bytes as a whole object: never "more"; an object that ends before PatientID has none.
+        assert.notEqual(whole.kind, 'more', `${vector.label} whole at ${length}`);
+        if (whole.kind === 'known') assert.equal(whole.patientId, '', `${vector.label} whole at ${length}`);
+      } else {
+        assert.deepEqual(open, known('SYN-0001'), `${vector.label} cut at ${length}`);
+        assert.deepEqual(whole, known('SYN-0001'), `${vector.label} whole at ${length}`);
+      }
+    }
+    // Known exactly where the top-level (0010,0020) value ends: the look-alikes nested in sequences before it are not it.
+    assert.ok(ends.has(first), `${vector.label}: first known at ${first}`);
+    assert.equal(vector.bytes.subarray(first - 8, first).toString('latin1'), 'SYN-0001', vector.label);
+  }
+});
+
+test('P-PREFIX-VALUE: the value as written less its trailing padding (leading spaces, case and zeros kept); an absent or empty PatientID is the empty identifier', () => {
+  for (const ts of [IMPLICIT, EXPLICIT, JPEG_BASELINE]) {
+    const explicit = ts !== IMPLICIT;
+    assert.deepEqual(prefix(dicomFile({ ts, explicit }).bytes, false), known('SYN-0001'), ts);
+    // An archive keys a study by the identifier as written: only the trailing padding is not part of it.
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: '  SYN-0002  ' } }).bytes, false), known('  SYN-0002'), ts);
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: 'syn-0002' } }).bytes, false), known('syn-0002'), ts);
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: '0012' } }).bytes, false), known('0012'), ts);
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: '    ' } }).bytes, false), known(''), ts);
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: '' } }).bytes, false), known(''), ts);
+    // No (0010,0020) at all: known as soon as a later tag is seen, and for a whole object that ends before one.
+    assert.deepEqual(prefix(dicomFile({ ts, explicit, values: { id: null } }).bytes, false), known(''), ts);
+    const short = dicomFile({ ts, explicit, values: { id: null, issuer: null, birth: null, sex: null, study: null, series: null } });
+    assert.deepEqual(prefix(short.bytes, false), { kind: 'more' }, ts);
+    assert.deepEqual(prefix(short.bytes, true), known(''), ts);
+  }
+  // The import's full read trims both ends (its own contract); this read keeps the leading space of the same bytes.
+  const same = dicomFile({ values: { id: ' SYN-0003' }, pixel: nativePixel(true) }).bytes;
+  assert.equal(accepted(same).header.patientId, 'SYN-0003');
+  assert.deepEqual(prefix(same, true), known(' SYN-0003'));
+});
+
+test('P-PREFIX-CHARSET: UTF-8 under ISO_IR 192, otherwise printable ASCII only; anything else is unreadable, never a guess', () => {
+  assert.deepEqual(prefix(dicomFile({ values: { charset: 'ISO_IR 192', id: utf8('환자-7') } }).bytes, false), known('환자-7'));
+  assert.deepEqual(prefix(dicomFile({ values: { charset: 'ISO_IR 192', id: Buffer.from([0xff, 0xfe]) } }).bytes, false), { kind: 'unreadable' });
+  // An ASCII identifier is read under any declared character set (a Korean name does not make the identifier unreadable).
+  assert.deepEqual(prefix(dicomFile({ values: { charset: '\\ISO 2022 IR 149', id: 'SYN-0004' } }).bytes, false), known('SYN-0004'));
+  assert.deepEqual(prefix(dicomFile({ values: { charset: 'ISO_IR 100', id: Buffer.from([0x53, 0xe9]) } }).bytes, false), { kind: 'unreadable' });
+  assert.deepEqual(prefix(dicomFile({ values: { id: Buffer.from('SYN\u0000', 'latin1') } }).bytes, false), { kind: 'unreadable' });
+});
+
+test('P-PREFIX-UNREADABLE: what cannot be walked is unreadable, and short bytes of a longer object are "more"', () => {
+  // A transfer syntax outside the reader's list is not walked on a guess of its encoding.
+  for (const ts of [BIG_ENDIAN, DEFLATED, JPEG_EXTENDED]) assert.deepEqual(prefix(dicomFile({ ts, explicit: true }).bytes, true), { kind: 'unreadable' }, ts);
+  assert.deepEqual(prefix(dicomFile({ magic: 'DICX' }).bytes, false), { kind: 'unreadable' });
+  assert.deepEqual(prefix(Buffer.from('ORIGINAL'), false), { kind: 'more' });
+  assert.deepEqual(prefix(Buffer.from('ORIGINAL'), true), { kind: 'unreadable' });
+  assert.deepEqual(prefix(Buffer.alloc(0), true), { kind: 'unreadable' });
+  assert.deepEqual(prefix(dicomFile({ metaOptions: { drop: [0x0010] } }).bytes, true), { kind: 'unreadable' });
+  // A binary VR on PatientID, an undefined length on it, and tags out of order before it.
+  assert.deepEqual(prefix(dicomFile({ vrs: { id: 'OB' } }).bytes, true), { kind: 'unreadable' });
+  const undefinedId = { t: 0x00100020, bytes: sequence(true, 0x0010, 0x0020, 'SQ', [undefinedItem(Buffer.alloc(0))]) };
+  assert.deepEqual(prefix(dicomFile({ values: { id: null }, extra: [undefinedId] }).bytes, true), { kind: 'unreadable' });
+  const swapped = dicomFile({ keepOrder: true, values: { name: null, id: null, issuer: null, birth: null, sex: null, study: null, series: null },
+    extra: [{ t: 0x00080016, bytes: el(true, 0x0008, 0x0016, 'UI', ui(SOP_CLASS)) },
+    { t: 0x00100020, bytes: el(true, 0x0010, 0x0020, 'LO', txt('SYN-0005')) }] });
+  assert.deepEqual(prefix(swapped.bytes, true), { kind: 'unreadable' });
+});
+
+test('P-PREFIX-FUZZ: random byte damage never throws', () => {
+  let seed = 0x51c0ffee;
+  const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+  const vectors = sweepVectors();
+  for (let round = 0; round < 3000; round += 1) {
+    const bytes = Buffer.from(vectors[round % vectors.length].bytes);
+    for (let i = 0, edits = 1 + Math.floor(random() * 4); i < edits; i += 1) {
+      const at = Math.floor(random() * (bytes.length - 4));
+      if (random() < 0.3) bytes.writeUInt32LE(0xffffffff, at);
+      else bytes[at] = Math.floor(random() * 256);
+    }
+    const result = prefix(bytes.subarray(0, 1 + Math.floor(random() * bytes.length)), random() < 0.5);
+    if (result.kind === 'known') assert.equal(typeof result.patientId, 'string');
+  }
+});

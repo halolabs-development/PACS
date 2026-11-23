@@ -260,6 +260,115 @@ class AgentUnitTests(unittest.TestCase):
             queue.close()
 
 
+class StowIdentityRefusalTests(unittest.TestCase):
+    """KIN refuses, before it writes anything, a copy of a study it holds under another PatientID (or of a study two
+    patients already answer). The same images get the same answer, so the agent fails the study with that reason once
+    instead of repeating the transfer, keeps what KIN took, and looks again only when new images arrive."""
+
+    def agent(self, **changes) -> Agent:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        agent = Agent(config(str(Path(directory.name) / "queue.db"), **changes))
+        self.addCleanup(agent.queue.close)
+        agent.poll_changes = lambda: None
+        return agent
+
+    def one_pass(self, agent: Agent) -> None:
+        """One pass of the real main loop: the due study (if any) through the real process and its error handling."""
+        agent.stopping = False
+        real = Agent.process.__get__(agent)
+
+        def process(row):
+            agent.stopping = True
+            real(row)
+
+        agent.process = process
+        with patch.object(agent_module.time, "sleep", side_effect=lambda _seconds: setattr(agent, "stopping", True)):
+            agent.loop()
+
+    def test_only_kins_two_identity_codes_on_a_409_are_permanent(self):
+        cloud = agent_module.Cloud(config("unused", client_id="gw-inst-a"))
+        self.addCleanup(cloud.session.close)
+        answers = []
+        cloud.request = lambda *args, **kwargs: answers.pop(0)
+        for code in ("PATIENT_ID_CONFLICT", "EXISTING_STUDY_IDENTITY_UNRESOLVED"):
+            with self.subTest(code=code):
+                answers.append(FakeResponse(409, {"code": code, "message": "synthetic"}))
+                with self.assertRaises(PermanentGatewayError) as raised:
+                    cloud.stow("1.2.3", b"original", "multipart/related", "SCANNER_A")
+                self.assertEqual(error_code(raised.exception), "stow_patient_conflict")
+                self.assertEqual((cloud.last_stored, cloud.last_stow_at), (set(), None), "KIN took nothing")
+        # The archive's own 409 (a body of another study), a 409 without JSON or without that code, the code on another
+        # status: none of them says "never with these bytes", so each is retried as before.
+        archive_refusal = {"00081198": {"vr": "SQ", "Value": [{"00081155": {"vr": "UI", "Value": ["1.2.3.4"]}}]}}
+        for answer in (FakeResponse(409, archive_refusal), FakeResponse(409), FakeResponse(409, ["PATIENT_ID_CONFLICT"]),
+                       FakeResponse(409, {"code": "STUDY_OWNERSHIP_CONFLICT"}), FakeResponse(409, {"code": 7}),
+                       FakeResponse(409, {"message": "PATIENT_ID_CONFLICT"}),
+                       FakeResponse(503, {"code": "PATIENT_ID_CONFLICT"}), FakeResponse(403, {"code": "PATIENT_ID_CONFLICT"})):
+            with self.subTest(status=answer.status_code, body=answer.body):
+                answers.append(answer)
+                with self.assertRaises(GatewayError) as raised:
+                    cloud.stow("1.2.3", b"original", "multipart/related", "SCANNER_A")
+                self.assertNotIsInstance(raised.exception, PermanentGatewayError)
+                self.assertEqual(str(raised.exception), f"STOW HTTP {answer.status_code}")
+                self.assertEqual(error_code(raised.exception), "stow_http")
+
+    def test_a_refused_study_fails_once_with_its_code_keeps_what_kin_took_and_waits_for_new_images(self):
+        # A 700-byte budget is one 16-byte instance per batch: KIN takes the first batch and refuses the second.
+        agent, sent, stows = self.agent(byte_budget=700), [], []
+        agent.orthanc = FakeOrthanc(["1.2.3.1", "1.2.3.2", "1.2.3.3"])
+        agent.cloud = FakeCloud(lambda body: sent.append(dict(body)) or FakeResponse(200, {"result": "stored"}))
+
+        def stow(uid, body, content_type, source_ae, before_send):
+            stows.append(uid)
+            if len(stows) > 1:
+                raise PermanentGatewayError("STOW refused patient identity conflict")
+            return set()
+
+        agent.cloud.stow = stow
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 1)
+        self.one_pass(agent)
+        row = agent.queue.summary()["rows"][0]
+        self.assertEqual((row["phase"], row["successfulSops"], row["attempt"], row["lastError"]),
+                         ("failed", 1, 0, "STOW refused patient identity conflict"))
+        self.assertEqual(agent.queue.successes("1.2.3"), {"1.2.3.1"}, "the refused batch is not counted as sent")
+        self.assertEqual(len(stows), 2, "the batch after the refused one is not tried")
+        self.assertIsNone(agent.queue.due(), "failed is final: no backoff and no retry")
+        agent.flush_receipts()
+        last = sent[-1]
+        self.assertEqual(set(last), RECEIPT_KEYS)
+        self.assertEqual((last["phase"], last["errorCode"], last["successCount"], last["localCount"], last["attempt"]),
+                         ("failed", "stow_patient_conflict", 1, 3, 0))
+        # Later passes do not send it again, and the local copies of a failed study are never deleted as delivered.
+        self.one_pass(agent)
+        self.one_pass(agent)
+        self.assertEqual(len(stows), 2)
+        self.assertEqual(agent.queue.purgeable(time.time() + 10 ** 9, 10), [])
+        # New images of the study at the Gateway open it once more: one look, the same answer, failed again.
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 2)
+        self.assertEqual(agent.queue.due()["phase"], "pending")
+        self.one_pass(agent)
+        self.one_pass(agent)
+        self.assertEqual(len(stows), 3)
+        self.assertEqual((agent.queue.summary()["rows"][0]["phase"], agent.queue.successes("1.2.3")), ("failed", {"1.2.3.1"}))
+        self.assertIsNone(agent.queue.due())
+
+    def test_any_other_refused_stow_is_still_retried(self):
+        agent = self.agent()
+        agent.orthanc = FakeOrthanc(["1.2.3.1"])
+        agent.cloud = FakeCloud(lambda body: FakeResponse(200, {"result": "stored"}))
+
+        def stow(uid, body, content_type, source_ae, before_send):
+            raise GatewayError("STOW HTTP 409")
+
+        agent.cloud.stow = stow
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 1)
+        self.one_pass(agent)
+        row = agent.queue.summary()["rows"][0]
+        self.assertEqual((row["phase"], row["attempt"], row["lastError"]), ("retry", 1, "STOW HTTP 409"))
+        self.assertEqual(agent.queue.receipt("1.2.3")["errorCode"], "stow_http")
+
+
 class ReceiptErrorCodeTests(unittest.TestCase):
     """S4-U3 contract test 8 (agent side): every GatewayError message has an explicit errorCode."""
 

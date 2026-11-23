@@ -158,6 +158,7 @@ FIVE = listing(
 
 F01 = "같은 바이트로는 성공할 수 없습니다 — 지원 범위 밖(F-01)"
 OVERSIZED = "단일 DICOM 인스턴스가 Gateway 전송 상한(최대 24 MiB)을 넘어 보낼 수 없습니다"
+IDENTITY_REFUSED = "이 검사 UID의 원본 환자 번호를 하나로 확인할 수 없어 영상을 받지 않았습니다"
 NOT_RETRY = "지금은 재시도 대기 상태가 아니어서 요청하지 않았습니다. 목록이 갱신되면 다시 확인하세요."
 BUSY = "요청이 겹쳐 처리하지 못했습니다. 잠시 후 다시 시도하세요."
 RETRY_REASON = "Gateway 자동 재시도 대기 · 시도 1회 · 오류 코드 stow_http"
@@ -1355,6 +1356,46 @@ class AdminGatewayStatusDOMTest(unittest.TestCase):
         ], result["summaries"])
         self.assertEqual("No Gateway of this institution has contacted this server since it started (T0).", result["empty"])
         self.assertTrue(result["frozen"])
+
+    def test_15_a_transfer_refused_for_its_patient_id_says_so_and_offers_no_retry(self):
+        # The study stays listed as it was (HALO PACS wrote nothing of the refused copy); its report is failed with the
+        # code of a refused patient ID. The line says that reason: not the size-limit sentence, no F-01 note, no control,
+        # and no value other than the listed study's own.
+        refused = dict(receipt("failed", 8, 5, success=3, local=6), errorCode="stow_patient_conflict")
+        self.open()
+        self.refresh((200, listing([study("1.2.30", refused), study("1.2.13", receipt("failed", 3, 3, success=0, local=1)),
+                                    study("1.2.12", receipt("retry", 7, 4))])))
+        rows = {row["uid"]: row for row in self.rows()}
+        row = rows["1.2.30"]
+        self.assertEqual(("failed", "Transfer Failed", "gstate failed", "SYN PATIENT 30 · SYN-PID-30 · 20260924 · SYN-ACC-30", "1.2.30"),
+                         (row["status"], row["chip"], row["chipClass"], row["study"], row["uidLine"]))
+        self.assertEqual(reported(5, 3, 6) + " · " + IDENTITY_REFUSED + " · 오류 코드 stow_patient_conflict", row["detail"])
+        self.assertEqual((False, ""), (row["button"], row["note"]))
+        # The size limit and a waiting retry beside it keep their own words and control.
+        self.assertEqual((reported(3, 0, 1) + " · " + OVERSIZED + " · 오류 코드 instance_exceeds_budget", False, F01),
+                         (rows["1.2.13"]["detail"], rows["1.2.13"]["button"], rows["1.2.13"]["note"]))
+        self.assertEqual((reported(4, 3, 12) + " · " + RETRY_REASON, True), (rows["1.2.12"]["detail"], rows["1.2.12"]["button"]))
+        expect(self.page.locator("#gateway-counts")).to_contain_text("Transfer Failed 3")
+        result = self.page.evaluate("""epoch => { const A = window.KinStudyArrivals, same = v => v;
+          const r = code => ({phase: 'failed', successCount: 3, localCount: 6, attempt: 0, errorCode: code,
+            serverReceivedAt: '2026-09-24T01:05:00.000Z', agentSeq: 8, epoch});
+          const status = A.gatewayStatus(r('stow_patient_conflict'), epoch + '|8', same), action = A.gatewayRetryAction(r('stow_patient_conflict'));
+          return {status: [status.key, window.KinLanguage.tr(status.reason, 'ko'), status.retry],
+            english: window.KinLanguage.tr(status.reason, 'en'), action: [action.kind, action.text, action.title],
+            size: A.gatewayRetryAction(r('instance_exceeds_budget')).kind,
+            answer: A.gatewayRetryAnswer('1.2.30', null, {status: 409, code: 'GATEWAY_RETRY_NOT_RETRY'}, same).text}; }""", EPOCH)
+        self.assertEqual(["failed", IDENTITY_REFUSED + " · 오류 코드 stow_patient_conflict", None], result["status"])
+        # On an English screen the reason and the label read in English; the code is a value and stays as sent.
+        self.assertEqual("The original patient ID of this study UID could not be confirmed as one, so the images were not received"
+                         " · Error code stow_patient_conflict", result["english"])
+        # The same action is the note the worklist's Info panel draws for the study: the reason, never a control.
+        self.assertEqual(["identity_refused", IDENTITY_REFUSED], result["action"][:2])
+        self.assertEqual("unsupported_f01", result["size"])
+        self.assertEqual(NOT_RETRY, result["answer"])
+        # Nothing on the line or in its hover text promises that sending the same images again brings them in.
+        for text in (row["detail"], result["action"][1], result["action"][2]):
+            self.assertNotRegex(text, "다시 보내면|재전송하면|Now Retry")
+        self.assertRegex(result["action"][2], "저장되지 않았고")
 
 
 if __name__ == "__main__":

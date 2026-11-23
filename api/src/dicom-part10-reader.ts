@@ -519,3 +519,73 @@ export function readDicomPart10(input: Uint8Array): DicomReadResult {
     throw error;
   }
 }
+
+/**
+ * What the leading bytes of one Part-10 object say of its PatientID: `known` (the value without its trailing padding
+ * spaces, '' when the object has none), `more` (the bytes end before PatientID could be reached and the object goes on)
+ * or `unreadable`.
+ */
+export type PatientIdPrefix = { kind: 'known'; patientId: string } | { kind: 'more' } | { kind: 'unreadable' };
+
+const SPECIFIC_CHARACTER_SET = 0x00080005;
+const PATIENT_ID = 0x00100020;
+
+/**
+ * The PatientID of a Part-10 object from its leading bytes, for a receiver that must decide before it holds the whole
+ * object (the Gateway STOW relay streams objects of any size). Unlike readDicomPart10 it accepts or refuses nothing: it
+ * walks the File Meta group and the top-level elements in their ascending order with the same bounded steps, under the
+ * same transfer syntax list (any other syntax is unreadable, never guessed), stops at PatientID (0010,0020) or the first
+ * tag after it, and decodes the value as readDicomPart10 does (UTF-8 under ISO_IR 192, otherwise printable ASCII only).
+ * The value keeps its leading spaces and its case: the archive keys a study by the identifier as written, less the
+ * trailing padding, so ` A` and `A` are two patients there and must be two here. `complete` says `input` is the whole
+ * object, so running out of bytes is not `more`. Pure: no IO, the input is never modified.
+ */
+export function readPatientIdPrefix(input: Uint8Array, complete: boolean): PatientIdPrefix {
+  const b = input;
+  const short = (): PatientIdPrefix => complete ? { kind: 'unreadable' } : { kind: 'more' };
+  if (b.length < 132) return short();
+  if (b[128] !== 0x44 || b[129] !== 0x49 || b[130] !== 0x43 || b[131] !== 0x4d) return { kind: 'unreadable' };
+  const w: Walk = { bytes: b, end: b.length, encapsulated: false, elements: 0, maxDepth: 0 };
+  try {
+    const meta = readFileMeta(w);
+    // The bytes stop where the next group number would be: the File Meta group (and its Transfer Syntax) may go on.
+    if (!complete && w.end - meta.datasetStart < 2) return { kind: 'more' };
+    const transferSyntaxUid = meta.transferSyntax ? latin1(b, uiTrimmed(b, meta.transferSyntax)) : '';
+    const syntax = DICOM_TRANSFER_SYNTAX_ALLOW_LIST.find(candidate => candidate.uid === transferSyntaxUid);
+    if (!syntax) return { kind: 'unreadable' };
+    const explicit = syntax.datasetSyntax === 'explicit-vr-little-endian';
+    w.encapsulated = syntax.pixelPolicy === 'encapsulated';
+    let pos = meta.datasetStart;
+    let last = meta.lastTag;
+    let characterSet: Range | null = null;
+    while (pos < w.end) {
+      const h = readHeader(w, pos, explicit);
+      if (h.tag <= last) return { kind: 'unreadable' };
+      last = h.tag;
+      if (h.tag > PATIENT_ID) return { kind: 'known', patientId: '' };
+      countElement(w);
+      if (h.length === UNDEFINED_LENGTH) {
+        if (h.tag === PATIENT_ID || h.tag === SPECIFIC_CHARACTER_SET) return { kind: 'unreadable' };
+        pos = undefinedLengthValue(w, h, explicit, 1);
+        continue;
+      }
+      const end = skip(w, h.valueStart, h.length);
+      if (h.tag === SPECIFIC_CHARACTER_SET || h.tag === PATIENT_ID) {
+        if (!namedVrAcceptable(h.vr)) return { kind: 'unreadable' };
+        if (h.tag === SPECIFIC_CHARACTER_SET) characterSet = [h.valueStart, end];
+        else {
+          const chars = repertoire(characterSet ? latin1(b, textTrimmed(b, characterSet, true)) : null);
+          const range = textTrimmed(b, [h.valueStart, end], false);
+          const patientId = chars === 'utf-8' ? utf8Text(b, range) : printableAscii(b, range) ? latin1(b, range) : null;
+          return patientId === null ? { kind: 'unreadable' } : { kind: 'known', patientId };
+        }
+      }
+      pos = end;
+    }
+    // The dataset ended before PatientID: an object without one, or bytes that stop short of it.
+    return complete ? { kind: 'known', patientId: '' } : { kind: 'more' };
+  } catch (error) {
+    if (error instanceof Refusal) return short();
+    throw error;
+  }
+}
