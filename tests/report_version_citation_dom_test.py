@@ -19,7 +19,7 @@ belong to the live suite and stay unverified. No LiveStack, no database, no Orth
 Hosted only: this file has never run anywhere but the hosted runner's measurement step.
 """
 from page_source import read_page_source
-from main_split_harness import fixture_block
+from main_split_harness import fixture_block, report_display_block
 import json
 import os
 import unittest
@@ -198,7 +198,7 @@ def harness():
             .replace("CITATIONJS", CITATION_JS)
             .replace("PAPERJS", PAPER_JS)
             .replace("VIEWSJS", VIEWS_JS)
-            .replace("DISPLAYACTORFN", DISPLAY_ACTOR_FN + "\n" + SIGNER_FN)
+            .replace("DISPLAYACTORFN", report_display_block(MAIN_PATH) + "\n" + DISPLAY_ACTOR_FN + "\n" + SIGNER_FN)
             .replace("HISTORYBLOCK", fixture_block(MAIN_PATH, HISTORY_FIXTURE, "HISTORY_BLOCK"))
             .replace("SESSIONACTOR", SESSION_ACTOR)
             .replace("UIDVALUE", UID))
