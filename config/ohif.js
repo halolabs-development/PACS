@@ -10668,6 +10668,22 @@ function kinViewerImageReference(imageId) {
   const m = typeof imageId === 'string' && imageId.match(/\/studies\/([0-9.]+)\/series\/([0-9.]+)\/instances\/([0-9.]+)\/frames\/([1-9][0-9]*)(?:$|[?#])/);
   return m ? { study: m[1], seriesUid: m[2], sopUid: m[3], frame: Number(m[4]) } : null;
 }
+// The cell's image number ("I: n (k/N)") and scroll bar follow STACK_VIEWPORT_SCROLL, which the renderer sends from its own
+// scroll but not from a direct setImageIdIndex() (that sends STACK_NEW_IMAGE only), so a cell moved here kept the old number.
+// The same event is sent on the cell's element in the renderer's own order: once the request is issued, before its image
+// arrives (the viewer raises its Loading cover on this event and lowers it on the STACK_NEW_IMAGE that follows). Nothing is
+// sent when the index did not change (the renderer then loads nothing), the move is no longer the live one of this cell, or
+// the request left the cell on another index or image.
+function kinViewerAnnounceScroll(v, index, from, imageId, live) {
+  try {
+    const name = window.cornerstone?.Enums?.Events?.STACK_VIEWPORT_SCROLL, element = v.element;
+    if (!name || !element || typeof element.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+    if (from === index || !live() || typeof v.getCurrentImageIdIndex !== 'function' || v.getCurrentImageIdIndex() !== index
+        || v.getImageIds()[index] !== imageId) return;
+    element.dispatchEvent(new CustomEvent(name, { cancelable: true, detail: { newImageIdIndex: index,
+      imageId, direction: Number.isInteger(from) ? index - from : 0 } }));
+  } catch (_) {}
+}
 // Exact-frame navigation shared by the Saved Items "Go to Image" button and the Findings section.
 // `env` exposes the live closure state of kinCreateViewerHistory through getters, so every decision
 // after an await is re-taken against the current session and never against a copy. The result is
@@ -10710,9 +10726,14 @@ async function kinViewerNavigateTo(env, target) {
         // The pinned setter preserves its load Promise but leaves the scroll target
         // and an older wheel debounce untouched. Retarget before starting the load;
         // doing this after await would rewind a newer user scroll.
+        const from = typeof v.getCurrentImageIdIndex === 'function' ? v.getCurrentImageIdIndex() : null;
+        const imageId = v.getImageIds()[index];
         clearTimeout(v.debouncedTimeout);
         v.targetImageIdIndex = index;
-        await v.setImageIdIndex(index);
+        const loading = v.setImageIdIndex(index);
+        kinViewerAnnounceScroll(v, index, from, imageId,
+          () => live() && env.services.viewportGridService.getActiveViewportId() === viewportId);
+        await loading;
       } catch (_) { return live() ? refusal('frame-missing') : refusal('superseded'); }
       if (!live() || env.services.viewportGridService.getActiveViewportId() !== viewportId) return refusal('superseded');
       // The frame actually shown after the await is the only proof; a user scroll or a
