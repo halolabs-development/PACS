@@ -15,7 +15,7 @@
     const TECHNICIAN_WORK_REASON = "방사선사(technician) 권한이 필요합니다";
     /** A row or order menu item that is technician work: grey with the bar's reason when this account may not do it. */
     function technicianItem(item) {
-      return technicianWork() ? item : { ...item, dis: true, title: TECHNICIAN_WORK_REASON };
+      return technicianWork() ? item : { ...item, dis: true, title: kinSayEn(TECHNICIAN_WORK_REASON) };
     }
     /**
      * B14: the top bar's mode menu (work-mode.js), opened from the HALO PACS mark; the Radiology / Technician tabs stay as they are. Radiologist
@@ -177,6 +177,7 @@
       queryRetrieve?.sync();
       clearInterval(poll); poll = null; ++pollGeneration;
       $("#dbstat").innerHTML = `<span style="color:#ff6b6b">●</span> 서버 연결 끊김 — 저장 불가 (클릭: 재시도)`;
+      window.KinLanguage?.markup?.($("#dbstat"));
       kinWrite($("#dbstat"), kinSayEn("API에 연결하지 못했습니다 ({e0}).\n이 상태에서는 아무것도 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.\ndocker compose up -d 로 API를 띄우면 자동으로 다시 붙습니다.", e?.message ?? ""), "title");
       $("#dbstat").style.cursor = "pointer";
       toast("서버 연결이 끊겼습니다 — 지금부터 저장되지 않습니다. 쓰던 판독문은 복사해 두세요.", "err");
@@ -495,6 +496,7 @@
         serverMode = false; offline = false;
         Object.assign(appState, legacyAppState);
         $("#dbstat").innerHTML = `<span style="color:#7f8899">●</span> 데모 모드`;
+        window.KinLanguage?.markup?.($("#dbstat"));
         kinWrite($("#dbstat"), kinSayEn("로그인하지 않은 둘러보기 모드 — 변경 내용은 이 브라우저에만 남습니다"), "title");
         await load();
         return;

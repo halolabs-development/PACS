@@ -682,9 +682,9 @@ def request_problems(main):
         problems.append("one empty POST")
     guard = "if (button.dataset.request !== token || button.dataset.uid !== uid || button.dataset.key !== key) return;"
     try:
-        if not body.index("await api(") < body.index(guard) < body.index("note.textContent = shown.text;"):
+        if not body.index("await api(") < body.index(guard) < body.index("kinWrite(note, kinSayEn(shown.text));"):
             problems.append("written before the stale check")
-        if body.index("note.textContent") < body.index("await api("):
+        if body.index("kinWrite(note") < body.index("await api("):
             problems.append("text before the answer")
     except ValueError:
         problems.append("guard")
@@ -703,7 +703,7 @@ def render_problems(main):
                    'if (retryButton.dataset.uid !== s.uid || retryButton.dataset.key !== retryKey) {',
                    'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                    '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
-                   'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                   'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
         if needle not in render:
             problems.append(needle[:40])
     for banned in ("api(", "fetch(", "toast(", "localStorage", "sessionStorage", "innerHTML"):
@@ -804,7 +804,7 @@ def f01v_problems(main, arrivals):
                        'Object.assign(retryButton.dataset, { uid: s.uid, key: retryKey, request: "", requested: "" });',
                        '|| !(serverMode && !offline && !demoMode && KinAuth.has("technician"));',
                        'retryButton.disabled = !!retryButton.dataset.request;',
-                       'if (!retryKey) { retryNote.textContent = retry?.text ?? ""; retryNote.title = retry?.title ?? ""; }'):
+                       'if (!retryKey) { kinWrite(retryNote, retry?.text ? kinSayEn(retry.text) : ""); kinWrite(retryNote, retry?.title ? kinSayEn(retry.title) : "", "title"); }'):
             if needle not in arrow:
                 problems.append("drawRetry " + needle[:40])
         if render.index(F01V_ARROW) > render.index('$("#not-observed-list")'):

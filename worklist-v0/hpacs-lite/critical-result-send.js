@@ -199,8 +199,8 @@
     const parts = [];
     if (error && error.status) parts.push(`HTTP ${error.status}`);
     if (error && error.code) parts.push(error.code);
-    const message = error && error.message ? error.message : TEXT.rejected;
-    return parts.length ? `${message} (${parts.join(' · ')})` : message;
+    const message = error && error.message ? error.message : kinSayEn(TEXT.rejected);
+    return parts.length ? kinSayEn('{0} ({1})', message, parts.join(' · ')) : message;
   }
   const reasonOf = error => (error && own(TEXT.codes, error.code) ? TEXT.codes[error.code] : null)
     || (error && own(TEXT.statuses, String(error.status)) ? TEXT.statuses[error.status] : TEXT.rejected);
@@ -1086,7 +1086,7 @@
         loadedOnce = true;
         if (!read) {
           listPhase = 'failed';
-          listError = TEXT.malformed;
+          listError = kinSayEn(TEXT.malformed);
           paintPanel();
           return;
         }
@@ -1401,7 +1401,7 @@
 
     function lockArea(message, detail) {
       if (ended || lock !== null) return;
-      lock = { text: message, detail: detail || '' };
+      lock = { text: typeof message === 'string' ? kinSayEn(message) : message, detail: detail || '' };
       abortAll();
       entrySeq++;
       listSeq++;

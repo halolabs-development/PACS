@@ -82,6 +82,49 @@ class ReportStateTablePage(unittest.TestCase):
         # the writer's name is data: never translated
         self.assertEqual(self.rs_cell(h.PATIENT).locator("[translate=no]").inner_text(), WRITER)
 
+    def test_rs_titles_name_the_writer_in_the_language_chosen_after_they_are_drawn(self):
+        # A colleague's Save and a colleague's hold: the RS title joins the state's help with the writer's name (data), and the
+        # viewing cell's mark names its holder. English repaints them with the name as written; Korean or no choice reads
+        # exactly as drawn.
+        self.open()
+        saved, held = self.rs_cell(h.PATIENT), self.rs_cell(h.PATIENT_B)
+        mark = self.row(h.PATIENT_B).locator("span.hold.other")
+        marked = mark.count() > 0
+        read = lambda: (saved.get_attribute("title"), held.get_attribute("title"), mark.get_attribute("title") if marked else None)
+        korean = read()
+        self.assertEqual(f"저장했지만 아직 승인하지 않은 판독문 — {WRITER}", korean[0])
+        self.assertEqual(f"판독의가 판독문을 쓰기 시작했습니다(점유) — 아직 저장하지 않았습니다 — {WRITER}", korean[1])
+        if marked:
+            self.assertEqual(f"{WRITER} 님이 작성 중", korean[2])
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(saved).to_have_attribute("title", f"Report saved but not yet approved — {WRITER}")
+        expect(held).to_have_attribute("title", f"A radiologist started writing this report (held) — not saved yet — {WRITER}")
+        if marked:
+            expect(mark).to_have_attribute("title", f"{WRITER} writing")
+        for choice in ({"version": 1, "worklist": "ko", "reading": "ko"}, {"version": 1, "worklist": None, "reading": None}):
+            self.page.evaluate("c => KinLanguage.restore(c)", choice)
+            self.assertEqual(korean, read(), choice)
+
+    def test_template_rows_say_how_to_use_them_in_the_language_chosen_after_they_are_drawn(self):
+        # Each template row's help and its View button name the template (title and shortcut are data): English repaints
+        # them; Korean or no choice reads exactly as drawn.
+        self.site.templates = [{**flow.TEMPLATE, "shortcut": "nbct"}, {**flow.TEMPLATE, "id": "SYN-TPL-2", "title": "SYN PLAIN TEMPLATE"}]
+        self.open()
+        self.pick(h.PATIENT)
+        self.wait(lambda: self.selected() == h.PATIENT, "the study opens")
+        rows = self.page.locator("#tplrows tr[data-i]")
+        expect(rows).to_have_count(2)
+        read = lambda: rows.evaluate_all("l => l.map(r => [r.title, r.querySelector('[data-tpl-preview]').getAttribute('aria-label')])")
+        korean = read()
+        self.assertEqual([['더블클릭: 판독문에 삽입 / 판독문에서 "nbct" 입력 후 Tab / 우클릭: 편집', "상용구 미리보기: SYN REC TEMPLATE"],
+                          ["더블클릭: 판독문에 삽입 / 우클릭: 편집", "상용구 미리보기: SYN PLAIN TEMPLATE"]], korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.assertEqual([['Double-click: insert into report / Type "nbct" in the report, then press Tab / Right-click: edit',
+                           "Template preview: SYN REC TEMPLATE"],
+                          ["Double-click: insert into report / Right-click: edit", "Template preview: SYN PLAIN TEMPLATE"]], read())
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, read())
+
     def test_another_radiologists_save_opens_read_only_with_only_reset_open(self):
         self.open()
         self.pick(h.PATIENT)

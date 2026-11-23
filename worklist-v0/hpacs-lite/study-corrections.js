@@ -3,11 +3,11 @@
     // ── Match / Unmatch (8.1.2.1.1 ~ 2) ──
     async function doMatch() {
       const s = cur(), o = curOrder();
-      if (!s || !o) { alert("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요."); return; }
-      if (s.matched === "M" || o.matched === "M") { alert("이미 매칭된 항목입니다."); return; }
+      if (!s || !o) { alert(kinSayEn("Study List에서 검사 1건, Order List에서 오더 1건을 각각 선택하세요.")); return; }
+      if (s.matched === "M" || o.matched === "M") { alert(kinSayEn("이미 매칭된 항목입니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
-      if (!confirm(`아래 오더 정보를 검사에 덮어씁니다.\n\n검사: ${s.name} (${s.id}) ${s.date}\n오더: ${o.name} (${o.id}) ${o.sched}\n\n진행할까요?`)) return;
-      await runMatch(s, o, message => alert("매칭 실패: " + message));
+      if (!confirm(kinSayEn("아래 오더 정보를 검사에 덮어씁니다.\n\n검사: {0} ({1}) {2}\n오더: {3} ({4}) {5}\n\n진행할까요?", s.name, s.id, s.date, o.name, o.id, o.sched))) return;
+      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", message)));
     }
 
     /**
@@ -72,9 +72,9 @@
 
     async function doUnmatch() {
       const s = cur();
-      if (!s || s.matched !== "M") { alert("매칭(M)된 검사를 선택하세요."); return; }
+      if (!s || s.matched !== "M") { alert(kinSayEn("매칭(M)된 검사를 선택하세요.")); return; }
       if (!studyWriteRoute()) return;
-      await runUnmatch(s, undefined, message => alert("매칭 해제 실패: " + message));
+      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", message)));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */
@@ -156,8 +156,8 @@
       if (uid === selectedUid) { loadReport(); updateReportButtons(); }
       said();
     }
-    $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert("검사를 선택하세요."));
-    $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert("검사를 선택하세요."));
+    $("#t-verify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Verified") : alert(kinSayEn("검사를 선택하세요.")));
+    $("#t-unverify").addEventListener("click", () => selectedUid ? setSs(selectedUid, "Unverified") : alert(kinSayEn("검사를 선택하세요.")));
 
     /**
      * ── QC Flag (Technician bar) ──
@@ -251,7 +251,7 @@
     function openQcFlag() {
       if (!technicianWork()) return;
       const s = selectedUid ? studies.find(x => x.uid === selectedUid) : null;
-      if (!s) { alert("검사를 선택하세요."); return; }
+      if (!s) { alert(kinSayEn("검사를 선택하세요.")); return; }
       if (!serverMode || offline || demoMode) { toast(kinSay("QC 표시는 서버에 연결된 동안에만 바꿀 수 있습니다"), "err"); return; }
       if (s.tele) { toast(kinSay("원격판독으로 받은 검사의 QC 표시는 보유 기관에서만 바꿀 수 있습니다"), "err"); return; }
       if (qcScope(s.uid) === null) { toast(kinSay("지금은 QC 표시를 바꿀 수 없습니다. 연결·권한·검사를 확인하세요."), "err"); return; }
@@ -343,8 +343,8 @@
     // ── Modify Exam (8.1.2.1.5) ──
     function openModify() {
       const s = cur();
-      if (!s) { alert("검사를 선택하세요."); return; }
-      if (s.rs !== "W") { alert("판독 전(RS: W)인 검사만 수정할 수 있습니다.\n현재 RS: " + s.rs); return; }
+      if (!s) { alert(kinSayEn("검사를 선택하세요.")); return; }
+      if (s.rs !== "W") { alert(kinSayEn("판독 전(RS: W)인 검사만 수정할 수 있습니다.\n현재 RS: {0}", s.rs)); return; }
       $("#m-id").value = s.id; $("#m-name").value = s.name; $("#m-sex").value = s.sex || "O";
       $("#m-birth").value = s.birth; $("#m-desc").value = s.desc; $("#m-ward").value = s.ward;
       $("#m-guidance").hidden = true; $("#m-guidance").textContent = "";
@@ -381,7 +381,7 @@
           if (!ok) {
             if (!serverMode) return;
             noteIdentityCorrection(uid, false);
-            guidance.textContent = window.KinStudyIdentity?.guidance(appState[uid]?.rs ?? "W", true, s.tele === true) ?? "";
+            kinWrite(guidance, window.KinStudyIdentity?.guidanceSaid?.(appState[uid]?.rs ?? "W", true, s.tele === true) ?? "");
             guidance.hidden = !guidance.textContent;
             return;
           }
@@ -411,14 +411,14 @@
     // ── Delete (8.1.2.1.8) ──
     async function doDelete(uid) {
       const s = studies.find(x => x.uid === uid); if (!s) return;
-      if (s.rs !== "W") { alert("RS가 W(Wait)인 검사만 삭제할 수 있습니다."); return; }
+      if (s.rs !== "W") { alert(kinSayEn("RS가 W(Wait)인 검사만 삭제할 수 있습니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       // 영상 자체(Orthanc)를 지우는 것은 아직 안 한다. 되돌릴 수 없는 동작이라
       // 권한·감사로그·연쇄 해제를 갖춰야 한다 (교훈 §5). 지금 지울 수 있는 건
       // "영상에 대한 사람의 결정"뿐이고, 그러면 다음 목록 조회 때 그 검사는
       // **막 도착한 검사처럼 다시 나타난다.** 그게 이 동작의 진짜 의미다.
-      if (!confirm(`이 검사의 판독 상태·매칭 기록을 지웁니다.\n${s.name} (${s.id}) ${s.date}\n` +
-                   `영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?`)) return;
+      if (!confirm(kinSayEn("이 검사의 판독 상태·매칭 기록을 지웁니다.\n{0} ({1}) {2}\n영상은 남고, 검사는 방금 도착한 것처럼 다시 나타납니다. 계속할까요?", s.name, s.id, s.date))) return;
+
       // 서버가 거절했는데 화면부터 지우면 검사가 사라진 것처럼 거짓말한다.
       // 응답을 기다려야 판독 이력·다른 사람의 초안 때문에 거절된 이유도 메뉴의 catch가 보여준다.
       const route = studyWriteRoute();

@@ -178,6 +178,40 @@ class ResetInProgressPage(unittest.TestCase):
         expect(self.page.locator("#reasonmodal")).to_be_visible()
         self.assertEqual([], self.resets(), "nothing is sent before a reason")
 
+    def test_the_reason_choices_read_in_english_and_send_the_reason_as_before(self):
+        # On an English screen the choices are English words; the value sent (and kept in the history) is the choice as written.
+        self.site.store[h.UID]["report"].update({"rs": "T", "version": 1, "findings": "SYN saved by me"})
+        self.site.saved_by[h.UID] = h.RAD["actor"]
+        self.site.saver_sub[h.UID] = h.RAD["sub"]
+        self.open()
+        self.select(h.PATIENT)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.press_unread()
+        expect(self.page.locator("#reasonmodal")).to_be_visible()
+        labels = self.page.locator("#reason-choices label")
+        expect(labels.first).to_have_text("Content needs correction")
+        self.assertEqual(["Content needs correction", "Patient/study mismatch", "Written on the wrong study", "Order canceled", "Other"],
+                         [t.strip() for t in labels.all_inner_texts()])
+        self.assertEqual(["내용 정정 필요", "환자·검사 불일치", "잘못된 검사에 작성", "의뢰 취소", "기타"],
+                         self.page.locator("#reason-choices input").evaluate_all("l => l.map(i => i.value)"))
+        self.page.locator("#reason-choices input").first.check()
+        self.page.locator("#reason-ok").click()
+        self.wait(lambda: len(self.resets()) == 1, "the reset is sent")
+        self.assertEqual("내용 정정 필요", self.resets()[0].get("reason"))
+
+    def test_a_released_notice_reads_in_english_with_the_names_as_written(self):
+        self.site.store[h.UID]["report"].update({"rs": "T", "version": 1, "findings": "SYN saved"})
+        self.site.holder[h.UID] = OTHER
+        self.site.released[h.UID] = {"holder": OTHER, "holderDraft": True, "savedBy": None, "savedKept": False}
+        self.open()
+        self.select(h.PATIENT)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.press_unread()
+        self.wait(lambda: len(self.resets()) == 1, "the reset is sent")
+        expect(self.toast()).to_contain_text("reset to Unread", ignore_case=True)
+        expect(self.toast()).to_contain_text(OTHER)
+        self.assertIsNone(re.search("[가-힣]", self.toast().inner_text().replace(OTHER, "")), self.toast().inner_text())
+
     def test_an_approved_report_held_by_another_reader_keeps_reset_disabled(self):
         self.site.store[h.UID]["report"].update({"rs": "A", "version": 1, "findings": "SYN approved"})
         self.site.holder[h.UID] = OTHER

@@ -541,15 +541,15 @@
       candidateStatus.hidden = !candidate;
       const candidateLines = [];
       if (candidate) {
-        candidateLines.push('New Selection · ' + candidate.status + ' · ' + candidate.message);
+        candidateLines.push(kinSayEn('New Selection · {0} · {1}', candidate.status, kinSayEn(String(candidate.message))));
         for (const member of candidate.members || []) if (member.status === 'error') {
           const state = memberState(member.code);
-          candidateLines.push(label(member) + ' · ' + state.status + ' · ' + state.message);
+          candidateLines.push(kinSayEn('{0} · {1} · {2}', label(member), state.status, kinSayEn(String(state.message))));
         }
       }
       if (candidateStatus.textContent !== candidateLines.join('')) {
         candidateStatus.replaceChildren(...candidateLines.map(text => {
-          const line = document.createElement('div'); line.textContent = text; return line;
+          const line = document.createElement('div'); kinWrite(line, text); return line;
         }));
       }
       previous.disabled = busy || !c || blocked || c.page <= 0;

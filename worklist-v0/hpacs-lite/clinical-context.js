@@ -318,7 +318,7 @@
   function reasonText(reason, status, code) {
     const tail = [status === null || status === undefined ? '' : 'HTTP ' + status, code || ''].filter(Boolean).join(' · ');
     // The reason is the page's words, the status and code are the server's: a sentence keeps them apart for the language.
-    return tail ? kinSay('{t0} ({1})', { t: kinSay(TEXT.reasons[reason]) }, tail) : TEXT.reasons[reason];
+    return tail ? kinSay('{t0} ({1})', { t: kinSay(TEXT.reasons[reason]) }, tail) : kinSay(TEXT.reasons[reason]);
   }
 
   // ── stale after a later list observation (§8.1 S1-S8). The baseline is the painted answer's own DTO paths. ──

@@ -1013,7 +1013,7 @@
     } catch(error) { refuse(describe(error));return; }
     // a cited line took the window at its click (its lookups came after); the address is then put in like a scoped one.
     let popup=held;if(!popup){try{popup=root.open(input.scoped?'':root.KinExamScope.viewerUrl(input),VIEWER_WINDOW);}catch(_){}}
-    if(!popup){note.textContent=TEXT.viewerBlocked;return;}
+    if(!popup){kinPut(note,TEXT.viewerBlocked);return;}
     const replace=!!held||input.scoped;
     const fresh=()=>!leaving&&selected===row.uid&&mine===reportSeq&&at===viewerSequence&&KinAuth.sessionId()===expectedSession;
     const apiRead=(_method,path)=>request(path);

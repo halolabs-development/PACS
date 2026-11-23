@@ -584,7 +584,7 @@
             invalidateCitations(epoch.uid);
             // 이 요청이 서버에 닿았는지 모르는 것은 구조화 쪽도 같다. 같은 자리에서 같이 되돌린다.
             invalidateStructure(epoch.uid);
-            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureText(result));
+            pane.status = kinSay("인용하지 못했습니다: {0} — 판독문은 그대로입니다.", draftFailureSaid(result));
             renderCitePreview();
             if (result.code === "REPORT_CITATION_STALE" || result.code === "REPORT_CITATION_SOURCE")
               toast("소견이 그 사이 바뀌었습니다 — Image Findings에서 Reload Findings를 누른 뒤 다시 인용하세요", "err");

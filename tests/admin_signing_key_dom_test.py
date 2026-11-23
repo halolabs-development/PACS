@@ -259,6 +259,19 @@ class AdminSigningKeyDOMTest(unittest.TestCase):
         self.assertEqual([], self.visible_actions())
         self.assertEqual({}, {uid: keys for uid, keys in self.keys.items() if keys})
 
+    def test_09_the_dialog_note_follows_an_english_screen(self):
+        # The dialog's own note is built from its template after the page's first markup was read: an English screen reads it
+        # in English (the member line is data and stays as written); no choice reads it exactly as drawn.
+        self.load()
+        self.open_keys("syn-radiologist")
+        note, target = self.dialog.locator("p").nth(1), self.dialog.locator("[data-target]")
+        korean, member = note.text_content(), target.text_content()
+        self.assertTrue(korean.startswith("온라인 승인 서명키는 서버가 회원별로 보관합니다."), korean)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: null})")
+        expect(note).to_have_text(re.compile(r"^The server keeps an online approval signing key for each member\."))
+        self.assertEqual(member, target.text_content())
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        expect(note).to_have_text(korean)
 
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

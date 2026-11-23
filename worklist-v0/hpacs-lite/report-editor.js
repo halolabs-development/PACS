@@ -120,7 +120,7 @@
         const row = document.createElement("div"), message = document.createElement("span");
         const open = document.createElement("button"), dismiss = document.createElement("button");
         row.className = "leftnote";
-        message.textContent = text;
+        kinWrite(message, text);
         open.type = dismiss.type = "button";
         kinWrite(open, kinSay("Open Study"));
         kinWrite(dismiss, kinSay("Dismiss"));
@@ -625,7 +625,7 @@
       const label = saved ? (appState[n.uid]?.draft ? `Draft Saved${draftAt ? " " + draftAt : ""}` : "Saved")
         : checked || n.status === "unknown" ? "Result Unknown"
         : n.status === "composing" ? "Not Moved"
-        : n.status === "conflict" ? "Save Failed — 서버의 초안이 이 화면과 다릅니다"
+        : n.status === "conflict" ? kinSay("Save Failed — 서버의 초안이 이 화면과 다릅니다")
         : kinSay("Save Failed — {0}", { e: n.reason ?? kinSay("서버가 저장을 받지 않았습니다") });
       // W5: the same notice for a Related Report mode entry the gate held (its Retry/Check continue that entry).
       const entry = n.action?.kind === "related-enter";
@@ -809,7 +809,7 @@
       // In the report window the question does not block the page: the answer counts only for the same study, selection,
       // text and work context it was asked about.
       const askedSeq = selectionSeq, askedEdits = reportEdits, askedAt = work.capture("document");
-      const question = "쓰다 만 초안을 버리고 저장된 판독문으로 돌아갑니다.\n계속할까요?";
+      const question = kinSayEn("쓰다 만 초안을 버리고 저장된 판독문으로 돌아갑니다.\n계속할까요?");
       const reportWindowNow = window.KinReportPopout?.current?.();
       if (!asked && !(await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question)))) return;
       if (uid !== selectedUid || selectionSeq !== askedSeq || reportEdits !== askedEdits || !work.admits(askedAt)
@@ -1006,7 +1006,7 @@
         const s = studies.find(x => x.uid === uid), state = appState[uid] ?? {};
         const study = s ? [s.name, s.id, shownStudyDesc(s)].filter(Boolean).join(" · ") : uid;
         // The draft read carries no reading state; this is the state the worklist last received from the server, said as such.
-        const server = `목록이 마지막으로 받은 판독 상태: ${reportStatusWord(state) ?? "—"} (v${state.version ?? 0})`;
+        const server = kinSayEn("목록이 마지막으로 받은 판독 상태: {0} (v{1})", reportStatusWord(state) ?? "—", state.version ?? 0);
         toast(String(read.present
           ? kinSayEn("Recover Draft — 내 초안을 편집기에 놓았습니다: {0} · 저장 {1} · {2}", study, draftTime(read.updatedAt) || kinSayEn("시각 모름"), server)
           : kinSayEn("Recover Draft — 서버에 이 계정의 초안이 없습니다: {0} · {1}", study, server)), "info", 15000);
@@ -1072,18 +1072,18 @@
       stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, action };
       drawApprovedPane(head, {
         title: "Approved Report Changed",
-        message: `이 초안은 v${head.draftBaseVersion ?? "?"}을 기준으로 씁니다. 그 뒤 v${head.version}이 승인됐습니다 — ` +
-          `아래 승인본을 확인한 뒤 정하세요. 쓰던 내용은 그대로 두었습니다.`,
-        mine: "지금 쓰던 내용 (저장되지 않음)", rebase: true });
+        message: kinSayEn("이 초안은 v{0}을 기준으로 씁니다. 그 뒤 v{n1}이 승인됐습니다 — 아래 승인본을 확인한 뒤 정하세요. 쓰던 내용은 그대로 두었습니다.",
+          head.draftBaseVersion ?? "?", head.version),
+        mine: kinSayEn("지금 쓰던 내용 (저장되지 않음)"), rebase: true });
       toast(String(kinSayEn("승인본이 v{n0}으로 바뀌어 추가기재를 붙이지 못했습니다 — 승인본을 확인하세요", head.version)), "err");
     }
     /** 승인본(서버가 준 다섯 칸)과 편집기의 지금 글을 나란히 그린다. 두 쓰임(재기준, 승인본 보기)이 같은 창을 쓴다. */
     function drawApprovedPane(head, { title, message, mine, rebase }) {
-      $("#stale-title").textContent = title;
-      $("#stale-msg").textContent = message;
-      $("#stale-head-title").textContent =
-        `승인본 v${head.version}` + (head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : "");
-      $("#stale-draft-title").textContent = mine;
+      kinWrite($("#stale-title"), title);
+      kinWrite($("#stale-msg"), message);
+      kinWrite($("#stale-head-title"), kinSayEn("승인본 v{n0}{1}", head.version,
+        head.updatedBy ? ` · ${signerName({ authorName: head.updatedByName, author: head.updatedBy })}` : ""));
+      kinWrite($("#stale-draft-title"), mine);
       for (const k of RFIELDS) {
         $("#stale-head-" + k).textContent = head[k];
         $("#stale-draft-" + k).textContent = $("#" + k).value;
@@ -1137,9 +1137,9 @@
         stalePane = { uid, seq: ++staleSeq, selSeq: selectionSeq, head, view: true };
         drawApprovedPane(head, {
           title: "Approved Report",
-          message: `왼쪽이 승인된 판독문(v${head.version})입니다. 오른쪽은 지금 이 화면의 글이고, 승인된 판독문에 포함되지 않았습니다.` +
-            ($("#b-addendum").disabled ? `` : ` 승인본에 덧붙이려면 닫고 More ▸ Addendum을 누르세요.`),
-          mine: "이 화면의 글 (승인본에 포함되지 않음)", rebase: false });
+          message: kinSayEn("왼쪽이 승인된 판독문(v{n0})입니다. 오른쪽은 지금 이 화면의 글이고, 승인된 판독문에 포함되지 않았습니다.{t1}", head.version,
+            { t: $("#b-addendum").disabled ? "" : kinSayEn(" 승인본에 덧붙이려면 닫고 More ▸ Addendum을 누르세요.") }),
+          mine: kinSayEn("이 화면의 글 (승인본에 포함되지 않음)"), rebase: false });
       });
     }
     $("#b-approved-view").addEventListener("click", viewApprovedReport);
@@ -1245,7 +1245,7 @@
       staleBusy = false;
       if (stalePane === pane) $("#stale-rebase").disabled = false;
       if (result.outcome !== "saved") {
-        work.commit(at, () => { kinWrite($("#stale-status"), kinSayEn("기준을 다시 잡지 못했습니다: {0}", draftFailureText(result))); });
+        work.commit(at, () => { kinWrite($("#stale-status"), kinSayEn("기준을 다시 잡지 못했습니다: {0}", draftFailureSaid(result))); });
         draftNotSaved(pane.uid, at, result, { quiet: true });
         return;
       }

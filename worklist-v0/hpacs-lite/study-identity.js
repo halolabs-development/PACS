@@ -55,12 +55,14 @@
 
   /* The one legitimate next step, only while a Different Value is shown or after a refused correction. At RS other
      than W the server refuses Match, Unmatch and Modify Exam; this names no report action. */
-  function guidance(rs,show,tele){
+  // The guidance as a sentence of the page (the screen writes it so the language reads it); guidance() is its words now.
+  function guidanceSaid(rs,show,tele){
     if(tele||!show)return '';
     const current=typeof rs==='string'&&rs?rs:'W';
-    if(current==='W')return GUIDANCE_W;
-    return '판독이 시작된 검사(현재 RS: '+current+')는 서버 규칙상 Match·Unmatch·Modify Exam으로 바꿀 수 없습니다. 판독 기록은 그대로 보존됩니다. 불일치가 의심되면 담당 판독의·관리자와 확인하세요.';
+    if(current==='W')return kinSay(GUIDANCE_W);
+    return kinSay('판독이 시작된 검사(현재 RS: {0})는 서버 규칙상 Match·Unmatch·Modify Exam으로 바꿀 수 없습니다. 판독 기록은 그대로 보존됩니다. 불일치가 의심되면 담당 판독의·관리자와 확인하세요.',current);
   }
+  function guidance(rs,show,tele){return String(guidanceSaid(rs,show,tele));}
 
   function start(){return {owner:null,observedAt:null,available:null,rows:null,refused:null};}
   const usable=model=>model&&typeof model==='object'&&'available' in model&&'rows' in model?model:start();
@@ -110,7 +112,7 @@
   function view(model,uid,state,format=localTime){
     const m=usable(model);
     if(m.available===null)return {hidden:true};
-    const tail=m.available===false?' · '+OBSERVATION_UNAVAILABLE+(m.observedAt?' · 마지막 관측 '+format(m.observedAt)+' 기준':''):'';
+    const tail=m.available===false?kinSay(' · {0}{1}',kinSay(OBSERVATION_UNAVAILABLE),m.observedAt?kinSay(' · 마지막 관측 {0} 기준',format(m.observedAt)):''):'';
     // The page's sentences joined: each part is read in the screen language (none of them is data).
     const unavailableTitle=m.available===false?kinSay('{t0}{t1}',{t:kinSay(UNAVAILABLE_TITLE)},{t:m.observedAt?kinSay(' 아래 값은 마지막으로 성공한 관측의 것입니다.'):''}):'';
     const row=m.rows?.get(uid)??null;
@@ -149,11 +151,11 @@
     text:kinSay('DICOM Identity{t0}{t1}{t2}',{t:patientMismatch?kinSay(' · Patient Mismatch'):''},{t:accessionMismatch?kinSay(' · Accession Mismatch'):''},{t:tail}),
       title:kinSay('{t0}{t1}{t2}{t3}',{t:kinSay(SUMMARY_TITLE)},{t:patientMismatch?kinSay(PATIENT_MISMATCH_TITLE):''},{t:accessionMismatch?kinSay(ACCESSION_MISMATCH_TITLE):''},{t:unavailableTitle})};
     const show=patientMismatch||accessionMismatch||m.refused===uid;
-    return {hidden:false,key,summary,order,rows,guidance:guidance(own.rs,show,key==='tele'),patientMismatch,accessionMismatch};
+    return {hidden:false,key,summary,order,rows,guidance:guidanceSaid(own.rs,show,key==='tele'),patientMismatch,accessionMismatch};
   }
 
   const api={start,read,succeeded,failed,correction,tags,view,guidance,SOURCE,MARKER,TAGS,RELATION_TEXT,RELATION_TITLE,
-    ORDER_TITLE,GUIDANCE_W,NAME_SCOPE,PHRASES:Object.freeze({observationUnavailable:OBSERVATION_UNAVAILABLE})};
+    ORDER_TITLE,GUIDANCE_W,guidanceSaid,NAME_SCOPE,PHRASES:Object.freeze({observationUnavailable:OBSERVATION_UNAVAILABLE})};
   root.KinStudyIdentity=api;
   if(typeof module==='object'&&module.exports)module.exports=api;
 })(typeof globalThis==='object'?globalThis:this);

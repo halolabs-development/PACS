@@ -37,7 +37,7 @@
     }
     button.onclick=()=>{
       if(!current())return;
-      if(!dialog){dialog=document.createElement('dialog');dialog.id='study-access-status';dialog.style.cssText='max-width:520px;color:inherit;background:#142237;border:1px solid #355272;padding:20px';dialog.innerHTML='<h2>Study Access</h2><p data-status role="status"></p><p data-period></p><p>검사 목록·영상·판독·저장 참조에 추가 조건이 적용됩니다. 접근 기간이 끝나면 새 요청이 차단됩니다. 작성 중인 판독문은 지우지 않습니다. 조건 변경은 기관 관리자에게 요청하세요.</p><button type="button" data-refresh>Refresh Status</button> <button type="button" data-close>Close</button>';dialog.querySelector('[data-refresh]').onclick=()=>check(true);dialog.querySelector('[data-close]').onclick=()=>dialog.close();document.body.append(dialog);}
+      if(!dialog){dialog=document.createElement('dialog');dialog.id='study-access-status';dialog.style.cssText='max-width:520px;color:inherit;background:#142237;border:1px solid #355272;padding:20px';dialog.innerHTML='<h2>Study Access</h2><p data-status role="status"></p><p data-period></p><p>검사 목록·영상·판독·저장 참조에 추가 조건이 적용됩니다. 접근 기간이 끝나면 새 요청이 차단됩니다. 작성 중인 판독문은 지우지 않습니다. 조건 변경은 기관 관리자에게 요청하세요.</p><button type="button" data-refresh>Refresh Status</button> <button type="button" data-close>Close</button>';globalThis.KinLanguage?.markup?.(dialog);dialog.querySelector('[data-refresh]').onclick=()=>check(true);dialog.querySelector('[data-close]').onclick=()=>dialog.close();document.body.append(dialog);}
       render();dialog.showModal();check();
     };
     let interval=null;

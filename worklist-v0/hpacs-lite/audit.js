@@ -283,8 +283,8 @@
         // Use the same Seoul calendar as the server, including the year boundary.
         const seoulNow = new Date(Date.now() + 9 * 3600_000);
         const lastEnded = new Date(Date.UTC(seoulNow.getUTCFullYear(), seoulNow.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
-        for (const item of response.body.months) el('inspection-month').add(new Option(
-          `${item.month} — ${states[item.state] || item.state}${item.month < lastEnded ? ' · 기한 경과' : ''}`, item.month));
+        for (const item of response.body.months) el('inspection-month').add(kinWrite(new Option('', item.month),
+          kinSayEn('{0} — {1}{2}', item.month, states[item.state] || item.state, item.month < lastEnded ? kinSayEn(' · 기한 경과') : '')));
         inspectionMessage(response.body.months.length ? kinSayEn("점검할 달을 선택하세요. 기한이 지난 달도 점검할 수 있습니다.") : kinSayEn("점검이 남은 달이 없습니다."));
       } else {
         showInspection(response.body, recordedFormKey, mode === 'steps');
@@ -345,7 +345,12 @@
     VersionListingRefused: '선택한 기록 종류나 판 ID가 저장된 판 목록과 맞지 않습니다.',
   };
   // The server's code stays beside the sentence: it is what support and the README name.
-  const refusalText = code => REFUSALS[code] ? `${REFUSALS[code]} (${code})` : `${code} — 입력을 확인하세요.`;
+  const refusalText = code => REFUSALS[code] ? kinSayEn('{0} ({1})', kinSayEn(REFUSALS[code]), code) : kinSayEn('{0} — 입력을 확인하세요.', code);
+  // Sentences said one after another on a status line: each is the page's sentence (a string of the page's tables becomes one),
+  // so the line reads in the page's language as a whole.
+  const saidTogether = parts => { const said = parts.filter(Boolean).map(part => typeof part === 'string' ? kinSayEn(part) : part);
+    return kinSayEn(said.map((part, i) => '{' + i + '}').join(' '), ...said); };
+  const recordKindGuidance = () => kinSayEn('{0} Record Type에서 Report 또는 Clinical Entry를 골라 다시 접수하세요.', kinSayEn(RECORD_KIND_BOTH));
 
   // The intake forms fill what the product knows: the institution every copy/rights subject belongs to and the signed-in
   // auditor as the default verifier (GET intake-context). The auditor enters only the patient ID and the request.
@@ -615,20 +620,20 @@
       }
       if (!admits()) return;
       showDisclosure(snapshot, copy);
-      disclosureMessage(failure?.code === 'RecordKindAmbiguous' ? [heldAmbiguityGuidance(snapshot, mode),
-          issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : ''].filter(Boolean).join(' ') :
-        [attempt(failure), issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : '',
-          failure || issuanceUnread ? '아래는 다시 조회한 상태입니다. 입력은 유지했습니다.' : '저장된 요청과 발급 상태를 다시 조회했습니다.'].filter(Boolean).join(' '));
+      disclosureMessage(failure?.code === 'RecordKindAmbiguous' ? saidTogether([heldAmbiguityGuidance(snapshot, mode),
+          issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : '']) :
+        saidTogether([attempt(failure), issuanceUnread ? kinText('발급 상태는 다시 읽지 못했습니다 ({0}).', issuanceUnread.code) : '',
+          failure || issuanceUnread ? '아래는 다시 조회한 상태입니다. 입력은 유지했습니다.' : '저장된 요청과 발급 상태를 다시 조회했습니다.']));
     } catch (error) {
       if (!admits() || error.stale) return;
       if (error.scope) disclosureScopeDenied();
-      else if (error.intakeRefused) disclosureMessage(error.code === 'RecordKindAmbiguous' ? kinSayEn("{0} 요청은 접수되지 않았고 입력은 유지했습니다.", RECORD_KIND_GUIDANCE) :
+      else if (error.intakeRefused) disclosureMessage(error.code === 'RecordKindAmbiguous' ? kinSayEn("{0} 요청은 접수되지 않았고 입력은 유지했습니다.", recordKindGuidance()) :
         kinSayEn("{0} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.", refusalText(error.code)));
       else {
         // A failed refresh cannot leave old action buttons presenting a confirmed state; the write's own answer stays said.
         disclosureSnapshot = null; disclosureCopy = null; disclosureEl('detail').hidden = true;
-        disclosureMessage([attempt(failure), error.kind === 'refused' ? refusalText(error.code) :
-          kinText('요청 상태를 확인하지 못했습니다 ({0}). 입력은 유지했습니다. Open Request로 다시 확인하세요.', error.code || 'ResponseUnavailable')].filter(Boolean).join(' '));
+        disclosureMessage(saidTogether([attempt(failure), error.kind === 'refused' ? refusalText(error.code) :
+          kinText('요청 상태를 확인하지 못했습니다 ({0}). 입력은 유지했습니다. Open Request로 다시 확인하세요.', error.code || 'ResponseUnavailable')]));
       }
     } finally {
       if (current === disclosureSequence) { disclosurePending = false; disclosureControls(); }
@@ -789,7 +794,7 @@
       }
       return answer.kind === 'denied' ? { kind: 'unconfirmed', code: answer.code || 'ResponseUnavailable' } : answer;
     };
-    const unconfirmed = code => `요구 상태를 확인하지 못했습니다 (${code}). 입력은 유지했습니다. Open Request로 다시 확인하세요.`;
+    const unconfirmed = code => kinSayEn('요구 상태를 확인하지 못했습니다 ({0}). 입력은 유지했습니다. Open Request로 다시 확인하세요.', code);
     try {
       const answer = await call(path, ['list', 'open'].includes(mode) ? 'GET' : 'POST', body);
       if (answer.kind === 'ok') {
@@ -808,23 +813,24 @@
         if (reread.kind === 'ok' && !rightsConfirmed(reread.body)) reread = { kind: 'unconfirmed', code: 'ResponseUnavailable' };
         if (reread.kind !== 'ok') {
           close();
-          say(`${refusalText(code)} ${reread.kind === 'refused' ? refusalText(reread.code) : `요구 상태는 다시 확인하지 못했습니다 (${reread.code}). Open Request로 다시 확인하세요.`}`);
+          say(kinSayEn('{0} {1}', refusalText(code), reread.kind === 'refused' ? refusalText(reread.code)
+            : kinSayEn('요구 상태는 다시 확인하지 못했습니다 ({0}). Open Request로 다시 확인하세요.', reread.code)));
           return;
         }
         showRights(rightsState(reread.body));
         const state = reread.body.status, open = state === 'Received' || state === 'Decided';
         say(mode === 'decide' && state === 'Received' && !['RightsRequestWithdrawn', 'RightsRequestConflict'].includes(code) ?
-          `결정이 거절되어 요구는 Received로 남고, 열린 응답 의무가 접속기록 만료를 계속 막습니다(CD-07-Q4). 철회가 아니면 닫지 않습니다 (${code}).` +
-            (REFUSALS[code] ? ` ${REFUSALS[code]}` : '') :
-          `${refusalText(code)} 아래는 다시 조회한 상태입니다.${mode === 'notify' && open ? ' 입력은 유지했습니다.' : ''}`);
+          kinSayEn('결정이 거절되어 요구는 Received로 남고, 열린 응답 의무가 접속기록 만료를 계속 막습니다(CD-07-Q4). 철회가 아니면 닫지 않습니다 ({0}).{1}',
+            code, REFUSALS[code] ? kinSayEn(' {0}', kinSayEn(REFUSALS[code])) : '') :
+          kinSayEn('{0} 아래는 다시 조회한 상태입니다.{t1}', refusalText(code), { t: mode === 'notify' && open ? kinSayEn(' 입력은 유지했습니다.') : '' }));
         return;
       }
       if (mode === 'receive') {
         close();
-        say(code === 'RecordKindAmbiguous' ? RECORD_KIND_GUIDANCE + ' 요구는 접수되지 않았고 입력은 유지했습니다.' :
+        say(code === 'RecordKindAmbiguous' ? kinSayEn('{0} 요구는 접수되지 않았고 입력은 유지했습니다.', recordKindGuidance()) :
           ['RightsRecordUnsupported', 'RightsRecordAmbiguous', 'VersionListingIncomplete'].includes(code) ?
           '이 기록 종류는 아직 이 화면에서 처리할 수 없습니다(CD-07-Q3 미정). 접수 사실은 별도로 기록하세요.' :
-          `${refusalText(code)} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.`);
+          kinSayEn('{0} 이 접수 시도는 저장되지 않았습니다. 입력은 유지했습니다.', refusalText(code)));
         return;
       }
       // A refused open or list says nothing about an open detail; it is not left actionable.

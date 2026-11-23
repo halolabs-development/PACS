@@ -95,7 +95,7 @@
       } finally { apply(() => { $('#sr-read').disabled = !srDocuments.some(d => srVal(d,'00080018') === $('#sr-document').value); }); }
     }
     function srOptions(select, rows, tag, label) {
-      select.replaceChildren(new Option('선택하세요', ''), ...rows.map(ds => new Option(label(ds), srVal(ds,tag))));
+      select.replaceChildren(kinWrite(new Option('', ''), kinSayEn('선택하세요')), ...rows.map(ds => kinWrite(new Option('', srVal(ds,tag)), label(ds))));
     }
     function srList() {
       srSeries = []; srDocuments = []; $('#sr-series').replaceChildren(); $('#sr-document').replaceChildren();
@@ -108,7 +108,7 @@
           if (srVal(ds,'0020000D') !== srUid || srVal(ds,'00080060') !== 'SR' || !srValidUid(id) || seen.has(id)) throw new Error('SR 시리즈 식별이 일치하지 않습니다.');
           seen.add(id);
         }
-        srSeries = rows; srOptions($('#sr-series'), rows, '0020000E', d => (srVal(d,'00200011') || '번호 없음') + ' · ' + (srVal(d,'0008103E') || '설명 없음') + ' · ' + srVal(d,'0020000E'));
+        srSeries = rows; srOptions($('#sr-series'), rows, '0020000E', d => kinSayEn('{0} · {1} · {2}', srVal(d,'00200011') || kinSayEn('번호 없음'), srVal(d,'0008103E') || kinSayEn('설명 없음'), srVal(d,'0020000E')));
       });
     }
     $('#sr-open').addEventListener('click', () => {
@@ -127,7 +127,7 @@
           if (srVal(ds,'0020000D') !== srUid || srVal(ds,'0020000E') !== series || !srValidUid(id) || seen.has(id)) throw new Error('SR 문서 식별이 일치하지 않습니다.');
           seen.add(id);
         }
-        srDocuments = rows; srOptions($('#sr-document'), rows, '00080018', d => (srVal(d,'00200013') || '번호 없음') + ' · ' + srVal(d,'00080018'));
+        srDocuments = rows; srOptions($('#sr-document'), rows, '00080018', d => kinSayEn('{0} · {1}', srVal(d,'00200013') || kinSayEn('번호 없음'), srVal(d,'00080018')));
       });
     });
     $('#sr-document').addEventListener('change', () => { srClear(); $('#sr-read').disabled = !srDocuments.some(d => srVal(d,'00080018') === $('#sr-document').value); });

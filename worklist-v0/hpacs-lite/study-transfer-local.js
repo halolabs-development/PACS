@@ -19,6 +19,9 @@ window.KinStudyTransferLocal = function (app) {
   // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
+  // A product line handed on as a string (this panel's table, a kept notice): a sentence the glossary knows whole reads in the
+  // screen's language; a sentence passes as it is.
+  const phrase = value => typeof value === 'string' && value && window.KinLanguage?.phrase ? window.KinLanguage.phrase(value) : value;
   const work = window.KinWorkContext;
   const root = document.getElementById('study-transfer');
   const toolbarButton = document.getElementById('t-import');
@@ -71,12 +74,12 @@ window.KinStudyTransferLocal = function (app) {
     identity: '로그인 서버를 포함한 계정 정보를 확인하지 못해 반입·원본 다운로드를 시작하지 않았습니다. 다시 로그인한 뒤 사용하세요.',
     legacy: '이 탭에 이전 형식의 반입·다운로드 기록이 남아 있습니다. 어느 로그인 서버 계정의 기록인지 확인할 수 없어 자동으로 조회하거나 표시하지 않고 지우지 않은 채 보존합니다. 필요하면 관리자에게 확인을 요청하세요.',
     pollsEnded: '자동 상태 확인을 마쳤습니다. 이후 상태는 Check Again으로 확인하세요.',
-    sending: (done, n) => `파일을 보내는 중입니다 (${done}/${n}).`,
+    sending: (done, n) => kinSay('파일을 보내는 중입니다 ({n0}/{n1}).', done, n),
     summary: (kept, attention, refused = 0) => kinSay('반입 결과: 저장 확인 {n0}개{t1}{t2}.', kept, { t: refused ? kinSay(', 거절된 파일 {n0}개', refused) : '' },
       { t: attention ? kinSay(', 확인이 필요한 파일 {n0}개', attention) : '' }),
     checking: '이 파일의 저장 결과를 다시 확인하는 중입니다…',
     sent: '서버가 이 검사의 모든 원본을 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
-    ready: (n, size) => `검사 원본 ${n}개(${size})를 내려받을 준비가 되었습니다.`,
+    ready: (n, size) => kinSay('검사 원본 {n0}개({n1})를 내려받을 준비가 되었습니다.', n, size),
     readyChosen: (n, size) => kinSay('고른 원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
     sentChosen: '서버가 고른 시리즈·영상의 원본을 모두 보냈습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     // Ready and Sent of an operation whose range is not confirmed (covered): the state alone, neither the whole study
@@ -84,7 +87,7 @@ window.KinStudyTransferLocal = function (app) {
     readyAlone: (n, size) => kinSay('원본 {n0}개({1})를 내려받을 준비가 되었습니다.', n, size),
     sentAlone: '서버가 이 작업의 원본 전송을 마쳤습니다. 내 컴퓨터에 저장됐는지는 브라우저의 다운로드 목록에서 확인하세요.',
     selectionMissing: '고른 시리즈·영상 가운데 이 검사의 원본에서 찾을 수 없는 것이 있어 준비하지 않았습니다. 다시 골라 주세요.',
-    downloading: (done, n) => `서버가 원본을 보내는 중입니다 (${done}/${n}).`,
+    downloading: (done, n) => kinSay('서버가 원본을 보내는 중입니다 ({n0}/{n1}).', done, n),
     incomplete: '서버 기록에서 전송 완료를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새 원본 목록을 준비하세요.',
     downloadUnconfirmed: '서버의 전송 결과를 확인하지 못했습니다. Check Again으로 확인하거나 Prepare Again으로 새로 준비하세요.',
     // A poll deadline does not prove that the browser's own GET will not start: only that it was not seen to start.
@@ -93,7 +96,7 @@ window.KinStudyTransferLocal = function (app) {
     preparing: '원본 목록을 준비하는 중입니다…',
     granting: '내려받기를 시작하는 중입니다…',
     copied: '작업 번호와 파일 번호를 복사했습니다.',
-    copyFailed: (id, index) => `복사하지 못했습니다. 작업 번호 ${id} · 파일 번호 ${index}`,
+    copyFailed: (id, index) => kinSay('복사하지 못했습니다. 작업 번호 {0} · 파일 번호 {n1}', id, index),
     resolveInput: '작업 번호(UUID), 파일 번호(0~99), 확인 근거와 확인 시각을 적으세요.',
     resolving: '관리자 확인을 요청하는 중입니다…',
     // An answer this page cannot read as a typed result or refusal: what it did is not known (D1566), never called refused.
@@ -190,7 +193,7 @@ window.KinStudyTransferLocal = function (app) {
   /** A download could not go on: the reason, in the panel's notice line (never the line the import progress writes). */
   function refuse(words) {
     openPanel();
-    kinWrite(refusal, words);
+    kinWrite(refusal, phrase(words));
     refusal.hidden = false;
   }
   /**
@@ -507,7 +510,7 @@ window.KinStudyTransferLocal = function (app) {
     else if (/PERMISSION|ACCESS|SUBJECT|AUTH/.test(c)) guidance = '현재 계정의 권한을 확인하세요. 기존 작업은 상태 조회만 가능합니다.';
     else if (/DICOM_|PATIENT_|SOP_|STUDY_UID|IDENTITY/.test(c)) guidance = '파일 형식과 환자·검사 식별 정보를 확인하세요. 관리자에게 작업 번호를 알려 주세요.';
     else if (/ORTHANC|STORAGE|NOT_READY/.test(c)) guidance = '서버 연결과 저장소 상태를 관리자에게 확인하세요.';
-    return kinSayEn("{0} · 결과를 확인하지 못했습니다. {1}", c, guidance);
+    return kinSayEn("{0} · 결과를 확인하지 못했습니다. {1}", c, kinSayEn(guidance));
   }
 
   function uncertain(entry, message) {
@@ -736,7 +739,7 @@ window.KinStudyTransferLocal = function (app) {
     sync();
     if (!canImport()) return;
     openPanel();
-    if (!usable()) { status.textContent = unavailable(); return; }
+    if (!usable()) { kinWrite(status, phrase(unavailable())); return; }
     pickFor = { expect };
     picker.value = '';
     picker.click();
@@ -893,7 +896,7 @@ window.KinStudyTransferLocal = function (app) {
 
   function copyId(entry) {
     const text = entry.index === undefined ? entry.op.id : `${entry.op.id} ${entry.index}`, at = work.capture('document');
-    const done = ok => work.commit(at, () => { status.textContent = ok ? TEXT.copied : TEXT.copyFailed(entry.op.id, entry.index); });
+    const done = ok => work.commit(at, () => { kinWrite(status, ok ? phrase(TEXT.copied) : TEXT.copyFailed(entry.op.id, entry.index)); });
     try { navigator.clipboard.writeText(text).then(() => done(true), () => done(false)); } catch (_) { done(false); }
   }
 
@@ -1376,11 +1379,11 @@ window.KinStudyTransferLocal = function (app) {
       const id = opInput.value.trim().toLowerCase(), index = indexInput.value.trim();
       // The local time the admin read is sent as the UTC instant it names (the route's closed form, 4.4).
       const when = checked.value ? new Date(checked.value) : null;
-      if (!UUID.test(id) || !/^(0|[1-9][0-9]?)$/.test(index) || !when || Number.isNaN(when.getTime())) { result.textContent = TEXT.resolveInput; return; }
+      if (!UUID.test(id) || !/^(0|[1-9][0-9]?)$/.test(index) || !when || Number.isNaN(when.getTime())) { kinWrite(result, phrase(TEXT.resolveInput)); return; }
       const gen = generation, at = work.capture('document');
       busy = true;
       submit.disabled = true;
-      result.textContent = TEXT.resolving;
+      kinWrite(result, phrase(TEXT.resolving));
       let answer = null, failed = false;
       try {
         answer = await app.transport.request(app.api + '/admin/dicom-import/' + encodeURIComponent(id) + '/files/' + index + '/recovery',
@@ -1390,9 +1393,9 @@ window.KinStudyTransferLocal = function (app) {
         busy = false;
         submit.disabled = false;
         if (ended || gen !== generation) return;
-        if (failed) { result.textContent = TEXT.lost; return; }
+        if (failed) { kinWrite(result, phrase(TEXT.lost)); return; }
         // Recovery is an explicit server action; its reply does not authorize another payload send or certify a file.
-        kinWrite(result, diagnostic(answer.body, kinSayEn("관리자 확인 요청 뒤 이 작업의 상태를 다시 확인하세요.")));
+        kinWrite(result, phrase(diagnostic(answer.body, kinSayEn("관리자 확인 요청 뒤 이 작업의 상태를 다시 확인하세요."))));
         const op = operations.find(o => o.kind === 'import' && o.id === id);
         if (op) readImport(op);
       });
@@ -1408,13 +1411,14 @@ window.KinStudyTransferLocal = function (app) {
   // ── drawing (textContent only: file names, messages and study labels are data) ──
   function render() {
     if (!root || ended) return;
-    persistence.textContent = [persistenceFailed ? TEXT.storeFailed : '', legacy ? TEXT.legacy : ''].filter(Boolean).join(' ');
+    const kept = [persistenceFailed ? TEXT.storeFailed : '', legacy ? TEXT.legacy : ''].filter(Boolean).map(phrase);
+    kinWrite(persistence, kinSayEn(kept.map((part, i) => '{' + i + '}').join(' '), ...kept));
     resolveOpen.hidden = !isAdmin();
     clear.disabled = !operations.some(finished);
     list.replaceChildren(...operations.map(op => op.kind === 'import' ? drawImport(op) : drawDownload(op)));
     if (running) {
       const all = operations.filter(op => op.kind === 'import').flatMap(op => op.files);
-      status.textContent = TEXT.sending(all.filter(f => f.state === 'result' || f.state === 'refused').length, all.length);
+      kinWrite(status, TEXT.sending(all.filter(f => f.state === 'result' || f.state === 'refused').length, all.length));
     }
   }
 
@@ -1427,7 +1431,7 @@ window.KinStudyTransferLocal = function (app) {
     if (op.files.filter(f => f.file && sendable(f)).length > 1) head.append(button('Retry All', () => op.files.forEach(retry)));
     if (op.files.some(f => !f.final && !unsent.has(f))) head.append(button('Check Again', () => readImport(op)));
     box.append(head);
-    if (op.notice) box.append(node('p', 'study-transfer-note', op.notice));
+    if (op.notice) box.append(kinWrite(node('p', 'study-transfer-note'), phrase(op.notice)));
     const rows = node('ol', 'study-transfer-files');
     for (const f of op.files) {
       const li = node('li', 'study-transfer-file');
@@ -1435,8 +1439,8 @@ window.KinStudyTransferLocal = function (app) {
       li.append(Object.assign(node('span', 'study-transfer-name', f.name || `#${f.index}`), { translate: false }), node('span', 'study-transfer-state', stateName(f)));
       if (f.state === 'result' && f.identity === 'not_comparable') li.append(node('span', 'study-transfer-mark', 'Unverified'));
       const text = describe(f);
-      if (text) li.append(node('span', 'study-transfer-reason', text));
-      if (f.checking) li.append(node('span', 'study-transfer-note', TEXT.checking));
+      if (text) li.append(kinWrite(node('span', 'study-transfer-reason'), phrase(text)));
+      if (f.checking) li.append(kinWrite(node('span', 'study-transfer-note'), phrase(TEXT.checking)));
       li.append(button('Copy ID', () => copyId(f)));
       if (f.file && sendable(f)) li.append(button('Retry', () => retry(f)));
       // C-R03-126: a file without a confirmed storage result is read again from its own row (the same status GET as the
@@ -1478,9 +1482,9 @@ window.KinStudyTransferLocal = function (app) {
     // A sentence that points at Prepare Again is said only where that button is offered (WITHOUT_AGAIN otherwise).
     const worded = text => (again ? text : WITHOUT_AGAIN.get(text) ?? text);
     line.append(node('span', 'study-transfer-state', ready ? 'Ready' : op.state && op.state !== 'prepared' ? DOWNLOAD_NAMES[op.state] : 'Not confirmed'),
-      kinWrite(node('span', 'study-transfer-reason'), worded(downloadText(op, covers))));
+      kinWrite(node('span', 'study-transfer-reason'), phrase(worded(downloadText(op, covers)))));
     box.append(line);
-    if (op.notice) box.append(node('p', 'study-transfer-note', worded(op.notice)));
+    if (op.notice) box.append(kinWrite(node('p', 'study-transfer-note'), phrase(worded(op.notice))));
     if (ready && !op.polling && !op.inFlight) box.append(button('Download', () => start(op)));
     box.append(button('Copy ID', () => copyId({ op })));
     if (!op.inFlight) {

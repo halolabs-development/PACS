@@ -44,7 +44,7 @@
   // `source` (the pressed copy) adds the S2-C notes from the viewer's live entry.
   function arrivalText(result, where, source) {
     const note = links.annotationText(result && result.annotation), live = source ? links.liveText(result, source.revision) : '';
-    return kinSay('영상 이동 확인 · {t0}{t1}{t2}{t3}', { t: where }, { t: result && result.phase ? ' · 비교 검사 영상 칸' : '' }, { t: note ? kinSay(' · {t0}', { t: note }) : '' }, { t: live ? kinSay(' · {t0}', { t: live }) : '' });
+    return kinSay('영상 이동 확인 · {t0}{t1}{t2}{t3}', { t: where }, { t: result && result.phase ? kinSay(' · 비교 검사 영상 칸') : '' }, { t: note ? kinSay(' · {t0}', { t: note }) : '' }, { t: live ? kinSay(' · {t0}', { t: live }) : '' });
   }
   // A saved-location outcome from the viewer, in the worklist's words.
   function locationText(result, source, where) {

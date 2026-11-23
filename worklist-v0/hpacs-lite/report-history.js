@@ -72,7 +72,7 @@
       const box = document.createElement("div");
       box.className = "vcite";
       const title = document.createElement("h5");
-      title.textContent = part.heading;
+      kinWrite(title, kinSayEn(part.heading));
       box.append(title);
       // 줄은 전부 텍스트 노드다. 작성자 표시명은 사용자 입력이고 이 화면은 기록이다.
       for (const line of part.lines) {
@@ -113,7 +113,7 @@
       : "Saved image" + (d.source?.frame ? " · frame " + d.source.frame : "");
     async function showHistory(requestedUid = null) {
       const uid = typeof requestedUid === "string" ? requestedUid : selectedUid;
-      if (!uid) { alert("검사를 선택하세요."); return; }
+      if (!uid) { alert(kinSayEn("검사를 선택하세요.")); return; }
       const box = $("#hist-body");
       const epoch = ++historyEpoch;
       historyUid = uid;
@@ -122,8 +122,10 @@
       KinReportViews.end("history");
       $("#histmodal").classList.add("show");
       box.innerHTML = "<div style='color:#667;padding:10px'>불러오는 중…</div>";
+      window.KinLanguage?.markup?.(box);
       if (!serverMode) {
         box.innerHTML = "<div style='color:#d8b24a;padding:10px'>서버에 연결돼 있을 때만 이력이 남습니다.</div>";
+        window.KinLanguage?.markup?.(box);
         return;
       }
       const at = work.capture("document");
@@ -160,6 +162,8 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
             <div class="vcite-host" data-version="${esc(v.version)}"></div>
           </div>`).join("")
           : "<div style='color:#667;padding:10px'>아직 확정된 판이 없습니다. Save 또는 Approve를 누르면 여기 쌓입니다.</div>";
+        // The list's own words (actions, labels, notes) follow the screen language; names, reasons and report text stay data.
+        window.KinLanguage?.markup?.(box);
         // The Exam scope sentence is written whole, its Accession Nos as data, so the screen language reads it.
         const scopeLines = box.querySelectorAll("[data-exam-scope-text]");
         list.filter(v => v.group).forEach((v, i) => {

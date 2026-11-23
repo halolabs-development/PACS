@@ -306,7 +306,7 @@
     function applyFilter(f, folderId) {
       if (!f || !Array.isArray(COLS[f.mode])) { toast('저장 검색의 업무 화면을 확인할 수 없습니다.', 'err'); return false; }
       const compoundError = KinCompoundFilter.validate(f.cols?.[KinCompoundFilter.KEY], COLS[f.mode]);
-      if (compoundError) { toast(String(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", compoundError)), 'err'); return false; }
+      if (compoundError) { toast(String(kinSayEn("복합 조건을 적용하지 못했습니다: {0}", kinSayEn(compoundError))), 'err'); return false; }
       activeFilterName = userFilters.some(saved => saved.name === f.name) ? f.name : null;
       const source = folderId && folderSearches().find(saved => saved.treeId === (f.treeId || 'own:' + f.id));
       folderAppliedSearch = source ? { id: source.treeId, name: source.name, criteria: filterCriteriaKey(f) } : null;
@@ -364,7 +364,7 @@
     $("#savefilter").addEventListener("click", () => {
       const current = snapshotFilter();
       const error = KinCompoundFilter.validate(current.cols[KinCompoundFilter.KEY], COLS[current.mode]);
-      if (error) { toast(String(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", error)), 'err'); return; }
+      if (error) { toast(String(kinSayEn("복합 조건을 저장하지 못했습니다: {0}", kinSayEn(error))), 'err'); return; }
       savedFilterManager.open();
     });
 

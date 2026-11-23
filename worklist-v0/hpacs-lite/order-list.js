@@ -41,11 +41,13 @@
           <td translate="no">${esc(o.id)}</td><td translate="no">${esc(o.name)}</td><td translate="no">${esc(o.sex)}</td><td translate="no">${esc(o.birth)}</td>
           <td translate="no">${esc(o.sched)}</td><td translate="no">${esc(o.modality)}</td><td translate="no">${esc(o.desc)}</td><td translate="no">${esc(o.ward)}</td><td translate="no">${esc(o.reqDoc)}</td>
         </tr>`).join("") || `<tr><td class="empty" colspan="11">오더 없음</td></tr>`;
+      const emptyOrders = $("#orderrows td.empty");
+      if (emptyOrders) kinWrite(emptyOrders, kinSay("오더 없음"));
       if (focusedOid !== null) $("#orderrows").querySelector(`tr[data-oid="${CSS.escape(focusedOid)}"]`)?.focus({ preventScroll: true });
 
       const s = cur(), o = curOrder();
-      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : { t: "(없음)" }, o ? o.name + " / " + o.sched : { t: "(없음)" },
-          { t: s && o && s.matched === "U" && o.matched === "U" ? "  → 우클릭 Match 가능" : "" }));
+      kinWrite($("#orderhint"), kinSay("선택: 검사 {0}  ·  오더 {1}{t2}", s ? s.name + " / " + s.date : kinSay("(없음)"), o ? o.name + " / " + o.sched : kinSay("(없음)"),
+          { t: s && o && s.matched === "U" && o.matched === "U" ? kinSay("  → 우클릭 Match 가능") : "" }));
       notifyAddOns("orders", [list.length]);
     }
     $("#orderrows").addEventListener("click", e => {

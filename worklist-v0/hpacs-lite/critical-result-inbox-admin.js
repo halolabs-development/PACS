@@ -40,7 +40,7 @@
   function failure(error, what) {
     if (error?.status === 400 && error.said) return error.said;
     if (error?.status === 403) return kinSayEn("이 계정으로는 병원 공용 수신을 정할 수 없습니다.");
-    return kinSayEn("{0} 결과를 확인하지 못했습니다. 지금 값을 다시 불러왔습니다.", what);
+    return kinSayEn("{0} 결과를 확인하지 못했습니다. 지금 값을 다시 불러왔습니다.", kinSayEn(what));
   }
 
   function render(body) {

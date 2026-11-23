@@ -154,8 +154,8 @@
         const parts = [];
         if (error && error.status) parts.push(`HTTP ${error.status}`);
         if (error && error.code) parts.push(error.code);
-        const message = error && error.message ? error.message : TEXT.rejected;
-        return parts.length ? `${message} (${parts.join(' · ')})` : message;
+        const message = error && error.message ? error.message : kinSayEn(TEXT.rejected);
+        return parts.length ? kinSayEn('{0} ({1})', message, parts.join(' · ')) : message;
       };
       // The page's sentence, and under it what failed (its own words or the server's message).
       const readDetail = error => error && error.status === 404 ? kinSay('{t0}\n{e1}', { t: kinSay(TEXT.notFound) }, { e: describe(error) }) : describe(error);
@@ -962,7 +962,7 @@
        */
       function lockPanel(text, detail, account = false) {
         if (ended || (lock !== null && (lock.account || !account))) return;
-        lock = { text, detail: detail || '', account };
+        lock = { text: typeof text === 'string' ? kinSayEn(text) : text, detail: detail || '', account };
         queueSeq++;
         detailSeq++;
         readSeq++;

@@ -9495,7 +9495,7 @@ window.KinLanguageTerms = {
     try {
       // The latest choice of the account changes only on the ticked screens; nothing on the screen changes until it is saved.
       const result = await save({ patch });
-      if (!result.ok) { status.textContent = result.message; return; }
+      if (!result.ok) { write(status, typeof result.message === 'string' && result.message ? sayEnglish(result.message) : result.message); return; }
       previous = result.before; applied = result.language;
       set(result.language);
       status.textContent = '';

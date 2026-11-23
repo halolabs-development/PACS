@@ -179,7 +179,7 @@
       kinWrite($("#tpl-save"), session.pending ? kinSayEn("저장 중…") : kinSayEn("저장"));
       kinWrite($("#tpl-save"), (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(why) ?? "", "title");
       if (session.source) kinWrite($("#tpl-source"), kinSayEn("{0}\n{1}", session.source.label,
-        why ?? kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
+        why != null ? kinSayEn(why) : kinSayEn("재사용할 문장만 남기고 제목을 입력하세요. 저장은 개인 상용구에만 반영됩니다.")));
     }
     function closeTemplateEditor(returnFocus = true) {
       const session = templateEditor;
@@ -220,7 +220,7 @@
       const modalities = String(s.modality ?? "").split(",").map(value => value.trim()).filter(Boolean);
       // 환자 식별은 출처 확인에만 쓴다. 재사용 문장/제목에 검사 식별을 자동으로 섞지 않는다.
       editTemplate(null, { uid: selectedUid,
-        label: `가져온 검사: ${s.name} (${s.id})\n${s.date} · ${shownStudyDesc(s)} · AccNo: ${s.acc || "없음"}` },
+        label: kinSayEn("가져온 검사: {0} ({1})\n{2} · {3} · AccNo: {4}", s.name, s.id, s.date, shownStudyDesc(s), s.acc || kinSayEn("없음")) },
         { ...text, modality: modalities.length === 1 ? modalities[0] : "" });
     });
     // 취소는 아무것도 안 한다. 저장을 누른 것만이 저장이다.
@@ -298,10 +298,10 @@
       const tr = e.target.closest("tr[data-i]");
       const t = tr ? templates[+tr.dataset.i] : null;
       showCtx(e, [
-        { label: "＋ 새 상용구", act: () => editTemplate(null) },
-        { label: "수정", dis: !t, act: () => editTemplate(t) },
+        { label: kinSayEn("＋ 새 상용구"), act: () => editTemplate(null) },
+        { label: kinSayEn("수정"), dis: !t, act: () => editTemplate(t) },
         { sep: 1 },
-        { label: "삭제", dis: !t, act: async () => {
+        { label: kinSayEn("삭제"), dis: !t, act: async () => {
             if (!confirm(kinSayEn("상용구 \"{0}\" 을(를) 삭제할까요?", t.title))) return;
             const at = work.capture("document");
             if (serverMode) {

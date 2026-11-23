@@ -122,7 +122,7 @@
     const $ = id => dialog.querySelector('#wc-' + id);
     const status = text => { kinWrite($('status'), typeof text === 'string' && text ? kinSayEn(text) : text); };
     const dirty = () => JSON.stringify(draft) !== baseline;
-    const mayLeave = () => !dirty() || confirm('적용하지 않은 열 설정 변경을 버릴까요?');
+    const mayLeave = () => !dirty() || confirm(kinSayEn("적용하지 않은 열 설정 변경을 버릴까요?"));
     for (const name of ['font','size','color']) $(name).addEventListener('change', () => {
       generation++;
       const part = draft.modes[openedMode]; part.appearance ||= appearanceDefault();
@@ -265,7 +265,7 @@
       if(work.state()!=='active')return;const at=work.capture('document');
       if (ended || !identity || serverBusy || !dialog.open || (['save','clear'].includes(action) && serverRevision === null)) return;
       if (action === 'load' && !mayLeave()) return;
-      if (action === 'clear' && !confirm('계정에 저장된 열 설정만 지울까요? 현재 목록과 브라우저 저장값은 유지합니다.')) return;
+      if (action === 'clear' && !confirm(kinSayEn("계정에 저장된 열 설정만 지울까요? 현재 목록과 브라우저 저장값은 유지합니다."))) return;
       const before = generation, snapshot = action === 'save' ? normalize(draft, columns) : null;
       if (action === 'save' && !snapshot) { kinWrite($('server-status'), kinSayEn("편집 중인 열 설정 형식이 잘못되었습니다. 다시 불러오거나 기본값으로 설정하세요.")); return; }
       interruptedAction = action; serverBusy = true; refreshServer(); kinWrite($('server-status'), kinSayEn("계정 설정 확인 중…"));

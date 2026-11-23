@@ -284,6 +284,28 @@ class WorklistAttachRefreshDOM(unittest.TestCase):
         expect(screen.data_row("SYN-AT-02")).to_have_class(re.compile(r"\bsel\b"))
         screen.finish()
 
+    def test_at08_the_thumbnail_bar_reads_in_english_with_its_counts_and_descriptions_as_written(self):
+        # The bar above the series (range, sort label and its three choices) is drawn from the page's template after the first
+        # markup was read: an English screen reads it in English, the counts and series descriptions stay as written; no
+        # choice reads it exactly as drawn.
+        server = AttachServer(rows=rows())
+        screen = self.ready(server)
+        screen.set_manual_refresh()
+        self.show_thumbnails(screen)
+        self.select(screen, "SYN-AT-01")
+        page = screen.page
+        expect(page.locator("#thumbwrap .thumb-card")).to_have_count(1)
+        bar = """() => { const w = document.querySelector('#thumbwrap'), sort = w.querySelector('#thumb-sort');
+          return [w.querySelector('#thumb-range').textContent, sort.closest('label').firstChild.data, sort.getAttribute('aria-label'),
+            ...[...sort.options].map(o => o.textContent)]; }"""
+        korean = page.evaluate(bar)
+        self.assertEqual(["시리즈 1–1 / 1", "정렬 ", "시리즈 정렬", "원래 순서", "번호 오름차순", "번호 내림차순"], korean)
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.assertEqual(["Series 1–1 / 1", "Sort ", "Sort Series", "Original Order", "Number ascending", "Number descending"],
+                         page.evaluate(bar))
+        page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
+        self.assertEqual(korean, page.evaluate(bar))
+        screen.finish()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,5 +1,7 @@
 (function(root) {
   'use strict';
+  // A product sentence of the page (English only on an English screen; otherwise as written).
+  const kinSayEn=(t,...p)=>root&&root.KinLanguage&&root.KinLanguage.sayEnglish?root.KinLanguage.sayEnglish(t,...p):t.replace(/\{[ten]?(\d+)\}/g,(m,i)=>String(p[i]));
   const uidPattern=/^[0-9]+(?:\.[0-9]+)+$/;
   function values(ds,tag) { const v=ds?.[tag]?.Value; return v===undefined?[]:v; }
   function parse(rows,uid) {
@@ -35,7 +37,7 @@
     }
     async function load(uids){
       if(work.state()!=='active')return;const at=work.capture('document');resume=[...uids];
-      cancel();if(!current()){note='로그인 계정을 확인할 수 없어 조회를 중단했습니다.';changed();return;}
+      cancel();if(!current()){note=kinSayEn('로그인 계정을 확인할 수 없어 조회를 중단했습니다.');changed();return;}
       const mine=generation,queue=[...new Set(uids)];busy=true;entries.clear();note='';changed();
       const active=()=>work.admits(at)&&mine===generation&&current();
       async function worker(){

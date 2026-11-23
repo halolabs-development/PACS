@@ -64,6 +64,7 @@
         return;
       }
       wrap.innerHTML = `<div style="color:#556;padding:20px">로딩…</div>`;
+      window.KinLanguage?.markup?.(wrap);
       // 이전 fetch뿐 아니라 body 소비까지 끝내야 빠른 전환에도 worker 수가 누적되지 않는다.
       thumbDone = thumbDone.then(async () => {
         if (stale() || !work.admits(at)) return;
@@ -101,6 +102,9 @@
               <option value="source">원래 순서</option><option value="number-asc">번호 오름차순</option><option value="number-desc">번호 내림차순</option>
             </select></label>
             </div><div class="thumbs" style="grid-template-columns:repeat(${n},1fr)"></div>`;
+          // The bar's own words (sort label, choices) follow the screen language; the range line is a sentence with its counts.
+          window.KinLanguage?.markup?.(wrap);
+          kinWrite(wrap.querySelector("#thumb-range"), kinSayEn("시리즈 {0}–{1} / {n2}", batch.length ? start + 1 : 0, start + batch.length, reps.length));
           const sort = wrap.querySelector("#thumb-sort");
           sort.value = thumbSort;
           sort.onchange = () => {
@@ -145,7 +149,7 @@
             images.onclick=()=>{if(!stale()&&!images.disabled){const study=viewed();if(study?.uid!==uid)return;cancelThumbs(true);if(!imageThumbnails?.open({...study,sourceUid:rep.sourceUid,series:rep.seriesUid}))renderThumbs();}};
             cell.append(label, disclosure, preview, open, inspect, images);
             grid.appendChild(cell);
-            return { preview, open, inspect, images, alt: `${heading} · ${description}` };
+            return { preview, open, inspect, images, alt: kinSayEn("{0} · {1}", heading, description) };
           });
           }) || !cells) return;
           let next = 0, stopped = false;
@@ -164,7 +168,7 @@
                   const url = URL.createObjectURL(blob);
                   thumbUrls.push(url);
                   const img = document.createElement("img");
-                  img.alt = cells[index].alt;
+                  kinWrite(img, cells[index].alt, "alt");
                   img.onerror = () => apply(() => { cells[index].open.disabled = cells[index].inspect.disabled = cells[index].images.disabled = true; kinWrite(cells[index].preview, kinSayEn("썸네일 표시 실패")); });
                   img.ondblclick = () => { if (!stale()) openFilmbox(uid, null, batch[index].seriesUid); };
                   img.src = url;
