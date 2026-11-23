@@ -655,6 +655,15 @@ class ExamMerge(unittest.TestCase):
         expect(done(win)).to_be_visible()
         expect(done(win)).not_to_contain_text(hangul)
 
+    def test_korean_screen_keeps_the_split_completion_line_as_written(self):
+        self.language("ko")
+        self.pick(h.UID)
+        self.page.locator("#t-split-unmerge").click()
+        win = self.window("unmerge")
+        win.get_by_role("checkbox", name=re.compile("SYN Series 2")).check()
+        win.locator(".order-dialog-foot button").first.click()
+        expect(win.locator("p.order-note.ok")).to_have_text("나눴습니다. 목록의 Split 1/2와 Split 2/2에서 각각 판독할 수 있습니다.")
+
     def test_korean_unmerge_and_split_windows_keep_their_data(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         self.site.desc[h.UID_B] = "Split Chest CT"

@@ -2,6 +2,8 @@
   'use strict';
   // A sentence of the page built from its template and its parts (page-core.js): data as is, {t: words}, {e: message}.
   const kinSay = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); }));
+  // English on an English screen; any other screen keeps the words as written here.
+  const kinSayEn = (t, ...p) => (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) ? window.KinLanguage.sayEnglish(t, ...p) : kinSay(t, ...p);
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
@@ -49,7 +51,7 @@
   // The server's refusals, each with the Accession No of the study it is about (when the page knows it).
   const reason = (error, accOf = uid => uid) => {
     const refusals = Array.isArray(error?.body?.refusals) ? error.body.refusals : [];
-    if (!refusals.length) return [error?.message || kinSay('서버가 변경을 받지 않았습니다.')];
+    if (!refusals.length) return [error?.message || kinSayEn('서버가 변경을 받지 않았습니다.')];
     const seen = new Set();
     return refusals.filter(r => { const key = (r.uid ? accOf(r.uid) : '') + '\u0000' + r.message; return !seen.has(key) && seen.add(key); })
       .map(r => r.uid ? kinSay('{0}: {e1}', accOf(r.uid), { e: r.message }) : r.message);
@@ -191,7 +193,7 @@
       };
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
       const paint=()=>{paintOriginals();checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || ended || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
-      win.body.replaceChildren(note(kinSay(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.')),
+      win.body.replaceChildren(note(kinSayEn(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.')),
         listed,el('h4',{text:'Checks'}),checks,
         note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));
       win.buttons(go,win.closeButton());paint();
@@ -202,7 +204,7 @@
         try {
           await ctx.api('POST','/exam-groups/'+encodeURIComponent(answer.group.id)+'/dissolve',undefined,undefined,win.at);
           ctx.examChanged?.(originals);
-          await changed(win,kinSay('되돌렸습니다. 원본 영상과 기존 판독 이력은 보존했습니다.'));
+          await changed(win,kinSayEn('되돌렸습니다. 원본 영상과 기존 판독 이력은 보존했습니다.'));
         }catch(error){failure(win,error);
           // Read again: the same group is the latest answer; no group, another group, or a refusal of this technician
           // (403/404) ends it here. A failure that says nothing of the group (a busy server, the network) keeps the last
@@ -251,7 +253,7 @@
           if(scopes.stamp(fresh)!==scopes.stamp(scope))throw Error('검사 범위가 바뀌었습니다. 창을 다시 여세요.');
           await ctx.api('POST','/exam-groups/split',{uid:scope.reportUid,seriesUids:chosen.map(s=>s.uid)},undefined,win.at);
           ctx.examChanged?.(scope.sources.map(s=>s.studyUid));
-          await changed(win,kinSay('나눴습니다. 목록의 Split 1/2와 Split 2/2에서 각각 판독할 수 있습니다.'));
+          await changed(win,kinSayEn('나눴습니다. 목록의 Split 1/2와 Split 2/2에서 각각 판독할 수 있습니다.'));
         }catch(error){failure(win,error);}finally{busy=false;if(win.live())paint();}
       }
     }

@@ -316,6 +316,16 @@ class ImageReportPage(unittest.TestCase):
         self.page.locator("#image-report-attach").click()
         expect(self.page.locator("#image-report-status")).to_have_text("Nothing to attach — draw first")
 
+    def test_english_screen_keeps_a_servers_refusal_in_the_window_status_as_written(self):
+        # A sentence the server wrote stays as it wrote it, even when the glossary happens to know the same words.
+        words = "보존 기간이 끝나 판독문을 파기한 검사입니다"
+        self.open()
+        self.open_study(h.PATIENT)
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.page.route("**/drawings*", lambda route: route.fulfill(status=409, json={"code": "REPORT_DESTROYED", "message": words}))
+        self.page.locator("#report-image-report").click()
+        expect(self.page.locator("#image-report-status")).to_have_text(words)
+
     def test_marks_undo_clear_and_each_background_keeps_its_own(self):
         self.open()
         self.open_study(h.PATIENT)

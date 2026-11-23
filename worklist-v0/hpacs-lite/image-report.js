@@ -254,7 +254,7 @@
     const color = () => value(colorRadios);
     const image = () => session?.images.find(i => i.id === imageSelect.value) || null;
     const key = () => keyOf(background(), background() === 'image' ? image() : null);
-    const say = (message, kind = '') => { kinWrite(status, (v => globalThis.KinLanguage?.phrase ? globalThis.KinLanguage.phrase(v) : v)(message)); status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
+    const say = (message, kind = '') => { kinWrite(status, message); status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
     const reason = (error, fallback) => (error && (error.body?.message || error.message)) || fallback;
 
     function sync() {
@@ -309,11 +309,11 @@
     canvas.addEventListener('pointerdown', event => {
       if (!session || !session.editable || event.button !== 0) return;
       const k = key();
-      if (!k) { say(background() === 'image' ? '이 검사에 저장된 영상이 없습니다' : '배경을 고르세요', 'err'); return; }
+      if (!k) { say(kinSayEn(background() === 'image' ? '이 검사에 저장된 영상이 없습니다' : '배경을 고르세요'), 'err'); return; }
       const at = point(event);
       if (tool() === 'text') {
         const words = text.value.trim();
-        if (!words) { say('먼저 Text 칸에 넣을 글을 쓰세요', 'err'); text.focus(); return; }
+        if (!words) { say(kinSayEn('먼저 Text 칸에 넣을 글을 쓰세요'), 'err'); text.focus(); return; }
         if (!session.marks.push(k, { tool: 'text', color: color(), points: [at], text: words.slice(0, LIMITS.text) })) { say(kinSayEn('표시는 한 그림에 {0}개까지입니다', LIMITS.strokes), 'err'); return; }
         say(''); paint(); remember(); return;
       }
@@ -382,9 +382,9 @@
       const picked = image();
       if (bg === 'image' && picked && !frames.has(picked.id + ':' + picked.revision)) {
         const mine = session.seq;
-        say('저장한 영상을 불러오는 중입니다…');
+        say(kinSayEn('저장한 영상을 불러오는 중입니다…'));
         loadFrame(session.uid, picked, mine).then(() => { if (current(mine)) { say(''); paint(); } },
-          error => { if (current(mine)) say(reason(error, '저장한 영상을 불러오지 못했습니다'), 'err'); });
+          error => { if (current(mine)) say(reason(error, kinSayEn('저장한 영상을 불러오지 못했습니다')), 'err'); });
       }
     }
 
@@ -512,7 +512,7 @@
         tellDrawn(uid, list, renderWindow(), () => current(mine));
         onBackground();
       } catch (error) {
-        if (current(mine)) say(reason(error, 'Image Report를 열지 못했습니다'), 'err');
+        if (current(mine)) say(reason(error, kinSayEn('Image Report를 열지 못했습니다')), 'err');
       }
     }
 
@@ -521,12 +521,12 @@
       if (!session || !session.editable) return;
       const mine = session.seq, uid = session.uid;
       attach.disabled = true;
-      say(operation.removeDrawing ? '그림을 빼는 중입니다…' : '판독문에 붙이는 중입니다…');
+      say(kinSayEn(operation.removeDrawing ? '그림을 빼는 중입니다…' : '판독문에 붙이는 중입니다…'));
       let result;
       try { result = await ctx.report.drawing(uid, operation); }
-      catch (error) { result = { status: 'refused', reason: reason(error, '처리하지 못했습니다') }; }
+      catch (error) { result = { status: 'refused', reason: reason(error, kinSayEn('처리하지 못했습니다')) }; }
       if (!current(mine)) { void refreshStrip(); return; }
-      if (result.status !== 'applied') { attach.disabled = !session.editable; say(result.reason || '처리하지 못했습니다', 'err'); return; }
+      if (result.status !== 'applied') { attach.disabled = !session.editable; say(result.reason || kinSayEn('처리하지 못했습니다'), 'err'); return; }
       // The draft changed; what is shown changes only with a list read again. When that read fails the list below is the
       // one from before, and it stays what the page tells as shown: a commit then names it and the server refuses it.
       let reread = true;
@@ -536,20 +536,20 @@
       const drawn = renderWindow();
       if (reread) tellDrawn(uid, session.list, drawn, () => current(mine));
       const n = shownList(session.list).length;
-      if (!reread) say('판독 초안에는 반영됐지만 붙인 그림 목록을 다시 읽지 못했습니다 — 아래 목록은 이전 것입니다. 창을 닫았다 다시 열어 확인하세요.', 'err');
+      if (!reread) say(kinSayEn('판독 초안에는 반영됐지만 붙인 그림 목록을 다시 읽지 못했습니다 — 아래 목록은 이전 것입니다. 창을 닫았다 다시 열어 확인하세요.'), 'err');
       else say(operation.removeDrawing ? 'Removed from the report draft.' : `Attached to the report draft (${n} of ${LIMITS.perReport}). Save, Prelim or Approve keeps it in the report.`, 'ok');
       void refreshStrip();
     }
     attach.addEventListener('click', () => {
       if (!session || !session.editable) return;
       const k = key(), bg = background(), picked = bg === 'image' ? image() : null;
-      if (!k) { say(bg === 'image' ? '이 검사에 저장된 영상이 없습니다' : '배경을 고르세요', 'err'); return; }
+      if (!k) { say(kinSayEn(bg === 'image' ? '이 검사에 저장된 영상이 없습니다' : '배경을 고르세요'), 'err'); return; }
       const strokes = wireStrokes(session.marks.list(k));
-      if (!strokes) { say('붙일 그림이 없습니다 — 먼저 그리세요', 'err'); return; }
-      if (bg === 'image' && !frames.has(picked.id + ':' + picked.revision)) { say('저장한 영상을 아직 불러오지 못했습니다', 'err'); return; }
+      if (!strokes) { say(kinSayEn('붙일 그림이 없습니다 — 먼저 그리세요'), 'err'); return; }
+      if (bg === 'image' && !frames.has(picked.id + ':' + picked.revision)) { say(kinSayEn('저장한 영상을 아직 불러오지 못했습니다'), 'err'); return; }
       paint();
       const png = canvas.toDataURL('image/png').split(',')[1];
-      if (Math.floor(png.length * 3 / 4) > LIMITS.pngBytes) { say('그림 파일이 너무 커서 붙이지 못했습니다 — 표시를 줄이거나 다른 배경을 쓰세요', 'err'); return; }
+      if (Math.floor(png.length * 3 / 4) > LIMITS.pngBytes) { say(kinSayEn('그림 파일이 너무 커서 붙이지 못했습니다 — 표시를 줄이거나 다른 배경을 쓰세요'), 'err'); return; }
       const replaces = shownList(session.list).find(d => attachedKey(d) === k)?.id;
       void change({ drawing: { background: bg, ...(picked ? { source: { keyImageId: picked.id, keyImageRevision: picked.revision, frame: picked.frame } } : {}),
         strokes, png, ...(replaces ? { replaces } : {}) } });
