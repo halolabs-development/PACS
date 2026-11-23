@@ -368,6 +368,43 @@ class StowIdentityRefusalTests(unittest.TestCase):
         self.assertEqual((row["phase"], row["attempt"], row["lastError"]), ("retry", 1, "STOW HTTP 409"))
         self.assertEqual(agent.queue.receipt("1.2.3")["errorCode"], "stow_http")
 
+    def test_a_storage_pause_is_retried_by_itself_and_the_study_arrives_when_it_ends(self):
+        # KIN answers 503 while it cannot read its archive. Nobody asks for a retry: the real loop and the real
+        # Cloud.stow wait out each backoff and send the study once the archive answers again.
+        agent = self.agent(backoff_base=0.4, backoff_max=0.4)
+        agent.orthanc = FakeOrthanc(["1.2.3.1"])
+        answers, stows, receipts = [503, 503, 200], [], []
+
+        def request(method, path, **kwargs):
+            if path.startswith("/dicom-web/studies/"):
+                stows.append(path)
+                answer = FakeResponse(answers.pop(0), {})
+                answer.content = b"{}"
+                return answer
+            if path == "/api/gateway/receipt":
+                receipts.append((kwargs["json"]["phase"], kwargs["json"]["errorCode"]))
+                return FakeResponse(200, {"result": "stored"})
+            return FakeResponse(200, {"studyUids": []})
+
+        agent.cloud.request = request
+        agent.queue.record_changes([("1.2.3", "orthanc-id")], 1)
+        for attempt in (1, 2):
+            self.one_pass(agent)
+            row = agent.queue.summary()["rows"][0]
+            self.assertEqual((row["phase"], row["attempt"], row["lastError"]), ("retry", attempt, "STOW HTTP 503"))
+            self.assertEqual(agent.queue.receipt("1.2.3")["errorCode"], "stow_http")
+            self.assertIsNone(agent.queue.due(), "nothing is sent before the backoff ends")
+            self.one_pass(agent)
+            self.assertEqual(len(stows), attempt, "a pass inside the backoff sends nothing")
+            time.sleep(0.45)
+        self.one_pass(agent)
+        self.assertEqual(agent.queue.summary()["rows"][0]["phase"], "complete")
+        self.assertEqual(agent.queue.successes("1.2.3"), {"1.2.3.1"})
+        self.assertEqual(len(stows), 3)
+        agent.flush_receipts()
+        self.assertEqual(receipts.count(("retry", "stow_http")), 2)
+        self.assertEqual(receipts[-1], ("complete", None))
+
 
 class ReceiptErrorCodeTests(unittest.TestCase):
     """S4-U3 contract test 8 (agent side): every GatewayError message has an explicit errorCode."""

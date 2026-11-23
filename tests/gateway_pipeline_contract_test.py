@@ -128,6 +128,21 @@ class JudgeAdequacy(unittest.TestCase):
             with self.subTest(why=item['why']):
                 self.assertEqual(judge.judge(apply(VECTORS['clean'], item['patch'])), [])
 
+    def test_the_storage_pause_retry_must_be_the_restarted_process(self):
+        lines = ['scenario', 'agent_log', 'stdout']
+        stdout = VECTORS['clean']['scenario']['agent_log']['stdout']
+        at = next(index for index, line in enumerate(stdout) if '"study.retry' in line.replace('\\', '') and '2.25.300' in line)
+        retry = stdout[at]
+        killed = retry.replace('2026-09-25T00:03:57.000000000Z', '2026-09-25T00:03:25.500000000Z')
+        self.assertEqual(judge.judge(apply(VECTORS['clean'], [{'op': 'set', 'path': lines + [at], 'value': killed}])),
+                         ['R-4'], 'the only retry came from the process that was killed')
+        both = stdout[:at] + [killed] + stdout[at:]
+        self.assertEqual(judge.judge(apply(VECTORS['clean'], [{'op': 'set', 'path': lines, 'value': both}])),
+                         ['R-4'], 'a retry before the restart beside the restarted one')
+        other = [{'op': 'set', 'path': ['scenario', 'R', 'crash', 'status', key], 'value': value}
+                 for key, value in (('phase', 'retry'), ('attempt', 1), ('lastError', 'cloud request ReadTimeout'))]
+        self.assertEqual(judge.judge(apply(VECTORS['clean'], other)), ['R-3'], 'a retry snapshot of another failure')
+
     def test_missing_evidence_fails_closed(self):
         self.assertEqual(judge.judge({}), list(judge.IDS))
         self.assertEqual(judge.judge(None), list(judge.IDS))

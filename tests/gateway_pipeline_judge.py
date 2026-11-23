@@ -50,7 +50,9 @@ LOG_KEYS = frozenset(('at', 'event', 'uid', 'batch', 'sops', 'failed', 'bytes', 
                       'destinations', 'compressed', 'pid', 'previous'))
 # Disconnecting an established cloud socket can time out instead of failing to connect (VM fix1-y).
 OUTAGE_ERRORS = ('token request ConnectionError', 'cloud request ConnectionError', 'cloud request ReadTimeout')
-STALL_ERROR = 'cloud request ReadTimeout'
+# Block R: KIN reads the archive before it writes a STOW, so a paused archive is answered 503 within that read's bound.
+STALL_ERROR = 'STOW HTTP 503'
+STALL_CODE = 'stow_http'
 INSTITUTION = 'KIN 판독센터'
 RESOLVE = {'kin-cloud': True, 'kin-api': False, 'kin-db': False, 'kin-keycloak': False, 'kin-orthanc': False}
 LOSSLESS_SYNTAX = '1.2.840.10008.1.2.4.70'
@@ -232,8 +234,9 @@ def _b5(s, t, d, e):
 # ── Block R: storage stall, crash restart, Now Retry ──────────────────────────────────────────────────────────────
 
 def _stall_retries(s, e):
+    # From the send of the second SOP, so a retry of the process that was killed is seen too (R-4 refuses it).
     block = s['R']
-    return pick(e, event='study.retry', uid=block['uid'], after=block['crash']['t_crash'], before=block['t_unpause'])
+    return pick(e, event='study.retry', uid=block['uid'], after=block['stall']['t_send'], before=block['t_unpause'])
 
 
 def _r1(s, t, d, e):
@@ -256,14 +259,22 @@ def _r3(s, t, d, e):
     stopped = pick(e, event='agent.stopped', after=block['stall']['t_pause'], before=crash['t_done'])
     started = pick(e, event='agent.started', after=crash['t_crash'], before=crash['t_done'])
     # The new process re-announces the row at once (process() sets announcing first, agent.py:748), so a snapshot
-    # right after the restart may show either phase; the row, not its phase, is what survives the crash.
+    # right after the restart may show either phase; the row, not its phase, is what survives the crash. A late snapshot
+    # may already show the new process's first refused attempt, and only that one.
+    status = crash['status']
+    survived = status['phase'] in ('sending', 'announcing') or (
+        status['phase'] == 'retry' and status['attempt'] == 1 and status['lastError'] == STALL_ERROR)
     return (crash['started_before'] != crash['started_after'] and not stopped and len(started) == 1
-            and crash['status']['phase'] in ('sending', 'announcing') and crash['status']['successfulSops'] == 1)
+            and survived and status['successfulSops'] == 1)
 
 
 def _r4(s, t, d, e):
-    return ([item['error'] for item in _stall_retries(s, e)] == [STALL_ERROR]
-            and s['R']['retry_audit'].count('study.announce') == 1)
+    block = s['R']
+    retries = _stall_retries(s, e)
+    started = pick(e, event='agent.started', after=block['crash']['t_crash'], before=block['crash']['t_done'])
+    # Exactly one retry while the archive is paused, and it is the restarted process's.
+    return ([item['error'] for item in retries] == [STALL_ERROR] and len(started) == 1
+            and retries[0]['_t'] > started[0]['_t'] and block['retry_audit'].count('study.announce') == 1)
 
 
 def _r5(s, t, d, e):
@@ -271,7 +282,7 @@ def _r5(s, t, d, e):
     receipt = block['retry_list']['gatewayReceipt']
     # The killed STOW may still be stored after unpause, so the listed count is 1 or 2 (recorded, both accepted).
     return (block['unpaused'] is True and receipt['phase'] == 'retry' and receipt['attempt'] >= 1
-            and receipt['errorCode'] == 'cloud_unreachable' and receipt['successCount'] == 1
+            and receipt['errorCode'] == STALL_CODE and receipt['successCount'] == 1
             and receipt['localCount'] == 2 and block['retry_list']['count'] in (1, 2))
 
 
