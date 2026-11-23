@@ -316,6 +316,19 @@ class ImageReportPage(unittest.TestCase):
         self.page.locator("#image-report-attach").click()
         expect(self.page.locator("#image-report-status")).to_have_text("Nothing to attach — draw first")
 
+    def test_english_screen_says_a_saved_image_that_did_not_load_in_english(self):
+        self.site.keys[h.UID] = [{"id": KEY_ID, "studyUid": h.UID, "revision": 2, "hidden": False,
+                                  "item": {"kind": "key", "seriesUid": "1.2.3.4", "sopUid": "1.2.3.4.5", "frame": 3, "title": "SYN key"}}]
+        self.open()
+        self.open_study(h.PATIENT)
+        self.open_window()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.page.route("**/frames/*/preview", lambda route: route.fulfill(status=503, body="unavailable"))
+        saved = self.page.locator("#image-report label", has_text="Saved image (this study)").locator("input")
+        expect(saved).to_be_enabled()
+        saved.check()
+        expect(self.page.locator("#image-report-status")).to_have_text("Could not load the saved image")
+
     def test_english_screen_keeps_a_servers_refusal_in_the_window_status_as_written(self):
         # A sentence the server wrote stays as it wrote it, even when the glossary happens to know the same words.
         words = "보존 기간이 끝나 판독문을 파기한 검사입니다"

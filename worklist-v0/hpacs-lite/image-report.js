@@ -255,7 +255,9 @@
     const image = () => session?.images.find(i => i.id === imageSelect.value) || null;
     const key = () => keyOf(background(), background() === 'image' ? image() : null);
     const say = (message, kind = '') => { kinWrite(status, message); status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
-    const reason = (error, fallback) => (error && (error.body?.message || error.message)) || fallback;
+    // This window's own failure carries its sentence; a server's message is shown as the server wrote it.
+    const failure = words => Object.assign(new Error(words), { sentence: kinSayEn(words) });
+    const reason = (error, fallback) => (error && (error.sentence || error.body?.message || error.message)) || fallback;
 
     function sync() {
       const uid = ctx.selectedUid();
@@ -346,7 +348,7 @@
         let cursor = null;
         do {
           const page = await ctx.api('GET', '/studies/' + encodeURIComponent(source.studyUid) + '/viewer-items?limit=100' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''), undefined, undefined, at);
-          if (!page || !Array.isArray(page.items) || (cursor && page.nextCursor === cursor)) throw new Error('저장한 영상 목록을 읽지 못했습니다');
+          if (!page || !Array.isArray(page.items) || (cursor && page.nextCursor === cursor)) throw failure('저장한 영상 목록을 읽지 못했습니다');
           items.push(...page.items.filter(item => root.KinExamScope.allows(source, item.item?.seriesUid))
             .map(item => ({ ...item, sourceUid: source.studyUid })));
           cursor = page.nextCursor || null;
@@ -363,10 +365,10 @@
       if (frames.has(cacheKey)) return;
       const at = session.at;
       const located = await ctx.api('POST', '/dicom/lookup', { studyUid: picked.sourceUid, sopUid: picked.sopUid }, undefined, at);
-      if (!located || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(located.id)) throw new Error('저장한 영상을 찾지 못했습니다');
+      if (!located || !/^[a-f0-9]{8}(?:-[a-f0-9]{8}){4}$/.test(located.id)) throw failure('저장한 영상을 찾지 못했습니다');
       const response = await root.KinSessionTransport.page().request('/instances/' + located.id + '/frames/' + (picked.frame - 1) + '/preview',
         { context: at, read: 'response', cache: 'no-store', headers: { Accept: 'image/png' } });
-      if (!response.ok || !response.headers.get('content-type')?.startsWith('image/png')) throw new Error('저장한 영상을 불러오지 못했습니다');
+      if (!response.ok || !response.headers.get('content-type')?.startsWith('image/png')) throw failure('저장한 영상을 불러오지 못했습니다');
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const picture = new Image(); picture.src = url;
@@ -392,7 +394,7 @@
     async function picture(uid, id, at) {
       if (pictures.has(id)) return pictures.get(id);
       const got = await ctx.api('GET', '/studies/' + encodeURIComponent(uid) + '/report/drawings/' + encodeURIComponent(id), undefined, undefined, at);
-      if (!got || typeof got.png !== 'string') throw new Error('그림을 읽지 못했습니다');
+      if (!got || typeof got.png !== 'string') throw failure('그림을 읽지 못했습니다');
       const bytes = Uint8Array.from(atob(got.png), ch => ch.charCodeAt(0));
       const url = URL.createObjectURL(new Blob([bytes], { type: 'image/png' }));
       pictures.set(id, url);
@@ -459,7 +461,7 @@
 
     async function readList(uid, at) {
       const list = await ctx.api('GET', '/studies/' + encodeURIComponent(uid) + '/report/drawings', undefined, undefined, at);
-      if (!list || !Array.isArray(list.head)) throw new Error('붙인 그림 목록을 읽지 못했습니다');
+      if (!list || !Array.isArray(list.head)) throw failure('붙인 그림 목록을 읽지 못했습니다');
       return list;
     }
     function current(mine) { return !!session && session.seq === mine && dialog.open && ctx.admits(session.at) && session.scopeStamp === examStamp(session.uid); }
