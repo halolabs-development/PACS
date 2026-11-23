@@ -1004,10 +1004,20 @@
         || String(s?.modality ?? "").trim()
         || "(설명 없음)";
     }
+    const studyDescIsEmpty = s => !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim();
     /** The same, as a part of a sentence: the placeholder is the page's word (English on an English screen), a description is data. */
     function shownStudyDescSaid(s) {
       const desc = shownStudyDesc(s);
-      return desc === "(설명 없음)" && !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim() ? kinSayEn(desc) : desc;
+      return studyDescIsEmpty(s) ? kinSayEn(desc) : desc;
+    }
+    /** The same for a data cell's markup: only the placeholder is marked, so paintStudyDesc can write it as the page's word. */
+    function studyDescMarkup(s) {
+      const desc = esc(shownStudyDesc(s));
+      return studyDescIsEmpty(s) ? `<span data-desc-placeholder>${desc}</span>` : desc;
+    }
+    function paintStudyDesc(root, s) {
+      const placeholder = root?.querySelector?.("[data-desc-placeholder]");
+      if (placeholder) kinWrite(placeholder, shownStudyDescSaid(s));
     }
     /** A server time (ISO) as this screen's local "YYYY-MM-DD HH:mm"; anything unreadable is blank. */
     function localStamp(iso) {
@@ -1116,6 +1126,7 @@
      */
     function paintRowWords(row, s) {
       if (!row || !s) return;
+      paintStudyDesc(row, s);
       const rs = row.querySelector("span.rs");
       if (rs && !s.holdReason) {
         const { on, help } = rsWords(s);
@@ -1163,7 +1174,7 @@
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
-      desc: s => esc(shownStudyDesc(s)),
+      desc: s => studyDescMarkup(s),
       preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
       preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.
@@ -3393,7 +3404,7 @@
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
           <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Study</td><td translate="no">${studyDescMarkup(s)}</td></tr>
           <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
           <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
@@ -3403,6 +3414,7 @@
         </table>` : "";
       if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
+      if (s) paintStudyDesc($("#clinical"), s);
       renderStudyIdentity();
       renderQcInfo();
       renderAcquisition();
@@ -8240,9 +8252,11 @@
         : result.outcome === "owner" ? "이 화면의 계정으로 쓴 초안이 아니라고 서버가 답했습니다"
         : "요청을 보내지 못했습니다");
     }
-    // The same words as a part of a sentence on the screen: the server's own message is put in as written; only this page's
-    // fallback words are its sentence (English on an English screen).
-    function draftFailureSaid(result) { return result.message ?? kinSayEn(draftFailureText(result)); }
+    // The same words as a part of a sentence on the screen: the server's own message is put in as written; only the words
+    // this page made (its fallback, or a refusal the draft client made itself) are its sentence (English on an English screen).
+    function draftFailureSaid(result) {
+      return result.message != null && !result.madeHere ? result.message : kinSayEn(draftFailureText(result));
+    }
 
     /**
      * 저장되지 않은 초안 명령의 결과를 사실대로 남긴다(saved는 부른 쪽이 다룬다). 명령 경로가 이미 서버의 지금 초안을 읽어

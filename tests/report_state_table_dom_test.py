@@ -55,6 +55,16 @@ class MovedEmailSite(StateTableSite):
         return super().api(route, request, method, path, query)
 
 
+class EmptyDescriptionSite(StateTableSite):
+    """The second study has neither a description nor a modality: the product writes its placeholder there."""
+
+    def study_row(self, account, uid=h.UID, name=h.PATIENT, patient="SYN-P-001"):
+        row = super().study_row(account, uid, name, patient)
+        if name == h.PATIENT_B:  # the flow site draws every row from the first study's uid and sets its own after
+            row.update(desc="", modality="")
+        return row
+
+
 class ReportStateTablePage(unittest.TestCase):
     # The report flow suite's page driving, borrowed without its own cases.
     count = 3
@@ -124,6 +134,43 @@ class ReportStateTablePage(unittest.TestCase):
                           ["Double-click: insert into report / Right-click: edit", "Template preview: SYN PLAIN TEMPLATE"]], read())
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: null, reading: null})")
         self.assertEqual(korean, read())
+
+    def test_an_empty_description_is_the_pages_word_and_a_real_one_stays_as_written(self):
+        self.site.__class__ = EmptyDescriptionSite
+        self.open()
+        self.pick(h.PATIENT_B)
+        self.wait(lambda: self.selected() == h.PATIENT_B, "the study opens")
+        empty, real = self.row(h.PATIENT_B), self.row(h.PATIENT)
+        info = self.page.locator('#clinical tr:has(> td:text-is("Study")) > td:nth-child(2)')
+        expect(info).to_have_text("(설명 없음)")
+        expect(empty).to_contain_text("(설명 없음)")
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        expect(info).to_have_text("(no description)")
+        expect(empty).to_contain_text("(no description)")
+        # drawn again on an English screen
+        self.page.evaluate("() => { render(); renderClinical(); }")
+        expect(info).to_have_text("(no description)")
+        expect(self.row(h.PATIENT_B)).to_contain_text("(no description)")
+        expect(real).to_contain_text("SYN CT CHEST")
+        for choice in ({"version": 1, "worklist": "ko", "reading": "ko"}, {"version": 1, "worklist": None, "reading": None}):
+            self.page.evaluate("c => KinLanguage.restore(c)", choice)
+            expect(info).to_have_text("(설명 없음)")
+            expect(self.row(h.PATIENT_B)).to_contain_text("(설명 없음)")
+
+    def test_a_refusal_the_page_made_is_its_word_and_a_servers_message_stays_as_written(self):
+        self.open()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        toast = self.page.locator("#toast")
+        # The draft client refuses by itself: this page never read the draft of this study, so it has no base to write on.
+        self.page.evaluate("""async () => {
+          const uid = 'syn-study-never-read';
+          draftNotSaved(uid, work.capture('document'), await draftClient.write(uid, {findings: 'SYN'}, {}));
+        }""")
+        expect(toast).to_have_text("Server save failed: Not saved because the draft base for this study is unknown.")
+        # The same code in a server's answer: its message is the server's and is put in as written.
+        self.page.evaluate("""() => draftNotSaved('syn-study-never-read', work.capture('document'),
+          {outcome: 'refused', code: 'KIN_DRAFT_BASE_UNKNOWN', message: '검사를 찾을 수 없습니다'})""")
+        expect(toast).to_have_text("Server save failed: 검사를 찾을 수 없습니다")
 
     def test_another_radiologists_save_opens_read_only_with_only_reset_open(self):
         self.open()

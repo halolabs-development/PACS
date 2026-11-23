@@ -84,10 +84,20 @@
         || String(s?.modality ?? "").trim()
         || "(설명 없음)";
     }
+    const studyDescIsEmpty = s => !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim();
     /** The same, as a part of a sentence: the placeholder is the page's word (English on an English screen), a description is data. */
     function shownStudyDescSaid(s) {
       const desc = shownStudyDesc(s);
-      return desc === "(설명 없음)" && !String(s?.desc ?? "").trim() && !String(s?.modality ?? "").trim() ? kinSayEn(desc) : desc;
+      return studyDescIsEmpty(s) ? kinSayEn(desc) : desc;
+    }
+    /** The same for a data cell's markup: only the placeholder is marked, so paintStudyDesc can write it as the page's word. */
+    function studyDescMarkup(s) {
+      const desc = esc(shownStudyDesc(s));
+      return studyDescIsEmpty(s) ? `<span data-desc-placeholder>${desc}</span>` : desc;
+    }
+    function paintStudyDesc(root, s) {
+      const placeholder = root?.querySelector?.("[data-desc-placeholder]");
+      if (placeholder) kinWrite(placeholder, shownStudyDescSaid(s));
     }
     /** A server time (ISO) as this screen's local "YYYY-MM-DD HH:mm"; anything unreadable is blank. */
     function localStamp(iso) {
@@ -196,6 +206,7 @@
      */
     function paintRowWords(row, s) {
       if (!row || !s) return;
+      paintStudyDesc(row, s);
       const rs = row.querySelector("span.rs");
       if (rs && !s.holdReason) {
         const { on, help } = rsWords(s);
@@ -243,7 +254,7 @@
       ss: s => `<span class="ss ${esc(s.ss)}">${esc(s.ss)}</span>`,
       // S4-U5: server values too, but escaped like every other cell; a stored value never becomes markup.
       matched: s => `<span class="mt ${esc(s.matched)}">${esc(s.matched)}</span>`,
-      desc: s => esc(shownStudyDesc(s)),
+      desc: s => studyDescMarkup(s),
       preDoc: s => esc(s.preDoc ? writerName(s.preDocName, s.preDoc) : ""),
       preReviewer: s => esc(s.preReviewer ? writerName(s.preReviewerName, s.preReviewer) : ""),
       // A writer can hold the report with no viewer open. Presence excludes self; the lock does not.

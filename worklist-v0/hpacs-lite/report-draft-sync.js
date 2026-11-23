@@ -624,9 +624,11 @@
         : result.outcome === "owner" ? "이 화면의 계정으로 쓴 초안이 아니라고 서버가 답했습니다"
         : "요청을 보내지 못했습니다");
     }
-    // The same words as a part of a sentence on the screen: the server's own message is put in as written; only this page's
-    // fallback words are its sentence (English on an English screen).
-    function draftFailureSaid(result) { return result.message ?? kinSayEn(draftFailureText(result)); }
+    // The same words as a part of a sentence on the screen: the server's own message is put in as written; only the words
+    // this page made (its fallback, or a refusal the draft client made itself) are its sentence (English on an English screen).
+    function draftFailureSaid(result) {
+      return result.message != null && !result.madeHere ? result.message : kinSayEn(draftFailureText(result));
+    }
 
     /**
      * 저장되지 않은 초안 명령의 결과를 사실대로 남긴다(saved는 부른 쪽이 다룬다). 명령 경로가 이미 서버의 지금 초안을 읽어

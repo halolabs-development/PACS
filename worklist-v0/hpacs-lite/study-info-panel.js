@@ -21,7 +21,7 @@
           <tr><td>Patient</td><td translate="no">${esc(s.name)} (${esc(s.id)})</td></tr>
           <tr><td>Sex/Age</td><td translate="no">${esc(s.sex)} / ${esc(s.age)}</td></tr>
           <tr><td>Birth</td><td translate="no">${esc(s.birth)}</td></tr>
-          <tr><td>Study</td><td translate="no">${esc(shownStudyDesc(s))}</td></tr>
+          <tr><td>Study</td><td translate="no">${studyDescMarkup(s)}</td></tr>
           <tr><td>Date</td><td translate="no">${esc(s.date)}</td></tr>
           <tr><td>AccNo</td><td translate="no">${esc(s.acc)}</td></tr>
           <tr><td>Img/Se</td><td>${esc(s.count)} / ${esc(s.series)}</td></tr>
@@ -31,6 +31,7 @@
         </table>` : "";
       if (!s) kinWrite($("#clinical"), kinSay("No clinical information provided."));
       if (s) kinWrite($("#clinical .clinical-scope"), s.uid === selectedUid ? kinSay("판독 대상 검사 정보") : kinSay("관련 검사 정보 · 판독 대상은 바뀌지 않습니다"));
+      if (s) paintStudyDesc($("#clinical"), s);
       renderStudyIdentity();
       renderQcInfo();
       renderAcquisition();
