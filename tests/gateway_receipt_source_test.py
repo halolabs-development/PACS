@@ -393,7 +393,8 @@ class AgentPins(unittest.TestCase):
         # 82 -> 95: signed updates and remote support added SupportTests (13 cases, the agent's half).
         # 95 -> 115: RetentionTests (deleting delivered local copies after the set days).
         # 115 -> 118: StowIdentityRefusalTests (a transfer KIN refused for its patient ID fails once and is not repeated).
-        self.assertEqual(count, 118)
+        # 118 -> 119: a storage pause (503) is retried by the real loop and arrives with no request.
+        self.assertEqual(count, 119)
 
 
 class ServerPins(unittest.TestCase):

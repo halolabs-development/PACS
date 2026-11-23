@@ -676,7 +676,7 @@ class GatewayPipelineLive(unittest.TestCase):
             stall['cstore'] = self.cstore(study, self.small, 1, 1)
             self.sent(stall['cstore'], 1, 'R-2')
             stall['status'] = self.until('R-2 status sending', deadline, lambda: self.sending(uid))
-            # R-3: kill the agent while its STOW hangs (-t 0: no grace, no agent.stopped).
+            # R-3: kill the agent while its STOW waits on the paused storage (-t 0: no grace, no agent.stopped).
             block['crash'] = crash = {}
             crash['t_crash'], crash['started_before'], crash['started_after'] = self.restart(0)
             self.wait_event('R-3 agent.started', deadline, event='agent.started', after=crash['t_crash'])
