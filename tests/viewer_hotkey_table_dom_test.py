@@ -151,6 +151,43 @@ class ViewerHotkeyTableDOMTest(unittest.TestCase):
         page.evaluate(MODAL, rows)
         self.assertIsNone(dict(self.notes(page))['Copy'])
 
+    def test_05_a_row_whose_key_runs_its_own_function_is_not_marked(self):
+        """The pinned table's rows with this product's default keys: Z, I and C run the row's own function through the key
+        layer, so their rows carry no note; R, L, H and V do something else or nothing, so theirs still do."""
+        page = self.browser.new_context().new_page(); errors = []
+        self.addCleanup(page.context.close)
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.route(ORIGIN + "/", lambda route: route.fulfill(body=HARNESS, content_type="text/html"))
+        page.goto(ORIGIN + "/")
+        page.add_script_tag(path=str(HPACS / "viewer-ux-shortcuts.js"))
+        rows = [['Zoom', 'z', 'setToolActive', 'Zoom'], ['Invert', 'i', 'invertViewport', None], ['Cine', 'c', 'toggleCine', None],
+                ['Rotate Right', 'r', 'rotateViewportCW', None], ['Rotate Left', 'l', 'rotateViewportCCW', None],
+                ['Flip Horizontally', 'h', 'flipViewportHorizontal', None], ['Flip Vertically', 'v', 'flipViewportVertical', None]]
+        page.evaluate("""rows => {
+          window.synInvoked = [];
+          window.synDefinitions = Object.fromEntries(rows.map(([label, key, commandName, toolName], i) => [i, { label, keys: [key], commandName,
+            ...(toolName ? { commandOptions: { toolName } } : {}) }]));
+          window.synKeys = KinViewerUXShortcuts.mount({ getBindings: () => KinViewerUXShortcuts.current(null),
+            invoke: id => { synInvoked.push(id); return true; }, allowed: () => true, hotkeyRows: () => synDefinitions });
+        }""", rows)
+        page.evaluate(MODAL, [[label, key] for label, key, _, _ in rows])
+        notes = dict(self.notes(page))
+        for label in ['Zoom', 'Invert', 'Cine']:
+            self.assertIsNone(notes[label], label)
+            self.assertIsNone(page.get_attribute(f'[aria-label="{label}"]', 'aria-invalid'), label)
+        for label in ['Rotate Right', 'Rotate Left', 'Flip Horizontally', 'Flip Vertically']:
+            self.assertIn('영상 도구 키', notes[label] or '', label)
+        # Pressing the row's own key in its field keeps the binding and adds no warning.
+        page.focus('[aria-label="Zoom"]'); page.keyboard.press('z')
+        self.assertIsNone(dict(self.notes(page))['Zoom'])
+        self.assertEqual('z', page.input_value('[aria-label="Zoom"]'))
+        # A key moved off the row's tool: the row no longer does its function, and says so.
+        page.evaluate("() => { const current = KinViewerUXShortcuts.current(null); current.Zoom = 'q'; current.Pan = 'z'; synKeys.dispose();"
+                      " window.synKeys = KinViewerUXShortcuts.mount({ getBindings: () => current, invoke: () => true, allowed: () => true, hotkeyRows: () => synDefinitions }); }")
+        page.evaluate("() => { const f = document.querySelector('[aria-label=\"Zoom\"]'); f.setAttribute('data-touch', '1'); }")
+        self.assertIn('영상 도구 키', dict(self.notes(page))['Zoom'])
+        self.assertEqual([], errors)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

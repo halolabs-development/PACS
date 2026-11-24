@@ -41,7 +41,7 @@ function kinCreateViewerUX() {
   function stop() { generation++; dispose?.(); dispose = null; mouse?.dispose(); mouse = null; resize?.(); resize = null; }
   return {
     id: 'kin.viewer-ux',
-    async preRegistration({ servicesManager, commandsManager }) {
+    async preRegistration({ servicesManager, commandsManager, hotkeysManager }) {
       services = servicesManager.services; commands = commandsManager;
       if (window.top !== window) return;
       try { await load(); }
@@ -55,7 +55,7 @@ function kinCreateViewerUX() {
       shortcuts = window.KinViewerUXShortcuts.mount({
         getBindings: () => toolbar?.bindings() || {}, invoke: id => toolbar?.invoke(id),
         allowed: () => !kinViewerSession.ended(),
-        workspace: kinViewerWorkspaceClaims,
+        workspace: kinViewerWorkspaceClaims, hotkeyRows: () => hotkeysManager?.hotkeyDefinitions,
       });
       kinViewerOnEnd(() => { shortcuts?.dispose(); window.KinViewerUXToolbar.clear(); });
     },

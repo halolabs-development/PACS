@@ -79,7 +79,12 @@ window.KinViewerUXShortcuts = (() => {
     tool: () => kinText('이 창에서 사용 불가 — 영상 도구 키가 먼저 받습니다(Viewer Settings · Edit Shortcuts › Viewer에서 정함). 다른 키를 지정하세요.'),
     leader: () => kinText('이 창에서 사용 불가 — Space는 F.Leader가 받습니다(Viewer Settings › Space opens F.Leader). 다른 키를 지정하세요.'),
     workspace: () => kinText('이 창에서 사용 불가 — 작업 화면 단축키가 받습니다(Edit Shortcuts). 다른 키를 지정하세요.') };
-  function mount({ getBindings, invoke, allowed, workspace = () => null }) {
+  // The tool of this layer that does what a row of the pinned viewer's table does (the row's stock command).
+  const rowCommands = { invertViewport: 'invert', toggleCine: 'Cine', resetViewport: 'Reset',
+    flipViewportHorizontal: 'flipHorizontal', flipViewportVertical: 'flipVertical',
+    rotateViewportCW: 'rotate-right', rotateViewportCCW: 'rotate-left' };
+  const rowTool = row => row?.commandName === 'setToolActive' ? row.commandOptions?.toolName : rowCommands[row?.commandName];
+  function mount({ getBindings, invoke, allowed, workspace = () => null, hotkeyRows = () => null }) {
     const blocked = event => event.isComposing || event.keyCode === 229 || event.repeat ||
       editable(event.target) || editable(document.activeElement) ||
       document.body.classList.contains('kin-viewer-empty') || document.body.classList.contains('kin-patient-switching') ||
@@ -153,8 +158,15 @@ window.KinViewerUXShortcuts = (() => {
       if (note.textContent !== words) note.textContent = words;
       note.hidden = false; field.setAttribute('aria-invalid', 'true');
     }
+    // A key this layer takes still does what its row says when the layer's tool on that key is the row's own function.
+    const keepsRow = binding => {
+      const row = Object.values(hotkeyRows() || {}).find(item => [].concat(item?.keys ?? []).join('+') === binding);
+      const tool = rowTool(row);
+      return !!tool && getBindings()[tool] === binding;
+    };
+    const rowReason = binding => { const reason = claims(binding); return reason === 'tool' && keepsRow(binding) ? null : reason; };
     // A refused press keeps its reason shown until the field holds another binding.
-    const mark = () => { for (const field of fields()) say(field, claims(field.value) || (field.dataset.kinRefusedAt === field.value ? field.dataset.kinRefused : null)); };
+    const mark = () => { for (const field of fields()) say(field, rowReason(field.value) || (field.dataset.kinRefusedAt === field.value ? field.dataset.kinRefused : null)); };
     let marking = 0;
     const remark = () => { clearTimeout(marking); marking = setTimeout(mark, 150); };
     // The viewer's modals open in portals added to the body; only those are watched, not the images' busy DOM.
@@ -181,6 +193,8 @@ window.KinViewerUXShortcuts = (() => {
       if (!reason) return;
       // Before the viewer's recorder (a document listener) hears it: the field keeps its binding.
       event.preventDefault(); event.stopImmediatePropagation();
+      // The row's own key pressed again changes nothing and is nothing to warn about.
+      if (reason === 'tool' && (event.shiftKey ? 'shift+' : '') + named(event) === event.target.value && keepsRow(event.target.value)) return;
       event.target.dataset.kinRefused = reason; event.target.dataset.kinRefusedAt = event.target.value;
       say(event.target, reason);
     };

@@ -1086,9 +1086,10 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
           const note = row && row.dataset.kinHotkeyNote && document.getElementById(row.dataset.kinHotkeyNote);
           return row ? [row.value, note && !note.hidden ? note.textContent : null] : null; }'''
         page.wait_for_function('label => (' + note_of + ')(label)?.[1]', arg='Rotate Right')
-        for label in ['Rotate Right', 'Rotate Left', 'Flip Horizontally', 'Flip Vertically', 'Zoom', 'Invert']:
+        # This account's keys: Z is Zoom, so its row is true; I is on no tool here, so the Invert row does nothing.
+        for label in ['Rotate Right', 'Rotate Left', 'Flip Horizontally', 'Flip Vertically', 'Invert']:
             self.assertIn('이 창에서 사용 불가', page.evaluate('label => (' + note_of + ')(label)', label)[1] or '', label)
-        for label in ['Next Image', 'Previous Image', 'First Image', 'Last Image', 'Zoom In', 'Zoom Out']:
+        for label in ['Zoom', 'Next Image', 'Previous Image', 'First Image', 'Last Image', 'Zoom In', 'Zoom Out']:
             self.assertIsNone(page.evaluate('label => (' + note_of + ')(label)', label)[1], label)
         before = page.evaluate('label => (' + note_of + ')(label)[0]', 'Next Image')
         page.evaluate('label => (' + field_of + ')(label).focus()', 'Next Image'); page.keyboard.press('q')
@@ -1100,6 +1101,67 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         record = document_request(page, 'GET', '/api/workspace-shortcuts').json()
         document_request(page, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
                          data=dict(expectedOwner=record['owner'], revision=record['revision'], viewerSettings=start))
+
+    def test_shell_17_each_hotkey_row_says_what_its_key_does(self):
+        # With the default keys, a row carries the "not available" note exactly when its key does not do the row's function.
+        fixture = self.multiple('U2KEYS-' + uuid.uuid4().hex[:12], 'keys', '20260801')
+        work = self.login()
+        record = document_request(work, 'GET', '/api/workspace-shortcuts').json()
+        original = record.get('viewerSettings')
+        keys = work.evaluate('() => ({ version: 2, bar: KinViewerUXShortcuts.defaultBar, shortcuts: KinViewerUXShortcuts.defaults })')
+        response = document_request(work, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
+                                    data=dict(expectedOwner=record['owner'], revision=record['revision'], viewerSettings=keys))
+        self.assertEqual(response.status, 200)
+        page = self.launch(work, [fixture])
+        page.wait_for_function('() => window.kinViewerHistoryWorkspaceState?.()?.busy === false && window.kinViewerJobWorkspaceState?.()?.busy === false')
+        page.locator('.bg-secondary-dark.z-20:has(#kin-viewer-brand) button[aria-haspopup="menu"]').click()
+        page.get_by_role('menu').get_by_text('Preferences', exact=True).click()
+        expect(page.get_by_text('User Preferences', exact=True)).to_be_visible()
+        page.wait_for_function("() => [...document.querySelectorAll('.kin-hotkey-note')].some(n => !n.hidden)")
+        page.wait_for_timeout(400)
+        rows = page.evaluate('''() => [...document.querySelectorAll('.ReactModal__Content .w-32 input[readonly]')].map(f => {
+          const note = f.dataset.kinHotkeyNote && document.getElementById(f.dataset.kinHotkeyNote);
+          return { label: f.closest('.mb-2')?.firstElementChild?.lastElementChild?.textContent.trim(), key: f.value, noted: !!note && !note.hidden }; })''')
+        page.get_by_role('button', name='Cancel', exact=True).click()
+        state = '''() => { const g = services.viewportGridService, id = g.getActiveViewportId(),
+            v = services.cornerstoneViewportService.getCornerstoneViewport(id), c = v.getCamera(), p = v.getProperties();
+          return { tool: services.toolGroupService.getToolGroupForViewport(id).getActivePrimaryMouseButtonTool(),
+            scale: Math.round(c.parallelScale * 1000), flipH: !!c.flipHorizontal, flipV: !!c.flipVertical, rotation: Math.round(v.getRotation?.() ?? 0),
+            invert: !!p.invert, voi: JSON.stringify(p.voiRange ?? null), image: v.getCurrentImageIdIndex(),
+            set: g.getState().viewports.get(id).displaySetInstanceUIDs[0], cine: !!services.cineService.getState().cines?.[id]?.isPlaying }; }'''
+        prepare = '''() => { const g = services.viewportGridService, id = g.getActiveViewportId(),
+            v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          services.cineService.setCine?.({ id, isPlaying: false });
+          v.setImageIdIndex(Math.floor(v.getImageIds().length / 2)); const c = v.getCamera(); v.setCamera({ parallelScale: c.parallelScale * 0.8 }); v.render(); }'''
+        function = {'Zoom': 'tool', 'Zoom In': 'scale', 'Zoom Out': 'scale', 'Zoom to Fit': 'scale', 'Rotate Right': 'rotation', 'Rotate Left': 'rotation',
+                    'Flip Horizontally': 'flipH', 'Flip Vertically': 'flipV', 'Cine': 'cine', 'Invert': 'invert', 'Next Image': 'image', 'Previous Image': 'image',
+                    'First Image': 'image', 'Last Image': 'image', 'Next Series': 'set', 'Previous Series': 'set', 'Reset': 'scale',
+                    **{f'W/L Preset {n}': 'voi' for n in range(1, 10)}}
+        names = {'pageup': 'PageUp', 'pagedown': 'PageDown', 'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight',
+                 'home': 'Home', 'end': 'End', 'esc': 'Escape', 'space': ' ', '+': 'Shift+Equal', '=': 'Equal', '-': 'Minus'}
+        table, wrong = [], []
+        page.locator('[data-cy="viewport-pane"] canvas').first.hover()
+        for row in rows:
+            page.keyboard.press('w'); page.evaluate(prepare); page.wait_for_timeout(250)
+            before = page.evaluate(state)
+            page.keyboard.press(names.get(row['key'], row['key'])); page.wait_for_timeout(350)
+            after = page.evaluate(state)
+            changed = sorted(k for k in after if after[k] != before[k])
+            expected = function.get(row['label'])
+            did = None if expected is None else expected in changed
+            table.append({**row, 'changed': changed, 'function': expected, 'did': did})
+            print('HOTKEY-ROW', json.dumps(table[-1], ensure_ascii=False), flush=True)
+            if did is not None and did == row['noted']: wrong.append(row['label'])
+            if page.locator('[role="dialog"][aria-modal="true"]').count(): page.keyboard.press('Escape')
+            if row['key'] == 'pagedown': page.keyboard.press('PageUp'); page.wait_for_timeout(250)
+        folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-ux-u2/screens')); folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'hotkey-rows.json').write_text(json.dumps(table, ensure_ascii=False, indent=1), encoding='utf-8')
+        current = document_request(page, 'GET', '/api/workspace-shortcuts').json()
+        document_request(page, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
+                         data=dict(expectedOwner=current['owner'], revision=current['revision'], viewerSettings=original))
+        self.assertEqual([], wrong, 'rows whose note and key disagree')
+        for label in ['Zoom', 'Invert', 'Cine']:
+            self.assertFalse(next(r for r in table if r['label'] == label)['noted'], label)
 
 
 def load_tests(loader, tests, pattern):
