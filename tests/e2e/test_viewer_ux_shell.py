@@ -1131,10 +1131,11 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
             scale: Math.round(c.parallelScale * 1000), flipH: !!c.flipHorizontal, flipV: !!c.flipVertical, rotation: Math.round(v.getRotation?.() ?? 0),
             invert: !!p.invert, voi: JSON.stringify(p.voiRange ?? null), image: v.getCurrentImageIdIndex(),
             set: g.getState().viewports.get(id).displaySetInstanceUIDs[0], cine: !!services.cineService.getState().cines?.[id]?.isPlaying }; }'''
-        prepare = '''() => { const g = services.viewportGridService, id = g.getActiveViewportId(),
+        # A key that moves forward starts on the first image, one that moves back on the last (the series may have two).
+        prepare = '''last => { const g = services.viewportGridService, id = g.getActiveViewportId(),
             v = services.cornerstoneViewportService.getCornerstoneViewport(id);
           services.cineService.setCine?.({ id, isPlaying: false });
-          v.setImageIdIndex(Math.floor(v.getImageIds().length / 2)); const c = v.getCamera(); v.setCamera({ parallelScale: c.parallelScale * 0.8 }); v.render(); }'''
+          v.setImageIdIndex(last ? v.getImageIds().length - 1 : 0); const c = v.getCamera(); v.setCamera({ parallelScale: c.parallelScale * 0.8 }); v.render(); }'''
         function = {'Zoom': 'tool', 'Zoom In': 'scale', 'Zoom Out': 'scale', 'Zoom to Fit': 'scale', 'Rotate Right': 'rotation', 'Rotate Left': 'rotation',
                     'Flip Horizontally': 'flipH', 'Flip Vertically': 'flipV', 'Cine': 'cine', 'Invert': 'invert', 'Next Image': 'image', 'Previous Image': 'image',
                     'First Image': 'image', 'Last Image': 'image', 'Next Series': 'set', 'Previous Series': 'set', 'Reset': 'scale',
@@ -1146,7 +1147,7 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         for row in rows:
             # Previous Series is measured from the second series; every row starts from the middle image.
             if row['key'] == 'pageup': page.keyboard.press('PageDown'); page.wait_for_timeout(600)
-            page.keyboard.press('w'); page.evaluate(prepare); page.wait_for_timeout(400)
+            page.keyboard.press('w'); page.evaluate(prepare, row['key'] in ('up', 'home')); page.wait_for_timeout(400)
             before = page.evaluate(state)
             page.keyboard.press(names.get(row['key'], row['key']))
             for _ in range(10):
@@ -1154,11 +1155,6 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
                 after = page.evaluate(state)
                 if any(after[k] != before[k] for k in after): page.wait_for_timeout(150); after = page.evaluate(state); break
             changed = sorted(k for k in after if after[k] != before[k])
-            if row['key'] in ('down', 'up'):
-                print('HOTKEY-IMAGE', row['key'], before['image'], after['image'],
-                      page.evaluate('''() => services.cornerstoneViewportService.getCornerstoneViewport(
-                        services.viewportGridService.getActiveViewportId()).getImageIds().length'''),
-                      page.evaluate('() => document.activeElement?.tagName + "#" + (document.activeElement?.id || "")'), flush=True)
             expected = function.get(row['label'])
             did = None if expected is None else expected in changed
             table.append({**row, 'changed': changed, 'function': expected, 'did': did})
