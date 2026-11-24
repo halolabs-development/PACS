@@ -180,6 +180,31 @@ class ViewerCompareE2E(CTSyncE2E):
         p.screenshot(path=str(self.artifacts() / 'COMPARE-match-ratio.png'))
         self.assertEqual(self.originals(), originals)
 
+    def test_compare_05_frame_coverage_counts_a_drawn_cell_that_is_not_active(self):
+        f, series, refs = self.pair(); originals = self.originals(); p = self.pair_page(f)
+        self.activate(p, 0); other = self.snapshot(p)[1]['id']
+        # The pinned grid gives the cell that is not active no pointer input, so a hit test passes through it.
+        self.assertEqual('none', p.evaluate('id=>getComputedStyle(services.cornerstoneViewportService.getCornerstoneViewport(id).element).pointerEvents', other))
+        p.get_by_role('button', name='Comparison', exact=True).click()
+        p.locator('#kin-frame-warning').check()
+        p.wait_for_function("()=>kinViewerFrameCoverageState().phase==='ready'", timeout=30000)
+        shown = lambda n: p.wait_for_function('n=>kinViewerFrameCoverageState().shown===n', arg=n, timeout=15000)
+        shown(2)  # one image in each cell, without pressing the second
+        self.jump(p, 1, 3); self.wait_index(p, 1, 3); shown(3)
+        # Something really on top of that cell: the image drawn under it is not counted.
+        p.evaluate('''id=>{const r=services.cornerstoneViewportService.getCornerstoneViewport(id).element.getBoundingClientRect(),c=document.createElement('div');c.id='coverage-cover';
+          c.style.cssText=`position:fixed;z-index:9999;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;background:#123`;document.body.append(c)}''', other)
+        self.jump(p, 1, 5); self.wait_index(p, 1, 5); p.wait_for_timeout(400)
+        self.assertEqual(3, p.evaluate('kinViewerFrameCoverageState().shown'))
+        p.evaluate("document.querySelector('#coverage-cover').remove()")
+        self.jump(p, 1, 6); self.wait_index(p, 1, 6); shown(4)
+        state = p.evaluate('kinViewerFrameCoverageState()')
+        self.assertEqual(state['total'] - 4, state['remaining'])
+        asked = p.evaluate('()=>{let m=null;kinViewerFrameCoverageConfirm(t=>{m=t;return false});return m}')
+        self.assertIn(str(state['remaining']), asked)
+        p.locator('#kin-frame-warning').uncheck()
+        self.assertEqual(self.originals(), originals)
+
     def test_compare_04_related_studies_lists_a_later_study_series_before_it_opens(self):
         # One patient: an earlier, the current and a later study; the later one has a second series. Only the current opens.
         f = self.ct('CMP-' + uuid.uuid4().hex[:12], 'current', '20260801')

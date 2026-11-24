@@ -1,5 +1,8 @@
 (function(root){
   'use strict';
+  // Product words reach the screen through the screen-language write path (English only; otherwise as written).
+  const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
+    : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => (p[i] === undefined ? m : String(p[i])));
   function create({owner,allowed,request,apply,changed,invalidate,notify}){
     const work=globalThis.KinWorkContext;
     const pending=new Map();let bound=owner(),ended=false;
@@ -22,7 +25,7 @@
       }catch(e){
         if(!active())return;
         work.commit(at,()=>{
-        invalidate();task.phase='unknown';update();notify('응급 상태 저장 결과를 확인하지 못했습니다. Refresh Status로 확인한 뒤 다시 지정하세요. '+e.message,true);});
+        invalidate();task.phase='unknown';update();notify(kinSayEn('응급 상태 저장 결과를 확인하지 못했습니다. Refresh Status로 확인한 뒤 다시 지정하세요. {e0}',e.message),true);});
       }
     }
     function end(){ended=true;pending.clear();update();}

@@ -183,6 +183,27 @@ class WorklistLanguageDOM(unittest.TestCase):
             box.check() if on else box.uncheck()
         return dialog
 
+    def test_sentences_handed_to_a_status_helper_read_in_english(self):
+        self.boot()
+        self.apply("en")
+        said = self.page.evaluate("""async () => {
+          const host = document.createElement('div'), line = document.createElement('p');
+          document.body.append(host, line);
+          KinSharedFilterManager.mount({ host, api: {}, run: fn => fn, status: value => KinLanguage.write(line, value),
+            personal: () => null, acceptPersonal() {} });
+          const bulk = host.querySelector('#sfs-move-selected');
+          bulk.disabled = false; bulk.click();
+          const shared = line.textContent;
+          const priority = KinStudyPriority.create({ owner: () => 'syn', allowed: () => true,
+            request: async () => { throw new Error('SYN offline'); }, apply() {}, changed() {}, invalidate() {},
+            notify: (message, error) => toast(message, error ? 'err' : '') });
+          await priority.set('syn-uid', 'E');
+          return { shared, priority: document.querySelector('#toast').textContent };
+        }""")
+        self.assertEqual("Select an institution search.", said["shared"])
+        self.assertTrue(said["priority"].startswith("Could not confirm that the emergency status was saved."), said["priority"])
+        self.assertNotRegex(said["priority"], "[가-힣]")
+
     def test_korean_on_both_screens_changes_labels_not_data_and_revert_restores_the_mixed_screen(self):
         self.boot()
         page = self.page

@@ -582,8 +582,8 @@
         renderDraftBar();
         updateReportButtons();
       }
-      if (op.state === "applied") relatedMode.announce("삽입됨 · " + relatedInsertLabel(op));
-      else if (op.state === "discarded" && op.reverted) relatedMode.announce("넣었던 글을 취소했습니다 (Insert Discarded).");
+      if (op.state === "applied") relatedMode.announce(kinSayEn("삽입됨 · {0}", relatedInsertLabel(op)));
+      else if (op.state === "discarded" && op.reverted) relatedMode.announce(kinSayEn("넣었던 글을 취소했습니다 (Insert Discarded)."));
       relatedMode.refresh();
     }
     /** Shows the pending operation's Notice again (a refused command or entry names it). */

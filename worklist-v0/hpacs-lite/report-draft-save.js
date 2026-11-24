@@ -257,13 +257,13 @@
     async function writeReportDrawing(sourceUid, operation) {
       const refused = (reason, code = null) => ({ status: "refused", reason, code });
       const uid = selectedUid, seq = selectionSeq;
-      if (typeof sourceUid !== "string" || sourceUid !== uid) return refused("지금 고른 검사의 판독문이 아니어서 붙이지 않았습니다");
-      if (!operation || (operation.drawing === undefined) === (operation.removeDrawing === undefined)) return refused("그림 요청의 모양이 올바르지 않습니다");
-      if (!serverMode || demoMode || offline) return refused("서버에 연결된 계정에서만 판독문에 그림을 붙일 수 있습니다");
-      if (reportOpening?.uid !== uid || reportOpening?.selectionSeq !== seq) return refused("판독문이 아직 이 검사로 열리지 않았습니다");
-      const why = work.state() !== "active" ? "판독 화면이 지금 편집을 받지 않습니다." : reportEditorBlock();
+      if (typeof sourceUid !== "string" || sourceUid !== uid) return refused(kinSayEn("지금 고른 검사의 판독문이 아니어서 붙이지 않았습니다"));
+      if (!operation || (operation.drawing === undefined) === (operation.removeDrawing === undefined)) return refused(kinSayEn("그림 요청의 모양이 올바르지 않습니다"));
+      if (!serverMode || demoMode || offline) return refused(kinSayEn("서버에 연결된 계정에서만 판독문에 그림을 붙일 수 있습니다"));
+      if (reportOpening?.uid !== uid || reportOpening?.selectionSeq !== seq) return refused(kinSayEn("판독문이 아직 이 검사로 열리지 않았습니다"));
+      const why = work.state() !== "active" ? kinSayEn("판독 화면이 지금 편집을 받지 않습니다.") : reportEditorBlock();
       if (why) return refused(why);
-      if (insertInFlight) return refused("다른 삽입이 처리 중입니다 — 잠시 뒤 다시 시도하세요");
+      if (insertInFlight) return refused(kinSayEn("다른 삽입이 처리 중입니다 — 잠시 뒤 다시 시도하세요"));
       const a = appState[uid] ?? {};
       const content = Object.fromEntries(RFIELDS.map(k => [k, $("#" + k).value]));
       const baseVersion = reportBaseVersion(uid, a.draft?.baseVersion ?? a.version ?? 0);
@@ -277,7 +277,7 @@
         const untouched = insertLeftNoText(pristine, result);
         work.commit(at, () => { if (!untouched) markConverge(uid); });
         draftNotSaved(uid, at, result, { quiet: true, converge: !untouched });
-        return refused(draftFailureText(result), result.code ?? result.answer?.body?.code ?? null);
+        return refused(draftFailureSaid(result), result.code ?? result.answer?.body?.code ?? null);
       }
       const drawn = result.answer?.body?.drawn ?? null;
       work.commit(at, () => {

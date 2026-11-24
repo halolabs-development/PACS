@@ -138,7 +138,7 @@
     }
 
     // The status row is one line in the Related panel; its tooltip keeps the whole sentence.
-    function say(text) { status.textContent = text; status.title = text; }
+    function say(text) { kinWrite(status, text); kinWrite(status, text, 'title'); }
 
     function rows(card, heading, entries, extra) {
       const nodes = [];
@@ -275,7 +275,7 @@
       if (!state) return;
       render();
       if (before !== next.state && next.uid) {
-        say(next.state === 'ready' ? '이전 판독문을 표시했습니다.' : next.message || SOURCE_STATE[next.state] || '');
+        say(next.state === 'ready' ? kinSayEn('이전 판독문을 표시했습니다.') : next.message || (SOURCE_STATE[next.state] ? kinSayEn(SOURCE_STATE[next.state]) : ''));
       }
     }
 
@@ -309,7 +309,7 @@
     }
 
     function refuseInsert(message) {
-      say(message);
+      say(typeof message === 'string' && message ? kinSayEn(message) : message);
       // Refusal leaves the draft in view; the existing Notice owns any receipt recovery.
       confirming = null;
       renderButtons();
@@ -326,7 +326,7 @@
       const open = { generation: gen, parts, source };
       confirming = open;
       renderButtons();
-      say('현재 초안의 저장 상태를 확인하는 중입니다…');
+      say(kinSayEn('현재 초안의 저장 상태를 확인하는 중입니다…'));
       try {
         let prepared;
         try { prepared = await app.prepare(); }
@@ -373,7 +373,7 @@
           state.inserted = Object.freeze({ field: last.field, end: last.at.start + last.text.length, after: last.after });
           title.focus({ preventScroll: true });
         }
-        say('현재 초안에 넣었습니다. 서버 저장을 확인하는 중입니다…');
+        say(kinSayEn('현재 초안에 넣었습니다. 서버 저장을 확인하는 중입니다…'));
         await app.submit(frozen.op);
       } finally {
         if (confirming === open) confirming = null;
@@ -414,7 +414,7 @@
       section.hidden = false;
       render();
       if (focus) title.focus({ preventScroll: false });
-      say('Related Report 모드입니다. 이전 판독문은 읽기 전용이고, 검토한 글만 Insert로 현재 초안에 넣습니다.');
+      say(kinSayEn('Related Report 모드입니다. 이전 판독문은 읽기 전용이고, 검토한 글만 Insert로 현재 초안에 넣습니다.'));
       return true;
     }
 

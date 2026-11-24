@@ -119,7 +119,7 @@
     $('load').addEventListener('click', () => options.run(async (signal,at) => {
       const personal=await options.api.readFolders(signal,at);
       if(!work.commit(at,()=>options.acceptPersonal(personal)))return;
-      const shared=await options.api.readShared(signal,at);work.commit(at,()=>{accept(shared);options.status('개인 폴더와 기관 검색 모음을 불러왔습니다. 편집 내용은 유지했습니다.');});
+      const shared=await options.api.readShared(signal,at);work.commit(at,()=>{accept(shared);options.status(kinSayEn('개인 폴더와 기관 검색 모음을 불러왔습니다. 편집 내용은 유지했습니다.'));});
     }, true));
     $('source').addEventListener('change', () => {
       const initial = JSON.parse(baseline);
@@ -136,7 +136,7 @@
       options.run(async (signal,at) => {
         const personal=await options.api.copyShared(body, signal,at);
         work.commit(at,()=>{options.acceptPersonal(personal); acknowledge([0,1,2]);
-        options.status('개인 검색으로 복사했습니다. 개인 목록에서 검색을 선택해 편집하거나 적용하세요.');});
+        options.status(kinSayEn('개인 검색으로 복사했습니다. 개인 목록에서 검색을 선택해 편집하거나 적용하세요.'));});
       });
     });
     function change(command, message) {
@@ -147,7 +147,7 @@
         work.commit(at,()=>{accept(shared);
         acknowledge({ 'publish-folder': [1,2,3,6], 'save-folder': [0,4,5], 'move-folder': [0,1],
           'remove-folder': [0], 'move-searches': [1], 'delete-searches': [] }[command.action]);
-        options.status('기관 검색 모음을 갱신했습니다. 기존 개인 복사본은 유지됩니다.');});
+        options.status(kinSayEn('기관 검색 모음을 갱신했습니다. 기존 개인 복사본은 유지됩니다.'));});
       });
     }
     $('publish').addEventListener('click', () => {
@@ -161,7 +161,7 @@
     $('remove').addEventListener('click', () => change({action:'remove-folder',path:$('source').value},kinSayEn("기관 폴더 \"{0}\"와 하위 폴더를 제거할까요? 포함된 검색은 부모 폴더로 옮기며 삭제하지 않습니다.", $('source').value)));
     function bulk(action) {
       const selected = library?.filters.filter(filter => checked.has(filter.id)) || [];
-      if (!selected.length) { options.status('기관 검색을 선택하세요.', true); return; }
+      if (!selected.length) { options.status(kinSayEn('기관 검색을 선택하세요.'), true); return; }
       const command = { action, ids: selected.map(filter => filter.id) };
       if (action === 'move-searches') command.to = $('destination').value;
       change(command, kinSayEn("선택한 기관 검색 {n0}개를 {1}할까요?\n{2}\n기존 개인 복사본·검사·판독문은 유지됩니다.", selected.length, action === 'delete-searches' ? kinSayEn("삭제") : kinSayEn("\"{0}\"로 이동", command.to || kinSayEn("미분류")), selected.map(filter => filter.name).join('\n')));
