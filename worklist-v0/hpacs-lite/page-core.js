@@ -10,10 +10,10 @@
     const $ = s => document.querySelector(s) ?? (window.KinReportPopout?.find(s) ?? null);
     // A sentence of the page built from its template and its parts (data as is, {t: words}, {e: message}).
     // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
-    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
+    const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay,
+      // A refusal the server wrote: its words in English only when the whole message is a known sentence (worklist-language.js).
+      kinServer = message => (typeof window !== 'undefined' && window.KinLanguage?.server) ? window.KinLanguage.server(message) : message;
     function kinWrite(el, value, name) { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; }
-    // A refusal the server wrote: its words in English only when the whole message is a known sentence (worklist-language.js).
-    const kinServer = message => window.KinLanguage?.server ? window.KinLanguage.server(message) : message;
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
       const key = String(id ?? "");
