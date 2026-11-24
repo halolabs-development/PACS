@@ -51,6 +51,7 @@ class OrdersSite(rf.FlowSite):
         self.scheduled_reads = []       # query strings
         self.retry_answers = {}         # oid -> entry for the next one-order read
         self.unmatch_refusal = None
+        self.match_refusal = None
         self.own_ward = {h.UID: "SYN OWN WARD"}
         self.hold_scheduled = 0        # the next N scheduled reads are held until release_scheduled()
         self.held_scheduled = []        # (route, body)
@@ -117,6 +118,8 @@ class OrdersSite(rf.FlowSite):
         if method == "POST" and path == "/api/match":
             body = request.post_data_json
             self.sent.append((method, path, body))
+            if self.match_refusal:
+                return self.answer(route, 400, {"message": self.match_refusal})
             order = next(o for o in self.orders if o["oid"] == body["oid"])
             order.update(matched="M", studyUid=body["uid"])
             return route.fulfill(json=self.state_of(body["uid"], account))
@@ -441,6 +444,27 @@ class TechnicianOrders(unittest.TestCase):
         w.get_by_role("button", name="Unmatch").click()
         expect(w).to_contain_text("Order SYN-O-1 is Unmatched again.")
         expect(w).not_to_contain_text(hangul)
+
+    def test_the_right_click_match_and_unmatch_refusals_read_the_servers_known_sentence_in_english(self):
+        refusals = lambda: [d for d in self.dialogs if d.startswith(("Match failed", "Unmatch failed", "매칭"))]
+        self.page.evaluate("() => KinLanguage.restore({ version: 1, worklist: 'en', reading: 'en' })")
+        self.site.match_refusal = "이미 매칭된 오더입니다. 목록을 새로고침한 뒤 다시 선택하세요."
+        self.pick_study(h.PATIENT)
+        self.pick_order("SYN-O-1")
+        self.page.evaluate("() => doMatch()")
+        self.pick_study(rf.PATIENT_C)
+        for message in ["매칭된 검사가 아닙니다", "매칭된 검사가 아닙니다 ", "SYN 미등록 거절 문장"]:
+            self.site.unmatch_refusal = message
+            self.page.evaluate("() => doUnmatch()")
+        self.assertEqual(["Match failed: This order is already matched. Refresh the list and select again.",
+                          "Unmatch failed: Not a matched study", "Unmatch failed: 매칭된 검사가 아닙니다 ",
+                          "Unmatch failed: SYN 미등록 거절 문장"], refusals())
+        self.page.evaluate("() => KinLanguage.restore({ version: 1, worklist: 'ko', reading: 'ko' })")
+        self.dialogs.clear()
+        self.site.unmatch_refusal = "매칭된 검사가 아닙니다"
+        self.page.evaluate("() => doUnmatch()")
+        self.assertEqual(["매칭 해제 실패: 매칭된 검사가 아닙니다"], refusals())
+        self.dialogs.clear()
 
     def test_unmatch_refusal_is_shown_in_the_window(self):
         self.pick_study(rf.PATIENT_C)

@@ -254,8 +254,12 @@
     const color = () => value(colorRadios);
     const image = () => session?.images.find(i => i.id === imageSelect.value) || null;
     const key = () => keyOf(background(), background() === 'image' ? image() : null);
-    const say = (message, kind = '') => { kinWrite(status, message); status.className = 'ir-status' + (kind ? ' ' + kind : ''); };
-    // This window's own failure carries its sentence; a server's message is shown as the server wrote it.
+    // A refusal the server wrote reads in English only when the whole message is a known sentence (worklist-language.js).
+    const say = (message, kind = '') => {
+      kinWrite(status, kind === 'err' && window.KinLanguage?.server ? window.KinLanguage.server(message) : message);
+      status.className = 'ir-status' + (kind ? ' ' + kind : '');
+    };
+    // This window's own failure carries its sentence; a server's message is judged by say() above.
     const failure = words => Object.assign(new Error(words), { sentence: kinSayEn(words) });
     const reason = (error, fallback) => (error && (error.sentence || error.body?.message || error.message)) || fallback;
 

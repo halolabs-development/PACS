@@ -69,6 +69,7 @@ class LanguageSite(WorkspaceSite):
         self.clinical_fixture = None
         self.planter = None  # language_data_probe.Planter: answers carry planted data
         self.lost = {}  # uid -> exam kind: the list server's mark for an exam whose originals cannot all be read now
+        self.hold_appearance = None  # a list: the account reads wait there until the test answers them
 
     def list_body(self, account, rename=None):
         body = super().list_body(account, rename)
@@ -88,6 +89,8 @@ class LanguageSite(WorkspaceSite):
             return route.fulfill(json=answer)
         if path != "/api/reading-appearance":
             return super().api(route, request, method, path, query)
+        if method == "GET" and self.hold_appearance is not None:
+            return self.hold_appearance.append((route, request, method, path, query))
         account, refused = self.authenticate(request)
         if refused:
             return self.refuse(route, *refused)
@@ -182,6 +185,66 @@ class WorklistLanguageDOM(unittest.TestCase):
             box = dialog.locator("#language-scope-" + scope)
             box.check() if on else box.uncheck()
         return dialog
+
+    def opening(self):
+        return self.page.evaluate("""() => [...document.querySelectorAll('[data-kin-lang-wait]')].map(el => ({
+          text: el.tagName === 'INPUT' ? el.placeholder : el.textContent.trim(), shown: getComputedStyle(el).visibility === 'visible' }))""")
+
+    def test_opening_words_wait_for_the_accounts_language_and_never_show_korean_first(self):
+        hangul = re.compile("[가-힣]")
+        self.boot()
+        self.apply("en")
+        for answer in (True, False):
+            self.site.hold_appearance = []
+            self.page.goto(auth.MAIN_URL)
+            self.page.wait_for_function("() => document.querySelectorAll('[data-kin-lang-wait]').length === 4")
+            words = self.opening()
+            self.assertEqual(4, len(words))
+            self.assertTrue(all(not w["shown"] for w in words if hangul.search(w["text"])), words)
+            for _ in range(100):
+                if self.site.hold_appearance: break
+                self.page.wait_for_timeout(50)
+            self.assertTrue(self.site.hold_appearance, "the account read")
+            held, self.site.hold_appearance = self.site.hold_appearance, None
+            if answer:
+                for call in held: self.site.api(*call)
+                self.page.wait_for_function("() => document.documentElement.hasAttribute('data-kin-lang-settled')")
+                words = self.opening()
+                self.assertTrue(all(w["shown"] and not hangul.search(w["text"]) for w in words), words)
+            else:
+                # No answer at all: the words appear by the style's own bound, as written.
+                self.page.wait_for_timeout(1700)
+                self.assertTrue(all(w["shown"] for w in self.opening()))
+                for call in held: call[0].abort()
+        expect(self.page.locator("#rows")).to_contain_text(auth.PATIENT)
+
+    def test_opening_words_show_at_once_for_an_account_without_a_choice(self):
+        self.boot()
+        self.page.wait_for_function("() => document.documentElement.hasAttribute('data-kin-lang-settled')")
+        words = self.opening()
+        self.assertIn("제목·단축어·Modality·부위 검색", [w["text"] for w in words])
+        self.assertTrue(all(w["shown"] for w in words), words)
+
+    def test_server_sentences_read_in_english_only_when_the_whole_message_is_known(self):
+        self.boot()
+        self.apply("en")
+        said = self.page.evaluate("""() => ['매칭된 검사가 아닙니다', '매칭된 검사가 아닙니다 ', ' 매칭된 검사가 아닙니다', 'SYN 판독의가 쓴 글 매칭된 검사가 아닙니다',
+          '합친 검사에 지금 승인된 판독문이 없습니다.', '', null].map(m => String(KinLanguage.server(m)))""")
+        self.assertEqual(["Not a matched study", "매칭된 검사가 아닙니다 ", " 매칭된 검사가 아닙니다", "SYN 판독의가 쓴 글 매칭된 검사가 아닙니다",
+                          "The merged exam has no approved report now.", "", "null"], said)
+        toast = self.page.evaluate("""() => { toast(String(kinSayEn('저장 실패: {e0}', kinServer(
+          '다른 판독의가 Save해 둔 진행 중 판독입니다. 그 판독의만 보고 이어 쓸 수 있습니다 — 이어 쓰려면 Reset으로 Unread로 되돌리세요'))), 'err');
+          return document.querySelector('#toast').textContent; }""")
+        self.assertEqual("Save failed: Another radiologist saved this report in progress. Only that radiologist can read and continue it — "
+                         "to continue, reset it to Unread with Reset", toast)
+        # Study Access's saved line: the code's template is the glossary's ({n0}), so the number goes into the English line.
+        source = (Path(__file__).resolve().parents[1] / "worklist-v0" / "hpacs-lite" / "study-access-admin.js").read_text(encoding="utf-8")
+        template = "Saved · Revision {n0}. Reload로 현재 설정을 확인하세요."
+        self.assertIn(template, source)
+        self.assertEqual("Saved · Revision 3. Use Reload to check the current settings.",
+                         self.page.evaluate("t => String(KinLanguage.tr(KinLanguage.sayEnglish(t, 3), 'en'))", template))
+        self.apply("ko")
+        self.assertEqual("매칭된 검사가 아닙니다", self.page.evaluate("() => String(KinLanguage.server('매칭된 검사가 아닙니다'))"))
 
     def test_sentences_handed_to_a_status_helper_read_in_english(self):
         self.boot()

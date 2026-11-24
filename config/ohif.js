@@ -9586,6 +9586,8 @@ window.KinLanguageTerms = {
   // on an answer or a failed one, and by that style's short bound whatever happens (main.html).
   const settled = () => document.documentElement.setAttribute('data-kin-lang-settled', '');
   function start() {
+    // The same bound here, for words in a part not drawn yet (a closed dialog's animation would only start when it opens).
+    setTimeout(settled, 1500);
     registerMarkup(document);
     watchMoves(document);
     for (const [region, selectors] of Object.entries(REGION_OF))

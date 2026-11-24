@@ -12,6 +12,8 @@
     // Shared by the sources of this script, and by the functions a page test takes out of it (kinSayShared).
     const kinSay = globalThis.kinSayShared = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.say) || ((t, ...p) => t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); })), kinSayEn = (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) || kinSay;
     function kinWrite(el, value, name) { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; }
+    // A refusal the server wrote: its words in English only when the whole message is a known sentence (worklist-language.js).
+    const kinServer = message => window.KinLanguage?.server ? window.KinLanguage.server(message) : message;
     const actorNames = new Map();
     function rememberActor(id, name, username = "") {
       const key = String(id ?? "");
@@ -5651,7 +5653,7 @@
       if (s.matched === "M" || o.matched === "M") { alert(kinSayEn("이미 매칭된 항목입니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       if (!confirm(kinSayEn("아래 오더 정보를 검사에 덮어씁니다.\n\n검사: {0} ({1}) {2}\n오더: {3} ({4}) {5}\n\n진행할까요?", s.name, s.id, s.date, o.name, o.id, o.sched))) return;
-      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", message)));
+      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", kinServer(message))));
     }
 
     /**
@@ -5718,7 +5720,7 @@
       const s = cur();
       if (!s || s.matched !== "M") { alert(kinSayEn("매칭(M)된 검사를 선택하세요.")); return; }
       if (!studyWriteRoute()) return;
-      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", message)));
+      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", kinServer(message))));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */
@@ -10132,7 +10134,7 @@
           // 문맥이 무효가 된 뒤의 실패(이어진 읽기의 취소 등)는 알릴 실패가 아니다.
           // 서명키가 없어 거절된 승인은 판독의가 풀 수 없다: 서버가 말한 까닭을 읽고 관리자에게 전할 만큼 오래 보인다.
           const words = refusalWords(e, action);
-          if (work.admits(at)) toast(String(words ? kinSay("저장 실패: {e0}", words) : kinSayEn("저장 실패: {e0}", e.message)), "err",
+          if (work.admits(at)) toast(String(words ? kinSay("저장 실패: {e0}", words) : kinSayEn("저장 실패: {e0}", kinServer(e.message))), "err",
             e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
           return;
         } finally {

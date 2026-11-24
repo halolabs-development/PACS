@@ -5,6 +5,8 @@
   // English on an English screen; any other screen keeps the words as written here.
   const kinSayEn = (t, ...p) => (typeof window !== 'undefined' && window.KinLanguage && window.KinLanguage.sayEnglish) ? window.KinLanguage.sayEnglish(t, ...p) : kinSay(t, ...p);
   const kinWrite = (el, value, name) => { if (window.KinLanguage) return window.KinLanguage.write(el, value, name); if (name) el.setAttribute(name, value); else el.textContent = value; return el; };
+  // A check the server wrote: in English only when the whole message is a known sentence (worklist-language.js).
+  const kinServer = message => window.KinLanguage?.server ? window.KinLanguage.server(message) : message;
   const el = (tag, props = {}, ...children) => {
     const node = document.createElement(tag);
     for (const [key, value] of Object.entries(props)) {
@@ -192,7 +194,7 @@
           ...(hidden?[note(kinSay('원본 검사 {n0}건은 지금 볼 수 없어 이 표에 없습니다.',hidden),'exam-merge-hidden')]:[]));
       };
       // The mark, then the server's sentence for that check (in the glossary when the server writes one sentence).
-      const paint=()=>{paintOriginals();checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:c.message})})));go.disabled=busy || ended || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
+      const paint=()=>{paintOriginals();checks.replaceChildren(...(answer.checks||[]).map(c=>el('li',{className:c.ok?'order-note ok':'order-note err',text:kinSay('{0}{t1}',c.ok?'✓ ':'✗ ',{t:kinServer(c.message)})})));go.disabled=busy || ended || !Array.isArray(answer.checks) || answer.checks.some(c=>!c.ok);};
       win.body.replaceChildren(note(kinSayEn(split?'나눈 검사를 원래 영상 소속으로 되돌립니다. 양쪽의 판독 이력은 남습니다.':'합친 검사를 원래 영상 소속으로 되돌립니다. 합친 동안 쓴 판독 이력은 남습니다.')),
         listed,el('h4',{text:'Checks'}),checks,
         note(kinSay('현재 승인·점유·초안·진행 중 전송이 있으면 서버가 되돌리기를 거절합니다. 합친 뒤 도착한 영상은 자기 원본에 그대로 남습니다.'),'muted'));

@@ -595,7 +595,7 @@ class ExamMerge(unittest.TestCase):
                 win.locator("button", has_text="닫기").click()
                 expect(win).to_have_count(0)
 
-    def test_english_screen_keeps_the_server_check_and_refusal_details(self):
+    def test_english_screen_reads_the_server_checks_in_english_and_keeps_refusal_details(self):
         self.site.groups[h.UID] = [h.UID, h.UID_B]
         settle(self.page, "load()")
         self.language("en")
@@ -605,9 +605,15 @@ class ExamMerge(unittest.TestCase):
         # The window reads the group before it draws the table; the table is read once it is there.
         expect(win.locator("tbody tr")).to_have_count(2)
         expect(win.locator("thead th")).to_have_text(["Original exam", "StudyDate", "StudyDesc", "Series / Images back"])
+        # The server's check sentences are known whole to the glossary, so they read in English; Korean keeps them as sent.
+        expect(win.locator(".exam-merge-checks li")).to_have_text([
+            "✓ The merged exam has no approved report now.", "✓ No transfer or export of these studies is in progress.",
+            "✓ No one is writing the report of the merged exam."])
+        self.language("ko")
         expect(win.locator(".exam-merge-checks li")).to_have_text([
             "✓ 합친 검사에 지금 승인된 판독문이 없습니다.", "✓ 이 검사들의 전송·내보내기가 진행 중이지 않습니다.",
             "✓ 합친 검사의 판독문을 쓰는 사람이 없습니다."])
+        self.language("en")
         win.locator("button", has_text="Close").click()
         self.site.groups.clear()
         settle(self.page, "load()")

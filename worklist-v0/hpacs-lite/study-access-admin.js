@@ -84,7 +84,7 @@
         catch(e){message(e.message);return;}
       }
       busy=true;controls();message('Saving');const token=++generation;
-      try{const result=await request('POST',pending);if(closed||token!==generation)return;pending=null;dirty=false;revision=null;message(kinSayEn('Saved · Revision {0}. Reload로 현재 설정을 확인하세요.',result.revision));}
+      try{const result=await request('POST',pending);if(closed||token!==generation)return;pending=null;dirty=false;revision=null;message(kinSayEn('Saved · Revision {n0}. Reload로 현재 설정을 확인하세요.',result.revision));}
       catch(e){if(closed)return;message(kinSayEn('{0} · 입력을 유지했습니다.',e.message||kinSayEn('저장 결과를 확인하지 못했습니다')));if([400,403,404,409].includes(e.status)){pending=null;if(e.status===409)revision=null;}}
       finally{busy=false;if(!closed)controls();}
     }

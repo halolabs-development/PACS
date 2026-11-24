@@ -73,6 +73,14 @@
     return sentence;
   }
 
+  // ── A fixed sentence of the product's server, where a page shows its refusal or check ──
+  // English on an English screen only when the whole message, exactly as received, is a sentence of the glossary; any
+  // other message (unknown, spaced differently, or a person's words) is shown exactly as received. Korean or no choice: as received.
+  const sources = new Set((terms.terms || []).map(([source]) => source));
+  function server(message) {
+    return typeof message === 'string' && sources.has(message) && message.search(slots) < 0 ? sayEnglish(message) : message;
+  }
+
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
   const state = { worklist: null, reading: null };
   let lastRegion = 'worklist', generation = 0;
@@ -535,7 +543,13 @@
     return out + phrase(template.slice(at), params);
   }
 
+  // Words of the work page's markup that are on screen when it opens (marked data-kin-lang-wait) stay hidden by the page's
+  // own style until the account's language is known, so an English reader never sees them in Korean first: shown at once
+  // on an answer or a failed one, and by that style's short bound whatever happens (main.html).
+  const settled = () => document.documentElement.setAttribute('data-kin-lang-settled', '');
   function start() {
+    // The same bound here, for words in a part not drawn yet (a closed dialog's animation would only start when it opens).
+    setTimeout(settled, 1500);
     registerMarkup(document);
     watchMoves(document);
     for (const [region, selectors] of Object.entries(REGION_OF))
@@ -587,7 +601,9 @@
   }
 
   window.KinLanguage = {
-    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
+    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error, server,
+    /** The account's language is known (or could not be): the words held back at the page's opening are shown. */
+    settled,
     /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
     isSentence,
     /** The sentence write() last put in the text of this element (or its attribute `name`) and still owns there, or null — so another
