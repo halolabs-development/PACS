@@ -44,7 +44,7 @@ class Incidents(AuditPage):
 
     def click(self, text): self.section.get_by_role('button', name=text, exact=True).click()
 
-    def register(self, identifier='SYN-A', verdict='possible'):
+    def register(self, identifier='SYN-A', verdict='possible', saved=True):
         self.section.get_by_label('Incident ID', exact=True).fill(identifier)
         for label, text in {'Awareness At (UTC)': '2026-11-01T00:00', 'Determination At (UTC)': '2026-11-01T00:00',
                 'Finding Evidence ID': 'SYN-EVIDENCE', 'Incident From (UTC)': '2026-10-01T00:00',
@@ -54,7 +54,18 @@ class Incidents(AuditPage):
         self.section.get_by_role('combobox', name='Incident Type', exact=True).select_option('cvr-misdelivery')
         self.section.get_by_role('combobox', name='Scope Finding', exact=True).select_option('access-outside-ledger')
         self.click('Register Incident')
-        expect(self.section.locator('#audit-incident-state')).to_contain_text('Status: Open')
+        if saved: expect(self.section.locator('#audit-incident-state')).to_contain_text('Status: Open')
+
+    def test_a_range_too_large_is_refused_in_words_and_keeps_the_input(self):
+        self.open()
+        self.incident_reply = (409, {'code': 'IncidentRangeTooLarge', 'message': 'synthetic'})
+        self.register('SYN-WIDE', saved=False)
+        words = '이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.'
+        expect(self.section.locator('#audit-incident-message')).to_have_text(words)
+        expect(self.section.get_by_label('Incident ID', exact=True)).to_have_value('SYN-WIDE')
+        expect(self.section.get_by_label('Incident From (UTC)', exact=True)).to_have_value('2026-10-01T00:00')
+        self.assertEqual(self.page.evaluate('text => String(KinLanguage.tr(KinLanguage.sayEnglish(text), "en"))', words),
+                         'This period has too many access records to register as one incident. Narrow the period or conditions and register again.')
 
     def test_registration_scope_six_downloads_and_no_dispatch(self):
         self.open(); self.register()

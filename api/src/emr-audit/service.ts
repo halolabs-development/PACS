@@ -1,6 +1,7 @@
 import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import type { IncomingMessage } from 'node:http';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
@@ -8,7 +9,8 @@ import { identity, newAuditLinkId, patientLink } from '../emr-contract/access-ev
 import type { AccessTarget, AccessEventV1 } from '../emr-contract/access-event';
 import { clauseVersionAt, HOLD_CLAUSE_VERSIONS } from '../emr-contract/legal-basis';
 import type { LegalHold } from '../emr-contract/lawful-defaults';
-import { choice, object, refuse, string, utc } from '../emr-contract/validation';
+import { choice, ContractError, object, refuse, string, utc } from '../emr-contract/validation';
+import { EMR_TX_MAX_WAIT_MS, EMR_TX_TIMEOUT_MS } from '../emr-runtime/limits';
 import { REQUEST_CONTEXT_SOURCE, RequestContextSource, RequestWorkContext } from '../emr-runtime/request-context';
 import type { RecordMutation } from '../emr-runtime/store';
 import { lockFixedRecords } from '../emr-runtime/fixed-record-lock';
@@ -18,9 +20,54 @@ import { fixedOriginals, onlineFixedListing } from './fixed-listing';
 import { fixedAuthorNames, fixedContentType, fixedDocument } from './fixed-document';
 import { rightsRecords } from './rights-records';
 import { RightsIntake, RightsState, rightsView } from './rights-state';
-import { IncidentState, IncidentStep, INCIDENT_FORMS, incidentDraft } from './incident-state';
+import { IncidentSnapshot, IncidentSnapshotCopy, IncidentState, IncidentStep, INCIDENT_FORMS, incidentDraft } from './incident-state';
 
 type Tx = Prisma.TransactionClient;
+// A registration's evidence rows stay in the incident body up to these sizes; above them they are one compressed fixed copy.
+const INCIDENT_INLINE_ROWS = 1000, INCIDENT_INLINE_BYTES = 2_000_000;
+const INCIDENT_PAGE = 500, INCIDENT_COPY_MAX_BYTES = 256 * 1024 * 1024;
+// One commit holds every access record of a response, and the ledger admits 128 unfinished records in all: a range is
+// registered only if its records leave room for other users' work. The row bound stops the read before that count.
+const INCIDENT_MAX_RECORDS = 112, INCIDENT_MAX_ROWS = 40_000;
+// One point in time for the whole range: a row expiring or committing late cannot mix two views of the ledger.
+const INCIDENT_READ = { maxWait: EMR_TX_MAX_WAIT_MS, timeout: EMR_TX_TIMEOUT_MS, isolationLevel: 'RepeatableRead' as const };
+const ACCESS_RECORD_BYTES = 65_536;
+/** A scope computed before the write transaction, and which copy it was computed from (null: the incident's body). */
+type PreparedScope = { sha256: string | null; scope: Readonly<F.IncidentScope> | null };
+type PreparedRegistration = { id: string; sha256: string | null } & (
+  { scope: Readonly<F.IncidentScope>; fresh: { snapshot: IncidentSnapshot; body: Buffer | null } } |
+  { scope: Readonly<F.IncidentScope> | null; fresh: null });
+/** B1's admit_operation/storage contract caps the canonical UTF-8 payload: every target, in order, in as few records as fit. */
+function recordChunks(overhead: number, targets: readonly F.InvestigationAuditTarget[]): F.InvestigationAuditTarget[][] {
+  const chunks: F.InvestigationAuditTarget[][] = [];
+  let chunk: F.InvestigationAuditTarget[] = [], bytes = overhead;
+  for (const target of targets) {
+    const size = Buffer.byteLength(JSON.stringify(target));
+    if (overhead + size > ACCESS_RECORD_BYTES) refuse('AccessPayloadInvalid');
+    if (chunk.length && bytes + size + 1 > ACCESS_RECORD_BYTES) { chunks.push(chunk); chunk = []; bytes = overhead; }
+    bytes += size + (chunk.length ? 1 : 0); chunk.push(target);
+  }
+  if (chunk.length || !targets.length) chunks.push(chunk);
+  return chunks;
+}
+function incidentLedger(top: number, failure: string | null, rows: readonly F.LedgerRow[]): F.InvestigationLedger {
+  return {
+    top: async () => { if (failure) refuse(failure); return top; },
+    rows: async (ceiling, below, take) => rows.filter(r => {
+      const sequence = (r.entry as { sequence: number }).sequence; return sequence <= ceiling && (below === null || sequence < below);
+    }).slice(0, take),
+  };
+}
+/** The copy's rows, or null when they cannot be vouched for: missing, another hash, not the recorded count, not readable. */
+function incidentCopyRows(found: { body: Uint8Array; sha256: string } | undefined, copy: IncidentSnapshotCopy): F.LedgerRow[] | null {
+  try {
+    if (!found || found.sha256 !== copy.sha256 || hash(Buffer.from(found.body)) !== copy.sha256) return null;
+    const rows = JSON.parse(gunzipSync(found.body, { maxOutputLength: INCIDENT_COPY_MAX_BYTES }).toString('utf8'));
+    return Array.isArray(rows) && rows.length === copy.rows ? rows : null;
+  } catch { return null; }
+}
+const incidentUnreadable = (state: IncidentState, scope: F.IncidentScope) =>
+  !!state.snapshot.copy && !state.snapshot.failure && scope.reasons.some(r => r.kind === 'ledger-unreadable');
 type HeldRequest = { kind: 'access-request'; request: F.DisclosureRequest; facts: F.RequestDeadlineFacts; holds: LegalHold[]; issuanceId: string | null };
 const known = <T>(value: T) => ({ status: 'known' as const, value });
 const none = { status: 'not-applicable' as const, reason: 'non-record-target' as const };
@@ -72,41 +119,37 @@ export class EmrAuditService {
     return F.resolveAuditAuthority({ listGrants: () => ({ subject: f.actor, complete: true, grants: rows.map(r => r.body) }) },
       { identity: f.actor, institutionId: f.institution, roles: f.roles }, now());
   }
-  private async run<T>(request: IncomingMessage, task: (tx: Tx, ctx: RequestWorkContext, record: RecordMutation) => Promise<T>): Promise<T> {
+  /** `prepare` does a request's heavy reading and computing before the write transaction opens; its value goes to `task`. */
+  private async run<T, P = undefined>(request: IncomingMessage, task: (tx: Tx, ctx: RequestWorkContext, record: RecordMutation, prepared: P) => Promise<T>,
+    prepare?: (ctx: RequestWorkContext) => Promise<P>): Promise<T> {
     return this.requests.withWork(request, async ctx => {
+      const prepared = prepare ? await prepare(ctx).catch(ledgerAnswer) : undefined as P;
       const result = await ctx.work.transactionWithRecords(async (tx, record) => {
         await ctx.requireCurrent(tx);
-        return task(tx, ctx, record);
+        return task(tx, ctx, record, prepared);
       }).catch(ledgerAnswer);
       await ctx.requireCurrent(); ctx.assertActive();
       return result;
     });
   }
-  private async recorded(record: RecordMutation, ctx: RequestWorkContext, action: AccessEventV1['action'],
-    targets: readonly F.InvestigationAuditTarget[], reference: string, surface = ctx.facts.surface): Promise<void> {
+  private accessEvent(ctx: RequestWorkContext, action: AccessEventV1['action'], targets: readonly F.InvestigationAuditTarget[],
+    surface = ctx.facts.surface): AccessEventV1 {
     const f = ctx.facts;
-    const event: AccessEventV1 = { formatVersion: 1, surface, eventId: randomUUID(),
+    return { formatVersion: 1, surface, eventId: randomUUID(),
       userId: known(f.actor), rolesAtTime: known(f.roles), actingInstitution: known(f.institution), managingInstitution: known(f.institution),
       occurredAt: now(), trustedProxyIp: f.ingress, cause: 'user-view',
       context: { basis: 'out-of-context', studyId: null, relatedStudyId: null, reason: null }, executor: 'member',
       targets, action, result: action === 'provide-prepared' ? 'prepared' : 'succeeded',
       requestId: f.requestId, auditLinkId: newAuditLinkId(), relatedEventId: null };
-    // B1's admit_operation/storage contract caps the canonical UTF-8 payload at 65,536 bytes.
+  }
+  private async recorded(record: RecordMutation, ctx: RequestWorkContext, action: AccessEventV1['action'],
+    targets: readonly F.InvestigationAuditTarget[], reference: string, surface = ctx.facts.surface): Promise<void> {
+    const event = this.accessEvent(ctx, action, targets, surface);
     // Partition by bytes, keeping every target and the request correlation in the same transaction.
-    const cap = 65_536, overhead = Buffer.byteLength(JSON.stringify({ ...event, targets: [] }));
-    let chunk: F.InvestigationAuditTarget[] = [], bytes = overhead;
-    const append = async () => {
-      // B1 validates each complete chunk at admission; avoid parsing the unbounded export first.
+    // B1 validates each complete chunk at admission; avoid parsing the unbounded export first.
+    for (const chunk of recordChunks(Buffer.byteLength(JSON.stringify({ ...event, targets: [] })), event.targets))
       await record({ ...event, eventId: randomUUID(), auditLinkId: newAuditLinkId(), targets: chunk },
         async () => ({ kind: 'emr-audit', id: reference, version: null }));
-    };
-    for (const target of event.targets) {
-      const size = Buffer.byteLength(JSON.stringify(target));
-      if (overhead + size > cap) refuse('AccessPayloadInvalid');
-      if (chunk.length && bytes + size + 1 > cap) { await append(); chunk = []; bytes = overhead; }
-      bytes += size + (chunk.length ? 1 : 0); chunk.push(target);
-    }
-    if (chunk.length || !event.targets.length) await append();
   }
 
   private async rosterSubject(tx: Tx, input: unknown) {
@@ -395,17 +438,102 @@ export class EmrAuditService {
     return F.resolveAuditAuthority({ listGrants: () => ({ subject: step.by, complete: true, grants: rows.map(r => r.body) }) },
       { identity: step.by, institutionId: ctx.facts.institution, roles: step.roles }, step.at);
   }
-  private async savedIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
-    await this.lock(tx, JSON.stringify(['emr-f-request', id]));
+  private async latestIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
     const [row] = await tx.$queryRaw<{ body: IncidentState; institution_id: string }[]>`SELECT body,institution_id
       FROM emr_audit.request_event WHERE request_id=${id} ORDER BY sequence DESC LIMIT 1`;
     if (row && row.institution_id !== institution) refuse('IncidentNotFound');
     if (row && row.body.kind !== 'incident') refuse('IncidentConflict');
     return row?.body ?? null;
   }
-  private async saveIncident(tx: Tx, state: IncidentState) {
+  private async savedIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
+    await this.lock(tx, JSON.stringify(['emr-f-request', id]));
+    return this.latestIncident(tx, id, institution);
+  }
+  private async saveIncident(tx: Tx, state: IncidentState, plan: Readonly<F.IncidentResponsePlan>) {
+    if (state.snapshot.copy) state.listing = { verdict: plan.verdict, awarenessAt: plan.awarenessAt };
     await tx.$executeRaw`INSERT INTO emr_audit.request_event(request_id,institution_id,body)
       VALUES(${state.incidentId},${state.institutionId},${JSON.stringify(state)}::json)`;
+  }
+  private async incidentCopy(tx: Tx, copy: IncidentSnapshotCopy) {
+    const [found] = await tx.$queryRaw<{ body: Uint8Array; sha256: string }[]>`SELECT body,sha256 FROM emr_audit.fixed_copy WHERE issuance_id=${copy.key}`;
+    return found;
+  }
+  /** The registration's fixed scope, rebuilt by the contract from the evidence rows under the registering auditor's authority.
+   *  Evidence that cannot be vouched for is the contract's unreadable ledger: subjects unidentified, never nobody affected. */
+  private fixedScope(authority: F.AuditAuthority, state: IncidentState, rows: readonly F.LedgerRow[] | null) {
+    return F.incidentScope(authority, F.planInvestigation(authority, state.query, 'export'),
+      incidentLedger(state.snapshot.top, rows ? state.snapshot.failure : 'LedgerReadFailed', rows ?? []), state.determinations);
+  }
+  /** Before the write transaction: a large incident's copy is read and its scope computed, so the commit holds neither. */
+  private async preparedCopyScope(ctx: RequestWorkContext, rawId: unknown): Promise<PreparedScope | null> {
+    const read = await ctx.work.transactionWithRecords(async tx => {
+      await ctx.requireCurrent(tx);
+      await this.incidentAuthority(tx, ctx);
+      const id = requestValue(() => string(rawId));
+      const [marked] = await tx.$queryRaw<{ copied: boolean }[]>`SELECT (body #> '{snapshot,copy}') IS NOT NULL AS copied
+        FROM emr_audit.request_event WHERE request_id=${id} ORDER BY sequence DESC LIMIT 1`;
+      if (!marked?.copied) return null;
+      const state = await this.latestIncident(tx, id, ctx.facts.institution);
+      if (!state?.snapshot.copy) return null;
+      return { state, authority: await this.incidentAuthority(tx, ctx, state.steps[0]), found: await this.incidentCopy(tx, state.snapshot.copy) };
+    }, INCIDENT_READ);
+    if (!read) return null;
+    return { sha256: read.state.snapshot.copy.sha256,
+      scope: await this.fixedScope(read.authority, read.state, incidentCopyRows(read.found, read.state.snapshot.copy)) };
+  }
+  /** A new registration's whole range at one point in time, then its scope and evidence outside any transaction. */
+  private async prepareRegistration(ctx: RequestWorkContext, input: unknown): Promise<PreparedRegistration> {
+    const read = await ctx.work.transactionWithRecords(async tx => {
+      await ctx.requireCurrent(tx);
+      const authority = await this.incidentAuthority(tx, ctx);
+      const v = requestBody(input, ['incidentId', 'incidentType', 'query', 'determinations', 'facts']);
+      const id = requestValue(() => string(v.incidentId));
+      // A retry of a saved registration answers from that incident, whatever the ledger holds by now.
+      const existing = await this.latestIncident(tx, id, authority.institutionId);
+      if (existing) {
+        if (!isDeepStrictEqual(existing.intake, input)) refuse('IncidentConflict');
+        return { id, v, authority, existing };
+      }
+      const plan = F.planInvestigation(authority, v.query, 'export'), rows: F.LedgerRow[] = [];
+      let top = 0;
+      try {
+        const [first] = await tx.$queryRaw<{ snapshot_top: bigint }[]>`SELECT * FROM emr_access.investigation_entries(
+          ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
+          ${null}::bigint,${null}::bigint,${1}::integer,${'{}'}::jsonb)`;
+        top = Number(first?.snapshot_top ?? 0);
+        for (let below: number | null = null; ;) {
+          const found = await tx.$queryRaw<{ sequence: bigint; payload: string; recorded_at: Date }[]>`SELECT * FROM emr_access.investigation_entries(
+            ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
+            ${top}::bigint,${below}::bigint,${INCIDENT_PAGE}::integer,${JSON.stringify(plan.filters)}::jsonb)`;
+          for (const r of found) rows.push({ entry: { sequence: Number(r.sequence), payload: { kind: 'access', event: JSON.parse(r.payload) } },
+            durableAt: r.recorded_at.toISOString(), served: null });
+          if (rows.length > INCIDENT_MAX_ROWS) refuse('IncidentRangeTooLarge');
+          if (found.length < INCIDENT_PAGE) break;
+          below = Number(found[found.length - 1].sequence);
+        }
+      } catch (error) {
+        if (error instanceof ContractError) throw error;
+        F.ledgerReadFailure(error);
+      }
+      return { id, v, authority, plan, top, rows };
+    }, INCIDENT_READ);
+    if ('existing' in read) {
+      const copy = read.existing.snapshot.copy;
+      if (!copy) return { id: read.id, fresh: null, sha256: null, scope: null };
+      const authority = await ctx.work.transactionWithRecords(tx => this.incidentAuthority(tx, ctx, read.existing.steps[0]), INCIDENT_READ);
+      const found = await ctx.work.transactionWithRecords(tx => this.incidentCopy(tx, copy), INCIDENT_READ);
+      return { id: read.id, fresh: null, sha256: copy.sha256, scope: await this.fixedScope(authority, read.existing, incidentCopyRows(found, copy)) };
+    }
+    const scope = await F.incidentScope(read.authority, read.plan, incidentLedger(read.top, null, read.rows), read.v.determinations);
+    // Outside the scope's own read: a range too large to record is refused, never saved as an unidentified one.
+    const targets = this.incidentTargets({ incidentId: read.id }, scope), event = this.accessEvent(ctx, 'provide-prepared', targets);
+    if (recordChunks(Buffer.byteLength(JSON.stringify({ ...event, targets: [] })), targets).length > INCIDENT_MAX_RECORDS) refuse('IncidentRangeTooLarge');
+    const failure = scope.reasons.find(r => r.kind === 'ledger-unreadable')?.['code'] ?? null, text = JSON.stringify(read.rows);
+    if (read.rows.length <= INCIDENT_INLINE_ROWS && Buffer.byteLength(text) <= INCIDENT_INLINE_BYTES)
+      return { id: read.id, scope, sha256: null, fresh: { snapshot: { top: read.top, rows: read.rows, failure } as IncidentSnapshot, body: null as Buffer | null } };
+    const body = gzipSync(text, { level: 1 }), sha256 = hash(body);
+    const copy: IncidentSnapshotCopy = { format: 'gzip-json-ledger-rows-v1', key: `incident-snapshot:${read.id}`, sha256, rows: read.rows.length };
+    return { id: read.id, scope, sha256, fresh: { snapshot: { top: read.top, failure, copy } as IncidentSnapshot, body } };
   }
   private async incidentFacts(tx: Tx, ctx: RequestWorkContext, input: unknown, id: string, at: string) {
     const facts = requestValue(() => ({ ...object(input, Object.keys(input ?? {})), incidentId: id, recordedAt: at })) as F.IncidentResponseFacts;
@@ -424,17 +552,14 @@ export class EmrAuditService {
     }
     return facts;
   }
-  private async incidentProjection(tx: Tx, ctx: RequestWorkContext, state: IncidentState, at: string) {
+  private async incidentProjection(tx: Tx, ctx: RequestWorkContext, state: IncidentState, at: string,
+    prepared?: PreparedScope | null) {
     let plan: Readonly<F.IncidentResponsePlan>;
-    const originalAuthority = await this.incidentAuthority(tx, ctx, state.steps[0]);
-    const source: F.InvestigationLedger = {
-      top: async () => { if (state.snapshot.failure) refuse(state.snapshot.failure); return state.snapshot.top; },
-      rows: async (top, below, take) => state.snapshot.rows.filter(r => {
-        const sequence = (r.entry as { sequence: number }).sequence; return sequence <= top && (below === null || sequence < below);
-      }).slice(0, take),
-    };
+    const copy = state.snapshot.copy;
     // The scope determination belongs to registration, even when another auditor later records a notice.
-    const scope = await F.incidentScope(originalAuthority, F.planInvestigation(originalAuthority, state.query, 'export'), source, state.determinations);
+    const scope = prepared?.scope && prepared.sha256 === (copy?.sha256 ?? null) ? prepared.scope
+      : await this.fixedScope(await this.incidentAuthority(tx, ctx, state.steps[0]), state,
+        copy ? incidentCopyRows(await this.incidentCopy(tx, copy), copy) : state.snapshot.rows ?? null);
     for (const step of state.steps) {
       const authority = await this.incidentAuthority(tx, ctx, step);
       plan = F.planIncidentResponse(authority, scope, step.facts, { previous: plan, notices: step.notices,
@@ -444,52 +569,36 @@ export class EmrAuditService {
     plan = F.planIncidentResponse(authority, scope, state.steps.at(-1).facts, { previous: plan, asOf: at });
     return { scope, plan };
   }
-  private incidentTargets(state: IncidentState, scope?: F.IncidentScope): F.InvestigationAuditTarget[] {
+  private incidentTargets(state: Pick<IncidentState, 'incidentId'>, scope?: F.IncidentScope): F.InvestigationAuditTarget[] {
     // A complete scope retains its contract-produced patient and local-source targets, even on a draft download.
     return [{ kind: 'access-audit', patientLinkSnapshot: none, studyId: none,
       recordId: known(state.incidentId), versionId: none }, ...(scope?.auditEvent.targets ?? [])];
   }
   async registerIncident(request: IncomingMessage, input: unknown) {
-    return this.run(request, async (tx, ctx, record) => {
+    return this.run(request, async (tx, ctx, record, prepared: PreparedRegistration) => {
       const authority = await this.incidentAuthority(tx, ctx), at = now();
       const v = requestBody(input, ['incidentId', 'incidentType', 'query', 'determinations', 'facts']);
       const id = requestValue(() => string(v.incidentId));
       let state = await this.savedIncident(tx, id, authority.institutionId), changed = false;
       if (state && !isDeepStrictEqual(state.intake, input)) refuse('IncidentConflict');
       if (!state) {
-        const plan = F.planInvestigation(authority, v.query, 'export');
-        const rows: F.LedgerRow[] = [];
-        let top: number | null = null;
-        const source: F.InvestigationLedger = {
-          top: async () => {
-            const found = await tx.$queryRaw<{ snapshot_top: bigint }[]>`SELECT * FROM emr_access.investigation_entries(
-              ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
-              ${null}::bigint,${null}::bigint,${1}::integer,${'{}'}::jsonb)`;
-            top = Number(found[0]?.snapshot_top ?? 0); return top;
-          },
-          rows: async (ceiling, below, take) => {
-            const found = await tx.$queryRaw<{ sequence: bigint; payload: string; recorded_at: Date }[]>`SELECT * FROM emr_access.investigation_entries(
-              ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
-              ${ceiling}::bigint,${below}::bigint,${take}::integer,${JSON.stringify(plan.filters)}::jsonb)`;
-            const page = found.map(r => ({ entry: { sequence: Number(r.sequence), payload: { kind: 'access', event: JSON.parse(r.payload) } },
-              durableAt: r.recorded_at.toISOString(), served: null })); rows.push(...page); return page;
-          },
-        };
-        const scope = await F.incidentScope(authority, plan, source, v.determinations);
+        if (!prepared.fresh) refuse('IncidentConflict');
         const facts = await this.incidentFacts(tx, ctx, v.facts, id, at);
-        F.planIncidentResponse(authority, scope, facts, { asOf: at });
+        F.planIncidentResponse(authority, prepared.scope, facts, { asOf: at });
         state = { kind: 'incident', institutionId: authority.institutionId, incidentId: id,
           incidentType: requestValue(() => choice(v.incidentType, ['other', 'cvr-misdelivery'])), intake: input,
-          query: v.query, determinations: v.determinations,
-          snapshot: { top: top ?? 0, rows, failure: scope.reasons.find(r => r.kind === 'ledger-unreadable')?.['code'] ?? null },
+          query: v.query, determinations: v.determinations, snapshot: prepared.fresh.snapshot,
           steps: [{ operationId: 'registration', input, facts, notices: [], by: ctx.facts.actor, roles: ctx.facts.roles, at }], closed: null };
+        const copy = prepared.fresh.snapshot.copy;
+        if (copy && prepared.fresh.body) await tx.$executeRaw`INSERT INTO emr_audit.fixed_copy(issuance_id,body,sha256)
+          VALUES(${copy.key},${prepared.fresh.body},${copy.sha256})`;
         changed = true;
       }
-      const projection = await this.incidentProjection(tx, ctx, state, at);
-      if (changed) await this.saveIncident(tx, state);
+      const projection = await this.incidentProjection(tx, ctx, state, at, prepared);
+      if (changed) await this.saveIncident(tx, state, projection.plan);
       await this.recorded(record, ctx, changed ? 'write' : 'provide-prepared', this.incidentTargets(state, projection.scope), id);
       return this.incidentView(state, projection);
-    });
+    }, ctx => this.prepareRegistration(ctx, input));
   }
   private incidentView(state: IncidentState, projection: { scope: F.IncidentScope; plan: F.IncidentResponsePlan }) {
     return { incidentId: state.incidentId, incidentType: state.incidentType, status: state.closed ? 'Closed' : 'Open',
@@ -503,7 +612,8 @@ export class EmrAuditService {
         WHERE institution_id=${authority.institutionId} AND body->>'kind'='incident' ORDER BY request_id,sequence DESC`;
       const incidents = [];
       for (const { body: s } of rows) {
-        const { plan } = await this.incidentProjection(tx, ctx, s, now());
+        // A large incident's row carries the verdict the contract gave when it was saved; its copy is not read for a list.
+        const plan = s.snapshot.copy && s.listing ? s.listing : (await this.incidentProjection(tx, ctx, s, now())).plan;
         incidents.push({ incidentId: s.incidentId, incidentType: s.incidentType,
           status: s.closed ? 'Closed' : 'Open', supersededBy: s.closed?.supersededBy ?? null, verdict: plan.verdict, awarenessAt: plan.awarenessAt });
       }
@@ -513,7 +623,7 @@ export class EmrAuditService {
     });
   }
   async incidentAction(request: IncomingMessage, id: string, action: 'read' | 'finding' | 'notice' | 'close' | 'draft', input?: unknown) {
-    return this.run(request, async (tx, ctx, record) => {
+    return this.run(request, async (tx, ctx, record, prepared: PreparedScope | null) => {
       await this.incidentAuthority(tx, ctx);
       const closure = action === 'close' ? requestValue(() => {
         const v = object(input, ['evidenceId', ...(Object.prototype.hasOwnProperty.call(input, 'supersededBy') ? ['supersededBy'] : [])]);
@@ -565,7 +675,7 @@ export class EmrAuditService {
           changed = true;
         }
       }
-      const projection = await this.incidentProjection(tx, ctx, state, at);
+      const projection = await this.incidentProjection(tx, ctx, state, at, prepared);
       if (action === 'close') {
         if (state.closed) {
           if (state.closed.evidenceId !== closure.evidenceId || state.closed.supersededBy !== closure.supersededBy) refuse('IncidentConflict');
@@ -584,11 +694,13 @@ export class EmrAuditService {
         }
       }
       const form = action === 'draft' ? requestValue(() => choice(input, Object.keys(INCIDENT_FORMS) as (keyof typeof INCIDENT_FORMS)[])) : null;
-      if (changed) await this.saveIncident(tx, state);
+      // A copy damaged after registration is shown as unreadable; no new decision is taken on it.
+      if (changed && incidentUnreadable(state, projection.scope)) refuse('IncidentSnapshotUnreadable');
+      if (changed) await this.saveIncident(tx, state, projection.plan);
       await this.recorded(record, ctx, action === 'draft' ? 'download' : changed ? 'write' : 'provide-prepared',
         this.incidentTargets(state, projection.scope), id);
       return form ? incidentDraft(form, state, projection.scope, projection.plan) : this.incidentView(state, projection);
-    });
+    }, ctx => this.preparedCopyScope(ctx, id));
   }
   private async saveIssuance(tx: Tx, issuance: F.Issuance) {
     await tx.$executeRaw`INSERT INTO emr_audit.issuance_event(issuance_id,institution_id,body)

@@ -4,7 +4,8 @@ const { fixture: base, actor, EmrAuditController } = require('./inspection_harne
 const { randomUUID } = require('node:crypto');
 const known = value => ({ status: 'known', value });
 function fixture(scopes = ['investigate', 'export'], institution = 'SYN-SITE', requestActor = actor) {
-  const f = base(scopes, institution, [], requestActor), requests = [], query = f.tx.$queryRaw;
+  const f = base(scopes, institution, [], requestActor), requests = [], copies = new Map(), query = f.tx.$queryRaw;
+  f.copyReads = 0;
   f.events.splice(0, f.events.length, { formatVersion: 1, surface: 'GET studies/:uid/report/versions', eventId: 'SYN-READ',
     userId: known(actor), rolesAtTime: known(['radiologist']), actingInstitution: known('SYN-SITE'), managingInstitution: known('SYN-SITE'),
     occurredAt: '2026-10-02T00:00:00.000Z', trustedProxyIp: known({ address: '127.0.0.1', source: 'trusted-proxy' }),
@@ -19,18 +20,28 @@ function fixture(scopes = ['investigate', 'export'], institution = 'SYN-SITE', r
       const rows = await query(parts, ...values);
       return rows.map(r => ({ body: { ...r.body, grantId: 'SYN-ORIGINAL-GRANT', subject: actor } }));
     }
+    if (sql.includes('FROM emr_audit.fixed_copy')) {
+      f.copyReads++;
+      return copies.has(values[0]) ? [{ ...copies.get(values[0]) }] : [];
+    }
     if (sql.includes('FROM emr_audit.request_event')) {
+      if (sql.includes('AS copied')) return requests.filter(r => r.body.incidentId === values[0]).slice(-1).map(r => ({ copied: !!r.body.snapshot.copy }));
       if (sql.includes('DISTINCT ON')) return structuredClone([...new Map(requests.filter(r => r.institution_id === values[0] && r.body.kind === 'incident').map(r => [r.body.incidentId, r])).values()]);
       return structuredClone(requests.filter(r => r.body.incidentId === values[0]).slice(-1));
     }
     return query(parts, ...values);
   };
   f.tx.$executeRaw = async (parts, ...values) => {
-    if (!parts.join('?').includes('INSERT INTO emr_audit.request_event')) throw Error('Unexpected write');
+    const sql = parts.join('?');
+    if (sql.includes('INSERT INTO emr_audit.fixed_copy')) {
+      if (copies.has(values[0])) throw Error('Duplicate fixed copy');
+      copies.set(values[0], { body: Buffer.from(values[1]), sha256: values[2] }); return 1;
+    }
+    if (!sql.includes('INSERT INTO emr_audit.request_event')) throw Error('Unexpected write');
     requests.push({ institution_id: values[1], body: JSON.parse(values[2]) }); return 1;
   };
   f.grantor = { capacity: 'privacy-officer', basis_document_id: 'SYN-DESIGNATION' };
-  return Object.assign(f, { requests });
+  return Object.assign(f, { requests, copies });
 }
 function intake(id = 'SYN-INCIDENT', status = 'possible') {
   return { incidentId: id, incidentType: 'cvr-misdelivery', query: { from: '2026-10-01T00:00:00.000Z', to: '2026-10-03T00:00:00.000Z' },

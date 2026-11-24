@@ -5953,6 +5953,7 @@ window.KinLanguageTerms = {
     ["저장된 사건 상태입니다. 음수 남은 시간은 기한 경과를 뜻하며 기록을 막지 않습니다.", "Saved incident status. A negative time remaining means the deadline has passed; it does not block recording.", "m"],
     ["계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.", "Not closed: contractual duties to confirm or fulfill remain. Check them with Open Incident.", "m"],
     ["사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", "Could not confirm the incident status ({e0}). Your input was kept. Check again with Open Incident.", "m"],
+    ["이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.", "This period has too many access records to register as one incident. Narrow the period or conditions and register again.", "m"],
     ["화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다.", "Inspection finished on screen. No further records were saved. The hash and incident count above are the report values saved at the start. Any unconfirmed or unresolved items remain open.", "m"],
     ["조건이 바뀌었습니다. Search로 조회하세요.", "Filters changed. Use Search to run the query.", "m"],
     ["세션을 확인하고 다시 로그인하세요.", "Check your session and sign in again.", "m"],

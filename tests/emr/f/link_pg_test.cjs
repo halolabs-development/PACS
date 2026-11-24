@@ -271,6 +271,7 @@ if(process.argv.includes('--serve')){
     const signed=await c2.approve();
     await rightsAndInspection(port,db,witness,ok,call,identities.auditor,patient,signed);
     await incidentsHttp(witness,ok,call,query,recordId,patient,identities.officer);
+    await largeIncidentHttp(port,witness,ok,identities.doctor,patient);
     const c2input=copy();c2input.request.scope=[{recordId:signed.recordId,versions:'all'}];
     const stale=await ok('auditor','POST','issuances',c2input);
     const added=await c2.approve('addendum',signed.versionId);
@@ -475,6 +476,41 @@ async function incidentsHttp(witness,ok,call,query,recordId,patient,officer) {
   assert.equal(replacedRows.length,2);assert.equal(replacedRows[0].body.closed,null);
   assert.equal(replacedRows[1].body.closed.supersededBy,retired.closed.supersededBy);
   console.log('CD-08 r2 HTTP/PG: report exemption closure/reopen, superseded closure/reopen, unchanged scope/drafts, concurrent cycle refusal and append-only history PASS');
+}
+
+// More evidence rows than an incident body keeps: one fixed copy beside a small body, answered the same on PostgreSQL, and
+// kept by the dump and restore below (it compares every fixed_copy and request_event row).
+async function largeIncidentHttp(port,witness,ok,reader,patient) {
+  const from=new Date(Date.now()-1000).toISOString(), work=port.begin();
+  const read=i=>({formatVersion:1,surface:'GET studies/:uid/report/versions',eventId:randomUUID(),
+    userId:known(reader),rolesAtTime:known(['radiologist']),actingInstitution:known('synthetic-hospital'),managingInstitution:known('synthetic-hospital'),
+    occurredAt:new Date().toISOString(),trustedProxyIp:known({address:'127.0.0.1',source:'trusted-proxy'}),cause:'user-view',
+    context:{basis:'worklist',studyId:null,relatedStudyId:null,reason:null},executor:'member',
+    targets:[{kind:'report-version',patientLinkSnapshot:known(patient),studyId:known('2.25.901'),recordId:known('synthetic-large-'+i),versionId:known('synthetic-large-version-'+i)}],
+    action:'provide-prepared',result:'prepared',requestId:randomUUID(),auditLinkId:'audit:'+randomUUID(),relatedEventId:null});
+  try{for(let i=0;i<1100;i+=10)await Promise.all(Array.from({length:10},(_,k)=>work.append(read(i+k))));}finally{work.end();}
+  const id=randomUUID(), at=new Date(Date.now()-5000).toISOString();
+  const input={incidentId:id,incidentType:'other',query:{from,to:new Date(Date.now()+60000).toISOString()},
+    determinations:[{kind:'access-outside-ledger',note:'Synthetic access outside ledger'}],
+    facts:{incidentId:id,awarenessAt:at,determinationAt:at,status:'possible',possibleGround:'illegal-access-unidentifiable',
+      detailsComplete:true,newlyConfirmedAt:null,reportTriggers:[],medicalIncident:null,evidenceId:'synthetic-large-finding'}};
+  const registered=await ok('auditor','POST','incidents',input);
+  assert.ok(registered.scope.identified[0].eventIds.length>=1100);
+  const copies=await witness.$queryRaw`SELECT sha256,octet_length(body)::int AS bytes FROM emr_audit.fixed_copy WHERE issuance_id=${'incident-snapshot:'+id}`;
+  assert.equal(copies.length,1);
+  const [saved]=await witness.$queryRaw`SELECT body FROM emr_audit.request_event WHERE request_id=${id}`;
+  assert.equal('rows' in saved.body.snapshot,false);assert.equal(saved.body.snapshot.copy.sha256,copies[0].sha256);
+  assert.ok(saved.body.snapshot.copy.rows>=1100);
+  assert.deepEqual((await ok('auditor','GET',`incidents/${id}`)).scope,registered.scope);
+  await ok('auditor','POST','incidents',input);
+  const found=await ok('auditor','POST',`incidents/${id}/findings`,{operationId:'large-more',facts:{...input.facts,evidenceId:'synthetic-large-finding-2'}});
+  assert.deepEqual(found.scope,registered.scope);
+  assert.deepEqual((await ok('auditor','GET',`incidents/${id}/drafts/possibility`)).scope,registered.scope);
+  assert.equal((await ok('auditor','GET','incidents')).incidents.find(i=>i.incidentId===id).verdict,found.plan.verdict);
+  const history=await witness.$queryRaw`SELECT count(*)::int AS n FROM emr_audit.request_event WHERE request_id=${id}`;
+  assert.equal(history[0].n,2);
+  assert.equal((await witness.$queryRaw`SELECT count(*)::int AS n FROM emr_audit.fixed_copy WHERE issuance_id=${'incident-snapshot:'+id}`)[0].n,1);
+  console.log('F incident HTTP/PG: large range kept once as a fixed copy, read back the same, replay and finding add no copy PASS');
 }
 
 async function rightsAndInspection(port,db,witness,ok,call,auditor,patient,signed) {
