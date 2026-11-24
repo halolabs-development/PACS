@@ -6,11 +6,17 @@ export interface IncidentStep {
   notices: F.IncidentNoticeEvidence[]; by: ImmutableIdentity; roles: readonly string[]; at: string;
   decisions?: F.IncidentDecision[]; delays?: F.IncidentDelay[];
 }
+/** The evidence rows of a large registration, kept once outside the incident's history. The hash is of the stored bytes. */
+export interface IncidentSnapshotCopy { format: 'gzip-json-ledger-rows-v1'; key: string; sha256: string; rows: number }
+/** Exactly one of `rows` (in the body) and `copy` (a fixed copy) holds the evidence; a body with neither is not an empty range. */
+export interface IncidentSnapshot { top: number; rows?: F.LedgerRow[]; failure: string | null; copy?: IncidentSnapshotCopy }
 export interface IncidentState {
   kind: 'incident'; institutionId: string; incidentId: string; incidentType: 'other' | 'cvr-misdelivery';
   intake: unknown; query: unknown; determinations: F.IncidentDetermination[];
-  snapshot: { top: number; rows: F.LedgerRow[]; failure: string | null };
+  snapshot: IncidentSnapshot;
   steps: IncidentStep[]; closed: { evidenceId: string; by: ImmutableIdentity; at: string; supersededBy?: string } | null;
+  /** With a copy: the contract's effective verdict when this row was saved, so the list does not read the copy. */
+  listing?: { verdict: F.IncidentResponsePlan['verdict']; awarenessAt: string };
 }
 export const INCIDENT_FORMS = {
   possibility: { title: 'Possible Leak Notice', kinds: ['possible-leak'] },

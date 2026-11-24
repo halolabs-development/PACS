@@ -329,12 +329,26 @@ class ImageReportPage(unittest.TestCase):
         saved.check()
         expect(self.page.locator("#image-report-status")).to_have_text("Could not load the saved image")
 
-    def test_english_screen_keeps_a_servers_refusal_in_the_window_status_as_written(self):
-        # A sentence the server wrote stays as it wrote it, even when the glossary happens to know the same words.
+    def test_english_screen_shows_a_servers_known_refusal_in_english_and_any_other_as_received(self):
+        # The server's refusal reads in English only when the whole message is exactly a sentence of the glossary.
         words = "보존 기간이 끝나 판독문을 파기한 검사입니다"
         self.open()
         self.open_study(h.PATIENT)
+        english = self.page.evaluate("text => String(KinLanguage.tr(KinLanguage.sayEnglish(text), 'en'))", words)
+        self.assertNotEqual(english, words)
         self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        for message, shown in [(words, english), (words + " ", words + " "), ("합성 서버 문장 (미등록)", "합성 서버 문장 (미등록)")]:
+            self.page.unroute("**/drawings*")
+            self.page.route("**/drawings*", (lambda m: lambda route: route.fulfill(status=409, json={"code": "REPORT_DESTROYED", "message": m}))(message))
+            self.page.locator("#report-image-report").click()
+            expect(self.page.locator("#image-report-status")).to_have_text(shown)
+            self.page.keyboard.press("Escape")
+            expect(self.page.locator("#image-report")).to_be_hidden()
+
+    def test_korean_screen_keeps_a_servers_refusal_as_received(self):
+        words = "보존 기간이 끝나 판독문을 파기한 검사입니다"
+        self.open()
+        self.open_study(h.PATIENT)
         self.page.route("**/drawings*", lambda route: route.fulfill(status=409, json={"code": "REPORT_DESTROYED", "message": words}))
         self.page.locator("#report-image-report").click()
         expect(self.page.locator("#image-report-status")).to_have_text(words)

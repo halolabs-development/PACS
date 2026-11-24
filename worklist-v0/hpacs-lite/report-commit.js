@@ -473,7 +473,7 @@
           // 문맥이 무효가 된 뒤의 실패(이어진 읽기의 취소 등)는 알릴 실패가 아니다.
           // 서명키가 없어 거절된 승인은 판독의가 풀 수 없다: 서버가 말한 까닭을 읽고 관리자에게 전할 만큼 오래 보인다.
           const words = refusalWords(e, action);
-          if (work.admits(at)) toast(String(words ? kinSay("저장 실패: {e0}", words) : kinSayEn("저장 실패: {e0}", e.message)), "err",
+          if (work.admits(at)) toast(String(words ? kinSay("저장 실패: {e0}", words) : kinSayEn("저장 실패: {e0}", kinServer(e.message))), "err",
             e.code === "DoctorSigningKeyUnavailable" ? 12000 : undefined);
           return;
         } finally {

@@ -4,6 +4,80 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { fixture, intake, notice, exemption, delay } = require('./incident_harness.cjs');
 const forms = ['possibility', 'confirmed', 'not-a-leak', 'report', 'medical', 'network'];
+const known = value => ({ status: 'known', value });
+// A ledger of `count` reads of five patients in the incident's period.
+function ledger(f, count, patientId = i => `SYN-P${i % 5}`) {
+  const first = f.events[0];
+  f.events.splice(0, f.events.length, ...Array.from({ length: count }, (_, i) => ({ ...structuredClone(first), eventId: `SYN-READ-${i}`,
+    requestId: `SYN-REQUEST-${i}`, targets: [{ ...structuredClone(first.targets[0]), versionId: known(`SYN-VERSION-${i}`),
+      patientLinkSnapshot: known({ patientId: patientId(i), assigningAuthority: 'SYN-SITE', linkId: `SYN-LINK-${i % 5}` }) }] })));
+}
+test('a large range is kept once as a fixed copy and answers from it after the ledger rows have expired', async () => {
+  const f = fixture(), input = intake('LARGE'); ledger(f, 1200);
+  const registered = await f.controller.registerIncident({}, input);
+  assert.equal(registered.scope.identified.length, 5);
+  assert.equal(registered.scope.identified.reduce((n, p) => n + p.eventIds.length, 0), 1200);
+  assert.equal(f.copies.size, 1);
+  const saved = f.requests[0].body, copy = f.copies.get('incident-snapshot:LARGE');
+  assert.equal('rows' in saved.snapshot, false, 'the evidence rows are not in the incident history');
+  assert.deepEqual({ rows: saved.snapshot.copy.rows, sha256: saved.snapshot.copy.sha256 }, { rows: 1200, sha256: copy.sha256 });
+  assert.ok(JSON.stringify(saved).length < 20000);
+  assert.equal(saved.listing.verdict, registered.plan.verdict);
+  // Every returned target is recorded, as for a range kept in the body.
+  assert.equal(f.records.flatMap(r => r.targets).length, registered.scope.auditEvent.targets.length + 1);
+  f.events.splice(0);   // the viewing rows reach their retention end
+  assert.deepEqual((await f.controller.readIncident({}, 'LARGE')).scope, registered.scope);
+  await f.controller.registerIncident({}, input);   // the same request again after a lost answer
+  assert.equal(f.requests.length, 1); assert.equal(f.copies.size, 1);
+  const found = await f.controller.incidentFinding({}, 'LARGE', { operationId: 'more', facts: { ...input.facts, evidenceId: 'SYN-FINDING-2' } });
+  assert.deepEqual(found.scope, registered.scope);
+  assert.equal(f.requests.length, 2); assert.equal(f.copies.size, 1);
+  assert.ok(JSON.stringify(f.requests[1].body).length < 20000, 'a later step does not store the rows again');
+  for (const form of forms) assert.deepEqual((await f.controller.incidentDraft({}, 'LARGE', form)).scope, registered.scope);
+  const reads = f.copyReads, list = await f.controller.listIncidents({});
+  assert.equal(f.copyReads, reads, 'the list does not read the copy');
+  assert.deepEqual([list.incidents[0].verdict, list.incidents[0].awarenessAt], [found.plan.verdict, found.plan.awarenessAt]);
+});
+test('a registration retried before the first one committed answers and records the saved incident, not its own read', async () => {
+  for (const count of [20, 1200]) {
+    const f = fixture(), input = intake('RACE'); ledger(f, count, () => 'SYN-A');
+    const first = await f.controller.registerIncident({}, input);
+    // Patient B is read after the first request read the ledger; the retry read the ledger before the first one was saved.
+    f.events.unshift({ ...structuredClone(f.events[0]), eventId: 'SYN-READ-B', targets: [{ ...structuredClone(f.events[0].targets[0]),
+      patientLinkSnapshot: known({ patientId: 'SYN-B', assigningAuthority: 'SYN-SITE', linkId: 'SYN-LINK-B' }) }] });
+    f.unsavedReads = 1;
+    const records = f.records.length, retried = await f.controller.registerIncident({}, input);
+    assert.deepEqual(retried.scope, first.scope, `${count} rows`);
+    assert.deepEqual(retried.scope.identified.map(p => p.patient.patientId), ['SYN-A']);
+    assert.ok(f.records.slice(records).flatMap(r => r.targets).every(t => t.patientLinkSnapshot?.value?.patientId !== 'SYN-B'));
+    assert.equal(f.requests.length, 1);
+  }
+});
+test('a small range stays in the incident body as before', async () => {
+  const f = fixture(), input = intake('SMALL'); ledger(f, 20);
+  await f.controller.registerIncident({}, input);
+  assert.equal(f.copies.size, 0);
+  assert.equal(f.requests[0].body.snapshot.rows.length, 20);
+  assert.deepEqual(Object.keys(f.requests[0].body.snapshot), ['top', 'rows', 'failure']);
+  assert.equal('listing' in f.requests[0].body, false);
+});
+test('a damaged copy reads as unidentified, never as nobody affected, and takes no new decision', async () => {
+  const f = fixture(), input = intake('DAMAGED'); ledger(f, 1200);
+  await f.controller.registerIncident({}, input);
+  const copy = f.copies.get('incident-snapshot:DAMAGED'); copy.body[copy.body.length - 1] ^= 1;
+  const read = await f.controller.readIncident({}, 'DAMAGED');
+  assert.equal(read.scope.subjectsIdentifiable, false);
+  assert.deepEqual(read.scope.identified, []);
+  assert.ok(read.scope.reasons.some(r => r.kind === 'ledger-unreadable'));
+  await assert.rejects(f.controller.incidentFinding({}, 'DAMAGED', { operationId: 'more', facts: { ...input.facts, evidenceId: 'SYN-FINDING-2' } }),
+    { code: 'IncidentSnapshotUnreadable' });
+  assert.equal(f.requests.length, 1);
+});
+test('a range too large to record in one commit is refused before anything is saved', async () => {
+  const f = fixture(), input = intake('TOO-LARGE'); ledger(f, 3400, i => `SYN-${String(i % 5).repeat(2000)}`);
+  await assert.rejects(f.controller.registerIncident({}, input), { code: 'IncidentRangeTooLarge' });
+  assert.deepEqual([f.requests.length, f.copies.size, f.records.length], [0, 0, 0]);
+});
 test('a later auditor never becomes the author of the registration scope finding', async () => {
   const first = fixture(), input = intake();
   await first.controller.registerIncident({}, input);

@@ -7,7 +7,7 @@
       if (s.matched === "M" || o.matched === "M") { alert(kinSayEn("이미 매칭된 항목입니다.")); return; }
       if (!studyWriteRoute()) return;   // disconnected: said once, before the confirm
       if (!confirm(kinSayEn("아래 오더 정보를 검사에 덮어씁니다.\n\n검사: {0} ({1}) {2}\n오더: {3} ({4}) {5}\n\n진행할까요?", s.name, s.id, s.date, o.name, o.id, o.sched))) return;
-      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", message)));
+      await runMatch(s, o, message => alert(kinSayEn("매칭 실패: {0}", kinServer(message))));
     }
 
     /**
@@ -74,7 +74,7 @@
       const s = cur();
       if (!s || s.matched !== "M") { alert(kinSayEn("매칭(M)된 검사를 선택하세요.")); return; }
       if (!studyWriteRoute()) return;
-      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", message)));
+      await runUnmatch(s, undefined, message => alert(kinSayEn("매칭 해제 실패: {0}", kinServer(message))));
     }
 
     /** The Unmatch itself (right-click Unmatch without a reason, the Unmatch… window with one); answers as runMatch. */

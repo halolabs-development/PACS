@@ -17,8 +17,14 @@ route requires the institution's auditor designation and both `investigate` and
 The existing append-only `request_event` holds a distinct `incident` body. It stores
 the registration query and fixed viewing-stream snapshot (also containing changes),
 scope determinations, accepted findings/notices with actor/roles/time, and closure
-evidence. The shared request-ID lock prevents copy/rights collisions. No migration,
-clinical write or external dispatch is involved. Historical authority is reconstructed
+evidence. A snapshot above 1,000 rows or 2 MB is instead one gzip row in the write-once
+`fixed_copy` (`incident-snapshot:<incidentId>`), named with its hash in the body, which
+then also carries the saved effective verdict for the list. The range is read at one
+point in time before the write transaction. A range whose access records would exceed
+112 in one commit (the ledger admits 128 unfinished records) is refused as
+`IncidentRangeTooLarge` before anything is saved. A copy that cannot be vouched for reads as
+an unreadable ledger and takes no new finding. The shared request-ID lock prevents
+copy/rights collisions. No migration, clinical write or external dispatch is involved. Historical authority is reconstructed
 from the original subject's roster at acceptance; current authority gates every route.
 Plans/scopes are reconstructed through the real contract constructors, preserving the
 original findings' attribution. Raw source rows do not cross the response boundary.
@@ -41,7 +47,8 @@ or closed replacements refuse. Exact closure replay remains readable even after 
 replacement later closes. An open replacement requirement prevents cycles.
 
 Snapshot storage/list-read performance re-check trigger (P3-3): before a larger
-hospital, or when an incident query covers a whole month of an institution.
+hospital, or when an incident query covers a whole month of an institution. Incidents
+saved before the fixed copy keep their rows in the body and their read cost.
 
 Form keys: `possibility`, `confirmed` (full/priority/additional), `not-a-leak`, `report`
 (PIPC/KISA), `medical` (MOHW), `network` (ISP report/supplement/user notice). Drafts

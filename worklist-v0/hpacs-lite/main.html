@@ -11,6 +11,9 @@
   <link rel="icon" type="image/svg+xml" href="/kin-brand/kin-emblem-j1.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="/kin-brand/kin-favicon-32.png">
   <style>
+    /* Opening words shown in the account's language: hidden until it is known (worklist-language.js settled), at most 1.5 s. */
+    html:not([data-kin-lang-settled]) [data-kin-lang-wait] { animation: kin-lang-wait 1.5s steps(1, end) both; }
+    @keyframes kin-lang-wait { from { visibility: hidden; } to { visibility: visible; } }
     :root {
       --kin-bg: #0B1220;
       --kin-panel: #0E1728;
@@ -1910,7 +1913,7 @@
             <div title="추후 구현" data-panel="aiReport"><button type="button" class="panel-fold" data-fold="aiReport" aria-expanded="true" aria-label="AI Report 패널 접기" title="AI Report 패널 접기"></button>AI Report</div>
           </div>
           <div class="thumbwrap" id="thumbwrap">
-            <div style="color:#556;padding:20px;text-align:center">검사를 선택하세요</div>
+            <div style="color:#556;padding:20px;text-align:center" data-kin-lang-wait>검사를 선택하세요</div>
           </div>
         </section>
         <!-- Image Report panel (2026-10-27 item 9): the drawings attached to the selected study's report, and the way into the
@@ -1962,11 +1965,11 @@
           <h3>Reading Template<button type="button" class="panel-fold" data-fold="template" aria-expanded="true" aria-label="Reading Template 패널 접기" title="Reading Template 패널 접기"></button></h3>
           <div class="tpl-opts">
             <label><input type="checkbox" id="t-mod" checked> Modality</label>
-            <label>부위 <select id="t-body" aria-label="상용구 부위"><option value="">전체 부위</option></select></label>
+            <label data-kin-lang-wait>부위 <select id="t-body" aria-label="상용구 부위"><option value="">전체 부위</option></select></label>
             <label hidden title="검사명 자동 매칭은 준비 중입니다"><input type="checkbox" id="t-desc" disabled> Study Description (준비 중)</label>
           </div>
           <div class="tpl-search">
-            <input id="tpl-search" type="search" maxlength="200" aria-label="상용구 검색" placeholder="제목·단축어·Modality·부위 검색">
+            <input id="tpl-search" type="search" maxlength="200" aria-label="상용구 검색" placeholder="제목·단축어·Modality·부위 검색" data-kin-lang-wait>
             <button id="tpl-search-clear" class="chip" type="button">Clear Search</button>
             <button id="tpl-filter-clear" class="chip" type="button">Show All</button>
           </div>
@@ -2013,7 +2016,7 @@
             <span class="readonly">Read only</span>
           </div>
           <div class="prior-report-body">
-            <div class="prior-report-status" id="prior-report-status">관련 검사를 선택하세요</div>
+            <div class="prior-report-status" id="prior-report-status" data-kin-lang-wait>관련 검사를 선택하세요</div>
             <div id="prior-report-content" style="display:none">
               <div class="prior-report-section"><h4>Findings</h4><div class="prior-report-value" id="prior-findings" translate="no"></div></div>
               <div class="prior-report-section"><h4>Conclusion</h4><div class="prior-report-value" id="prior-conclusion" translate="no"></div></div>

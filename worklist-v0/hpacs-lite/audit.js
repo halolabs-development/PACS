@@ -1067,6 +1067,7 @@
       if (!admits()) return;
       incidentSnapshot = null; incidentEl('detail').hidden = true;
       kinWrite(incidentEl('message'), error.message === 'IncidentDutiesOpen' ? kinSayEn("계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.") :
+        error.message === 'IncidentRangeTooLarge' ? kinSayEn("이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.") :
         kinSayEn("사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", error.message));
     } finally { if (current === incidentSequence) { incidentPending = false; incidentControls(); } }
   }

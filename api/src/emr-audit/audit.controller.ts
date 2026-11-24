@@ -11,6 +11,7 @@ class AuditContractFilter implements ExceptionFilter {
       ['AuditRequestInvalid','InvestigationQueryRefused','DisclosureRequestRefused','RightsRequestRefused','AuditIdentityUnknown','IncidentResponseRefused','IncidentDeterminationRefused'].includes(error.code) ? 400 :
       error.code === 'InvestigationTimedOut' ? 503 : 409;
     const message = error.code === 'InvestigationTimedOut' ? '조회 시간이 초과되었습니다. 기간이나 조회 조건을 좁혀 다시 시도하세요.' :
+      error.code === 'IncidentRangeTooLarge' ? '이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.' :
       error.code === 'AuditIdentityUnknown' ? '등록된 계정이 없습니다. issuer와 subject를 확인하고 대상자가 한 번 로그인한 뒤 다시 지정하세요.' :
       '감사 권한과 요청 상태를 확인하세요';
     host.switchToHttp().getResponse().status(status)

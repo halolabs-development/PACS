@@ -64,6 +64,8 @@ window.KinReadingAppearanceAccount = function ({ owner, host, read, apply, gener
       clearTimeout(timer);
       if (request === local) { request = null; busy = false; }
       work.commit(at, () => { interrupted = null; refresh(); });
+      // The page's opening words wait for the first answer about the account's language, answered or not.
+      if (action === 'inspect') window.KinLanguage?.settled?.();
     }
   }
   load.onclick = () => run('load'); save.onclick = () => run('save'); refresh();
@@ -114,5 +116,5 @@ window.KinReadingAppearanceAccount = function ({ owner, host, read, apply, gener
     }
   }
   window.KinLanguage?.connect({ save: saveLanguage });
-  if (owner) run('inspect');
+  if (owner) run('inspect'); else window.KinLanguage?.settled?.();
 };

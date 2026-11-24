@@ -701,11 +701,11 @@
       recipientField.setAttribute('aria-disabled', String(!editable));
       messageField.readOnly = !editable;
       sendButton.disabled = !editable || !!waiting;
-      sendButton.title = waiting || '';
+      kinWrite(sendButton, phrase(waiting) || '', 'title');
       const open = list.filter(item => ['unknown', 'checking', 'not-sent'].includes(item.state));
       checkButton.hidden = !open.length || lock !== null;
       checkButton.disabled = !!waiting || !sender() || !open.some(item => item.state !== 'checking');
-      checkButton.title = waiting || '';
+      kinWrite(checkButton, phrase(waiting) || '', 'title');
       kinWrite(checkButton, open.length && open.every(item => item.state === 'not-sent') ? kinSay('Send') : kinSay('Check Again'));
     }
 
@@ -1140,7 +1140,7 @@
         const again = element.querySelector('button');
         again.hidden = !['unknown', 'checking', 'not-sent'].includes(attempt.state);
         again.disabled = !!blocked() || !sender() || attempt.state === 'checking';
-        again.title = blocked() || '';
+        kinWrite(again, phrase(blocked()) || '', 'title');
         kinWrite(again, attempt.state === 'not-sent' ? kinSay('Send') : kinSay('Check Again'));
         again.setAttribute('aria-describedby', modeNote.id);
       }
@@ -1182,8 +1182,8 @@
       for (const [key, name, note] of markOf(item)) {
         const mark = make('span', 'cvr-mark', name);
         mark.dataset.mark = key;
-        mark.title = note;
-        stateCell.append(mark, make('p', 'cvr-note', note));
+        kinWrite(mark, phrase(note), 'title');
+        stateCell.append(mark, make('p', 'cvr-note', phrase(note)));
       }
       if (item.state === 'cancelled' && item.cancelReason) stateCell.append(make('p', 'cvr-note', TEXT.list.cancelReason(item.cancelReason)));
       if (item.state === 'created') {
@@ -1192,7 +1192,7 @@
         const supersede = button(kinSay('Supersede'), () => openForm(item, 'supersede'));
         const cancel = button(kinSay('Cancel Delivery'), () => openForm(item, 'cancel'));
         rowActionHints.set(supersede, TEXT.form.supersedeHint(item.recipient.name));
-        rowActionHints.set(cancel, TEXT.form.cancelHint);
+        rowActionHints.set(cancel, phrase(TEXT.form.cancelHint));
         supersede.disabled = cancel.disabled = busy || forms.has(item.id);
         actions.append(supersede, cancel);
         stateCell.append(actions);
@@ -1216,7 +1216,7 @@
 
     function paintWriteControls() {
       const waiting = blocked();
-      modeNote.textContent = waiting || '';
+      kinWrite(modeNote, phrase(waiting) || '');
       modeNote.hidden = !waiting;
       // Focused rows and open forms deliberately survive list paints; update their actions in place.
       for (const row of rows.querySelectorAll('tr[data-id]')) {
@@ -1226,7 +1226,7 @@
         for (const control of row.querySelectorAll('.cvr-actions button')) {
           control.disabled = !!waiting || !sender() || !item || item.state !== 'created' || busy || forms.has(id);
           // Back restores the action's explanation while the focused row stays mounted.
-          control.title = waiting || rowActionHints.get(control);
+          kinWrite(control, phrase(waiting) || rowActionHints.get(control), 'title');
           control.setAttribute('aria-describedby', modeNote.id);
         }
       }
@@ -1234,8 +1234,8 @@
         const current = items.find(value => value.id === form.item.id);
         form.confirm.disabled = !!waiting || !sender() || !live(form.sent) || !current || current.state !== 'created'
           || current.revision !== form.item.revision || (form.kind === 'supersede' && !form.source);
-        form.confirm.title = waiting || '';
-        form.modeNote.textContent = waiting || '';
+        kinWrite(form.confirm, phrase(waiting) || '', 'title');
+        kinWrite(form.modeNote, phrase(waiting) || '');
         form.modeNote.hidden = !waiting;
       }
     }

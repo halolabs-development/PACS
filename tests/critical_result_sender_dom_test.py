@@ -734,10 +734,14 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
     def fault(self, kind, **spec):
         self.faults.setdefault(kind, []).append(spec)
 
-    def open_reader(self, session=None, mode=None, app=None, clock=False):
+    def open_reader(self, session=None, mode=None, app=None, clock=False, language=False):
         self.page.goto(ORIGIN + BASE + "main.html")
         if clock:
             self.page.clock.install()
+        if language and not self.page.evaluate("() => !!window.KinLanguage"):
+            # The page's screen language, as main.html loads it before its scripts.
+            self.page.add_script_tag(path=str(HPACS / "worklist-language-terms.js"))
+            self.page.add_script_tag(path=str(HPACS / "worklist-language.js"))
         self.page.evaluate(SETUP, {"session": session or me(RAD, ["radiologist"]), "studies": STUDIES,
                                    "app": app or {A: {"version": 3, "rs": "A"}, B: {"version": 1, "rs": "T"}, C: {"version": 2, "rs": "A"}},
                                    "names": NAMES, "mode": mode or {"serverMode": True, "offline": False}})
@@ -917,6 +921,27 @@ class CriticalResultSenderDOMTest(unittest.TestCase):
         control.focus()
         self.page.keyboard.press('Space')
         expect(self.page.locator('tr[data-form]')).to_be_visible()
+
+    def test_english_screen_reads_row_action_guidance_and_the_mode_note_in_english(self):
+        self.server.add(B, X)
+        self.open_reader(language=True)
+        self.pick(A)
+        self.entry_settled()
+        self.page.evaluate("() => KinLanguage.restore({version: 1, worklist: 'en', reading: 'en'})")
+        self.show_sent()
+        cancel = self.page.locator('#cvr-sent-rows').get_by_role('button', name='Cancel Delivery', exact=True)
+        hint = ('The cancellation reason stays in this delivery record and is shown to the recipient if they can read the record. '
+                'A cancelled delivery cannot be undone.')
+        mode = 'Not available in Related Report mode — go back with Back to Current Draft, then use it.'
+        expect(cancel).to_have_attribute('title', hint)
+        self.r3_mode(True)
+        expect(cancel).to_have_attribute('title', mode)
+        note = self.page.locator('#' + cancel.get_attribute('aria-describedby'))
+        expect(note).to_have_text(mode)
+        for control in self.page.locator('#cvr-sent-rows button[title]').all():
+            self.assertFalse(has_hangul(control.get_attribute('title') or ''), control.get_attribute('title'))
+        self.r3_mode(False)
+        expect(cancel).to_have_attribute('title', hint)
 
     def test_w5r3_row_action_explanations_survive_mode_round_trip(self):
         # REQ-S7-U1b-SENDER-UI / W5R3-ADMIT-02/10: action guidance remains useful after the restriction ends.
