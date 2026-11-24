@@ -1168,7 +1168,8 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         document_request(page, 'PUT', '/api/workspace-shortcuts', headers={'X-KIN-CSRF': '1'},
                          data=dict(expectedOwner=current['owner'], revision=current['revision'], viewerSettings=original))
         self.assertEqual([], wrong, 'rows whose note and key disagree')
-        for label in ['Zoom', 'Invert', 'Cine']:
+        # The pinned table has no editable Cine row; Zoom and Invert are the rows the key layer used to mark wrongly.
+        for label in ['Zoom', 'Invert']:
             self.assertFalse(next(r for r in table if r['label'] == label)['noted'], label)
 
 
