@@ -1122,6 +1122,8 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         rows = page.evaluate('''() => [...document.querySelectorAll('.ReactModal__Content .w-32 input[readonly]')].map(f => {
           const note = f.dataset.kinHotkeyNote && document.getElementById(f.dataset.kinHotkeyNote);
           return { label: f.closest('.mb-2')?.firstElementChild?.lastElementChild?.textContent.trim(), key: f.value, noted: !!note && !note.hidden }; })''')
+        print('HOTKEY-TABLE', json.dumps(page.evaluate('''() => ({ rows: KinViewerUXShortcuts.hotkeyTable(),
+          bindings: KinViewerUXShortcuts.current(null) })''')), flush=True)
         page.get_by_role('button', name='Cancel', exact=True).click()
         state = '''() => { const g = services.viewportGridService, id = g.getActiveViewportId(),
             v = services.cornerstoneViewportService.getCornerstoneViewport(id), c = v.getCamera(), p = v.getProperties();

@@ -71,8 +71,10 @@ window.KinViewerUXShortcuts = (() => {
     : ({ left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' })[key] || null;
   // What a mounted layer takes in this window before the pinned viewer's hotkeys, given as a reason; null when the
   // viewer's hotkey gets the key. One answer for a press and for a binding the User Preferences table shows.
-  let claimant = () => null;
+  let claimant = () => null, tableRows = () => null;
   const claims = binding => { const parts = hotkey(binding); return parts ? claimant(parts) : null; };
+  // The pinned viewer's own hotkey rows as the mounted layer reads them (keys and the command each row runs).
+  const hotkeyTable = () => Object.values(tableRows() || {}).map(row => ({ keys: [].concat(row?.keys ?? []).join('+'), tool: rowTool(row) || null }));
   // The reason in the reader's screen language when it is written (English only; otherwise as written).
   const kinText = text => window.KinLanguage?.text ? window.KinLanguage.text(text) : text;
   const reasons = {
@@ -159,9 +161,9 @@ window.KinViewerUXShortcuts = (() => {
       note.hidden = false; field.setAttribute('aria-invalid', 'true');
     }
     // A key this layer takes still does what its row says when the layer's tool on that key is the row's own function.
+    tableRows = hotkeyRows;
     const keepsRow = binding => {
-      const row = Object.values(hotkeyRows() || {}).find(item => [].concat(item?.keys ?? []).join('+') === binding);
-      const tool = rowTool(row);
+      const tool = hotkeyTable().find(row => row.keys === binding)?.tool;
       return !!tool && getBindings()[tool] === binding;
     };
     const rowReason = binding => { const reason = claims(binding); return reason === 'tool' && keepsRow(binding) ? null : reason; };
@@ -205,7 +207,7 @@ window.KinViewerUXShortcuts = (() => {
     window.addEventListener('keyup', stopNativeCharacter, true);
     mark();
     return { dispose() {
-      claimant = () => null; table.disconnect(); clearTimeout(marking);
+      claimant = () => null; tableRows = () => null; table.disconnect(); clearTimeout(marking);
       window.removeEventListener('keydown', refuse, true);
       window.removeEventListener('keyup', refuse, true);
       window.removeEventListener('keydown', key, true);
@@ -213,5 +215,5 @@ window.KinViewerUXShortcuts = (() => {
       window.removeEventListener('keyup', stopNativeCharacter, true);
     } };
   }
-  return { defaults, names, defaultBar, current, parse, display, pressed, claims, mount, lead };
+  return { defaults, names, defaultBar, current, parse, display, pressed, claims, hotkeyTable, mount, lead };
 })();
