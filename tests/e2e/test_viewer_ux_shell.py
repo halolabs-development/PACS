@@ -1154,6 +1154,11 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
                 after = page.evaluate(state)
                 if any(after[k] != before[k] for k in after): page.wait_for_timeout(150); after = page.evaluate(state); break
             changed = sorted(k for k in after if after[k] != before[k])
+            if row['key'] in ('down', 'up'):
+                print('HOTKEY-IMAGE', row['key'], before['image'], after['image'],
+                      page.evaluate('''() => services.cornerstoneViewportService.getCornerstoneViewport(
+                        services.viewportGridService.getActiveViewportId()).getImageIds().length'''),
+                      page.evaluate('() => document.activeElement?.tagName + "#" + (document.activeElement?.id || "")'), flush=True)
             expected = function.get(row['label'])
             did = None if expected is None else expected in changed
             table.append({**row, 'changed': changed, 'function': expected, 'did': did})
