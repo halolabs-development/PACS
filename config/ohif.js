@@ -16398,6 +16398,19 @@ function kinCreateMammographyHanging() {
       return run.call(this, data, protocolId, { ...options, stageIndex: next.stageIndex });
     };
     hp.run = wrappedRun;
+    // A stage change (Next/Previous Stage) leaves OHIF's remembered active image unset and refills it
+    // only from an active cell that shows an image. From a stage whose cells are empty (an image type
+    // the examination does not have) the next stage change then rejected that unset entry, and the
+    // reader could not leave the stage. An unset entry means no remembered image, so it is left out.
+    const setProtocol = hp.setProtocol;
+    const wrappedSetProtocol = function (id, options, ...rest) {
+      const map = options?.displaySetSelectorMap;
+      if (live() && id === protocolId && map && Object.values(map).some(uid => typeof uid !== 'string')) {
+        options = { ...options, displaySetSelectorMap: Object.fromEntries(Object.entries(map).filter(([, uid]) => typeof uid === 'string')) };
+      }
+      return setProtocol.call(this, id, options, ...rest);
+    };
+    hp.setProtocol = wrappedSetProtocol;
     applyPreference = () => {
       if (!live()) return;
       if (last) wrappedRun.call(hp, last.data, protocolId, last.options);
@@ -16428,6 +16441,7 @@ function kinCreateMammographyHanging() {
       if (series.metadata === metadata) series.metadata = retrieve;
       if (handler.getDisplaySetsFromSeries === createDisplaySets) handler.getDisplaySetsFromSeries = nativeDisplaySets;
       if (hp.run === wrappedRun) hp.run = run;
+      if (hp.setProtocol === wrappedSetProtocol) hp.setProtocol = setProtocol;
       observer.disconnect(); subscription.unsubscribe(); activeSubscription.unsubscribe(); panel?.remove();
       document.removeEventListener(imageEvent, orient, true);
       document.removeEventListener(newStackEvent, orient, true);
