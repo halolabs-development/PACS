@@ -305,11 +305,10 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         retry.click(); expect(retry).not_to_be_visible()
         expect(zoom).to_have_attribute('draggable', 'true')
 
-    def test_shell_10_mammography_tab_roundtrip(self):
-        patient = 'U2MG-' + uuid.uuid4().hex[:12]
+    def mammography_pair(self, patient):
+        # A current and a prior mammogram, four conventional views each (no Synthetic 2D or DBT).
         current = self.ct(patient, 'MG current', '20260801')
         prior = self.ct(patient, 'MG prior', '20250701')
-        other = self.ct('U2CT-' + uuid.uuid4().hex[:12], 'CT patient', '20260801')
         for fixture in [current, prior]:
             source = next(d for d in (dcmread(io.BytesIO(self.stack.orthanc_bytes(path))) for path in self.originals())
                           if str(d.StudyInstanceUID) == fixture.uid)
@@ -328,6 +327,12 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
                 data.SeriesDescription = 'MG ' + side + ' ' + view
                 stream = io.BytesIO(); data.save_as(stream, write_like_original=False)
                 self.assertEqual(self.stack._orthanc_request('POST', '/instances', stream.getvalue()).status, 200)
+        return current, prior
+
+    def test_shell_10_mammography_tab_roundtrip(self):
+        patient = 'U2MG-' + uuid.uuid4().hex[:12]
+        current, prior = self.mammography_pair(patient)
+        other = self.ct('U2CT-' + uuid.uuid4().hex[:12], 'CT patient', '20260801')
         work = self.login(); page = work.context.new_page()
         page.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + current.uid + ',' + prior.uid)
         canvas_ready(page, 8)
@@ -1171,6 +1176,24 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         # The pinned table has no editable Cine row; Zoom and Invert are the rows the key layer used to mark wrongly.
         for label in ['Zoom', 'Invert']:
             self.assertFalse(next(r for r in table if r['label'] == label)['noted'], label)
+
+    def test_shell_18_mammography_stage_keys_go_back(self):
+        # Next Stage from Current vs Prior reaches Synthetic 2D, which this examination does not have (every
+        # cell empty). Previous Stage must come back from there, and Next Stage must go on.
+        current, prior = self.mammography_pair('U2MGS-' + uuid.uuid4().hex[:12])
+        work = self.login(); page = work.context.new_page()
+        page.goto(self.stack.proxy + '/ohif/viewer?StudyInstanceUIDs=' + current.uid + ',' + prior.uid)
+        canvas_ready(page, 8)
+        stage = '() => services.hangingProtocolService.getState().stageIndex'
+        self.assertEqual(page.evaluate(stage), 0)
+        page.locator('[data-cy="viewport-pane"] canvas').first.hover()
+        for key, expected in [('.', 1), (',', 0), ('.', 1), ('.', 2), (',', 1), (',', 0)]:
+            page.keyboard.press(key)
+            try:
+                page.wait_for_function('n => services.hangingProtocolService.getState().stageIndex === n', arg=expected, timeout=10000)
+            except Exception:
+                self.fail(f'{key!r} should reach stage {expected}; the viewer stayed on stage {page.evaluate(stage)}')
+        canvas_ready(page, 8)
 
 
 def load_tests(loader, tests, pattern):
