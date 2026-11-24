@@ -6299,6 +6299,7 @@ window.KinLanguageTerms = {
     ["저장된 사건 상태입니다. 음수 남은 시간은 기한 경과를 뜻하며 기록을 막지 않습니다.", "Saved incident status. A negative time remaining means the deadline has passed; it does not block recording.", "m"],
     ["계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.", "Not closed: contractual duties to confirm or fulfill remain. Check them with Open Incident.", "m"],
     ["사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", "Could not confirm the incident status ({e0}). Your input was kept. Check again with Open Incident.", "m"],
+    ["이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.", "This period has too many access records to register as one incident. Narrow the period or conditions and register again.", "m"],
     ["화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다.", "Inspection finished on screen. No further records were saved. The hash and incident count above are the report values saved at the start. Any unconfirmed or unresolved items remain open.", "m"],
     ["조건이 바뀌었습니다. Search로 조회하세요.", "Filters changed. Use Search to run the query.", "m"],
     ["세션을 확인하고 다시 로그인하세요.", "Check your session and sign in again.", "m"],
@@ -9110,6 +9111,14 @@ window.KinLanguageTerms = {
     return sentence;
   }
 
+  // ── A fixed sentence of the product's server, where a page shows its refusal or check ──
+  // English on an English screen only when the whole message, exactly as received, is a sentence of the glossary; any
+  // other message (unknown, spaced differently, or a person's words) is shown exactly as received. Korean or no choice: as received.
+  const sources = new Set((terms.terms || []).map(([source]) => source));
+  function server(message) {
+    return typeof message === 'string' && sources.has(message) && message.search(slots) < 0 ? sayEnglish(message) : message;
+  }
+
   // ── Where a node is and what may change ───────────────────────────────────────────────────────────────────────
   const state = { worklist: null, reading: null };
   let lastRegion = 'worklist', generation = 0;
@@ -9572,6 +9581,10 @@ window.KinLanguageTerms = {
     return out + phrase(template.slice(at), params);
   }
 
+  // Words of the work page's markup that are on screen when it opens (marked data-kin-lang-wait) stay hidden by the page's
+  // own style until the account's language is known, so an English reader never sees them in Korean first: shown at once
+  // on an answer or a failed one, and by that style's short bound whatever happens (main.html).
+  const settled = () => document.documentElement.setAttribute('data-kin-lang-settled', '');
   function start() {
     registerMarkup(document);
     watchMoves(document);
@@ -9624,7 +9637,9 @@ window.KinLanguageTerms = {
   }
 
   window.KinLanguage = {
-    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error,
+    tr, say, sayEnglish, write, normalize, value, attach, source, connect, markup, text, html, error, server,
+    /** The account's language is known (or could not be): the words held back at the page's opening are shown. */
+    settled,
     /** Whether a value is a sentence of the write path (code that hands strings on turns one into its words). */
     isSentence,
     /** The sentence write() last put in the text of this element (or its attribute `name`) and still owns there, or null — so another
@@ -16957,7 +16972,7 @@ function kinCreateViewerUX() {
   function stop() { generation++; dispose?.(); dispose = null; mouse?.dispose(); mouse = null; resize?.(); resize = null; }
   return {
     id: 'kin.viewer-ux',
-    async preRegistration({ servicesManager, commandsManager }) {
+    async preRegistration({ servicesManager, commandsManager, hotkeysManager }) {
       services = servicesManager.services; commands = commandsManager;
       if (window.top !== window) return;
       try { await load(); }
@@ -16971,7 +16986,7 @@ function kinCreateViewerUX() {
       shortcuts = window.KinViewerUXShortcuts.mount({
         getBindings: () => toolbar?.bindings() || {}, invoke: id => toolbar?.invoke(id),
         allowed: () => !kinViewerSession.ended(),
-        workspace: kinViewerWorkspaceClaims,
+        workspace: kinViewerWorkspaceClaims, hotkeyRows: () => hotkeysManager?.hotkeyDefinitions,
       });
       kinViewerOnEnd(() => { shortcuts?.dispose(); window.KinViewerUXToolbar.clear(); });
     },

@@ -1142,10 +1142,15 @@ class ViewerUXShellE2E(ViewerLayoutE2E):
         table, wrong = [], []
         page.locator('[data-cy="viewport-pane"] canvas').first.hover()
         for row in rows:
-            page.keyboard.press('w'); page.evaluate(prepare); page.wait_for_timeout(250)
+            # Previous Series is measured from the second series; every row starts from the middle image.
+            if row['key'] == 'pageup': page.keyboard.press('PageDown'); page.wait_for_timeout(600)
+            page.keyboard.press('w'); page.evaluate(prepare); page.wait_for_timeout(400)
             before = page.evaluate(state)
-            page.keyboard.press(names.get(row['key'], row['key'])); page.wait_for_timeout(350)
-            after = page.evaluate(state)
+            page.keyboard.press(names.get(row['key'], row['key']))
+            for _ in range(10):
+                page.wait_for_timeout(150)
+                after = page.evaluate(state)
+                if any(after[k] != before[k] for k in after): page.wait_for_timeout(150); after = page.evaluate(state); break
             changed = sorted(k for k in after if after[k] != before[k])
             expected = function.get(row['label'])
             did = None if expected is None else expected in changed
