@@ -38,6 +38,21 @@ test('a large range is kept once as a fixed copy and answers from it after the l
   assert.equal(f.copyReads, reads, 'the list does not read the copy');
   assert.deepEqual([list.incidents[0].verdict, list.incidents[0].awarenessAt], [found.plan.verdict, found.plan.awarenessAt]);
 });
+test('a registration retried before the first one committed answers and records the saved incident, not its own read', async () => {
+  for (const count of [20, 1200]) {
+    const f = fixture(), input = intake('RACE'); ledger(f, count, () => 'SYN-A');
+    const first = await f.controller.registerIncident({}, input);
+    // Patient B is read after the first request read the ledger; the retry read the ledger before the first one was saved.
+    f.events.unshift({ ...structuredClone(f.events[0]), eventId: 'SYN-READ-B', targets: [{ ...structuredClone(f.events[0].targets[0]),
+      patientLinkSnapshot: known({ patientId: 'SYN-B', assigningAuthority: 'SYN-SITE', linkId: 'SYN-LINK-B' }) }] });
+    f.unsavedReads = 1;
+    const records = f.records.length, retried = await f.controller.registerIncident({}, input);
+    assert.deepEqual(retried.scope, first.scope, `${count} rows`);
+    assert.deepEqual(retried.scope.identified.map(p => p.patient.patientId), ['SYN-A']);
+    assert.ok(f.records.slice(records).flatMap(r => r.targets).every(t => t.patientLinkSnapshot?.value?.patientId !== 'SYN-B'));
+    assert.equal(f.requests.length, 1);
+  }
+});
 test('a small range stays in the incident body as before', async () => {
   const f = fixture(), input = intake('SMALL'); ledger(f, 20);
   await f.controller.registerIncident({}, input);

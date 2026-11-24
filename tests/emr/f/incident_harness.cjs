@@ -27,6 +27,8 @@ function fixture(scopes = ['investigate', 'export'], institution = 'SYN-SITE', r
     if (sql.includes('FROM emr_audit.request_event')) {
       if (sql.includes('AS copied')) return requests.filter(r => r.body.incidentId === values[0]).slice(-1).map(r => ({ copied: !!r.body.snapshot.copy }));
       if (sql.includes('DISTINCT ON')) return structuredClone([...new Map(requests.filter(r => r.institution_id === values[0] && r.body.kind === 'incident').map(r => [r.body.incidentId, r])).values()]);
+      // A read made before another request's registration committed (set by a test): it sees no incident yet.
+      if (f.unsavedReads > 0 && !sql.includes('pg_advisory')) { f.unsavedReads--; return []; }
       return structuredClone(requests.filter(r => r.body.incidentId === values[0]).slice(-1));
     }
     return query(parts, ...values);

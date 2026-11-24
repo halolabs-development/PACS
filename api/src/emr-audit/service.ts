@@ -594,7 +594,9 @@ export class EmrAuditService {
           VALUES(${copy.key},${prepared.fresh.body},${copy.sha256})`;
         changed = true;
       }
-      const projection = await this.incidentProjection(tx, ctx, state, at, prepared);
+      // A scope read for a registration another request saved first (found only under the lock) is not that incident's:
+      // the saved incident answers and is recorded from its own evidence.
+      const projection = await this.incidentProjection(tx, ctx, state, at, changed || !prepared.fresh ? prepared : null);
       if (changed) await this.saveIncident(tx, state, projection.plan);
       await this.recorded(record, ctx, changed ? 'write' : 'provide-prepared', this.incidentTargets(state, projection.scope), id);
       return this.incidentView(state, projection);
