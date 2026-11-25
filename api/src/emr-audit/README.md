@@ -54,8 +54,10 @@ larger range is one incident all the same, in a paged form:
   between two parts: such a registration is saved as unreadable (`LedgerRetentionElapsed`).
 - More than 5,000,000 rows is refused as `IncidentRangeTooLarge`, remembered so the same
   request answers the same; the ID then takes a narrower range. Costs are linear in the
-  rows: about 2,700 rows a second to preserve and 137 stored bytes a row on PostgreSQL. At
-  a 200-study list an alert's 50 openings are 63,000 rows, a reader's 200-study day 250,000.
+  rows: about 2,700 rows a second to preserve and 137 stored bytes a row on PostgreSQL, and
+  each later answer vouches for the parts in about 2 s a million rows. At a 200-study list
+  an alert's 50 openings are 63,000 rows, a reader's 200-study day 250,000, and that day
+  with five colleagues' lists open 2.8 million (registered in 17 minutes, opened in 6 s).
 
 A copy or part that cannot be vouched for reads as
 an unreadable ledger and takes no new finding. The shared request-ID lock prevents

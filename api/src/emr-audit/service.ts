@@ -34,9 +34,10 @@ const INCIDENT_PAGE = 500, INCIDENT_COPY_MAX_BYTES = 256 * 1024 * 1024;
  * summary, and its subjects and events are read and recorded a page at a time (`pageSubjects`, `pageBytes`, `pageEvents`).
  * A part is cut after the 500-row read that reaches its size.
  * `maxRows` is the protection that remains. Every cost is linear in the rows (measured on PostgreSQL: about 2,700 rows a
- * second to preserve, 137 stored bytes a row, 0.3 s to vouch for 250,000 rows on each later answer). At a 200-study list
- * one opening leaves about 1,250 rows: an alert's 50 openings 63,000, a reader's 200-study day 250,000, that day with
- * five colleagues' lists open 2.8 million. Tests lower these sizes to reach a boundary with few rows.
+ * second to preserve, 137 stored bytes a row, and on each later answer 0.3 s to vouch for 250,000 rows, 6 s for 2.8
+ * million). At a 200-study list one opening leaves about 1,250 rows: an alert's 50 openings 63,000, a reader's 200-study
+ * day 250,000, that day with five colleagues' lists open 2.8 million. Tests lower these sizes to reach a boundary with
+ * few rows.
  */
 export const INCIDENT_LIMITS = { wholeRows: 4000, wholeBytes: 16 * 1024 * 1024, wholeRecords: 16,
   partRows: 4000, partBytes: 8 * 1024 * 1024, requestMs: 6000, maxRows: 5_000_000,
