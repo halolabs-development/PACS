@@ -436,20 +436,33 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
             self.until(viewer, '() => !KinViewerPatientTabs.settling()')
             self.until(viewer, two)
 
+        # The series the right monitor's cell has drawn now (null when it is empty), and whether it is the one wanted.
+        right_series = '''wanted => { const cell = [...services.viewportGridService.getState().viewports.values()].find(c => c.x >= 0.5);
+          const v = cell && services.cornerstoneViewportService.getCornerstoneViewport(cell.viewportId), image = v?.getCurrentImageId?.();
+          const now = image && cornerstone.metaData.get('instance', image)?.SeriesInstanceUID || null;
+          return wanted === undefined ? now : now === wanted && (v.viewportStatus === undefined || v.viewportStatus === 'rendered'); }'''
         to(b)
         right = next(cell for cell in viewer.evaluate(GRID)['cells'] if cell[1] >= 0.5)
-        card = viewer.get_by_role('region', name='Series', exact=True).locator('button.kin-series-card').first
-        preview = card.locator('.kin-series-preview')
+        strip = viewer.get_by_role('region', name='Series', exact=True)
+        before = viewer.evaluate(right_series)
+        # A series of this patient the right cell does not show now: once dropped, that cell shows that very series.
+        series = next((uid for uid in strip.locator('button.kin-series-card').evaluate_all('cards => cards.map(c => c.dataset.series)')
+                       if uid and uid != before), None)
+        self.assertIsNotNone(series, 'a series other than the one the right cell shows')
+        preview = strip.locator(f'button.kin-series-card[data-series="{series}"] .kin-series-preview')
         expect(preview.locator('img')).to_be_visible(timeout=30000)
         start, (x, y) = preview.bounding_box(), self.cell_centre(viewer, right)
         viewer.mouse.move(start['x'] + start['width'] / 2, start['y'] + start['height'] / 2)
         viewer.mouse.down()
         viewer.mouse.move(x, y, steps=15)
         viewer.mouse.up()
-        self.shows(viewer, b.uid, right[0])
+        self.until(viewer, right_series, series)
         viewer.wait_for_timeout(1500)
         for fixture in (a, b, a):
             to(fixture)
+            if fixture is b:
+                # Back on the second patient: its right cell shows the dropped series again.
+                self.until(viewer, right_series, series)
         self.assertEqual([], [text for text in errors if 'HTML5 backends' in text])
         self.until(viewer, ON_SEAM)
         # Viewer Windows still has that window Open, and Span Displays can be pressed for it.
