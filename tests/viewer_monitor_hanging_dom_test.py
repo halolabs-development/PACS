@@ -11,6 +11,7 @@ hanging-protocol-model.js and viewer-ux-theme.css in the synthetic stock column 
 with a synthetic Hanging Protocols panel handle and, where two displays are needed, a synthetic screen-details answer
 (window-management already granted) for two displays meeting in the middle of this window. Real monitors are not
 emulated: the actual move of a window between two physical displays is checked on a real desktop."""
+import json
 import unittest
 
 from playwright.sync_api import sync_playwright, expect
@@ -55,6 +56,19 @@ TWO_DISPLAYS = """() => {
   window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
 }"""
 
+# Two displays side by side meeting left of the window's middle (client x = SEAM), as over a viewer whose side panel is
+# open on one side only: a plain grid's middle edge is not on the display edge. The access is already granted.
+SEAM = 600
+OFF_MIDDLE = """seam => {
+  const at = screenX + (outerWidth - innerWidth) / 2 + seam;
+  const screens = [{ left: at - 1600, width: 1600 }, { left: at, width: 1600 }].map((s, i) => ({ availLeft: s.left, availTop: screenY,
+    availWidth: s.width, availHeight: 2000, left: s.left, top: screenY, width: s.width, height: 2000, isPrimary: i === 0, devicePixelRatio }));
+  window.synSeam = seam;
+  const query = navigator.permissions.query.bind(navigator.permissions);
+  navigator.permissions.query = async value => value?.name === 'window-management' ? { state: 'granted', onchange: null } : query(value);
+  window.getScreenDetails = async () => ({ screens, currentScreen: screens[0], addEventListener() {}, removeEventListener() {} });
+}"""
+
 # One display, and the browser says so.
 ONE_DISPLAY = "() => { Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => false }); }"
 
@@ -73,6 +87,75 @@ BESIDE = """() => {
 }"""
 
 
+# A viewport grid that follows the pinned viewer where laying cells depends on it, in place of the harness's static one:
+# setLayout builds one cell per position (layoutOptions: those rectangles; else the plain grid), each from what
+# findOrCreateViewport answers (the same viewport id keeps its viewport); the Layout menu's command builds the plain grid
+# and keeps the cell of every position there already is (a new position is empty). A layout lands a moment later and is
+# announced. Each cell's viewport has drawn the first image of the series it shows. synApplySplit lays a rule's split as
+# Hanging Protocols does (and registers it, kinViewerSplitRects); synMenu picks a layout from the Layout menu.
+GRID = """() => {
+  const listeners = new Set(), views = new Map(); let made = 0;
+  window.synSets = new Map();
+  const series = uid => { if (!synSets.has(uid)) synSets.set(uid, { displaySetInstanceUID: uid, images: [0, 1, 2].map(n => ({ SOPInstanceUID: 'sop:' + uid + ':' + n })) }); return uid; };
+  const viewport = id => { if (!views.has(id)) views.set(id, { id, type: 'stack', held: null, element: document.body.appendChild(document.createElement('div')),
+      getImageIds() { return this.held ? [0, 1, 2].map(n => 'img:' + this.held + ':' + n) : []; },
+      getCurrentImageId() { return this.held ? 'img:' + this.held + ':0' : undefined; },
+      getCornerstoneImage() { const imageId = this.getCurrentImageId(); return imageId ? { imageId } : undefined; } });
+    return views.get(id); };
+  const entry = (id, rect, positionId, sets, options) => { if (sets.length) viewport(id).held = sets[0];
+    return { viewportId: id, positionId, x: rect.x, y: rect.y, width: rect.width, height: rect.height, displaySetInstanceUIDs: [...sets],
+      displaySetOptions: sets.map(() => ({})), viewportOptions: { viewportType: 'stack', ...options, viewportId: id } }; };
+  const plainRects = (rows, cols) => Array.from({ length: rows * cols }, (_, i) => ({ x: (i % cols) / cols, y: Math.floor(i / cols) / rows, width: 1 / cols, height: 1 / rows }));
+  let state = { layout: { layoutType: 'grid', numRows: 1, numCols: 1 }, activeViewportId: 'v0', viewports: new Map() };
+  state.viewports.set('v0', entry('v0', plainRects(1, 1)[0], '0-0', [series('ds-1')], {}));
+  const land = next => setTimeout(() => { state = next; for (const fn of [...listeners]) fn({}); });
+  window.synLayouts = [];
+  const grid = { EVENTS: { LAYOUT_CHANGED: 'layout', GRID_STATE_CHANGED: 'grid' }, getState: () => state,
+    subscribe(event, fn) { listeners.add(fn); return { unsubscribe() { listeners.delete(fn); } }; },
+    getActiveViewportId: () => state.activeViewportId, setActiveViewportId() {},
+    setLayout({ numRows, numCols, layoutOptions, findOrCreateViewport, activeViewportId }) {
+      synLayouts.push({ numRows, numCols, layoutOptions: layoutOptions ? structuredClone(layoutOptions) : null });
+      const viewports = new Map();
+      // As the pinned grid: a position's key is its option's positionId, or else its place rounded to the grid.
+      (layoutOptions || plainRects(numRows, numCols)).forEach((rect, index) => {
+        const positionId = rect.positionId || Math.round(rect.x * numCols) + '-' + Math.round(rect.y * numRows);
+        const asked = findOrCreateViewport(index, positionId, {}) || {};
+        const id = asked.viewportOptions?.viewportId || 'v' + (++made);
+        viewports.set(id, entry(id, rect, positionId, asked.displaySetInstanceUIDs || [], asked.viewportOptions || {}));
+      });
+      land({ layout: { layoutType: 'grid', numRows, numCols }, activeViewportId: viewports.has(activeViewportId) ? activeViewportId : [...viewports.keys()][0], viewports });
+      return Promise.resolve();
+    } };
+  window.synLayoutCommands = { runCommand(name, { numRows, numCols }) {
+    if (name !== 'setViewportGridLayout') return;
+    const kept = new Map([...state.viewports.values()].map(cell => [cell.positionId, cell]));
+    grid.setLayout({ numRows, numCols, activeViewportId: state.activeViewportId, findOrCreateViewport: (index, positionId) => {
+      const old = kept.get(positionId);
+      return old ? { displaySetInstanceUIDs: old.displaySetInstanceUIDs, viewportOptions: old.viewportOptions } : { displaySetInstanceUIDs: [], viewportOptions: {} }; } });
+  } };
+  window.synMenu = (rows, cols) => synLayoutCommands.runCommand('setViewportGridLayout', { numRows: rows, numCols: cols });
+  // Another series put into one cell (dragged from the strip): the layout stays, the cell shows the new set.
+  window.putSeries = (id, uid) => { const viewports = new Map(state.viewports), old = viewports.get(id);
+    viewports.set(id, { ...old, displaySetInstanceUIDs: [series(uid)], displaySetOptions: [{}] }); viewport(id).held = uid;
+    state = { ...state, viewports }; for (const fn of [...listeners]) fn({}); };
+  window.synApplySplit = split => { window.kinViewerSplitRects = structuredClone(split.rects);
+    grid.setLayout({ numRows: split.numRows, numCols: split.numCols, activeViewportId: 'hp-0', layoutOptions: split.rects,
+      findOrCreateViewport: index => ({ displaySetInstanceUIDs: split.cells[index] === null ? [] : [series('ds-hp-' + index)], viewportOptions: { viewportId: 'hp-' + index } }) }); };
+  // Each cell as client px, top to bottom then left to right: [id, left, top, right, bottom, display set].
+  window.synCells = () => { const g = document.querySelector('[data-cy=viewport-grid]').getBoundingClientRect();
+    return [...state.viewports.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(c => [c.viewportId, g.left + c.x * g.width, g.top + c.y * g.height,
+      g.left + (c.x + c.width) * g.width, g.top + (c.y + c.height) * g.height, c.displaySetInstanceUIDs[0] || null]); };
+  window.synGridState = () => ({ rows: state.layout.numRows, cols: state.layout.numCols, rects: [...state.viewports.values()].map(c => ({ x: c.x, y: c.y, width: c.width, height: c.height })) });
+  Object.assign(synServices, { viewportGridService: grid,
+    cornerstoneViewportService: { ...synServices.cornerstoneViewportService, getCornerstoneViewport: id => state.viewports.has(id) ? viewport(id) : null },
+    displaySetService: { ...synServices.displaySetService, getDisplaySetByUID: uid => synSets.get(uid) },
+    cineService: { getState: () => ({ cines: {} }) }, hangingProtocolService: { getState: () => ({ protocolId: 'default' }) } });
+  cornerstone.metaData.get = (type, imageId) => type === 'instance' && /^img:/.test(imageId || '') ? { SOPInstanceUID: 'sop:' + imageId.slice(4) } : null;
+  // The browser of a desktop with two displays says it has more than one.
+  Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => true });
+}"""
+
+
 class MonitorHangingDOMTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -82,7 +165,7 @@ class MonitorHangingDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def open(self, library=None, applied=None, displays=ONE_DISPLAY, settings=None, second=True, size=(1366, 900), tools=TOOLS):
+    def open(self, library=None, applied=None, displays=ONE_DISPLAY, settings=None, second=True, size=(1366, 900), tools=TOOLS, grid=None):
         context = self.browser.new_context(viewport={'width': size[0], 'height': size[1]})
         page = context.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
@@ -96,12 +179,17 @@ class MonitorHangingDOMTest(unittest.TestCase):
         page.evaluate("settings => { synServer.viewerSettings = settings; }", settings)
         page.evaluate(HP, [library or {'version': 1, 'activeRuleId': None, 'rules': [hp_rule(RULE_ID, 'Brain CT'), hp_rule(OTHER_ID, 'Chest CT')]}, applied])
         if displays:
-            page.evaluate(displays)
+            # A script, or a script and its argument.
+            page.evaluate(*displays) if isinstance(displays, tuple) else page.evaluate(displays)
         page.evaluate("() => synMount()")
         expect(page.locator('.kin-ux-toolbar-slot > .kin-ux-toolbar')).to_have_count(1)
         expect(page.locator('.kin-series-card')).to_have_count(4)
         page.wait_for_function("KinViewerFeatures.settings().some(s => s.id === 'monitorHanging')")
-        page.evaluate("second => { window.synSecond = second; window.synSpan = KinViewerDisplaySpan.mount({ services: synServices, enabled: () => synSecond }); }", second)
+        # grid: a synthetic viewport grid (and the Layout menu's command) put in place of the static one.
+        if grid:
+            page.evaluate(grid)
+        page.evaluate("""second => { window.synSecond = second;
+          window.synSpan = KinViewerDisplaySpan.mount({ services: synServices, commands: window.synLayoutCommands || null, enabled: () => synSecond }); }""", second)
         page.evaluate(FRAME)
         self.addCleanup(context.close)
         self.addCleanup(lambda: self.assertEqual([], errors))
@@ -267,6 +355,84 @@ class MonitorHangingDOMTest(unittest.TestCase):
         # Back to the account's rows: the fixed copies go, and Second Display off again takes every copy.
         page.evaluate('synAnswer.undo()'); page.evaluate(FRAME); page.evaluate(FRAME)
         expect(page.locator('.kin-span-fixed')).to_have_count(0)
+
+    def laid_on_monitors(self, page, each):
+        """Every cell lies on one monitor's image area - none across the display edge, none under a row - and the cells of
+        each monitor fill its area: `each` cells per monitor."""
+        boxes, cells = page.evaluate(BOXES), page.evaluate('synCells()')
+        seam = page.evaluate('window.synSeam ?? innerWidth / 2')
+        copies = page.locator('.kin-span-fixed').evaluate_all('n => n.map(e => e.getBoundingClientRect().bottom)')
+        state = json.dumps({'cells': cells, 'seam': seam, 'boxes': boxes})
+        one = [c for c in cells if c[3] <= seam + 0.5]
+        two = [c for c in cells if c[1] >= seam - 0.5]
+        self.assertEqual(len(cells), len(one) + len(two), 'a cell lies across the display edge: ' + state)
+        self.assertEqual([each, each], [len(one), len(two)], state)
+        # Monitor 1: the strip on its left, the toolbar at its bottom.
+        self.assertAlmostEqual(boxes['thumbs']['right'], min(c[1] for c in one), delta=1, msg=state)
+        self.assertAlmostEqual(seam, max(c[3] for c in one), delta=1, msg=state)
+        self.assertAlmostEqual(boxes['grid']['top'], min(c[2] for c in one), delta=1, msg=state)
+        self.assertAlmostEqual(boxes['toolbar']['top'], max(c[4] for c in one), delta=1, msg=state)
+        # Monitor 2: the copies of the toolbar and the strip on its top.
+        self.assertAlmostEqual(seam, min(c[1] for c in two), delta=1, msg=state)
+        self.assertAlmostEqual(boxes['grid']['right'], max(c[3] for c in two), delta=1, msg=state)
+        self.assertAlmostEqual(max(copies), min(c[2] for c in two), delta=1, msg=state)
+        self.assertAlmostEqual(boxes['grid']['bottom'], max(c[4] for c in two), delta=1, msg=state)
+        return cells
+
+    def test_07b_a_layout_picked_from_the_menu_after_the_rule_stands_is_laid_on_each_monitor(self):
+        # The rule of a reading desk: monitor 1 with its strip on the left and its toolbar at the bottom, monitor 2 with
+        # both on top (their fixed copies). The window covers both displays, which meet left of its middle.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        rule = [monitor('2x2', thumbs='left', toolbar='bottom'), monitor('2x2', thumbs='top', toolbar='top')]
+        result = self.prepare(page, rule)
+        self.assertIn('적용 Monitor 1·Monitor 2.', result['note'])
+        page.evaluate('synApplySplit(synAnswer.split)')
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('synGridState().rects.length === 8')
+        split = page.evaluate('synGridState()')
+        self.laid_on_monitors(page, 4)
+        # The rule's own split is left as it is.
+        page.wait_for_timeout(2100)
+        self.assertEqual(split, page.evaluate('synGridState()'))
+
+        def pick(rows, cols, count):
+            # The Layout menu's grid lands; whatever lays it on the monitors has had its moment (the page measures on the
+            # grid's announcement and once a second).
+            page.evaluate('([rows, cols]) => synMenu(rows, cols)', [rows, cols])
+            page.wait_for_function('([rows, count]) => synGridState().rows === rows && synGridState().rects.length === count', arg=[rows, count], timeout=5000, polling=250)
+            page.wait_for_timeout(2500)
+
+        # The reader picks 1 x 2 from the Layout menu: one cell on each monitor's image area, each the cell it was.
+        before = [c[0] for c in page.evaluate('synCells()')][:2]
+        pick(1, 2, 2)
+        cells = self.laid_on_monitors(page, 1)
+        self.assertEqual(before, [c[0] for c in cells])
+        # Registered as this screen's split (the double click's maximize and a later Apply's rollback know it).
+        self.assertEqual(page.evaluate('synGridState().rects'), page.evaluate('kinViewerSplitRects'))
+        # 2 x 2: two cells on each monitor.
+        pick(2, 2, 4)
+        cells = self.laid_on_monitors(page, 2)
+        # The top cell of each monitor (the 2 x 2's top row); the reader puts another series into the right one.
+        top = lambda cells: [min((c for c in cells if c[3] <= SEAM + 0.5), key=lambda c: c[2]), min((c for c in cells if c[1] >= SEAM - 0.5), key=lambda c: c[2])]
+        page.evaluate("id => putSeries(id, 'ds-reader')", top(cells)[1][0])
+        tops = top(page.evaluate('synCells()'))
+        self.assertEqual('ds-reader', tops[1][5])
+        # Back to 1 x 2: the top row stays, each cell with what it shows.
+        pick(1, 2, 2)
+        cells = self.laid_on_monitors(page, 1)
+        self.assertEqual([[c[0], c[5]] for c in tops], [[c[0], c[5]] for c in cells])
+        # 1 x 1: one cell on each monitor (the one column is made two, then laid); the reader's cell stays the first.
+        first = page.evaluate('synCells()')[0]
+        page.evaluate('synMenu(1, 1)')
+        page.wait_for_function('() => synGridState().rows === 1 && synGridState().rects.length === 2', timeout=6000, polling=250)
+        page.wait_for_timeout(2500)
+        cells = self.laid_on_monitors(page, 1)
+        self.assertEqual(first[0], cells[0][0])
+        self.assertEqual(first[5], cells[0][5])
+        # Settled: nothing more is laid.
+        count = page.evaluate('synLayouts.length')
+        page.wait_for_timeout(2500)
+        self.assertEqual(count, page.evaluate('synLayouts.length'))
 
     def test_08_the_worklist_window_is_read_and_asked_to_its_monitor_once_the_rule_stands(self):
         page = self.open(displays=TWO_DISPLAYS)

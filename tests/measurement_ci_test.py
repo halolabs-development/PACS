@@ -2069,7 +2069,8 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_two_08_a_protocol_the_browser_kept_on_one_display_comes_back_once_the_window_is_over_both',
                           'test_two_09_work_on_the_images_meanwhile_is_not_built_over_by_the_protocol',
                           'test_two_12_an_image_enlarged_from_the_toolbar_menu_meanwhile_is_not_built_over_by_the_protocol',
-                          'test_two_14_a_series_dropped_into_a_cell_then_patient_tabs_there_and_back_keep_the_viewer'])
+                          'test_two_14_a_series_dropped_into_a_cell_then_patient_tabs_there_and_back_keep_the_viewer',
+                          'test_two_15_a_layout_picked_after_a_monitor_rule_is_laid_on_each_monitors_images'])
         self.assertNotIn('two-monitor-layout', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- two-monitor-layout', dispatch)

@@ -102,6 +102,8 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   //  rows: { toolbar, thumbs } -> { original: band | null, copy: band | null } (band: client px + side + monitor).
   //  applied: the monitors shown; hidden: rule cells no applied monitor shows; toolbarKept: no applied monitor shows a
   //  toolbar, so it stays on top of the first one (Viewer Settings must stay reachable).
+  //  areas: each applied monitor's image area (its part less its rows), left to right, as fractions of the grid - where a
+  //  grid picked later is laid while these rows stand (fit).
   function split(model, rule, covered, column, grid) {
     const list = rule?.monitors?.list;
     if (!list || !covered.length || !grid || !(grid.width > 0) || !(grid.height > 0)) return null;
@@ -112,7 +114,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
     const showing = row => parts.filter(part => part.monitor[row] !== 'none').map(part => ({ part, side: part.monitor[row] }));
     const toolbarKept = !showing('toolbar').length;
     const rows = { toolbar: toolbarKept ? [{ part: parts[0], side: 'top' }] : showing('toolbar'), thumbs: showing('thumbs') };
-    const positions = [], placed = { toolbar: [], thumbs: [] };
+    const positions = [], placed = { toolbar: [], thumbs: [] }, areas = [];
     for (const part of parts) {
       const box = { left: part.region.left, right: part.region.right, top: column.top, bottom: column.bottom };
       const own = {};
@@ -122,6 +124,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       const from = (part.region.left - column.left) / span, to = (part.region.right - column.left) / span;
       for (const row of ['toolbar', 'thumbs']) if (b[row]) placed[row].push({ ...b[row], monitor: part.region.monitor, from, to });
       const { rows: r, cols: c, cells } = part.entry, area = b.images, w = (area.right - area.left) / c, h = (area.bottom - area.top) / r;
+      areas.push({ monitor: part.region.monitor, left: area.left, top: area.top, width: area.right - area.left, height: area.bottom - area.top });
       cells.forEach((cell, index) => {
         const col = index % c, line = Math.floor(index / c);
         positions.push({ cell, left: area.left + col * w, top: area.top + line * h, width: w, height: h });
@@ -138,7 +141,24 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       numRows: Math.max(...parts.map(part => part.entry.rows)), numCols: parts.reduce((sum, part) => sum + part.entry.cols, 0),
       rows: { toolbar: { original: placed.toolbar[0] || null, copy: placed.toolbar[1] || null }, thumbs: { original: placed.thumbs[0] || null, copy: placed.thumbs[1] || null } },
       applied: parts.map(part => part.region.monitor), hidden, toolbarKept,
+      areas: areas.map(a => ({ monitor: a.monitor, x: round((a.left - grid.left) / grid.width), y: round((a.top - grid.top) / grid.height),
+        width: round(a.width / grid.width), height: round(a.height / grid.height) })),
     };
+  }
+
+  // A plain grid of rows x cols (one the Layout menu builds) laid on the monitors' image areas of an applied rule (split's
+  // areas), as the rule lays its own cells: each area takes an equal share of the columns and every row, so no cell lies
+  // under a row or across a display edge. The rectangles are in the grid's position order (row by row, left to right
+  // across the monitors). null when the columns do not share out evenly between the areas, or for fewer than two areas.
+  function fit(areas, rows, cols) {
+    if (!Array.isArray(areas) || areas.length < 2 || !Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 ||
+        cols % areas.length || !areas.every(a => a && finite(a.x, a.y, a.width, a.height) && a.width > 0 && a.height > 0)) return null;
+    const per = cols / areas.length, round = v => Math.round(v * 1e6) / 1e6, rects = [];
+    for (let line = 0; line < rows; line++) for (let col = 0; col < cols; col++) {
+      const area = areas[Math.floor(col / per)], w = area.width / per, h = area.height / rows;
+      rects.push({ x: round(area.x + (col % per) * w), y: round(area.y + line * h), width: round(w), height: round(h) });
+    }
+    return rects;
   }
 
   // Which monitor (index into screens) a window rectangle stands on: the display holding its centre.
@@ -207,7 +227,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, monitorOf, validRects, place, edges, pair };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);
@@ -381,7 +401,8 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       placeStyle.textContent = '';
       window.KinViewerUXShell?.chrome?.(account());
     } else {
-      window.KinViewerMonitorRows = { copies: state.copies };
+      // areas: the monitors' image areas the rule measured, where a grid picked later is laid (viewer-display-span.js).
+      window.KinViewerMonitorRows = { copies: state.copies, areas: state.areas || null };
       body.setAttribute('data-kin-monitor-rows', ''); body.toggleAttribute('data-kin-monitor-no-thumbs', state.noThumbs);
       placeStyle.textContent = state.css;
       window.KinViewerUXShell?.chrome?.(state.chrome);
@@ -483,7 +504,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
       const css = [toolbar.original && declare(COLUMN + ' > .kin-ux-toolbar-slot', plan.place(toolbar.original)),
         thumbs.original && declare(COLUMN + ' > .kin-viewer-series-strip', plan.place(thumbs.original))].filter(Boolean).join('\n');
       place({ chrome: { toolbar: toolbar.original?.side || 'top', toolbarAutoHide: true, thumbs: thumbs.original?.side || 'top', thumbsAutoHide: true },
-        css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) } });
+        css, noThumbs: !thumbs.original, copies: { 'Image Tools': copy(toolbar.copy), Series: copy(thumbs.copy) }, areas: split.areas });
       notes.unshift(kinText("적용 {0}.", split.applied.map(name).join('·')));
       // The worklist window: where it stands is read from it now for the note; once the rule stands (commit) the list
       // document is told the worklist's monitor (settleWorklist) - also when it is there already, so that an offer made
