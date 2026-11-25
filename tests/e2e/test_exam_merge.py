@@ -322,6 +322,113 @@ class ExamMergeE2E(WorklistE2E):
         reader.get_by_role('button', name=re.compile(r'Related Report · Exam 2')).click()
         expect(reader.locator('#hist-body')).to_contain_text('SYNTHETIC SECOND REPORT', timeout=30000)
 
+    def series_instances(self, uid):
+        """Every instance of a synthetic original, by series: {seriesUid: [dataset, ...]} in instance order."""
+        found = self.stack._orthanc_request('POST', '/tools/lookup', uid.encode())
+        study = next(x['ID'] for x in found.body if x['Type'] == 'Study')
+        out = {}
+        for i in self.stack._orthanc_request('GET', '/studies/' + study + '/instances').body:
+            ds = dcmread(io.BytesIO(self.stack.orthanc_bytes('/instances/' + i['ID'] + '/file')))
+            out.setdefault(str(ds.SeriesInstanceUID), []).append(ds)
+        return {k: sorted(v, key=lambda d: int(d.InstanceNumber)) for k, v in out.items()}
+
+    def length_on(self, uid, ds, extent=20):
+        """A saved Length on one image of an original, as the viewer saves it (marks stay on the original UID)."""
+        ipp = [float(x) for x in ds.ImagePositionPatient]
+        r = self.stack.request('POST', f'/studies/{uid}/viewer-items', 'doctor', dict(requestId=str(uuid.uuid4()), item=dict(
+            schemaVersion=1, kind='length', seriesUid=str(ds.SeriesInstanceUID), sopUid=str(ds.SOPInstanceUID), frame=1,
+            frameOfReferenceUid=str(ds.FrameOfReferenceUID), label='길이', points=[[ipp[0]+10, ipp[1]+10, ipp[2]], [ipp[0]+10+extent, ipp[1]+10, ipp[2]]],
+            viewPlaneNormal=[0, 0, 1], viewUp=[0, 1, 0], baseline=dict(calculator='kin-native-manual-v1', values=[float(extent)]))))
+        self.assertEqual(r.status, 200, r.text)
+        return r.body
+
+    def finding_on(self, reading, item, title, status=200):
+        r = self.stack.request('POST', f'/studies/{reading}/findings', 'doctor', dict(requestId=str(uuid.uuid4()), item=dict(
+            schemaVersion=4, title=title, text='', characteristics='', lesionLocation='', size='', primary=0,
+            sources=[dict(itemId=item['id'], revision=item['revision'])])))
+        self.assertEqual(r.status, status, r.text)
+        return r.body
+
+    def listed_findings(self, reading):
+        r = self.stack.request('GET', f'/studies/{reading}/findings?includeHidden=true&limit=100', 'doctor')
+        self.assertEqual(r.status, 200, r.text)
+        return r.body
+
+    def cite(self, reading, finding, text, line=None):
+        listed = next(i for i in self.listed_findings(reading)['items'] if i['id'] == finding['id'])
+        insert = dict(field='findings', findingId=finding['id'], findingRevision=finding['revision'], sourceIndex=0,
+                      insertedText=text + ('\n' + line if line else ''), expectedLinkState=listed['links'][0]['linkState'],
+                      expectedHeadRevision=listed['links'][0]['headRevision'])
+        if line:
+            insert.update(measurementLine=line, measurementSources=[0])
+        return self.stack.request('PUT', f'/studies/{reading}/report', 'doctor', dict(findings=insert['insertedText'],
+            conclusion='', recommendation='', baseVersion=0, insert=insert))
+
+    def test_exam_merge_05_split_part_finding_is_that_parts_own(self):
+        """A finding made on the second part of a split exam is that part's: it is written on the part's UID with its mark
+        on the original, listed and cited (with its measurement) there and not on the first part. A mark of the other part
+        is refused on each part. A finding the original held before the split, on a series that went to the second part, is
+        listed by neither part, while the report citation naming it and its history stay readable. Ordinary studies are
+        covered by the findings suites unchanged."""
+        patient, (a,) = self.patient(1)
+        self.add_series(patient, a.uid)
+        series = self.series_instances(a.uid)
+        self.assertEqual(len(series), 2)
+        first, moved = sorted(series, key=lambda s: int(series[s][0].SeriesNumber) if 'SeriesNumber' in series[s][0] else 0)
+        # Before the split: a finding on the original, from the series that will become the second part (a split needs no
+        # open report, so it is cited only after the split, below, as a screen that still listed it would have).
+        old = self.finding_on(a.uid, self.length_on(a.uid, series[moved][0]), 'SYNTHETIC BEFORE SPLIT')
+
+        split =self.stack.request('POST', '/exam-groups/split', 'tech', {'uid': a.uid, 'seriesUids': [moved]})
+        self.assertEqual(split.status, 200, split.text)
+        second = next(row for row in self.listed().values() if row.get('examScope', {}).get('part') == 1 and
+                      row['examScope']['sources'][0]['studyUid'] == a.uid)['uid']
+
+        # The second part: a Length on its own series, saved by the viewer on the original UID, becomes a finding of the part.
+        mark = self.length_on(a.uid, series[moved][0])
+        mine = self.finding_on(second, mark, 'SYNTHETIC SECOND PART')
+        self.assertEqual(mine['studyUid'], second)
+        self.assertEqual([(s['studyUid'], s['seriesUid']) for s in mine['item']['sources']], [(a.uid, moved)])
+        listed = self.listed_findings(second)
+        self.assertEqual([i['id'] for i in listed['items']], [mine['id']])
+        self.assertEqual(listed['ownStudies'], [a.uid])
+        # Not a candidate on the first part; the finding the original held for the moved series is listed by neither part.
+        self.assertEqual([i['id'] for i in self.listed_findings(a.uid)['items']], [])
+        # A mark of the other part is refused on each part, like a mark the study does not hold.
+        self.finding_on(a.uid, mark, 'SYNTHETIC WRONG PART', status=404)
+        self.finding_on(second, self.length_on(a.uid, series[first][0]), 'SYNTHETIC WRONG PART', status=404)
+        # Cited on the second part with Include Measurements: the server takes the part's own mark into the line.
+        line = '측정: Length 20.0 mm (Series 2 / Image 1)'
+        quoted = self.cite(second, mine, 'SYNTHETIC SECOND PART', line)
+        self.assertEqual(quoted.status, 200, quoted.text)
+        drafts = self.stack.request('GET', f'/studies/{second}/report/citations', 'doctor')
+        self.assertEqual(drafts.status, 200, drafts.text)
+        entry = drafts.body['draft'][0]
+        self.assertEqual((entry['findingId'], entry['measurementLine'], entry['measurementSources']), (mine['id'], line, [0]))
+        # The part's report is approved and signed on the part's UID; its patient is read from the original (no archive
+        # resource carries the part's own UID).
+        approved = self.stack.request('POST', f'/studies/{second}/report/commit', 'doctor', {'action': 'approve', 'baseVersion': 0,
+            'findings': 'SYNTHETIC SECOND PART\n' + line, 'conclusion': '', 'recommendation': ''})
+        self.assertEqual(approved.status, 201, approved.text)
+        self.assertEqual(psql(f'SELECT action FROM "ReportVersion" WHERE uid={lit(second)} ORDER BY version DESC LIMIT 1'), ['approve'])
+        # Opening the cited source again reads the part's history: the original study, series, image and frame.
+        history = self.stack.request('GET', f'/studies/{second}/findings/{mine["id"]}/revisions?limit=100', 'doctor')
+        self.assertEqual(history.status, 200, history.text)
+        source = history.body['revisions'][0]['item']['sources'][0]
+        self.assertEqual((source['studyUid'], source['seriesUid'], source['sopUid'], source['frame']),
+                         (a.uid, moved, str(series[moved][0].SOPInstanceUID), 1))
+        # The finding the original held stays readable: its history, and a report citation naming it (made here through the
+        # API, as a screen that still listed it would have made it) is not turned into a missing source.
+        kept = self.stack.request('GET', f'/studies/{a.uid}/findings/{old["id"]}/revisions?limit=100', 'doctor')
+        self.assertEqual(kept.status, 200, kept.text)
+        r = self.stack.request('PUT', f'/studies/{a.uid}/report', 'doctor', dict(findings='SYNTHETIC BEFORE SPLIT', conclusion='',
+            recommendation='', baseVersion=0, insert=dict(field='findings', findingId=old['id'], findingRevision=old['revision'],
+            sourceIndex=0, insertedText='SYNTHETIC BEFORE SPLIT', expectedLinkState='current', expectedHeadRevision=1)))
+        self.assertEqual(r.status, 200, r.text)
+        before = self.stack.request('GET', f'/studies/{a.uid}/report/citations', 'doctor')
+        self.assertEqual(before.status, 200, before.text)
+        self.assertEqual([(e['findingId'], e['state'] != 'source-unavailable') for e in before.body['draft']], [(old['id'], True)])
+
     def test_exam_merge_04_original_loss_and_patient_change_refuse_scope(self):
         patient, (a, b) = self.patient(2)
         merged = self.stack.request('POST', '/exam-groups', 'tech', {'baseUid': a.uid, 'uids': [a.uid, b.uid]})
@@ -372,7 +479,8 @@ def load_tests(loader, tests, pattern):
     return unittest.TestSuite([ExamMergeE2E("test_exam_merge_01_three_studies_one_exam_viewer_report_unmerge"),
                                ExamMergeE2E("test_exam_merge_02_late_image_and_approved_refusal"),
                                ExamMergeE2E("test_exam_merge_03_split_second_viewer_report_late_series_unsplit"),
-                               ExamMergeE2E("test_exam_merge_04_original_loss_and_patient_change_refuse_scope")])
+                               ExamMergeE2E("test_exam_merge_04_original_loss_and_patient_change_refuse_scope"),
+                               ExamMergeE2E("test_exam_merge_05_split_part_finding_is_that_parts_own")])
 
 
 if __name__ == "__main__":

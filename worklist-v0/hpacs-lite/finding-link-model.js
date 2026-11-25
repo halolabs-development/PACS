@@ -636,7 +636,8 @@
     const jobMs = Number.isFinite(deps.jobMs) ? deps.jobMs : 270000;
     const studies = studySet(deps.studies);
     const listeners = new Set();
-    const s = { scope: '', subject: '', me: null, ended: false, generation: 0, readSequence: 0, loading: false, suspended: true,
+    // `scope`: the anchor original this store follows; `report`: the UID its findings are written on (the same for an ordinary study).
+    const s = { scope: '', report: '', exam: null, subject: '', me: null, ended: false, generation: 0, readSequence: 0, loading: false, suspended: true,
       status: '', history: null, entries: new Map(), heads: new Map(), parked: new Map(), studies, navigation: 0,
       pair: { status: 'none', heads: new Map(), working: new Set(), key: '', sequence: 0, refused: false },
       // 'old-api': a successful findings answer without the schema header; nothing is written until a later one carries it.
@@ -649,10 +650,26 @@
     const writable = entry => !s.suspended && s.compat !== 'old-api' && s.me?.kind === 'member' && Array.isArray(s.me.roles) && s.me.roles.includes('radiologist') &&
       (!entry || !entry.head || entry.head.authorSub === s.subject);
     const hasWork = e => !!(e.editing || e.pending || e.busy);
-    const anchorOf = scope => studies && studies.length === 2 && studies.includes(scope) ? studies[0] : scope;
-    const pairOf = () => studies && studies.length === 2 && s.scope === studies[0] ? studies[1] : '';
+    /* The reading a window opened on an exam (a split part, a merged exam) writes its findings to: the exam's report UID, with
+     * every original of that exam as its own images and the prior exam's one original as the comparison study. Read from the
+     * window's admitted scope (deps.exam: null for a window opened without one, which keeps its study as before; 'pending'
+     * while a scoped window has not admitted its scope yet, when nothing is read or written). */
+    function examOf() {
+      let value = null;
+      try { value = typeof deps.exam === 'function' ? deps.exam() : null; } catch (_) { return 'pending'; }
+      if (value === null || value === undefined) return null;
+      const originals = scope => scope && Array.isArray(scope.sources) ? [...new Set(scope.sources.map(x => x && x.studyUid))] : [];
+      const current = value && value.current, own = originals(current), prior = originals(value.prior);
+      if (!current || !uid(current.reportUid) || !own.length || !own.every(uid) || !prior.every(uid)) return 'pending';
+      return { report: current.reportUid, own, prior, role: typeof value.role === 'function' ? value.role : null };
+    }
+    const anchorOf = scope => s.exam ? s.exam.own[0] : studies && studies.length === 2 && studies.includes(scope) ? studies[0] : scope;
+    const pairOf = () => s.exam ? (s.exam.prior.length === 1 && s.scope === s.exam.own[0] ? s.exam.prior[0] : '')
+      : studies && studies.length === 2 && s.scope === studies[0] ? studies[1] : '';
+    // A study whose marks are this reading's own: the anchor, or any original of the window's exam.
+    const own = study => !!study && (s.exam ? s.exam.own.includes(study) : study === s.scope);
     // The anchor's saved heads are selectable only while its own viewport feeds the Measurements panel.
-    const anchorLive = () => !!s.history && s.history.scope === s.scope && !!s.scope;
+    const anchorLive = () => !!s.history && !!s.scope && own(s.history.scope);
     function clearPair() {
       s.pair.sequence++; s.pair.heads = new Map(); s.pair.working = new Set(); s.pair.key = ''; s.pair.refused = false;
       s.pair.status = pairOf() ? 'idle' : 'none';
@@ -665,7 +682,7 @@
     }
     function comparisonOf(e) {
       const found = new Set();
-      for (const x of [...(e.head?.item.sources || []), ...(e.draft?.sources || [])]) { const study = studyOf(e, x); if (study !== s.scope) found.add(study); }
+      for (const x of [...(e.head?.item.sources || []), ...(e.draft?.sources || [])]) { const study = studyOf(e, x); if (!own(study)) found.add(study); }
       return [...found].sort().join(',');
     }
     // A refused comparison list blocks new commands on every entry that names a comparison study.
@@ -679,14 +696,14 @@
       if (!s.scope || !s.subject) return;
       const work = [...s.entries.values()].filter(hasWork);
       if (!work.length) return;
-      const key = heldKey(s.subject, s.scope), record = s.parked.get(key) || { subject: s.subject, scope: s.scope, entries: [] };
+      const key = heldKey(s.subject, s.report), record = s.parked.get(key) || { subject: s.subject, scope: s.report, entries: [] };
       for (const e of work) { const copy = heldCopy(e); record.entries = record.entries.filter(x => x.id !== copy.id).concat([copy]); }
       s.parked.set(key, record);
     }
     // Called only after this study's list was read with the current login: the same subject, a
     // successful authorization of this study and a writable role. Otherwise the copies stay held.
     function restore() {
-      const key = heldKey(s.subject, s.scope), record = s.parked.get(key);
+      const key = heldKey(s.subject, s.report), record = s.parked.get(key);
       if (!record || !writable()) return;
       s.parked.delete(key);
       for (const copy of record.entries) {
@@ -701,7 +718,7 @@
     // Counts and study identifiers only: the held text and sources are never shown before restore.
     function held() {
       const studies = [...s.parked.values()].filter(r => s.subject && r.subject === s.subject)
-        .map(r => ({ scope: r.scope, count: r.entries.length, current: r.scope === s.scope }));
+        .map(r => ({ scope: r.scope, count: r.entries.length, current: r.scope === s.report }));
       return { count: studies.reduce((n, r) => n + r.count, 0), studies };
     }
     // Whole-viewer guard state: held copies are unsaved work too; only live entries can be in flight.
@@ -776,12 +793,13 @@
       });
       return user;
     }
-    const path = () => '/studies/' + s.scope + '/findings';
-    function setScope(scope) {
-      if (s.ended || scope === s.scope) return;
+    const path = () => '/studies/' + s.report + '/findings';
+    function setScope(scope, report = scope) {
+      if (s.ended || (scope === s.scope && (report || '') === s.report)) return;
       park();
       reset(scope ? kinText("소견 확인 중…") : '');
       s.scope = uid(scope) ? scope : '';
+      s.report = s.scope && uid(report) ? report : s.scope;
       clearPair();
       if (s.scope) load();
     }
@@ -791,14 +809,21 @@
       if (s.ended) return;
       if (!state || typeof state !== 'object') { s.history = null; return; }
       if (state.ended) { end(); return; }
-      const heads = Array.isArray(state.heads) ? state.heads : [];
-      const key = JSON.stringify([state.scope, state.suspended, heads.map(h => [h.id, h.revision, h.hidden, h.referenceStatus, h.working])]);
+      const exam = examOf();
+      let heads = Array.isArray(state.heads) ? state.heads : [];
+      // An exam window offers only the marks of this exam's own series (a split part's original also holds the other part's).
+      if (exam && exam !== 'pending' && exam.role) heads = heads.filter(h => { try { return exam.role(state.scope, h.seriesUid) === 'current'; } catch (_) { return false; } });
+      const key = JSON.stringify([state.scope, state.suspended, exam === 'pending' ? 'pending' : exam && exam.report,
+        heads.map(h => [h.id, h.revision, h.hidden, h.referenceStatus, h.working])]);
       const changed = key !== s.historyKey;
       s.historyKey = key; s.history = state;
-      const anchor = anchorOf(state.scope), moved = anchor !== s.scope;
+      // A scoped window whose scope is not admitted yet has no reading: the store holds no list and writes nothing.
+      if (exam === 'pending') { s.exam = null; s.heads = new Map(); setScope(''); return; }
+      s.exam = exam;
+      const anchor = anchorOf(state.scope), report = exam ? exam.report : anchor, moved = anchor !== s.scope || report !== s.report;
       if (moved) s.heads = new Map();
-      if (state.scope === anchor) s.heads = new Map(heads.map(h => [h.id, h]));
-      if (moved) { setScope(anchor); return; }
+      if (exam ? exam.own.includes(state.scope) : state.scope === anchor) s.heads = new Map(heads.map(h => [h.id, h]));
+      if (moved) { setScope(anchor, report); return; }
       // While the comparison viewport is active its panel marks items being edited; a changed saved set
       // (or a new activation) re-reads the comparison list.
       const onPair = !!pairOf() && state.scope === pairOf();
@@ -867,12 +892,12 @@
     function lose(e) {
       s.entries.delete(e.id);
       if (!e.editing) return false;
-      const own = e.draft.sources.filter(p => studyOf(e, p) === s.scope).map(sentPair);
+      const kept = e.draft.sources.filter(p => own(studyOf(e, p))).map(sentPair);
       Object.assign(e, { id: makeId(), head: null, links: [], latest: null, pending: null, staleSource: null, editing: true, busy: false,
         draft: Object.assign({ title: e.draft.title, text: e.draft.text },
           typeof e.draft.characteristics === 'string' ? { characteristics: e.draft.characteristics } : {},
           typeof e.draft.lesionLocation === 'string' ? { lesionLocation: e.draft.lesionLocation } : {},
-          typeof e.draft.size === 'string' ? { size: e.draft.size } : {}, { sources: own, primary: 0 }),
+          typeof e.draft.size === 'string' ? { size: e.draft.size } : {}, { sources: kept, primary: 0 }),
         message: kinText("이 소견을 더 이상 볼 수 없어 저장하지 않았습니다. 작성한 제목과 본문만 이 검사의 새 소견 초안으로 남겼고 비교 검사 연결은 뺐습니다. 저장 전 내용과 연결 표식을 확인하세요.") });
       s.entries.set(e.id, e);
       return true;
@@ -1004,7 +1029,7 @@
       if (s.entries.get(e.id) !== e || !e.editing || e.busy || e.pending) return false;
       const index = e.draft.sources.findIndex(x => x.itemId === itemId);
       if (index >= 0) { e.draft.sources.splice(index, 1); if (e.draft.primary >= e.draft.sources.length) e.draft.primary = 0; notify(); return true; }
-      if (study === undefined || study === s.scope) {
+      if (study === undefined || own(study)) {
         const head = s.heads.get(itemId);
         if (!anchorLive() || !head || head.hidden || head.working) return false;
         e.draft.sources.push({ itemId, revision: head.revision }); notify(); return true;
@@ -1024,7 +1049,7 @@
       if (s.entries.get(e.id) !== e || !e.head || e.busy || e.pending || !writable(e) || pairBlocked(e)) return false;
       if (typeof itemId === 'object' && itemId !== null) return refreshJob(e, itemId.jobId, itemId.markId);
       const link = (e.links || []).find(l => l.itemId === itemId);
-      const head = studyOf(e, { itemId }) === s.scope ? s.heads.get(itemId) : s.pair.heads.get(itemId);
+      const head = own(studyOf(e, { itemId })) ? s.heads.get(itemId) : s.pair.heads.get(itemId);
       const target = link && link.headRevision ? { revision: link.headRevision, hidden: !!link.headHidden } : head ? { revision: head.revision, hidden: !!head.hidden } : null;
       const pair = e.draft.sources.find(x => x.itemId === itemId);
       if (!pair || !target || target.hidden || target.revision === pair.revision) return false;
@@ -1140,7 +1165,9 @@
       const go = deps.navigate;
       const ticket = s.generation;
       const target = { studyUid: source.studyUid ?? s.scope, seriesUid: source.seriesUid, sopUid: source.sopUid, frame: source.frame, itemId: source.itemId };
-      if (target.studyUid !== s.scope && validTarget(target)) return navigateAcross(e, target, source.revision);
+      // The comparison study, or another original of this exam than the one the active viewport shows, is reached by activating it.
+      const elsewhere = !own(target.studyUid) || (!!s.exam && target.studyUid !== liveScope());
+      if (elsewhere && validTarget(target)) return navigateAcross(e, target, source.revision);
       let result;
       if (typeof go !== 'function') result = refusal('tool-missing');
       else {
@@ -1221,8 +1248,9 @@
       const ticket = s.generation, seq = ++s.navigation;
       const history = deps.history, activate = deps.activate, go = deps.navigate;
       let result, phase = 'before', expired = false, timer = null;
-      if (target.studyUid !== pairOf()) result = refusal('scope');
-      else if (s.pair.status === 'denied') result = refusal('busy');
+      const mine = own(target.studyUid);
+      if (!mine && target.studyUid !== pairOf()) result = refusal('scope');
+      else if (!mine && s.pair.status === 'denied') result = refusal('busy');
       else if (typeof history !== 'function' || typeof activate !== 'function' || typeof go !== 'function') result = refusal('tool-missing');
       else {
         const live = () => work.admits(workAt) && valid(ticket) && seq === s.navigation && s.entries.get(e.id) === e;
@@ -1235,7 +1263,7 @@
       }
       if (!valid(ticket) || seq !== s.navigation || s.entries.get(e.id) !== e) return { ...refusal('superseded'), phase };
       work.commit(workAt, () => {
-      e.message = result.ok ? joined(COMPARISON_ARRIVAL, annotationText(result.annotation), liveText(result, frozenRevision))
+      e.message = result.ok ? joined(mine ? '' : COMPARISON_ARRIVAL, annotationText(result.annotation), liveText(result, frozenRevision))
         : reasonText(result.reason) + phaseText(phase);
       notify(); }); return { ...result, phase };
     }
@@ -1249,7 +1277,7 @@
       return data;
     }
     return { state: () => s, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); }, valid, writable, hasWork, held, workState,
-      discardHeld, detach, pairOf, anchorLive, studyOf, comparisonOf, pairBlocked, loadPair, loadJobs, shownJob, toggleJob,
+      discardHeld, detach, pairOf, anchorLive, own, studyOf, comparisonOf, pairBlocked, loadPair, loadJobs, shownJob, toggleJob,
       setScope, syncHistory, load, newDraft, newDraftFrom, updateDraft, toggleSource, setPrimary, refreshSource, useLatest, discard, edit, save, navigate, history, end,
       dispose: () => { offEnd(); listeners.clear(); controller?.abort(); } };
   }

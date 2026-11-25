@@ -569,6 +569,61 @@ test('store loads findings for the history scope and drops a late list after A-B
   assert.deepEqual(titles, ['NEW'], 'only the fresh load for A is applied');
 });
 
+/* A window opened on an exam (split part / merged exam, viewer-exam-scope.js): findings go to the exam's report UID while the
+ * marks stay on the originals. PART is a split part's own UID over original A; OTHER is the part's own series, SERIES the other's. */
+const PART = '1.2.3.99', OTHER = '1.2.3.7';
+const partExam = (extra) => () => Object.assign({ current: { reportUid: PART, sources: [{ studyUid: A, series: { mode: 'include', uids: [OTHER] } }] }, prior: null,
+  role: (study, series) => study === A && series === OTHER ? 'current' : null }, extra);
+test('exam window: a split part reads, writes and holds its findings on the part UID; marks of the other part are not offered', async () => {
+  const t = transport(); const { store } = makeStore(t, { studies: [A], exam: partExam() });
+  const mine = { id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false, seriesUid: OTHER };
+  const theirs = { id: 'ffffffff-0000-4000-8000-000000000002', revision: 1, hidden: false, referenceStatus: 'verified', working: false, seriesUid: SERIES };
+  store.syncHistory(history(A, [mine, theirs])); await tick();
+  assert.equal(store.state().scope, A); assert.equal(store.state().report, PART);
+  assert.deepEqual(t.log.map(x => x.url), ['/api/me', '/api/studies/' + PART + '/findings?includeHidden=true&limit=100']);
+  assert.deepEqual([...store.state().heads.keys()], [ITEM], 'only the marks of this part\'s own series');
+  assert.equal(store.anchorLive(), true); assert.equal(store.own(A), true); assert.equal(store.pairOf(), '');
+  const e = store.newDraftFrom(ITEM, 2); assert.ok(e);
+  assert.equal(store.newDraftFrom(theirs.id, 1), null, 'a mark of the other part makes no draft');
+  store.updateDraft(e, { title: '둘째 부분 소견' });
+  assert.equal(await store.save(e, 'create'), true);
+  assert.deepEqual(t.log.filter(x => x.options.method === 'POST').map(x => [x.url, x.body.item.sources]), [['/api/studies/' + PART + '/findings', [{ itemId: ITEM, revision: 2 }]]]);
+  // A saved source on the part's original is this reading's own image, not a comparison study.
+  const saved = [...store.state().entries.values()][0];
+  assert.equal(store.comparisonOf(saved), '');
+  // An unsaved draft is held under the part UID, apart from the first part of the same original.
+  const draft = store.newDraft(); store.updateDraft(draft, { title: '보관' });
+  const records = store.detach();
+  assert.deepEqual(records.map(r => [r.scope, r.entries.length]), [[PART, 1]]);
+});
+
+test('exam window: nothing is read or written while the scope of a scoped window is not admitted; an ordinary window is unchanged', async () => {
+  const t = transport(); const { store } = makeStore(t, { studies: [A], exam: () => 'pending' });
+  store.syncHistory(history(A, [{ id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false, seriesUid: OTHER }])); await tick();
+  assert.equal(store.state().scope, ''); assert.equal(store.newDraft(), null); assert.deepEqual(t.log, []);
+  const plain = transport(); const kit = makeStore(plain, { studies: [A], exam: () => null });
+  kit.store.syncHistory(history(A, [{ id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false }])); await tick();
+  assert.equal(kit.store.state().report, A);
+  assert.deepEqual(plain.log.map(x => x.url), ['/api/me', '/api/studies/' + A + '/findings?includeHidden=true&limit=100']);
+});
+
+test('exam window: every original of a merged exam is the exam\'s own; the prior exam\'s original is the one comparison study', async () => {
+  const P = '7.8.9';
+  const exam = () => ({ current: { reportUid: A, sources: [{ studyUid: A, series: { mode: 'all', uids: [] } }, { studyUid: B, series: { mode: 'all', uids: [] } }] },
+    prior: { reportUid: P, sources: [{ studyUid: P, series: { mode: 'all', uids: [] } }] }, role: study => study === P ? 'prior' : 'current' });
+  const t = transport(); const { store } = makeStore(t, { studies: null, exam });
+  const onB = { id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false, seriesUid: SERIES };
+  store.syncHistory(history(B, [onB])); await tick();
+  assert.equal(store.state().scope, A); assert.equal(store.state().report, A);
+  assert.deepEqual([...store.state().heads.keys()], [ITEM], 'the active original B feeds the selectable marks');
+  assert.equal(store.own(B), true); assert.equal(store.pairOf(), P);
+  const e = store.newDraft(); assert.equal(store.toggleSource(e, ITEM), true);
+  assert.equal(store.comparisonOf(e), '', 'a mark of B is not the comparison study');
+  // Moving to the prior viewport keeps the reading; its marks come from the comparison list, not the live heads.
+  store.syncHistory(history(P, [])); await tick();
+  assert.equal(store.state().report, A); assert.equal(store.state().entries.get(e.id), e);
+});
+
 test('store save sends the exact pairs once, replays the same body on retry and refreshes links', async () => {
   const t = transport(); const { store } = makeStore(t);
   store.syncHistory(history(A, [{ id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false }])); await tick();

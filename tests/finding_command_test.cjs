@@ -1256,6 +1256,25 @@ test('comparison rows and targets: one comparison study per row; only a viewer o
   assert.equal(command.arrivalText({ ok: true, annotation: 'key', phase: 'navigating' }, '영상 창 1'), '영상 이동 확인 · 영상 창 1 · 비교 검사 영상 칸 · ' + links.annotationText('key'));
 });
 
+/* A split part's reading UID (PART) over its original X: the part's sources on X are its own images, and Go to Image goes only to
+ * the viewer opened on that part (its report UID), never to the other part's viewer, which shows the same original. */
+test('exam reading: sources of the reading\'s own originals are not comparison studies; the viewer is chosen by its report UID', () => {
+  const PART = '1.2.840.99.2';
+  const row = command.rowOf(Object.assign(crossFinding(), { studyUid: PART }), PART, [X]);
+  assert.equal(row.comparison, P); assert.deepEqual(row.sources.map(s => s.foreign), [false, true]);
+  // Without the list's ownStudies the same row has two other studies, which the list refuses as before.
+  assert.throws(() => command.rowOf(Object.assign(crossFinding(), { studyUid: PART }), PART), undefined, 'two comparison studies');
+  const part = win({ studies: [X], reading: PART, index: 0 }), first = win({ studies: [X], reading: X, index: 1 });
+  assert.deepEqual(command.chooseTarget({ uid: PART, comparison: null, windows: [part, first] }), { kind: 'window', index: 0 });
+  assert.deepEqual(command.chooseTarget({ uid: X, comparison: null, windows: [part, first] }), { kind: 'window', index: 1 });
+  assert.deepEqual(command.chooseTarget({ uid: PART, comparison: null, windows: [first] }), { kind: 'refused', reason: 'no-viewer' });
+  assert.deepEqual(command.chooseTarget({ uid: PART, comparison: null, workspace: ws({ studies: [X], reading: PART }), windows: [] }), { kind: 'embedded' });
+  // The pre-call reads the same: a viewer of another reading over the same original is not this reading's viewer.
+  const exam = { ...expected, uid: PART, own: [X] };
+  assert.equal(command.precheck(view({ uid: PART, selection: PART, scope: X, reading: PART, activate: true }), exam, true), null);
+  assert.equal(command.precheck(view({ uid: PART, selection: PART, scope: X, reading: X, activate: true }), exam, true), 'no-viewer');
+});
+
 test('comparison pre-call and identity: an activation tool is required; a loading history is tolerated only while the command waits', () => {
   assert.equal(command.precheck(view({ activate: false }), expected), null, 'B1 does not need it');
   assert.equal(command.precheck(view({ activate: false }), expected, true), 'tool-missing');

@@ -40,7 +40,8 @@ function readFixture(row, current = caller, transactionRow = row) {
   let reads = 0;
   const tx = { studyState: { findUnique: async () => transactionRow }, $executeRaw: async () => {},
     $queryRaw: async () => ++reads % 2 ? [] : [{ allowed: transactionRow?.institutionId === current.institution && transactionRow.rs !== 'P', rows: '[]' }] };
-  const db = { studyState: { findUnique: async () => row }, $transaction: async fn => fn(tx) };
+  // `$queryRaw` on the service's own client is the exam membership read (readingSources): a study never grouped.
+  const db = { studyState: { findUnique: async () => row }, $transaction: async fn => fn(tx), $queryRaw: async () => [] };
   const svc = new FindingService(db, { prepare: async () => {}, require: async () => {} }, {});
   const scope = async () => {
     if (!row || ![row.institutionId, row.teleInstitutionId].includes(current.institution)) throw new NotFoundException('검사가 없습니다.');

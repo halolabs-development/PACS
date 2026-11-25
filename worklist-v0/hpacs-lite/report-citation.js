@@ -216,8 +216,10 @@ window.KinReportCitation = (function () {
    * 줄에 들어갈 수 있는 출처 — 서버 `measurementEligible`과 같은 규칙. 이 검사의 영상 표식(저장 작업·
    * 비교 검사 출처가 아님)이고, 링크가 숨김·사라짐이 아닌 것.
    */
-  function measurementEligible(source, studyUid) {
-    return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' && source.studyUid === studyUid &&
+  // `own`: the originals of the exam this reading UID is written on (the findings list's ownStudies) — their marks are this exam's.
+  function measurementEligible(source, studyUid, own) {
+    return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' &&
+      (source.studyUid === studyUid || (Array.isArray(own) && own.includes(source.studyUid))) &&
       source.linkState !== 'hidden' && source.linkState !== 'missing';
   }
   /** 서버가 받는 줄의 모양. 맞으면 `null`, 아니면 이유. 서버 `measurementLineProblem`과 같은 규칙. */

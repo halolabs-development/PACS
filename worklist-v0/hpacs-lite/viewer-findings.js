@@ -23,6 +23,18 @@ window.kinViewerFindings = function (services, model) {
       return values.length === 1 ? values[0].split(',') : null;
     } catch (_) { return null; }
   }
+  // The exam this window reads (a split part, a merged exam): its admitted scope with the series rule, read at each call. A window
+  // opened without a scope has none (null); one opened with a scope that is not admitted yet is 'pending'.
+  function exam() {
+    let scoped = false;
+    try { scoped = new URLSearchParams(location.search).has('kinExamScopes'); } catch (_) { scoped = false; }
+    if (!scoped) return null;
+    const viewer = window.KinViewerExamScope, input = viewer && typeof viewer.snapshot === 'function' ? viewer.snapshot() : null;
+    // One admitted copy per read: the series rule is asked of that copy for every mark (KinExamScope.examRole).
+    const rule = window.KinExamScope && typeof window.KinExamScope.examRole === 'function' ? window.KinExamScope : null;
+    return input ? { current: input.current, prior: input.prior,
+      role: (study, series) => rule ? rule.examRole(input, study, series) : viewer.role(study, series) } : 'pending';
+  }
   /* S2-L2b continuation: a page opened by a finding's saved location names that finding, revision and source with a one-use nonce
    * the opening page stored in this tab's session storage. The nonce is consumed once; without session storage the request runs
    * at most once in this document. A missing or different record refuses the automatic restore. */
@@ -56,7 +68,7 @@ window.kinViewerFindings = function (services, model) {
       host.append(refused); stop = () => { refused.remove(); stop = () => {}; }; return false;
     }
     const studies = urlStudies();
-    const store = model.createStore({ fetch: (url, options) => window.fetch(url, options), uuid: () => crypto.randomUUID(), recovered: held, studies,
+    const store = model.createStore({ fetch: (url, options) => window.fetch(url, options), uuid: () => crypto.randomUUID(), recovered: held, studies, exam,
       navigate: target => typeof window.kinViewerHistoryNavigate === 'function' ? window.kinViewerHistoryNavigate(target) : { ok: false, reason: 'tool-missing' },
       history: () => typeof window.kinViewerHistoryState === 'function' ? window.kinViewerHistoryState() : null,
       activate: study => typeof window.kinViewerHistoryActivate === 'function' ? window.kinViewerHistoryActivate(study) : { ok: false, reason: 'tool-missing' },
@@ -121,7 +133,7 @@ window.kinViewerFindings = function (services, model) {
     // A saved location line: a frozen server copy (saved finding) or an unsaved {jobId, revision[, markId]} pair.
     function jobLine(parent, e, s, index, editing) {
       const st = store.state(), copy = model.isJob(s) ? s : null, markId = copy ? (copy.mark ? copy.mark.id : undefined) : s.markId;
-      const study = store.studyOf(e, s), own = study === st.scope, listed = st.jobs.list.get(s.jobId) || null;
+      const study = store.studyOf(e, s), own = store.own(study), listed = st.jobs.list.get(s.jobId) || null;
       const link = copy && e.head ? (e.links || []).find(l => l && l.jobId === s.jobId && (l.markId || null) === (markId || null)) || null : null;
       const status = model.jobStatus({ jobId: s.jobId, revision: s.revision, jobStudyUid: copy ? copy.jobStudyUid : st.scope, markId }, link, copy ? null : listed);
       const shown = markId && !copy ? store.shownJob() : null, shownMark = shown && shown.jobId === s.jobId ? shown.marks.find(m => m.id === markId) : null;
@@ -150,7 +162,7 @@ window.kinViewerFindings = function (services, model) {
     }
     function sourceLine(parent, e, s, index, editing) {
       if (model.isJob(s) || model.isJobPair(s)) return jobLine(parent, e, s, index, editing);
-      const st = store.state(), study = store.studyOf(e, s), own = study === st.scope;
+      const st = store.state(), study = store.studyOf(e, s), own = store.own(study);
       const link = (e.links || []).find(l => l.itemId === s.itemId) || null, head = (own ? st.heads : st.pair.heads).get(s.itemId) || null;
       const status = model.sourceStatus(s, e.head ? link : null, head);
       const line = text(parent, 'div', ''); line.dataset.itemId = s.itemId; line.dataset.linkState = status.linkState;
@@ -448,7 +460,7 @@ window.kinViewerFindings = function (services, model) {
     function render() {
       const s = store.state();
       status.textContent = s.status;
-      panel.dataset.studyUid = s.scope || '';
+      panel.dataset.studyUid = s.scope || ''; panel.dataset.reportUid = s.report || '';
       actions.replaceChildren();
       // A distinct accessible name: the Measurements panel already owns the exact name 'Refresh'.
       button(actions, 'Reload Findings', () => store.load(), s.ended || !s.scope);

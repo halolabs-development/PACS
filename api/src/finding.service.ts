@@ -10,6 +10,7 @@ import { OrthancService } from './orthanc.service';
 import type { Caller } from './pacs.service';
 import { REPORT_CITATION_LIMITS } from './report-citation';
 import { canonical, viewerUid, viewerUuid } from './viewer-input';
+import { readingSources, scopeIncludesSeries } from './exam-merge.service';
 import { comparisonStudies, copyJob, copySource, findingCommand, findingFingerprint, findingPage, FindingCommand, FindingJobSource, FindingSource,
   FindingSourceRef, FINDING_LIMITS, isJobRef, jobAbsent, jobFrame, jobLocation, jobMark, jobStudies, refKey, sourceRef, sourceStudies } from './finding-input';
 
@@ -106,6 +107,24 @@ function comparable(anchor: any, rows: any[], allowed: Set<string>, c: Caller) {
   }
   return { reachable, readable };
 }
+type Reading = Awaited<ReturnType<typeof readingSources>>;
+// The studies a finding counts toward its one comparison study: those other than its reading UID and the reading's own
+// originals (a split part's original, a merged exam's other originals). Access is still checked for every one of them.
+const counted = (uid: string, reading: Reading, studies: Iterable<unknown>) =>
+  comparisonStudies(uid, studies).filter(study => !reading.sources.some(source => source.studyUid === study));
+// A finding of a grouped reading is listed there only while every 2D mark it copied from one of the reading's originals is
+// of that reading's own series. One copied from the other part of a split original (before the split, or written on the
+// original UID by an older viewer) is listed by neither part; its history and the report citations naming it stay readable.
+function ownSeriesOnly(reading: Reading) {
+  const outside = reading.sources.filter(source => source.series.mode !== 'all').map(source => {
+    const uids = Prisma.join(source.series.uids.length ? source.series.uids : ['']);
+    return source.series.mode === 'include'
+      ? Prisma.sql`(s.value->>'studyUid' = ${source.studyUid} AND COALESCE(s.value->>'seriesUid', '') NOT IN (${uids}))`
+      : Prisma.sql`(s.value->>'studyUid' = ${source.studyUid} AND COALESCE(s.value->>'seriesUid', '') IN (${uids}))`;
+  });
+  return outside.length ? Prisma.sql`AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(f.snapshot->'sources') s
+    WHERE s.value->>'kind' IS DISTINCT FROM 'job' AND (${Prisma.join(outside, ' OR ')}))` : Prisma.empty;
+}
 function timestamp(value: Date | string) {
   return typeof value === 'string' ? new Date(value + 'Z') : value;
 }
@@ -193,6 +212,8 @@ export class FindingService {
     await this.studyAccess.require(c, [uid]);
     if (id !== undefined) viewerUuid(id);
     const page = findingPage(query, id !== undefined);
+    // History by id is never narrowed: a past report citation names the finding by id and must keep its source.
+    const reading = id === undefined ? await readingSources(this.prisma, uid) : null;
     // Permission predicate, page and per-source link state share one RepeatableRead statement:
     // a link state is never taken from a second, unlocked read of the item heads. The link state
     // is a database fact (head revision/hidden/presence) and is distinct from the viewer's
@@ -240,13 +261,15 @@ export class FindingService {
             FROM "Finding" f JOIN parent p ON p.uid = f."studyUid"
             WHERE (${page.includeHidden} OR NOT f.hidden)
               AND (${page.cursor}::uuid IS NULL OR f.id > ${page.cursor}::uuid)
-              AND ${readableLineage(studies)}
+              AND ${readableLineage(studies)} ${ownSeriesOnly(reading!)}
             ORDER BY f.id LIMIT ${page.limit + 1}) page), '[]'::jsonb)::text AS rows`;
       if (!pageRow.allowed) { visible(await tx.studyState.findUnique({ where: { uid } }), c); denied(); }
       const rows: any[] = parsed(pageRow.rows);
       const items = rows.slice(0, page.limit).map(row => ({ ...result(row), links: row.links }));
       if (!readable(items.map(i => i.item), schema)) clientOutdated();
-      return { items, nextCursor: rows.length > page.limit ? items[items.length - 1].id : null };
+      // A grouped reading names its own originals: a source copied from one of them is this exam's, not a comparison study.
+      const nextCursor = rows.length > page.limit ? items[items.length - 1].id : null;
+      return reading!.grouped ? { items, nextCursor, ownStudies: [...new Set(reading!.sources.map(source => source.studyUid))] } : { items, nextCursor };
     }, true, transaction);
   }
 
@@ -306,8 +329,12 @@ export class FindingService {
   // as an unknown id, and an anchored job's whole study set joins the item studies in the unchanged
   // reachable/readable/N2/patient checks. Only then, and only for a point on a job every study of which
   // passed, is the Frame of Reference of its first original read: once per job, all within 20 s.
+  // A finding is written on its reading UID (a split part's own UID); a mark of one of that reading's originals, of its own
+  // series, is its own image, not a comparison study: it is locked and access-checked like one, never counted or matched
+  // to a patient (it is the same exam). A comparison study's patient is matched to the reading's first original.
   private async plan(uid: string, anchor: any, command: FindingCommand, fingerprint: string, c: Caller, id?: string) {
-    const checked = new Set<string>(), frames = new Map<string, string>();
+    const checked = new Set<string>(), frames = new Map<string, string>(), reading = await readingSources(this.prisma, uid);
+    const fixed = (studies: string[]) => ({ studies, checked, frames, reading });
     const readableFinding = async (findingId: string) => {
       const lineage = await this.lineage(this.prisma, uid, findingId);
       const { readable } = await this.comparisons(c, anchor, lineage);
@@ -317,17 +344,17 @@ export class FindingService {
     const replay = await this.replayRow(this.prisma, c.sub, command.requestId);
     if (replay) {
       if (replayMismatch(replay, fingerprint, uid, c, id)) conflict();
-      return { studies: [uid, ...await readableFinding(replay.findingId)].sort(), checked, frames };
+      return fixed([uid, ...await readableFinding(replay.findingId)].sort());
     }
     let lineage: string[] = [];
     const frozen = new Map<string, unknown[]>();
     if (id !== undefined) {
       const heads: any = await this.prisma.$queryRaw`SELECT "authorSub", snapshot::text AS snapshot FROM "Finding" WHERE id = ${id}::uuid AND "studyUid" = ${uid}`;
-      if (!heads.length) return { studies: [uid], checked, frames };
+      if (!heads.length) return fixed([uid]);
       lineage = await readableFinding(id);
       if (heads[0].authorSub !== c.sub) denied();
       // Hide and restore keep the head's exact pairs, so they copy nothing and never reach Orthanc.
-      if (command.action !== 'edit') return { studies: [uid, ...lineage].sort(), checked, frames };
+      if (command.action !== 'edit') return fixed([uid, ...lineage].sort());
       for (const source of parsed(heads[0].snapshot).sources) frozen.set(refKey(sourceRef(source)), sourceStudies(source));
     }
     const fresh = command.item.sources.filter(ref => !frozen.has(refKey(ref)));
@@ -344,16 +371,16 @@ export class FindingService {
     }
     const candidates = comparisonStudies(uid, [...items.map(item => item.studyUid), ...[...anchored.values()].flatMap(job => job.studies)]);
     const { reachable, readable } = await this.comparisons(c, anchor, candidates);
-    const linked = candidates.filter(study => reachable.has(study));
+    const linked = candidates.filter(study => reachable.has(study)), compared = counted(uid, reading, linked);
     const kept = command.item.sources.filter(ref => frozen.has(refKey(ref))).flatMap(ref => frozen.get(refKey(ref)));
-    if (comparisonStudies(uid, [...kept, ...linked]).length > 1) throw new BadRequestException('소견에는 비교 검사 하나의 표식만 함께 연결할 수 있습니다');
+    if (counted(uid, reading, [...kept, ...linked]).length > 1) throw new BadRequestException('소견에는 비교 검사 하나의 표식만 함께 연결할 수 있습니다');
     if (linked.some(study => !readable.has(study))) denied();
-    if (comparisonStudies(uid, [...lineage, ...kept, ...linked]).length > 1) oneComparison();
-    if (linked.length) {
+    if (counted(uid, reading, [...lineage, ...kept, ...linked]).length > 1) oneComparison();
+    if (compared.length) {
       // Only a new copy from the comparison study proves the patient again; Orthanc 400/503 pass through.
-      const own = await this.orthanc.connectStudyIdentity(uid), other = await this.orthanc.connectStudyIdentity(linked[0]);
+      const own = await this.orthanc.connectStudyIdentity(reading.sources[0].studyUid), other = await this.orthanc.connectStudyIdentity(compared[0]);
       if (own.patientId !== other.patientId) throw new BadRequestException('같은 환자의 검사만 소견에 연결할 수 있습니다');
-      checked.add(linked[0]);
+      checked.add(compared[0]);
     }
     const permitted = new Set([uid, ...linked]), points = new Map<string, { study: string; series: string; sop: string }>();
     for (const ref of jobRefs) {
@@ -369,7 +396,12 @@ export class FindingService {
         for (const [jobId, volume] of points) frames.set(jobId, jobFrame(await this.orthanc.viewerReference(volume.sop, false, controller.signal), volume));
       } finally { clearTimeout(timer); controller.abort(); }
     }
-    return { studies: [...new Set([uid, ...lineage, ...linked])].sort(), checked, frames };
+    return fixed([...new Set([uid, ...lineage, ...linked])].sort());
+  }
+
+  /** The reading's own originals (readingSources): a measured mark on one of them is this reading's own image. */
+  async ownStudies(db: any, uid: string): Promise<string[]> {
+    return [...new Set((await readingSources(db, uid)).sources.map(source => source.studyUid))];
   }
 
   /** `held` is the fixed-record set the online business transaction already holds; a plan that needs
@@ -503,16 +535,19 @@ export class FindingService {
         const rows = await tx.$queryRaw<any[]>`SELECT id, "studyUid", revision, hidden, "authorActor", snapshot::text AS snapshot
           FROM "ViewerItem" WHERE id = ${ref.itemId}::uuid`;
         const item = rows[0] ? { ...rows[0], snapshot: parsed(rows[0].snapshot) } : null;
-        // An item of a study that is not locked and reachable here is indistinguishable from a missing one.
-        if (!item || (item.studyUid !== uid && !reachable.has(item.studyUid))) throw new NotFoundException('연결할 표식이 이 검사에 없습니다');
+        // An item of a study that is not locked and reachable here is indistinguishable from a missing one, and so is one of
+        // the reading's own originals outside its own series (the other part of a split original).
+        const own = !!item && plan.reading.sources.some(source => source.studyUid === item.studyUid);
+        if (!item || (item.studyUid !== uid && !reachable.has(item.studyUid)) ||
+            (own && !scopeIncludesSeries(plan.reading, item.studyUid, item.snapshot?.seriesUid))) throw new NotFoundException('연결할 표식이 이 검사에 없습니다');
         if (item.studyUid !== uid) {
           if (!readable.has(item.studyUid)) denied();
-          if (!plan.checked.has(item.studyUid)) conflict();
+          if (!own && !plan.checked.has(item.studyUid)) conflict();
         }
         if (item.hidden || item.revision !== ref.revision) staleSource(ref.itemId, item);
         sources.push(copySource(item));
       }
-      if (comparisonStudies(uid, [...lineage, ...sources.flatMap(sourceStudies)]).length > 1) oneComparison();
+      if (counted(uid, plan.reading, [...lineage, ...sources.flatMap(sourceStudies)]).length > 1) oneComparison();
       const hidden = command.action === 'hide' || (command.action === 'edit' && head?.hidden === true);
       const snapshot = command.item.schemaVersion === 4
         ? { schemaVersion: 4, title: command.item.title, text: command.item.text, characteristics: command.item.characteristics,
