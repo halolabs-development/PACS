@@ -3,7 +3,10 @@
 CD-08의 일곱 incident surface도 같은 표시 범위 원칙을 따른다. 목록의 사건 참조는
 `access-audit`의 알려진 `recordId`와 나머지 `non-record-target`만 허용한다. 상세·판정·
 이행·종결·초안 다운로드는 `incidentScope.auditEvent`가 돌려준 환자/원본기관/사건 참조를
-전부 기록한다. V1의 지정된 surface 예외이며 다른 임상 경로 및 V2의 규칙은 유지한다.
+전부 기록한다. 한 응답에 다 담기지 않는 범위는 요약(`incidentScopeSummary`)으로 답하고 대상과
+사건을 쪽마다 내주며, 쪽은 거기에 보인 것만 기록한다: 대상 쪽은 환자·원본기관마다 사건 ID를
+`recordId`·`versionId`로 한 `access-audit` 대상, 사건 쪽은 전체 범위와 같은 사건별 대상이다.
+V1의 지정된 surface 예외이며 다른 임상 경로 및 V2의 규칙은 유지한다.
 
 CD-05의 계약은 “감사자 화면의 모든 응답은 보여주는 만큼만 기록하고, 기록하지 않는 응답은 환자 식별자를 담지 않는다”이다.
 V1의 네 inspection surface에서 `access-audit` 월/주기 참조는 알려진 `recordId`만 기록하며 patient/study/version은

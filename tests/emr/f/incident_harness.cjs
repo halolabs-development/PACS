@@ -1,7 +1,8 @@
 /* Actual F controller, contract and surface parser; only storage is synthetic. */
 'use strict';
 const { fixture: base, actor, EmrAuditController } = require('./inspection_harness.cjs');
-const { randomUUID } = require('node:crypto');
+const { INCIDENT_LIMITS } = require('../../../api/src/emr-audit/service.ts');
+const { randomUUID, createHash } = require('node:crypto');
 const known = value => ({ status: 'known', value });
 function fixture(scopes = ['investigate', 'export'], institution = 'SYN-SITE', requestActor = actor) {
   const f = base(scopes, institution, [], requestActor), requests = [], copies = new Map(), query = f.tx.$queryRaw;
@@ -21,11 +22,25 @@ function fixture(scopes = ['investigate', 'export'], institution = 'SYN-SITE', r
       return rows.map(r => ({ body: { ...r.body, grantId: 'SYN-ORIGINAL-GRANT', subject: actor } }));
     }
     if (sql.includes('FROM emr_audit.fixed_copy')) {
-      f.copyReads++;
-      return copies.has(values[0]) ? [{ ...copies.get(values[0]) }] : [];
+      // copyReads counts the copies whose bytes leave the store; a hash taken where they are is not a read.
+      if (!Array.isArray(values[0])) { f.copyReads++; return copies.has(values[0]) ? [{ ...copies.get(values[0]) }] : []; }
+      if (sql.includes('body,sha256')) f.copyReads += values[0].length;
+      return values[0].filter(key => copies.has(key)).map(key => ({ issuance_id: key, ...copies.get(key),
+        actual: createHash('sha256').update(copies.get(key).body).digest('hex') }));
+    }
+    // Events of operations unfinished when a registration takes its ceiling (set by a test).
+    if (sql.includes('pending_operations')) return (f.pending || []).map(event_id => ({ event_id }));
+    // The ledger rows of the period below a ceiling: sequences are stable while a test adds newer events in front.
+    if (sql.includes('investigation_entries')) {
+      f.reads.push(values);
+      const top = values[4], below = values[5], take = values[6], total = f.events.length;
+      const rows = [];
+      for (let i = Math.max(0, top === null ? 0 : total - Number(top), below === null ? 0 : total - Number(below) + 1); i < total && rows.length < take; i++)
+        rows.push({ sequence: BigInt(total - i), payload: JSON.stringify(f.events[i]), recorded_at: new Date(f.events[i].occurredAt), snapshot_top: BigInt(total) });
+      return rows;
     }
     if (sql.includes('FROM emr_audit.request_event')) {
-      if (sql.includes('AS copied')) return requests.filter(r => r.body.incidentId === values[0]).slice(-1).map(r => ({ copied: !!r.body.snapshot.copy }));
+      if (sql.includes('AS copied')) return requests.filter(r => r.body.incidentId === values[0]).slice(-1).map(r => ({ copied: !!r.body.snapshot?.copy }));
       if (sql.includes('DISTINCT ON')) return structuredClone([...new Map(requests.filter(r => r.institution_id === values[0] && r.body.kind === 'incident').map(r => [r.body.incidentId, r])).values()]);
       // A read made before another request's registration committed (set by a test): it sees no incident yet.
       if (f.unsavedReads > 0 && !sql.includes('pg_advisory')) { f.unsavedReads--; return []; }
@@ -86,7 +101,22 @@ if (require.main === module) {
       const q = JSON.parse(line);
       if (q.reset) { f = fixture(q.scopes, q.institution); process.stdout.write(JSON.stringify({ status: 200, body: {} }) + '\n'); return; }
       if (q.inspect) { process.stdout.write(JSON.stringify({ status: 200, body: { records: f.records, requests: f.requests } }) + '\n'); return; }
-      const body = await f.controller[q.method]({}, ...(q.id ? [q.id] : []), ...(q.form ? [q.form] : []), ...(q.body ? [q.body] : []));
+      // A page test's ledger of `count` recent reads of `patients` patients, and the sizes at which this run pages a range.
+      if (q.ledger) {
+        const first = f.events[0], at = new Date(Date.now() - 3600_000).toISOString();
+        f.events.splice(0, f.events.length, ...Array.from({ length: q.ledger.count }, (_, i) => ({ ...structuredClone(first), eventId: `SYN-READ-${i}`, occurredAt: at,
+          targets: [{ ...structuredClone(first.targets[0]), versionId: known(`SYN-VERSION-${i}`), patientLinkSnapshot: known({
+            patientId: `SYN-P${String(i % q.ledger.patients).padStart(3, '0')}`, assigningAuthority: 'SYN-SITE', linkId: `SYN-LINK-${i % q.ledger.patients}` }) }] })));
+        // The newest row is an auditor's own read of the incident list: an event of the period that names no patient.
+        if (q.ledger.listRead) {
+          const seed = fixture(); await seed.controller.registerIncident({}, intake()); await seed.controller.listIncidents({});
+          f.events.unshift({ ...structuredClone(seed.records.at(-1)), eventId: 'SYN-LIST-READ', occurredAt: at });
+        }
+        Object.assign(INCIDENT_LIMITS, q.limits);
+        process.stdout.write(JSON.stringify({ status: 200, body: {} }) + '\n'); return;
+      }
+      const body = await f.controller[q.method]({}, ...(q.id ? [q.id] : []), ...(q.form ? [q.form] : []), ...(q.body ? [q.body] : []),
+        ...(q.query ? [q.query.subjects, q.query.events] : []));
       process.stdout.write(JSON.stringify({ status: 200, body }) + '\n');
     } catch (error) {
       let status = 500, body = { code: error.code || error.message };

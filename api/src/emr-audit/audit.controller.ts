@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Req, UseFilters, Catch, ArgumentsHost, ExceptionFilter } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseFilters, Catch, ArgumentsHost, ExceptionFilter } from '@nestjs/common';
 import { ContractError } from '../emr-contract/validation';
 import { EmrAuditService } from './service';
 
@@ -28,7 +28,9 @@ export class EmrAuditController {
   @Get('incidents')
   listIncidents(@Req() req: any) { return this.audit.listIncidents(req); }
   @Get('incidents/:id')
-  readIncident(@Req() req: any, @Param('id') id: string) { return this.audit.incidentAction(req, id, 'read'); }
+  readIncident(@Req() req: any, @Param('id') id: string, @Query('subjects') subjects?: string, @Query('events') events?: string) {
+    return this.audit.incidentAction(req, id, 'read', undefined, { subjects, events });
+  }
   @Post('incidents/:id/findings') @HttpCode(200)
   incidentFinding(@Req() req: any, @Param('id') id: string, @Body() body: unknown) { return this.audit.incidentAction(req, id, 'finding', body); }
   @Post('incidents/:id/notices') @HttpCode(200)

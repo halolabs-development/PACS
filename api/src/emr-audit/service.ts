@@ -1,7 +1,7 @@
 import { Inject, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
-import { gunzipSync, gzipSync } from 'node:zlib';
+import { isDeepStrictEqual, promisify } from 'node:util';
+import { gunzipSync, gzip, gzipSync } from 'node:zlib';
 import type { IncomingMessage } from 'node:http';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
@@ -20,23 +20,81 @@ import { fixedOriginals, onlineFixedListing } from './fixed-listing';
 import { fixedAuthorNames, fixedContentType, fixedDocument } from './fixed-document';
 import { rightsRecords } from './rights-records';
 import { RightsIntake, RightsState, rightsView } from './rights-state';
-import { IncidentSnapshot, IncidentSnapshotCopy, IncidentState, IncidentStep, INCIDENT_FORMS, incidentDraft } from './incident-state';
+import { IncidentRegistration, IncidentSnapshot, IncidentSnapshotCopy, IncidentSnapshotParts, IncidentState, IncidentStep, INCIDENT_FORMS, incidentDraft } from './incident-state';
 
 type Tx = Prisma.TransactionClient;
 // A registration's evidence rows stay in the incident body up to these sizes; above them they are one compressed fixed copy.
 const INCIDENT_INLINE_ROWS = 1000, INCIDENT_INLINE_BYTES = 2_000_000;
 const INCIDENT_PAGE = 500, INCIDENT_COPY_MAX_BYTES = 256 * 1024 * 1024;
-// One commit holds every access record of a response, and the ledger admits 128 unfinished records in all: a range is
-// registered only if its records leave room for other users' work. The row bound stops the read before that count.
-const INCIDENT_MAX_RECORDS = 112, INCIDENT_MAX_ROWS = 40_000;
+/**
+ * One commit holds every access record of a response, and the ledger admits 128 unfinished records in all. A range is
+ * answered whole - every subject and event in one response - only while its record stays within `wholeRecords` of them and
+ * its rows are read in one transaction (`wholeRows`, `wholeBytes`). A larger range is one incident all the same: its
+ * evidence is preserved a part a step (`partRows`, `partBytes`; a request works for `requestMs`), it is answered as a
+ * summary, and its subjects and events are read and recorded a page at a time (`pageSubjects`, `pageBytes`, `pageEvents`).
+ * A part is cut after the 500-row read that reaches its size.
+ * `maxRows` is the protection that remains. Every cost is linear in the rows (measured on PostgreSQL: about 2,700 rows a
+ * second to preserve, 137 stored bytes a row, and on each later answer 0.3 s to vouch for 250,000 rows, 6 s for 2.8
+ * million). At a 200-study list one opening leaves about 1,250 rows: an alert's 50 openings 63,000, a reader's 200-study
+ * day 250,000, that day with five colleagues' lists open 2.8 million. Tests lower these sizes to reach a boundary with
+ * few rows.
+ */
+export const INCIDENT_LIMITS = { wholeRows: 4000, wholeBytes: 16 * 1024 * 1024, wholeRecords: 16,
+  partRows: 4000, partBytes: 8 * 1024 * 1024, requestMs: 6000, maxRows: 5_000_000,
+  pageSubjects: 100, pageBytes: 8 * 65_536, pageEvents: 500 };
 // One point in time for the whole range: a row expiring or committing late cannot mix two views of the ledger.
 const INCIDENT_READ = { maxWait: EMR_TX_MAX_WAIT_MS, timeout: EMR_TX_TIMEOUT_MS, isolationLevel: 'RepeatableRead' as const };
-const ACCESS_RECORD_BYTES = 65_536;
+// No viewing row is removed before two years: a range that began later than this loses no row while its parts are read.
+const INCIDENT_RETAINED_MS = 728 * 86_400_000;
+const ACCESS_RECORD_BYTES = 65_536, INCIDENT_PARTS = 'gzip-json-ledger-rows-v2' as const;
 /** A scope computed before the write transaction, and which copy it was computed from (null: the incident's body). */
 type PreparedScope = { sha256: string | null; scope: Readonly<F.IncidentScope> | null };
-type PreparedRegistration = { id: string; sha256: string | null } & (
-  { scope: Readonly<F.IncidentScope>; fresh: { snapshot: IncidentSnapshot; body: Buffer | null } } |
-  { scope: Readonly<F.IncidentScope> | null; fresh: null });
+/** `paged`: the registration this request advanced, and when its last part is in, the index its incident will carry. */
+type PreparedRegistration = { id: string; sha256: string | null; scope: Readonly<F.IncidentScope> | null;
+  fresh: { snapshot: IncidentSnapshot; body: Buffer | null } | null; paged?: { registration: IncidentRegistration; index: PreparedIndex | null } };
+type PreparedIndex = { body: Buffer; sha256: string; subjects: F.IncidentSubjectIndex; all: boolean };
+type IncidentRegistered = IncidentState | IncidentRegistration;
+const partsOf = (copy: IncidentSnapshot['copy']): IncidentSnapshotParts | null => copy?.format === INCIDENT_PARTS ? copy : null;
+/** One hash for the same input in any key order: every step of a registration under way is held to it, without the input in each. */
+const ordered = (value: unknown): unknown => Array.isArray(value) ? value.map(ordered) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])])) : value;
+const inputHash = (input: unknown) => hash(Buffer.from(JSON.stringify(ordered(input))));
+const chained = (previous: string, sha256: string) => hash(Buffer.from(`${previous}:${sha256}`));
+// Off the event loop: a part is several megabytes, and other requests are answered while it is compressed.
+const packed = async (value: unknown) => { const body = await promisify(gzip)(JSON.stringify(value), { level: 1 }); return { body, sha256: hash(body) }; };
+/** A stored copy's JSON, or null when it cannot be vouched for: missing, another hash, not readable. */
+function unpacked<T>(found: { body: Uint8Array; sha256: string } | undefined, sha256?: string): T | null {
+  try {
+    if (!found || (sha256 !== undefined && found.sha256 !== sha256) || hash(Buffer.from(found.body)) !== found.sha256) return null;
+    return JSON.parse(gunzipSync(found.body, { maxOutputLength: INCIDENT_COPY_MAX_BYTES }).toString('utf8'));
+  } catch { return null; }
+}
+const recordBytes = (targets: readonly F.InvestigationAuditTarget[]) => targets.reduce((n, t) => n + Buffer.byteLength(JSON.stringify(t)) + 1, 0);
+/** The subjects from a place in the index that one response can show and record: whole subjects, or part of one local
+ * subject's studies when they alone fill the page. `next` continues it; null is the end. */
+function subjectPage(index: F.IncidentSubjectIndex, incidentId: string, from: { subject: number; study: number }) {
+  const shown: F.IncidentSubjectIndex = { identified: [], identifiedLocally: [] }, patients = index.identified.length;
+  let bytes = 0, count = 0, at = from.subject, study = from.study;
+  for (; at < patients + index.identifiedLocally.length && count < INCIDENT_LIMITS.pageSubjects; at++, study = 0, count++) {
+    if (at < patients) {
+      const size = recordBytes(F.incidentSubjectTargets(incidentId, { identified: [index.identified[at]], identifiedLocally: [] }));
+      if (count && bytes + size > INCIDENT_LIMITS.pageBytes) break;
+      bytes += size; shown.identified.push(index.identified[at]); continue;
+    }
+    const subject = index.identifiedLocally[at - patients], studyIds: string[] = [];
+    const one = (studyIds: string[]) => recordBytes(F.incidentSubjectTargets(incidentId, { identified: [], identifiedLocally: [{ ...subject, studyIds }] }));
+    if (!subject.studyIds.length) { const size = one([]); if (count && bytes + size > INCIDENT_LIMITS.pageBytes) break; bytes += size; }
+    for (; study < subject.studyIds.length; study++) {
+      const size = one([subject.studyIds[study]]);
+      if ((count || studyIds.length) && bytes + size > INCIDENT_LIMITS.pageBytes) break;
+      bytes += size; studyIds.push(subject.studyIds[study]);
+    }
+    if (subject.studyIds.length && !studyIds.length) break;
+    shown.identifiedLocally.push({ ...subject, studyIds });
+    if (study < subject.studyIds.length) return { shown, next: `${at}.${study}` };
+  }
+  return { shown, next: at < patients + index.identifiedLocally.length ? `${at}.0` : null };
+}
 /** B1's admit_operation/storage contract caps the canonical UTF-8 payload: every target, in order, in as few records as fit. */
 function recordChunks(overhead: number, targets: readonly F.InvestigationAuditTarget[]): F.InvestigationAuditTarget[][] {
   const chunks: F.InvestigationAuditTarget[][] = [];
@@ -50,12 +108,16 @@ function recordChunks(overhead: number, targets: readonly F.InvestigationAuditTa
   if (chunk.length || !targets.length) chunks.push(chunk);
   return chunks;
 }
-function incidentLedger(top: number, failure: string | null, rows: readonly F.LedgerRow[]): F.InvestigationLedger {
+/** `yielding`: a part's rows are held to the contract between other requests' turns, not in one stretch of the event loop. */
+function incidentLedger(top: number, failure: string | null, rows: readonly F.LedgerRow[], yielding = false): F.InvestigationLedger {
   return {
     top: async () => { if (failure) refuse(failure); return top; },
-    rows: async (ceiling, below, take) => rows.filter(r => {
-      const sequence = (r.entry as { sequence: number }).sequence; return sequence <= ceiling && (below === null || sequence < below);
-    }).slice(0, take),
+    rows: async (ceiling, below, take) => {
+      if (yielding) await new Promise(resolve => setImmediate(resolve));
+      return rows.filter(r => {
+        const sequence = (r.entry as { sequence: number }).sequence; return sequence <= ceiling && (below === null || sequence < below);
+      }).slice(0, take);
+    },
   };
 }
 /** The copy's rows, or null when they cannot be vouched for: missing, another hash, not the recorded count, not readable. */
@@ -438,25 +500,68 @@ export class EmrAuditService {
     return F.resolveAuditAuthority({ listGrants: () => ({ subject: step.by, complete: true, grants: rows.map(r => r.body) }) },
       { identity: step.by, institutionId: ctx.facts.institution, roles: step.roles }, step.at);
   }
-  private async latestIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
-    const [row] = await tx.$queryRaw<{ body: IncidentState; institution_id: string }[]>`SELECT body,institution_id
+  /** The latest body saved under an incident ID: the incident, or a registration still preserving its evidence. */
+  private async latestRegistered(tx: Tx, id: string, institution: string): Promise<IncidentRegistered | null> {
+    const [row] = await tx.$queryRaw<{ body: IncidentRegistered; institution_id: string }[]>`SELECT body,institution_id
       FROM emr_audit.request_event WHERE request_id=${id} ORDER BY sequence DESC LIMIT 1`;
     if (row && row.institution_id !== institution) refuse('IncidentNotFound');
-    if (row && row.body.kind !== 'incident') refuse('IncidentConflict');
+    if (row && row.body.kind !== 'incident' && row.body.kind !== 'incident-registration') refuse('IncidentConflict');
     return row?.body ?? null;
   }
-  private async savedIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
+  /** A registration that has not saved its incident is no incident: nothing to open, decide on, close or replace by. */
+  private async latestIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
+    const saved = await this.latestRegistered(tx, id, institution);
+    return saved?.kind === 'incident' ? saved : null;
+  }
+  private async savedRegistered(tx: Tx, id: string, institution: string): Promise<IncidentRegistered | null> {
     await this.lock(tx, JSON.stringify(['emr-f-request', id]));
-    return this.latestIncident(tx, id, institution);
+    return this.latestRegistered(tx, id, institution);
+  }
+  private async savedIncident(tx: Tx, id: string, institution: string): Promise<IncidentState | null> {
+    const saved = await this.savedRegistered(tx, id, institution);
+    return saved?.kind === 'incident' ? saved : null;
+  }
+  private async saveRegistered(tx: Tx, body: IncidentRegistered) {
+    await tx.$executeRaw`INSERT INTO emr_audit.request_event(request_id,institution_id,body)
+      VALUES(${body.incidentId},${body.institutionId},${JSON.stringify(body)}::json)`;
   }
   private async saveIncident(tx: Tx, state: IncidentState, plan: Readonly<F.IncidentResponsePlan>) {
     if (state.snapshot.copy) state.listing = { verdict: plan.verdict, awarenessAt: plan.awarenessAt };
-    await tx.$executeRaw`INSERT INTO emr_audit.request_event(request_id,institution_id,body)
-      VALUES(${state.incidentId},${state.institutionId},${JSON.stringify(state)}::json)`;
+    await this.saveRegistered(tx, state);
   }
-  private async incidentCopy(tx: Tx, copy: IncidentSnapshotCopy) {
-    const [found] = await tx.$queryRaw<{ body: Uint8Array; sha256: string }[]>`SELECT body,sha256 FROM emr_audit.fixed_copy WHERE issuance_id=${copy.key}`;
+  private async incidentCopy(tx: Tx, key: string) {
+    const [found] = await tx.$queryRaw<{ body: Uint8Array; sha256: string }[]>`SELECT body,sha256 FROM emr_audit.fixed_copy WHERE issuance_id=${key}`;
     return found;
+  }
+  private async saveCopy(tx: Tx, key: string, copy: { body: Buffer; sha256: string }) {
+    await tx.$executeRaw`INSERT INTO emr_audit.fixed_copy(issuance_id,body,sha256) VALUES(${key},${copy.body},${copy.sha256})`;
+  }
+  /** Whether every part of a paged incident, and its index, are the bytes its registration saved, in their order. The
+   *  database hashes them where they are: nothing is read out, however large the range. */
+  private async partsVouched(tx: Tx, copy: IncidentSnapshotParts): Promise<boolean> {
+    const keys = Array.from({ length: copy.parts }, (_, n) => `${copy.key}:${n}`), found = new Map<string, { sha256: string; actual: string }>();
+    if (copy.subjects) keys.push(`${copy.key}:subjects`);
+    for (let from = 0; from < keys.length; from += 100) for (const row of await tx.$queryRaw<{ issuance_id: string; sha256: string; actual: string }[]>`
+      SELECT issuance_id,sha256,encode(sha256(body),'hex') AS actual FROM emr_audit.fixed_copy
+      WHERE issuance_id=ANY(${keys.slice(from, from + 100)}::text[])`) found.set(row.issuance_id, row);
+    let chain = '';
+    for (let n = 0; n < copy.parts; n++) {
+      const part = found.get(`${copy.key}:${n}`);
+      if (!part || part.sha256 !== part.actual) return false;
+      chain = chained(chain, part.sha256);
+    }
+    const index = found.get(`${copy.key}:subjects`);
+    return chain === copy.sha256 && (!copy.subjects || (!!index && index.sha256 === index.actual && index.sha256 === copy.subjects.sha256));
+  }
+  /** A paged incident's fixed scope under the registering auditor's authority: the summary its registration saved while
+   *  its evidence is vouched for, the unreadable ledger when it is not. No part is read to answer it. */
+  private async pagedScope(tx: Tx, ctx: RequestWorkContext, state: IncidentState, copy: IncidentSnapshotParts) {
+    const authority = await this.incidentAuthority(tx, ctx, state.steps[0]), vouched = await this.partsVouched(tx, copy);
+    const all = vouched && copy.subjects?.all
+      ? unpacked<F.IncidentSubjectIndex>(await this.incidentCopy(tx, `${copy.key}:subjects`), copy.subjects.sha256) : null;
+    return F.incidentScopeSummary(authority, F.planInvestigation(authority, state.query, 'export'), { incidentId: state.incidentId,
+      top: state.snapshot.top, failure: vouched && (all || !copy.subjects?.all) ? state.snapshot.failure : 'LedgerReadFailed', events: copy.rows,
+      identified: copy.subjects?.identified ?? 0, identifiedLocally: copy.subjects?.identifiedLocally ?? 0, all }, state.determinations);
   }
   /** The registration's fixed scope, rebuilt by the contract from the evidence rows under the registering auditor's authority.
    *  Evidence that cannot be vouched for is the contract's unreadable ledger: subjects unidentified, never nobody affected. */
@@ -475,39 +580,58 @@ export class EmrAuditService {
       if (!marked?.copied) return null;
       const state = await this.latestIncident(tx, id, ctx.facts.institution);
       if (!state?.snapshot.copy) return null;
-      return { state, authority: await this.incidentAuthority(tx, ctx, state.steps[0]), found: await this.incidentCopy(tx, state.snapshot.copy) };
+      const parts = partsOf(state.snapshot.copy);
+      if (parts) return { state, scope: await this.pagedScope(tx, ctx, state, parts) };
+      return { state, authority: await this.incidentAuthority(tx, ctx, state.steps[0]), found: await this.incidentCopy(tx, state.snapshot.copy.key) };
     }, INCIDENT_READ);
     if (!read) return null;
-    return { sha256: read.state.snapshot.copy.sha256,
-      scope: await this.fixedScope(read.authority, read.state, incidentCopyRows(read.found, read.state.snapshot.copy)) };
+    return { sha256: read.state.snapshot.copy.sha256, scope: 'scope' in read ? read.scope
+      : await this.fixedScope(read.authority, read.state, incidentCopyRows(read.found, read.state.snapshot.copy as IncidentSnapshotCopy)) };
   }
-  /** A new registration's whole range at one point in time, then its scope and evidence outside any transaction. */
+  /** Whether a request is the registration already under way: the same auditor with the same whole input. While its
+   *  evidence is being preserved a registration is theirs alone; one that has ended without an incident (refused, or
+   *  complete and not accepted) gives way to another input, which starts again. */
+  private continued(saved: IncidentRegistration, ctx: RequestWorkContext, input: unknown): boolean {
+    const same = saved.by.id === ctx.facts.actor.id && saved.intake === inputHash(input);
+    if (!same && !saved.done && !saved.refused) refuse('IncidentConflict');
+    return same;
+  }
+  /** A new registration's range at one point in time - whole when it is small, otherwise its ceiling and the events
+   *  unfinished at that moment - then its scope and evidence outside any transaction, or a paged one's next parts. */
   private async prepareRegistration(ctx: RequestWorkContext, input: unknown): Promise<PreparedRegistration> {
+    const started = Date.now();
     const read = await ctx.work.transactionWithRecords(async tx => {
       await ctx.requireCurrent(tx);
       const authority = await this.incidentAuthority(tx, ctx);
       const v = requestBody(input, ['incidentId', 'incidentType', 'query', 'determinations', 'facts']);
       const id = requestValue(() => string(v.incidentId));
       // A retry of a saved registration answers from that incident, whatever the ledger holds by now.
-      const existing = await this.latestIncident(tx, id, authority.institutionId);
-      if (existing) {
+      const existing = await this.latestRegistered(tx, id, authority.institutionId);
+      if (existing?.kind === 'incident') {
         if (!isDeepStrictEqual(existing.intake, input)) refuse('IncidentConflict');
         return { id, v, authority, existing };
       }
       const plan = F.planInvestigation(authority, v.query, 'export'), rows: F.LedgerRow[] = [];
-      let top = 0;
+      if (existing && this.continued(existing, ctx, input)) return { id, v, authority, plan, registration: existing };
+      let top = 0, bytes = 0, whole = true, excluded: string[] = [];
       try {
         const [first] = await tx.$queryRaw<{ snapshot_top: bigint }[]>`SELECT * FROM emr_access.investigation_entries(
           ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
           ${null}::bigint,${null}::bigint,${1}::integer,${'{}'}::jsonb)`;
         top = Number(first?.snapshot_top ?? 0);
+        // A lower sequence can commit after a higher one. Whatever does was unfinished in this same view of the ledger.
+        excluded = (await tx.$queryRaw<{ event_id: string }[]>`SELECT emr_access.operation_result(operation_id)->>'eventId' AS event_id
+          FROM emr_access.pending_operations(128)`).map(r => r.event_id);
         for (let below: number | null = null; ;) {
           const found = await tx.$queryRaw<{ sequence: bigint; payload: string; recorded_at: Date }[]>`SELECT * FROM emr_access.investigation_entries(
             ${'viewing'},${authority.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
             ${top}::bigint,${below}::bigint,${INCIDENT_PAGE}::integer,${JSON.stringify(plan.filters)}::jsonb)`;
-          for (const r of found) rows.push({ entry: { sequence: Number(r.sequence), payload: { kind: 'access', event: JSON.parse(r.payload) } },
-            durableAt: r.recorded_at.toISOString(), served: null });
-          if (rows.length > INCIDENT_MAX_ROWS) refuse('IncidentRangeTooLarge');
+          for (const r of found) {
+            rows.push({ entry: { sequence: Number(r.sequence), payload: { kind: 'access', event: JSON.parse(r.payload) } },
+              durableAt: r.recorded_at.toISOString(), served: null });
+            bytes += r.payload.length;
+          }
+          if (rows.length > INCIDENT_LIMITS.wholeRows || bytes > INCIDENT_LIMITS.wholeBytes) { whole = false; break; }
           if (found.length < INCIDENT_PAGE) break;
           below = Number(found[found.length - 1].sequence);
         }
@@ -515,25 +639,144 @@ export class EmrAuditService {
         if (error instanceof ContractError) throw error;
         F.ledgerReadFailure(error);
       }
-      return { id, v, authority, plan, top, rows };
+      return { id, v, authority, plan, top, rows, whole, excluded };
     }, INCIDENT_READ);
     if ('existing' in read) {
-      const copy = read.existing.snapshot.copy;
+      const copy = read.existing.snapshot.copy, parts = partsOf(copy);
       if (!copy) return { id: read.id, fresh: null, sha256: null, scope: null };
+      if (parts) return { id: read.id, fresh: null, sha256: copy.sha256,
+        scope: await ctx.work.transactionWithRecords(tx => this.pagedScope(tx, ctx, read.existing, parts), INCIDENT_READ) };
       const authority = await ctx.work.transactionWithRecords(tx => this.incidentAuthority(tx, ctx, read.existing.steps[0]), INCIDENT_READ);
-      const found = await ctx.work.transactionWithRecords(tx => this.incidentCopy(tx, copy), INCIDENT_READ);
-      return { id: read.id, fresh: null, sha256: copy.sha256, scope: await this.fixedScope(authority, read.existing, incidentCopyRows(found, copy)) };
+      const found = await ctx.work.transactionWithRecords(tx => this.incidentCopy(tx, copy.key), INCIDENT_READ);
+      return { id: read.id, fresh: null, sha256: copy.sha256, scope: await this.fixedScope(authority, read.existing, incidentCopyRows(found, copy as IncidentSnapshotCopy)) };
     }
-    const scope = await F.incidentScope(read.authority, read.plan, incidentLedger(read.top, null, read.rows), read.v.determinations);
-    // Outside the scope's own read: a range too large to record is refused, never saved as an unidentified one.
-    const targets = this.incidentTargets({ incidentId: read.id }, scope), event = this.accessEvent(ctx, 'provide-prepared', targets);
-    if (recordChunks(Buffer.byteLength(JSON.stringify({ ...event, targets: [] })), targets).length > INCIDENT_MAX_RECORDS) refuse('IncidentRangeTooLarge');
-    const failure = scope.reasons.find(r => r.kind === 'ledger-unreadable')?.['code'] ?? null, text = JSON.stringify(read.rows);
-    if (read.rows.length <= INCIDENT_INLINE_ROWS && Buffer.byteLength(text) <= INCIDENT_INLINE_BYTES)
-      return { id: read.id, scope, sha256: null, fresh: { snapshot: { top: read.top, rows: read.rows, failure } as IncidentSnapshot, body: null as Buffer | null } };
-    const body = gzipSync(text, { level: 1 }), sha256 = hash(body);
-    const copy: IncidentSnapshotCopy = { format: 'gzip-json-ledger-rows-v1', key: `incident-snapshot:${read.id}`, sha256, rows: read.rows.length };
-    return { id: read.id, scope, sha256, fresh: { snapshot: { top: read.top, failure, copy } as IncidentSnapshot, body } };
+    let registration: IncidentRegistration | null = null;
+    if ('registration' in read) registration = read.registration;
+    else if (read.whole) {
+      const scope = await F.incidentScope(read.authority, read.plan, incidentLedger(read.top, null, read.rows), read.v.determinations);
+      // A scope whose record fits one response is answered and saved whole, as it always was.
+      const targets = this.incidentTargets({ incidentId: read.id }, scope), event = this.accessEvent(ctx, 'provide-prepared', targets);
+      if (recordChunks(Buffer.byteLength(JSON.stringify({ ...event, targets: [] })), targets).length <= INCIDENT_LIMITS.wholeRecords) {
+        const failure = scope.reasons.find(r => r.kind === 'ledger-unreadable')?.['code'] ?? null, text = JSON.stringify(read.rows);
+        if (read.rows.length <= INCIDENT_INLINE_ROWS && Buffer.byteLength(text) <= INCIDENT_INLINE_BYTES)
+          return { id: read.id, scope, sha256: null, fresh: { snapshot: { top: read.top, rows: read.rows, failure } as IncidentSnapshot, body: null as Buffer | null } };
+        const body = gzipSync(text, { level: 1 }), sha256 = hash(body);
+        const copy: IncidentSnapshotCopy = { format: 'gzip-json-ledger-rows-v1', key: `incident-snapshot:${read.id}`, sha256, rows: read.rows.length };
+        return { id: read.id, scope, sha256, fresh: { snapshot: { top: read.top, failure, copy } as IncidentSnapshot, body } };
+      }
+    }
+    // Everything larger is one incident too: preserved a part a step, by as many requests as it takes.
+    if (!('registration' in read)) registration = await this.beginRegistration(ctx, read.id, input, read.plan, read.top, read.excluded);
+    while (registration && !registration.done && !registration.refused) {
+      const saved = await this.preservePart(ctx, read.authority, read.plan, registration);
+      registration = saved?.kind === 'incident-registration' && saved.attempt === registration.attempt ? saved : null;
+      if (Date.now() - started >= INCIDENT_LIMITS.requestMs) break;
+    }
+    // No registration of this request's left: whatever is saved under the ID answers in the write transaction.
+    if (!registration) return { id: read.id, fresh: null, sha256: null, scope: null };
+    if (registration.refused) refuse(registration.refused);
+    return { id: read.id, fresh: null, sha256: null, scope: null,
+      paged: { registration, index: registration.done ? await this.registrationIndex(ctx, registration) : null } };
+  }
+  /** Opens a paged registration, once. Its input is first held to the contract under both answers its scope can still
+   *  give, so a request the contract would never accept preserves nothing. Null: an incident was saved under the ID. */
+  private async beginRegistration(ctx: RequestWorkContext, id: string, input: unknown, plan: Readonly<F.InvestigationPlan>,
+    top: number, excluded: string[]): Promise<IncidentRegistration | null> {
+    return ctx.work.transactionWithRecords(async tx => {
+      await ctx.requireCurrent(tx);
+      const authority = await this.incidentAuthority(tx, ctx), at = now();
+      const v = requestBody(input, ['incidentId', 'incidentType', 'query', 'determinations', 'facts']);
+      const saved = await this.savedRegistered(tx, id, authority.institutionId);
+      if (saved?.kind === 'incident') return null;
+      if (saved && this.continued(saved, ctx, input)) return saved;
+      requestValue(() => choice(v.incidentType, ['other', 'cvr-misdelivery']));
+      const facts = await this.incidentFacts(tx, ctx, v.facts, id, at);
+      const scope = (identifiedLocally: number) => F.incidentScopeSummary(authority, plan,
+        { incidentId: id, top, failure: null, events: 0, identified: 0, identifiedLocally, all: null }, v.determinations);
+      try { F.planIncidentResponse(authority, scope(0), facts, { asOf: at }); } catch (error) {
+        if (!(error instanceof ContractError)) throw error;
+        F.planIncidentResponse(authority, scope(1), facts, { asOf: at });
+      }
+      const registration: IncidentRegistration = { kind: 'incident-registration', institutionId: authority.institutionId, incidentId: id,
+        attempt: randomUUID(), intake: inputHash(input), by: ctx.facts.actor, at, top, excluded,
+        parts: 0, rows: 0, below: null, done: false, failure: null, sha256: '', refused: null };
+      await this.saveRegistered(tx, registration);
+      return registration;
+    });
+  }
+  /** One more part of a paged registration: read below the last one, held to the contract and counted outside any
+   *  transaction, then saved together with the step that names it. Answers what is saved under the ID afterwards: when
+   *  another request has taken this step, or another registration the ID, this part is dropped and that state stands. */
+  private async preservePart(ctx: RequestWorkContext, authority: F.AuditAuthority, plan: Readonly<F.InvestigationPlan>,
+    r: IncidentRegistration): Promise<IncidentRegistered | null> {
+    const rows: F.LedgerRow[] = [], excluded = new Set(r.excluded), key = `incident-snapshot:${r.incidentId}:${r.attempt}`;
+    let below = r.below, bytes = 0, done = false;
+    try {
+      await ctx.work.transactionWithRecords(async tx => {
+        await ctx.requireCurrent(tx);
+        while (!done && rows.length < INCIDENT_LIMITS.partRows && bytes < INCIDENT_LIMITS.partBytes) {
+          const found = await tx.$queryRaw<{ sequence: bigint; payload: string; recorded_at: Date }[]>`SELECT * FROM emr_access.investigation_entries(
+            ${'viewing'},${r.institutionId},${plan.filters.from}::timestamptz,${plan.filters.to}::timestamptz,
+            ${r.top}::bigint,${below}::bigint,${INCIDENT_PAGE}::integer,${JSON.stringify(plan.filters)}::jsonb)`;
+          for (const row of found) {
+            const event = JSON.parse(row.payload);
+            if (excluded.has(event?.eventId)) continue;
+            rows.push({ entry: { sequence: Number(row.sequence), payload: { kind: 'access', event } }, durableAt: row.recorded_at.toISOString(), served: null });
+            bytes += row.payload.length;
+          }
+          done = found.length < INCIDENT_PAGE;
+          if (found.length) below = Number(found[found.length - 1].sequence);
+        }
+      });
+    } catch (error) {
+      if (error instanceof ContractError) throw error;
+      F.ledgerReadFailure(error);
+    }
+    // A row that could have reached its retention end between two parts leaves the copy unable to say it is complete.
+    let failure = r.failure ?? (Date.parse(plan.filters.from) < Date.now() - INCIDENT_RETAINED_MS ? 'LedgerRetentionElapsed' : null);
+    let subjects: F.IncidentSubjectIndex | null = null;
+    if (failure === null && rows.length) {
+      const scope = await F.incidentScope(authority, plan, incidentLedger(r.top, null, rows, true), []);
+      failure = scope.reasons.find(reason => reason.kind === 'ledger-unreadable')?.['code'] ?? null;
+      if (failure === null) subjects = F.incidentSubjects(scope);
+    }
+    const part = rows.length ? await packed(rows) : null, index = subjects ? await packed(subjects) : null;
+    return ctx.work.transactionWithRecords(async tx => {
+      await ctx.requireCurrent(tx);
+      const saved = await this.savedRegistered(tx, r.incidentId, r.institutionId);
+      if (saved?.kind !== 'incident-registration' || saved.attempt !== r.attempt || saved.parts !== r.parts || saved.below !== r.below ||
+          saved.done || saved.refused) return saved;
+      if (r.rows + rows.length > INCIDENT_LIMITS.maxRows) {
+        const refused: IncidentRegistration = { ...r, refused: 'IncidentRangeTooLarge' };
+        await this.saveRegistered(tx, refused);
+        return refused;
+      }
+      if (part) await this.saveCopy(tx, `${key}:${r.parts}`, part);
+      if (index) await this.saveCopy(tx, `${key}:${r.parts}:subjects`, index);
+      const next: IncidentRegistration = { ...r, parts: r.parts + (part ? 1 : 0), rows: r.rows + rows.length, below, done, failure,
+        sha256: part ? chained(r.sha256, part.sha256) : r.sha256 };
+      await this.saveRegistered(tx, next);
+      return next;
+    });
+  }
+  /** What a complete registration's incident will carry: every part vouched for where it is saved, and every part's
+   *  subjects as one index. Null when the rows could not be read as a ledger: that incident names nobody. */
+  private async registrationIndex(ctx: RequestWorkContext, r: IncidentRegistration): Promise<PreparedIndex | null> {
+    const key = `incident-snapshot:${r.incidentId}:${r.attempt}`;
+    const vouched = await ctx.work.transactionWithRecords(tx => this.partsVouched(tx,
+      { format: INCIDENT_PARTS, key, parts: r.parts, rows: r.rows, sha256: r.sha256, subjects: null }));
+    if (!vouched) refuse('LedgerReadFailed');
+    if (r.failure !== null) return null;
+    let subjects: F.IncidentSubjectIndex = { identified: [], identifiedLocally: [] };
+    for (let from = 0; from < r.parts; from += 50) {
+      const keys = Array.from({ length: Math.min(50, r.parts - from) }, (_, n) => `${key}:${from + n}:subjects`);
+      const found = await ctx.work.transactionWithRecords(tx => tx.$queryRaw<{ issuance_id: string; body: Uint8Array; sha256: string }[]>`
+        SELECT issuance_id,body,sha256 FROM emr_audit.fixed_copy WHERE issuance_id=ANY(${keys}::text[])`);
+      const parts = keys.map(k => unpacked<F.IncidentSubjectIndex>(found.find(f => f.issuance_id === k)));
+      if (parts.some(p => !p)) refuse('LedgerReadFailed');
+      subjects = F.mergeIncidentSubjects([subjects, ...parts]);
+    }
+    return { ...await packed(subjects), subjects, all: subjectPage(subjects, r.incidentId, { subject: 0, study: 0 }).next === null };
   }
   private async incidentFacts(tx: Tx, ctx: RequestWorkContext, input: unknown, id: string, at: string) {
     const facts = requestValue(() => ({ ...object(input, Object.keys(input ?? {})), incidentId: id, recordedAt: at })) as F.IncidentResponseFacts;
@@ -555,11 +798,12 @@ export class EmrAuditService {
   private async incidentProjection(tx: Tx, ctx: RequestWorkContext, state: IncidentState, at: string,
     prepared?: PreparedScope | null) {
     let plan: Readonly<F.IncidentResponsePlan>;
-    const copy = state.snapshot.copy;
+    const copy = state.snapshot.copy, parts = partsOf(copy);
     // The scope determination belongs to registration, even when another auditor later records a notice.
     const scope = prepared?.scope && prepared.sha256 === (copy?.sha256 ?? null) ? prepared.scope
+      : parts ? await this.pagedScope(tx, ctx, state, parts)
       : await this.fixedScope(await this.incidentAuthority(tx, ctx, state.steps[0]), state,
-        copy ? incidentCopyRows(await this.incidentCopy(tx, copy), copy) : state.snapshot.rows ?? null);
+        copy ? incidentCopyRows(await this.incidentCopy(tx, copy.key), copy as IncidentSnapshotCopy) : state.snapshot.rows ?? null);
     for (const step of state.steps) {
       const authority = await this.incidentAuthority(tx, ctx, step);
       plan = F.planIncidentResponse(authority, scope, step.facts, { previous: plan, notices: step.notices,
@@ -579,24 +823,46 @@ export class EmrAuditService {
       const authority = await this.incidentAuthority(tx, ctx), at = now();
       const v = requestBody(input, ['incidentId', 'incidentType', 'query', 'determinations', 'facts']);
       const id = requestValue(() => string(v.incidentId));
-      let state = await this.savedIncident(tx, id, authority.institutionId), changed = false;
+      const saved = await this.savedRegistered(tx, id, authority.institutionId);
+      let state = saved?.kind === 'incident' ? saved : null, changed = false, scope = prepared.scope;
       if (state && !isDeepStrictEqual(state.intake, input)) refuse('IncidentConflict');
       if (!state) {
-        if (!prepared.fresh) refuse('IncidentConflict');
+        if (!prepared.fresh && !prepared.paged) refuse('IncidentConflict');
+        let snapshot: IncidentSnapshot;
+        if (prepared.fresh) snapshot = prepared.fresh.snapshot;
+        else {
+          // A paged registration becomes an incident by the step its own request prepared, when its last part and its
+          // index are in. Until then the answer names the incident and how far its evidence has come, nothing else.
+          const r = saved?.kind === 'incident-registration' && saved.attempt === prepared.paged.registration.attempt &&
+            this.continued(saved, ctx, input) ? saved : refuse('IncidentConflict');
+          const index = prepared.paged.index;
+          if (!r.done || !prepared.paged.registration.done || (r.failure === null && !index)) {
+            await this.recorded(record, ctx, 'provide-prepared', this.incidentTargets({ incidentId: id }), id);
+            return { incidentId: id, status: 'Registering', collected: { rows: r.rows } };
+          }
+          const key = `incident-snapshot:${id}:${r.attempt}`, subjects = r.failure === null ? index : null;
+          if (subjects) await this.saveCopy(tx, `${key}:subjects`, subjects);
+          snapshot = { top: r.top, failure: r.failure, copy: { format: INCIDENT_PARTS, key, parts: r.parts, rows: r.rows, sha256: r.sha256,
+            subjects: subjects && { sha256: subjects.sha256, identified: subjects.subjects.identified.length,
+              identifiedLocally: subjects.subjects.identifiedLocally.length, all: subjects.all } } };
+          scope = F.incidentScopeSummary(authority, F.planInvestigation(authority, v.query, 'export'), { incidentId: id, top: r.top, failure: r.failure,
+            events: r.rows, identified: subjects?.subjects.identified.length ?? 0, identifiedLocally: subjects?.subjects.identifiedLocally.length ?? 0,
+            all: subjects?.all ? subjects.subjects : null }, v.determinations);
+        }
         const facts = await this.incidentFacts(tx, ctx, v.facts, id, at);
-        F.planIncidentResponse(authority, prepared.scope, facts, { asOf: at });
+        F.planIncidentResponse(authority, scope, facts, { asOf: at });
         state = { kind: 'incident', institutionId: authority.institutionId, incidentId: id,
           incidentType: requestValue(() => choice(v.incidentType, ['other', 'cvr-misdelivery'])), intake: input,
-          query: v.query, determinations: v.determinations, snapshot: prepared.fresh.snapshot,
+          query: v.query, determinations: v.determinations, snapshot,
           steps: [{ operationId: 'registration', input, facts, notices: [], by: ctx.facts.actor, roles: ctx.facts.roles, at }], closed: null };
-        const copy = prepared.fresh.snapshot.copy;
-        if (copy && prepared.fresh.body) await tx.$executeRaw`INSERT INTO emr_audit.fixed_copy(issuance_id,body,sha256)
-          VALUES(${copy.key},${prepared.fresh.body},${copy.sha256})`;
+        const copy = prepared.fresh?.snapshot.copy;
+        if (copy && prepared.fresh.body) await this.saveCopy(tx, copy.key, { body: prepared.fresh.body, sha256: copy.sha256 });
         changed = true;
       }
       // A scope read for a registration another request saved first (found only under the lock) is not that incident's:
       // the saved incident answers and is recorded from its own evidence.
-      const projection = await this.incidentProjection(tx, ctx, state, at, changed || !prepared.fresh ? prepared : null);
+      const projection = await this.incidentProjection(tx, ctx, state, at,
+        changed ? { sha256: state.snapshot.copy?.sha256 ?? null, scope } : !prepared.fresh ? prepared : null);
       if (changed) await this.saveIncident(tx, state, projection.plan);
       await this.recorded(record, ctx, changed ? 'write' : 'provide-prepared', this.incidentTargets(state, projection.scope), id);
       return this.incidentView(state, projection);
@@ -624,7 +890,45 @@ export class EmrAuditService {
       return { incidents };
     });
   }
-  async incidentAction(request: IncomingMessage, id: string, action: 'read' | 'finding' | 'notice' | 'close' | 'draft', input?: unknown) {
+  /** One page of a paged incident, and what showing it discloses. Its subjects come from the index; its events from one
+   *  preserved part, scoped by the contract as a small incident's are - as many rows as one response can record. Every
+   *  row of the part is on some page: under the subjects it names, or among `others` when it names none. */
+  private async incidentPage(tx: Tx, ctx: RequestWorkContext, state: IncidentState, scope: F.IncidentScope, page: { subjects?: unknown; events?: unknown }) {
+    const copy = partsOf(state.snapshot.copy), subjects = page.subjects !== undefined;
+    if (!copy || subjects === (page.events !== undefined)) refuse('AuditRequestInvalid');
+    if (state.snapshot.failure || incidentUnreadable(state, scope)) refuse('IncidentSnapshotUnreadable');
+    const [first, second] = requestValue(() => {
+      const place = /^(\d{1,9})\.(\d{1,9})$/.exec(string(subjects ? page.subjects : page.events));
+      return place ? [Number(place[1]), Number(place[2])] : refuse('AuditRequestInvalid');
+    });
+    if (subjects) {
+      const index = unpacked<F.IncidentSubjectIndex>(await this.incidentCopy(tx, `${copy.key}:subjects`), copy.subjects?.sha256);
+      if (!index) refuse('IncidentSnapshotUnreadable');
+      const patients = index.identified.length, total = patients + index.identifiedLocally.length;
+      if (first >= total || second > (first < patients ? 0 : Math.max(index.identifiedLocally[first - patients].studyIds.length - 1, 0))) refuse('AuditRequestInvalid');
+      const { shown, next } = subjectPage(index, state.incidentId, { subject: first, study: second });
+      return { targets: F.incidentSubjectTargets(state.incidentId, shown), body: { incidentId: state.incidentId, subjects: { from: `${first}.${second}`, next,
+        identified: shown.identified.map(({ link, ...patient }) => patient), identifiedLocally: shown.identifiedLocally } } };
+    }
+    const rows = first < copy.parts ? unpacked<F.LedgerRow[]>(await this.incidentCopy(tx, `${copy.key}:${first}`)) : refuse('AuditRequestInvalid');
+    if (!Array.isArray(rows)) refuse('IncidentSnapshotUnreadable');
+    if (second >= rows.length) refuse('AuditRequestInvalid');
+    const authority = await this.incidentAuthority(tx, ctx, state.steps[0]), plan = F.planInvestigation(authority, state.query, 'export');
+    for (let take = Math.min(INCIDENT_LIMITS.pageEvents, rows.length - second); ; take = Math.ceil(take / 2)) {
+      const shown = await F.incidentScope(authority, plan, incidentLedger(state.snapshot.top, null, rows.slice(second, second + take)), []);
+      if (shown.reasons.some(reason => reason.kind === 'ledger-unreadable')) refuse('IncidentSnapshotUnreadable');
+      if (take > 1 && recordBytes(shown.auditEvent.targets) > INCIDENT_LIMITS.pageBytes) continue;
+      const end = second + take, next = end < rows.length ? `${first}.${end}` : first + 1 < copy.parts ? `${first + 1}.0` : null;
+      // A preserved row that names no subject (the auditor's own list read, a refused request) is shown by its event alone.
+      const named = new Set([...shown.identified, ...shown.identifiedLocally].flatMap(subject => subject.eventIds));
+      const others = rows.slice(second, end).map(row => (row.entry as { payload: { event: { eventId: string } } }).payload.event.eventId)
+        .filter(eventId => !named.has(eventId));
+      return { targets: [...shown.auditEvent.targets], body: { incidentId: state.incidentId, events: { from: `${first}.${second}`, next,
+        identified: shown.identified, identifiedLocally: shown.identifiedLocally, others } } };
+    }
+  }
+  async incidentAction(request: IncomingMessage, id: string, action: 'read' | 'finding' | 'notice' | 'close' | 'draft', input?: unknown,
+    page?: { subjects?: unknown; events?: unknown }) {
     return this.run(request, async (tx, ctx, record, prepared: PreparedScope | null) => {
       await this.incidentAuthority(tx, ctx);
       const closure = action === 'close' ? requestValue(() => {
@@ -678,6 +982,11 @@ export class EmrAuditService {
         }
       }
       const projection = await this.incidentProjection(tx, ctx, state, at, prepared);
+      if (page && (page.subjects !== undefined || page.events !== undefined)) {
+        const shown = await this.incidentPage(tx, ctx, state, projection.scope, page);
+        await this.recorded(record, ctx, 'provide-prepared', [...this.incidentTargets(state), ...shown.targets], id);
+        return shown.body;
+      }
       if (action === 'close') {
         if (state.closed) {
           if (state.closed.evidenceId !== closure.evidenceId || state.closed.supersededBy !== closure.supersededBy) refuse('IncidentConflict');
