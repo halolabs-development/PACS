@@ -476,7 +476,9 @@ class ExamMergeE2E(WorklistE2E):
         self.assertEqual(r.status, 200, r.text)
         before = self.stack.request('GET', f'/studies/{a.uid}/report/citations', 'doctor')
         self.assertEqual(before.status, 200, before.text)
-        self.assertEqual([(e['findingId'], e['state'] != 'source-unavailable') for e in before.body['draft']], [(old['id'], True)])
+        # A readable entry is whole; an unreadable one is reduced to {cid, field, insertedAt, insertedBy, state}.
+        self.assertEqual([(e.get('findingId'), e.get('insertedText'), e.get('state')) for e in before.body['draft']],
+                         [(old['id'], 'SYNTHETIC BEFORE SPLIT', None)])
 
 
 def load_tests(loader, tests, pattern):
