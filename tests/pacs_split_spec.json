@@ -10263,7 +10263,7 @@
     }
   },
   "di_additions_exam_scope": {
-    "note": "Previously introduced audit, product information and source-upload routes, and the logical exam controller, including Split and scope resolution.",
+    "note": "Previously introduced audit, product information and source-upload routes, and the logical exam controller, including Split and scope resolution. The incident read (GET emr-audit/incidents/:id) takes the two page queries of a large incident, subjects and events.",
     "controllers": [
       "ProductInfoController",
       "ExamMergeController"
@@ -10614,6 +10614,8 @@
         "interceptors": [],
         "args": [
           "0:0@0:null:0",
+          "4:2@2:\"subjects\":0",
+          "4:3@3:\"events\":0",
           "5:1@1:\"id\":0"
         ]
       },

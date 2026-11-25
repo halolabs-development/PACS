@@ -857,16 +857,20 @@
   rightsEl('notify').elements.outcome.addEventListener('change', rightsControls);
 
   const incidentEl = name => el(`incident-${name}`);
+  // A paged incident's next page of subjects and of events (null: the last one is open).
+  let incidentPages = { subjects: '0.0', events: '0.0' };
   function incidentControls() {
     const disabled = !ready || denied || incidentPending;
     for (const button of incidentEl('workspace').querySelectorAll('button')) button.disabled = disabled;
     incidentEl('finding').disabled = disabled || !incidentSnapshot || incidentSnapshot.status === 'Closed';
     for (const mode of ['notice', 'close']) incidentEl(mode).querySelector('button').disabled = disabled || !incidentSnapshot || incidentSnapshot.status === 'Closed';
+    for (const kind of ['subjects', 'events']) incidentEl(kind).disabled = disabled || !incidentSnapshot || incidentPages[kind] === null;
   }
   function clearIncident() {
     incidentSequence++; incidentPending = false; incidentSnapshot = null;
     incidentEl('detail').hidden = true; incidentEl('listing').replaceChildren();
-    for (const name of ['state', 'scope', 'history', 'draft-content']) incidentEl(name).textContent = '';
+    incidentPages = { subjects: '0.0', events: '0.0' }; incidentEl('pages').hidden = true;
+    for (const name of ['state', 'scope', 'history', 'draft-content', 'subject-list', 'event-list']) incidentEl(name).textContent = '';
     if (incidentDownload) { URL.revokeObjectURL(incidentDownload); incidentDownload = null; }
     incidentControls();
   }
@@ -878,11 +882,21 @@
   };
   // On the screen in the language of the page; in the downloaded notice draft (a document) as written.
   const asWritten = (t, ...p) => t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
+  // A subject with its events by ID (a range answered whole, a page of events) or by their number (a paged range).
+  const incidentSubjectLines = shown => [
+    ...shown.identified.map(p => `Patient: ${p.patient.patientId} / ${p.patient.assigningAuthority}\nEvents: ${p.eventIds ? p.eventIds.join(', ') : p.events}\nFirst / Last: ${p.firstAt} / ${p.lastAt}`),
+    ...shown.identifiedLocally.map(p => `Local Patient: ${fact(p.source.sourcePatientId)} / ${fact(p.source.sourceInstitution)}\nStudies: ${p.studyIds.join(', ')}\nEvents: ${p.eventIds ? p.eventIds.join(', ') : p.events}`),
+    // A page of events also lists the preserved records that name no subject, so every record of the range can be found.
+    ...(shown.others?.length ? [`Events Without a Subject: ${shown.others.join(', ')}`] : [])];
   function incidentScopeText(scope, say = kinText) {
+    const paged = scope.subjects;
     return [scope.subjectsIdentifiable ? say('원장 조회 범위에서 식별되었습니다.') : say('영향 대상자를 전부 특정할 수 없습니다. 아래 식별된 일부를 전체 대상 또는 0명으로 해석하지 마세요.'),
-      `Period: ${scope.filters.from} — ${scope.filters.to}`, ...scope.reasons.map(r => say('확인 근거: {0}', r.note || r.code || r.kind)),
-      ...scope.identified.map(p => `Patient: ${p.patient.patientId} / ${p.patient.assigningAuthority}\nEvents: ${p.eventIds.join(', ')}\nFirst / Last: ${p.firstAt} / ${p.lastAt}`),
-      ...scope.identifiedLocally.map(p => `Local Patient: ${fact(p.source.sourcePatientId)} / ${fact(p.source.sourceInstitution)}\nStudies: ${p.studyIds.join(', ')}\nEvents: ${p.eventIds.join(', ')}`)].join('\n\n');
+      `Period: ${scope.filters.from} — ${scope.filters.to}`,
+      // A patient condition the answer could not record is not in it: the scope says it was set, not who.
+      ...(paged?.withheld?.length ? ['Patient Condition: Set at Registration, Not Shown Here'] : []),
+      ...scope.reasons.map(r => say('확인 근거: {0}', r.note || r.code || r.kind)),
+      ...(!paged ? incidentSubjectLines(scope) : [`Identified Patients: ${paged.identified}\nLocal Patients: ${paged.identifiedLocally}\nAccess Records: ${paged.events}`,
+        ...(paged.all ? incidentSubjectLines(paged.all) : [say('대상이 많아 여기에는 수만 적습니다. 대상과 접근 기록은 사건 화면의 Load Subjects · Load Events로 쪽마다 엽니다. 연 쪽에 보인 대상은 접근 기록에 남습니다.')])])].join('\n\n');
   }
   function incidentDraftText(draft) {
     return [draft.title, `Status: ${draft.status}`, draft.wording, ...(draft.applicabilityNote ? [draft.applicabilityNote] : []), `Incident: ${draft.incidentId} / ${draft.incidentType}`,
@@ -919,6 +933,9 @@
     incidentSnapshot = data; incidentEl('detail').hidden = false;
     incidentEl('state').textContent = `${data.incidentId}\nStatus: ${incidentStatus(data)}\nVerdict: ${data.plan.verdict}\nAs of: ${data.plan.asOf}\n${data.cloud}`;
     kinWrite(incidentEl('scope'), incidentScopeText(data.scope));
+    // A paged incident's rows are opened a page at a time, and its subjects too unless they are all in the answer above.
+    const paged = data.scope.subjects, readable = !data.scope.reasons.some(r => r.kind === 'ledger-unreadable');
+    incidentEl('pages').hidden = !paged || !readable; incidentEl('subjects').hidden = !paged || !!paged.all;
     incidentEl('history').textContent = incidentJson({ history: data.history, closure: data.closed, notices: data.plan.ledger.notices,
       decisions: data.plan.ledger.decisions, delays: data.plan.ledger.delays, assessments: data.plan.ispAssessments });
     const table = document.createElement('table'), header = document.createElement('tr');
@@ -995,6 +1012,10 @@
     const id = incidentEl('id').value.trim(); let path = 'incidents', body;
     try {
       if (mode === 'register') {
+        // The form of a shown incident repeats its registration from the answer. An answer that withheld the patient
+        // condition leaves the form without it: sent, it would be another registration under the same incident ID.
+        if (incidentSnapshot?.incidentId === id && incidentSnapshot.scope.subjects?.withheld?.length)
+          throw Error('이미 등록된 사건입니다. 등록할 때 정한 환자 조건이 이 화면에 표시되지 않아 같은 등록을 다시 보내지 않았습니다. 아래는 저장된 사건 상태입니다.');
         const v = Object.fromEntries(new FormData(incidentEl('register')));
         if (!!v.patientId !== !!v.assigningAuthority) throw Error('환자 ID와 발급 기관을 함께 입력하세요.');
         body = { incidentId: id, incidentType: v.incidentType, facts: incidentFacts(), query: { from: utcInput(v.from), to: utcInput(v.to),
@@ -1039,15 +1060,23 @@
     const current = ++incidentSequence, context = KinWorkContext.capture('document');
     const admits = () => current === incidentSequence && id === incidentEl('id').value.trim() && KinWorkContext.admits(context);
     incidentPending = true; incidentControls(); kinWrite(incidentEl('message'), kinSayEn("사건을 확인하고 있습니다."));
+    let collecting = false;
     try {
-      const response = await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/${path}`,
-        { method: ['list', 'open', 'draft'].includes(mode) ? 'GET' : 'POST', ...(body ? { json: body } : {}), context });
-      if (!admits()) return;
-      if (response.status === 403 && response.body?.code === 'AuditorNotDesignated') { refuse(); return; }
-      if (response.status === 403 && response.body?.code === 'AuditScopeNotGranted') {
-        clearIncident(); incidentEl('workspace').hidden = true; kinWrite(incidentEl('message'), kinSayEn("이 계정에는 사건 조사와 전체 범위 내보내기 권한이 없습니다.")); return;
+      let response;
+      // A large period is registered by the same request sent again until its access records are all preserved.
+      for (;;) {
+        response = await KinSessionTransport.page().request(`${location.origin}/api/emr-audit/${path}`,
+          { method: ['list', 'open', 'draft'].includes(mode) ? 'GET' : 'POST', ...(body ? { json: body } : {}), context });
+        if (!admits()) return;
+        if (response.status === 403 && response.body?.code === 'AuditorNotDesignated') { refuse(); return; }
+        if (response.status === 403 && response.body?.code === 'AuditScopeNotGranted') {
+          clearIncident(); incidentEl('workspace').hidden = true; kinWrite(incidentEl('message'), kinSayEn("이 계정에는 사건 조사와 전체 범위 내보내기 권한이 없습니다.")); return;
+        }
+        if (!response.ok || response.incomplete) throw Error(response.body?.code || 'ResponseUnavailable');
+        if (mode !== 'register' || response.body?.status !== 'Registering') break;
+        collecting = true;
+        kinWrite(incidentEl('message'), kinSayEn("접근 기록을 모으고 있습니다. 지금까지 {n0}건입니다. 끝날 때까지 이 화면을 열어 두세요.", response.body.collected.rows));
       }
-      if (!response.ok || response.incomplete) throw Error(response.body?.code || 'ResponseUnavailable');
       if (mode === 'draft') {
         const text = incidentDraftText(response.body); kinWrite(incidentEl('draft-content'), text);
         if (incidentDownload) URL.revokeObjectURL(incidentDownload);
@@ -1068,9 +1097,32 @@
       incidentSnapshot = null; incidentEl('detail').hidden = true;
       kinWrite(incidentEl('message'), error.message === 'IncidentDutiesOpen' ? kinSayEn("계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.") :
         error.message === 'IncidentRangeTooLarge' ? kinSayEn("이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.") :
+        collecting ? kinSayEn("접근 기록을 다 모으지 못해 사건이 아직 등록되지 않았습니다 ({e0}). 입력은 유지했습니다. Register Incident를 다시 누르면 이어서 모읍니다.", error.message) :
         kinSayEn("사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", error.message));
     } finally { if (current === incidentSequence) { incidentPending = false; incidentControls(); } }
   }
+  // The next page of a paged incident's subjects or events, under what is already open. Each page is its own recorded read.
+  async function incidentPage(kind) {
+    if (!ready || denied || incidentPending || !incidentSnapshot || incidentPages[kind] === null) return;
+    const id = incidentSnapshot.incidentId, current = ++incidentSequence, context = KinWorkContext.capture('document');
+    const admits = () => current === incidentSequence && id === incidentEl('id').value.trim() && KinWorkContext.admits(context);
+    incidentPending = true; incidentControls(); kinWrite(incidentEl('message'), kinSayEn("사건을 확인하고 있습니다."));
+    try {
+      const response = await KinSessionTransport.page().request(
+        `${location.origin}/api/emr-audit/incidents/${encodeURIComponent(id)}?${kind}=${encodeURIComponent(incidentPages[kind])}`, { method: 'GET', context });
+      if (!admits()) return;
+      if (!response.ok || response.incomplete) throw Error(response.body?.code || 'ResponseUnavailable');
+      const page = response.body[kind], list = incidentEl(kind === 'subjects' ? 'subject-list' : 'event-list');
+      list.textContent += (list.textContent ? '\n\n' : '') + incidentSubjectLines(page).join('\n\n');
+      incidentPages[kind] = page.next;
+      kinWrite(incidentEl('message'), page.next === null ? kinSayEn("마지막 쪽까지 열었습니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다.") :
+        kinSayEn("한 쪽을 열었습니다. 같은 단추로 다음 쪽을 엽니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다."));
+    } catch (error) {
+      if (!admits()) return;
+      kinWrite(incidentEl('message'), kinSayEn("사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", error.message));
+    } finally { if (current === incidentSequence) { incidentPending = false; incidentControls(); } }
+  }
+  for (const kind of ['subjects', 'events']) incidentEl(kind).addEventListener('click', () => incidentPage(kind));
   incidentEl('id').addEventListener('input', clearIncident);
   incidentEl('list').addEventListener('click', () => incidentRequest('list'));
   incidentEl('finding').addEventListener('click', () => incidentRequest('finding'));

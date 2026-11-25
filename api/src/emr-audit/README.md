@@ -6,9 +6,9 @@ route requires the institution's auditor designation and both `investigate` and
 
 | Routes under `/api/emr-audit` | Response recording |
 | --- | --- |
-| POST incidents | Registration / exact replay: incident ID and all returned scope targets |
+| POST incidents | Registration / exact replay: incident ID and all returned scope targets. A paged range answers `Registering` with the incident ID alone until its evidence is preserved |
 | GET incidents | IDs, type, effective verdict, status and awareness only; no patient identifiers |
-| GET incidents/:id | Fixed impact scope, projected duties and evidence history |
+| GET incidents/:id | Fixed impact scope, projected duties and evidence history. `?subjects=<place>` or `?events=<place>`: one page of a paged incident, recorded as shown |
 | POST incidents/:id/findings | Exactly one of facts, decision or delay with operationId; contract validation and exact replay |
 | POST incidents/:id/notices | Actual performance evidence and scope; no dispatch; exact replay |
 | POST incidents/:id/close | Evidence with no owed duty/unresolved decision, or supersededBy an existing open same-institution incident |
@@ -20,9 +20,49 @@ scope determinations, accepted findings/notices with actor/roles/time, and closu
 evidence. A snapshot above 1,000 rows or 2 MB is instead one gzip row in the write-once
 `fixed_copy` (`incident-snapshot:<incidentId>`), named with its hash in the body, which
 then also carries the saved effective verdict for the list. The range is read at one
-point in time before the write transaction. A range whose access records would exceed
-112 in one commit (the ledger admits 128 unfinished records) is refused as
-`IncidentRangeTooLarge` before anything is saved. A copy that cannot be vouched for reads as
+point in time before the write transaction.
+
+One response records every target it provides, in its commit, and the ledger admits 128
+unfinished records in all. A range is therefore answered whole only while its record
+stays within 16 of them and its rows within 4,000 and 16 MiB (`INCIDENT_LIMITS`). A
+larger range is one incident all the same, in a paged form:
+
+- Registration takes its ceiling and the events then unfinished in one view of the ledger,
+  and saves an `incident-registration` body in `request_event`. Each request then preserves
+  parts of about 4,000 rows for about six seconds (`incident-snapshot:<id>:<attempt>:<n>`,
+  gzip JSON rows, with that part's subjects beside it) and answers `Registering`; the page
+  sends the same request until it is done. Rows above the ceiling and the events excluded
+  at the start never enter, so the parts hold the ledger of that one moment. The step
+  that saves the last part's incident also saves the subject index
+  (`…:subjects`) and the `incident` body (`snapshot.copy` format
+  `gzip-json-ledger-rows-v2`: part count, row count, the chained hash of the parts, the
+  index hash and subject counts). Until then nothing is registered: the ID is not listed,
+  opened, decided on, closed or a replacement.
+- A registration under way continues only for its auditor and its whole input; another
+  input or auditor is `IncidentConflict`. One that ended without an incident (refused, or
+  complete and not accepted by the contract) gives way to another input, which starts again.
+- Reads, findings, notices, closure and drafts answer the scope summary
+  (`incidentScopeSummary`: identifiability, reasons, subject and row counts) without
+  reading a part: the database hashes the parts and the index where they are and the
+  chain is compared. Subjects that all fit one response (100 subjects, 512 KiB of record)
+  are in the summary and in its record; otherwise the record is the incident alone. A
+  patient the range was asked for is repeated in the summary's `filters` only when that
+  record names them; otherwise the condition is left out and `subjects.withheld` says so.
+- `?subjects=` pages the index (a long study list continues on the next page) and records
+  each shown patient by their own snapshot and each local subject once per shown study,
+  with the incident as the record. `?events=` reads one preserved part and answers its
+  events as a whole range's are, as many rows as one response can record; a row that
+  names no subject is listed by its event (`others`), so every preserved row is on a page.
+- Rows of a range that began before the retention end of viewing rows could be removed
+  between two parts: such a registration is saved as unreadable (`LedgerRetentionElapsed`).
+- More than 5,000,000 rows is refused as `IncidentRangeTooLarge`, remembered so the same
+  request answers the same; the ID then takes a narrower range. Costs are linear in the
+  rows: about 2,700 rows a second to preserve and 137 stored bytes a row on PostgreSQL, and
+  each later answer vouches for the parts in about 2 s a million rows. At a 200-study list
+  an alert's 50 openings are 63,000 rows, a reader's 200-study day 250,000, and that day
+  with five colleagues' lists open 2.8 million (registered in 17 minutes, opened in 6 s).
+
+A copy or part that cannot be vouched for reads as
 an unreadable ledger and takes no new finding. The shared request-ID lock prevents
 copy/rights collisions. No migration, clinical write or external dispatch is involved. Historical authority is reconstructed
 from the original subject's roster at acceptance; current authority gates every route.
