@@ -449,7 +449,8 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         series = next((uid for uid in strip.locator('button.kin-series-card').evaluate_all('cards => cards.map(c => c.dataset.series)')
                        if uid and uid != before), None)
         self.assertIsNotNone(series, 'a series other than the one the right cell shows')
-        preview = strip.locator(f'button.kin-series-card[data-series="{series}"] .kin-series-preview')
+        # The row's own card (the copy on the other monitor follows it in the same row).
+        preview = strip.locator(f'button.kin-series-card[data-series="{series}"]').first.locator('.kin-series-preview')
         expect(preview.locator('img')).to_be_visible(timeout=30000)
         start, (x, y) = preview.bounding_box(), self.cell_centre(viewer, right)
         viewer.mouse.move(start['x'] + start['width'] / 2, start['y'] + start['height'] / 2)
