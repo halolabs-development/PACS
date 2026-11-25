@@ -521,18 +521,31 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertGreater(last, 0)
         viewer.wait_for_function('([id, last]) => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex() === last', arg=[first[0], last])
         viewer.wait_for_timeout(1500)
-        # 1 x 2: one cell on each monitor's images; the first cell keeps its image.
-        self.layout(viewer, 'Layout-1-0')
-        self.until(viewer, LAID, 1)
-        viewer.wait_for_timeout(2500)
-        self.assertTrue(viewer.evaluate(LAID, 1), json.dumps(viewer.evaluate(SEAM_STATE)))
-        self.assertEqual(last, viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex()', first[0]))
-        # 2 x 2: two on each monitor.
+        drawn = 'id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || null'
+        image = viewer.evaluate(drawn, first[0])
+        # 2 x 2: two cells on each monitor's images; the first cell keeps its image.
         self.layout(viewer, 'Layout-1-1')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
         self.until(viewer, LAID, 2)
         viewer.wait_for_timeout(2500)
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
+        self.assertEqual(last, viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex()', first[0]))
+        # The top cell of each monitor (the 2 x 2's top row) and the image each has drawn.
+        seam = viewer.evaluate(SEAM_STATE)['seams'][0] / viewer.evaluate('innerWidth')
+        cells = viewer.evaluate(GRID)['cells']
+        tops = [min((c for c in cells if c[1] + c[3] <= seam + 0.001), key=lambda c: c[2]), min((c for c in cells if c[1] >= seam - 0.001), key=lambda c: c[2])]
+        self.assertEqual(first[0], tops[0][0])
+        images = [viewer.evaluate(drawn, c[0]) for c in tops]
+        # 1 x 2 (four cells to two): the top row stays, one cell on each monitor's images, each with the image it has drawn.
+        self.layout(viewer, 'Layout-1-0')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
+        self.until(viewer, LAID, 1)
+        viewer.wait_for_timeout(2500)
+        self.assertTrue(viewer.evaluate(LAID, 1), json.dumps(viewer.evaluate(SEAM_STATE)))
+        now = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])
+        self.assertEqual([c[0] for c in tops], [c[0] for c in now])
+        self.assertEqual(images, [viewer.evaluate(drawn, c[0]) for c in now])
+        self.assertEqual(image, images[0])
         # 1 x 1: one cell on each monitor.
         self.layout(viewer, 'Layout-0-0')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')

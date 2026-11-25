@@ -145,6 +145,8 @@ GRID = """() => {
   window.synCells = () => { const g = document.querySelector('[data-cy=viewport-grid]').getBoundingClientRect();
     return [...state.viewports.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(c => [c.viewportId, g.left + c.x * g.width, g.top + c.y * g.height,
       g.left + (c.x + c.width) * g.width, g.top + (c.y + c.height) * g.height, c.displaySetInstanceUIDs[0] || null]); };
+  // The place key of each cell, in the order the native grid lists them.
+  window.synOrder = () => [...state.viewports.values()].map(c => c.positionId);
   window.synGridState = () => ({ rows: state.layout.numRows, cols: state.layout.numCols, rects: [...state.viewports.values()].map(c => ({ x: c.x, y: c.y, width: c.width, height: c.height })) });
   Object.assign(synServices, { viewportGridService: grid,
     cornerstoneViewportService: { ...synServices.cornerstoneViewportService, getCornerstoneViewport: id => state.viewports.has(id) ? viewport(id) : null },
@@ -407,10 +409,15 @@ class MonitorHangingDOMTest(unittest.TestCase):
         pick(1, 2, 2)
         cells = self.laid_on_monitors(page, 1)
         self.assertEqual(before, [c[0] for c in cells])
+        # Each cell keeps the place key of its place in the picked grid, listed in that grid's order - asked for by name,
+        # not left to the native grid's rounding of the moved rectangles (which can give two cells one key).
+        self.assertEqual(['0-0', '1-0'], page.evaluate('synLayouts.at(-1).layoutOptions.map(o => o.positionId)'))
+        self.assertEqual(['0-0', '1-0'], page.evaluate('synOrder()'))
         # Registered as this screen's split (the double click's maximize and a later Apply's rollback know it).
         self.assertEqual(page.evaluate('synGridState().rects'), page.evaluate('kinViewerSplitRects'))
         # 2 x 2: two cells on each monitor.
         pick(2, 2, 4)
+        self.assertEqual(['0-0', '1-0', '0-1', '1-1'], page.evaluate('synOrder()'))
         cells = self.laid_on_monitors(page, 2)
         # The top cell of each monitor (the 2 x 2's top row); the reader puts another series into the right one.
         top = lambda cells: [min((c for c in cells if c[3] <= SEAM + 0.5), key=lambda c: c[2]), min((c for c in cells if c[1] >= SEAM - 0.5), key=lambda c: c[2])]
@@ -433,6 +440,33 @@ class MonitorHangingDOMTest(unittest.TestCase):
         count = page.evaluate('synLayouts.length')
         page.wait_for_timeout(2500)
         self.assertEqual(count, page.evaluate('synLayouts.length'))
+
+    def test_07c_where_one_monitors_images_start_higher_the_cells_keep_the_picked_grids_order(self):
+        # Monitor 1 with both rows on top, monitor 2 with its toolbar at the bottom: monitor 2's images start higher.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.prepare(page, [monitor('1x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='none', toolbar='bottom')])
+        page.evaluate('synApplySplit(synAnswer.split)')
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('synGridState().rects.length === 2')
+        page.wait_for_timeout(2100)
+        page.evaluate('synMenu(2, 2)')
+        page.wait_for_function('() => synGridState().rows === 2 && synGridState().rects.length === 4', timeout=5000, polling=250)
+        page.wait_for_timeout(2500)
+        cells = page.evaluate('synCells()')
+        rows = page.locator('.kin-ux-toolbar-slot, .kin-viewer-series-strip, .kin-span-fixed').evaluate_all(
+            'n => n.map(e => e.getBoundingClientRect()).filter(r => r.width && r.height).map(r => [r.left, r.top, r.right, r.bottom])')
+        state = json.dumps({'cells': cells, 'rows': rows})
+        self.assertEqual([2, 2], [len([c for c in cells if c[3] <= SEAM + 0.5]), len([c for c in cells if c[1] >= SEAM - 0.5])], state)
+        over = lambda c, r: min(c[3], r[2]) - max(c[1], r[0]) > 1 and min(c[4], r[3]) - max(c[2], r[1]) > 1
+        self.assertFalse(any(over(c, r) for c in cells for r in rows), 'a cell under a row: ' + state)
+        self.assertLess(min(c[2] for c in cells if c[1] >= SEAM - 0.5), min(c[2] for c in cells if c[3] <= SEAM + 0.5), state)
+        # Listed as the picked grid lists them (a patient tab keeps and puts back the cells in that order), not by height.
+        self.assertEqual(['0-0', '1-0', '0-1', '1-1'], page.evaluate('synOrder()'))
+        lists = page.evaluate('() => [...synServices.viewportGridService.getState().viewports.values()].map(c => c.x < synSeam / innerWidth ? 1 : 2)')
+        self.assertEqual([1, 2, 1, 2], lists)
+        # The registered copy is in the order on screen.
+        rects = page.evaluate('kinViewerSplitRects')
+        self.assertEqual(sorted(rects, key=lambda r: (round(r['y'], 6), r['x'])), rects)
 
     def test_08_the_worklist_window_is_read_and_asked_to_its_monitor_once_the_rule_stands(self):
         page = self.open(displays=TWO_DISPLAYS)
