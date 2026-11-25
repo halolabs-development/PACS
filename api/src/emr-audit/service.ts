@@ -54,6 +54,10 @@ type PreparedRegistration = { id: string; sha256: string | null; scope: Readonly
 type PreparedIndex = { body: Buffer; sha256: string; subjects: F.IncidentSubjectIndex; all: boolean };
 type IncidentRegistered = IncidentState | IncidentRegistration;
 const partsOf = (copy: IncidentSnapshot['copy']): IncidentSnapshotParts | null => copy?.format === INCIDENT_PARTS ? copy : null;
+/** One hash for the same input in any key order: every step of a registration under way is held to it, without the input in each. */
+const ordered = (value: unknown): unknown => Array.isArray(value) ? value.map(ordered) : value && typeof value === 'object'
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, ordered(value[key])])) : value;
+const inputHash = (input: unknown) => hash(Buffer.from(JSON.stringify(ordered(input))));
 const chained = (previous: string, sha256: string) => hash(Buffer.from(`${previous}:${sha256}`));
 // Off the event loop: a part is several megabytes, and other requests are answered while it is compressed.
 const packed = async (value: unknown) => { const body = await promisify(gzip)(JSON.stringify(value), { level: 1 }); return { body, sha256: hash(body) }; };
@@ -587,7 +591,7 @@ export class EmrAuditService {
    *  evidence is being preserved a registration is theirs alone; one that has ended without an incident (refused, or
    *  complete and not accepted) gives way to another input, which starts again. */
   private continued(saved: IncidentRegistration, ctx: RequestWorkContext, input: unknown): boolean {
-    const same = saved.by.id === ctx.facts.actor.id && isDeepStrictEqual(saved.intake, input);
+    const same = saved.by.id === ctx.facts.actor.id && saved.intake === inputHash(input);
     if (!same && !saved.done && !saved.refused) refuse('IncidentConflict');
     return same;
   }
@@ -693,7 +697,7 @@ export class EmrAuditService {
         F.planIncidentResponse(authority, scope(1), facts, { asOf: at });
       }
       const registration: IncidentRegistration = { kind: 'incident-registration', institutionId: authority.institutionId, incidentId: id,
-        attempt: randomUUID(), intake: input, by: ctx.facts.actor, at, top, excluded,
+        attempt: randomUUID(), intake: inputHash(input), by: ctx.facts.actor, at, top, excluded,
         parts: 0, rows: 0, below: null, done: false, failure: null, sha256: '', refused: null };
       await this.saveRegistered(tx, registration);
       return registration;
