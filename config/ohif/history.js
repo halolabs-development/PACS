@@ -1198,8 +1198,11 @@ function kinCreateViewerHistory() {
         group.setToolActive(tools[kind], { bindings: [{ mouseButton: ct.Enums.MouseBindings.Primary }] });
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
-        // The frame on the screen, not the one a stack move is still loading (the renderer's index moves first).
-        const r = reference(kinViewerShownImageId(viewport())); if (!r || r.study !== scope) return;
+        // The frame on the screen, not the one a stack move is still loading (the renderer's index moves first). A volume cell
+        // (MPR) has no loaded-image notion: its current image id is the shown original slice.
+        const v = viewport();
+        const r = reference(typeof v?.getCornerstoneImage === 'function' ? kinViewerShownImageId(v) : v?.getCurrentImageId?.());
+        if (!r || r.study !== scope) return;
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
         // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.

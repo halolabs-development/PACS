@@ -92,6 +92,7 @@ async function harness() {
     text: () => all().map(e => e.textContent).join('\n'),
     switch: async uid => { study = uid; tick(); await flush(); },
     frames: (now, onScreen) => { requested = now; shown = onScreen; },
+    volumeCell: () => { delete viewport.getCornerstoneImage; },
     tick: async () => { tick(); await flush(); },
     logout: () => announce({ state: 'ending', session: 'S1' }),
   };
@@ -214,6 +215,15 @@ test('Add Key Image names the frame on the screen, not the frame a stack move is
   await h.click('Save');
   const sent = JSON.parse(h.calls.find(c => c.options.method === 'POST').options.body);
   assert.equal(sent.item.kind, 'key'); assert.equal(sent.item.frame, 2);
+});
+
+test('Add Key Image in a volume cell (MPR, no loaded-image read) names its current original slice', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  h.frames(4, 4); h.volumeCell(); await h.click('Add Key Image'); h.input('Key Title', 'mpr slice');
+  h.setReply(async (path, options) => options.method === 'POST' ? { status: 200, data: head('m', 1, 'mpr slice') } : h.defaultReply(path, options));
+  await h.click('Save');
+  const sent = JSON.parse(h.calls.find(c => c.options.method === 'POST').options.body);
+  assert.equal(sent.item.kind, 'key'); assert.equal(sent.item.frame, 4);
 });
 
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {
