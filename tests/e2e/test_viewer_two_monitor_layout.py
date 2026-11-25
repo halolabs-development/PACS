@@ -440,7 +440,7 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         right_series = '''wanted => { const cell = [...services.viewportGridService.getState().viewports.values()].find(c => c.x >= 0.5);
           const v = cell && services.cornerstoneViewportService.getCornerstoneViewport(cell.viewportId), image = v?.getCurrentImageId?.();
           const now = image && cornerstone.metaData.get('instance', image)?.SeriesInstanceUID || null;
-          return wanted === undefined ? now : now === wanted && (v.viewportStatus === undefined || v.viewportStatus === 'rendered'); }'''
+          return wanted == null ? now : now === wanted && (v.viewportStatus === undefined || v.viewportStatus === 'rendered'); }'''
         to(b)
         right = next(cell for cell in viewer.evaluate(GRID)['cells'] if cell[1] >= 0.5)
         strip = viewer.get_by_role('region', name='Series', exact=True)
