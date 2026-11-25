@@ -48,7 +48,11 @@ async function harness() {
     if (options.method === 'POST') return { status: 409, data: {} };
     return { status: 200, data: { items: copy(pages.get(uid) || []), nextCursor: null } };
   };
-  const viewport = { getCurrentImageId: () => `/studies/${study}/series/1.2/instances/1.3/frames/1`, render() {} };
+  // The renderer's index (getCurrentImageId) moves to a requested frame when its load starts; the image on the screen
+  // (getCornerstoneImage) stays the one before until the new one arrives. `frames` sets the two apart.
+  let requested = 1, shown = 1;
+  const imageId = frame => `/studies/${study}/series/1.2/instances/1.3/frames/${frame}`;
+  const viewport = { getCurrentImageId: () => imageId(requested), getCornerstoneImage: () => ({ imageId: imageId(shown) }), render() {} };
   window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'image' } }, metaData: { get() {} } };
   window.cornerstoneTools = { annotation: { locking: { setAnnotationLocked() {}, isAnnotationLocked: () => true },
     state: { getAnnotation: uid => annotations.get(uid), getAllAnnotations: () => [...annotations.values()], removeAnnotation: uid => annotations.delete(uid) } },
@@ -87,6 +91,7 @@ async function harness() {
     values: () => all().filter(e => e.tagName === 'input').map(e => e.value),
     text: () => all().map(e => e.textContent).join('\n'),
     switch: async uid => { study = uid; tick(); await flush(); },
+    frames: (now, onScreen) => { requested = now; shown = onScreen; },
     tick: async () => { tick(); await flush(); },
     logout: () => announce({ state: 'ending', session: 'S1' }),
   };
@@ -200,6 +205,15 @@ test('A1/C5 delta: pending create does not block another edit or overwrite its c
   await h.click('Retry Request'); assert.equal(h.calls.filter(c => c.options.method === 'POST').at(-1).options.body, body);
   assert.ok(h.values().includes('edit after commit')); assert.equal(h.window.kinViewerHistoryHasUnsaved(), true);
   assert.equal(h.document.body.all().filter(e => e.tagName === 'section').length, 1);
+});
+
+test('Add Key Image names the frame on the screen, not the frame a stack move is still loading', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  h.frames(3, 2); await h.click('Add Key Image'); h.input('Key Title', 'shown frame');
+  h.setReply(async (path, options) => options.method === 'POST' ? { status: 200, data: head('k', 1, 'shown frame') } : h.defaultReply(path, options));
+  await h.click('Save');
+  const sent = JSON.parse(h.calls.find(c => c.options.method === 'POST').options.body);
+  assert.equal(sent.item.kind, 'key'); assert.equal(sent.item.frame, 2);
 });
 
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {
