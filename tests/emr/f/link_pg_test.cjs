@@ -555,7 +555,7 @@ async function pagedIncidentHttp(port,witness,ok,call,reader,patient) {
   assert.equal((await ok('auditor','GET','incidents')).incidents.filter(i=>i.incidentId===id).length,1);
   assert.deepEqual((await ok('auditor','GET',`incidents/${id}`)).scope,registered.scope);
   assert.deepEqual((await ok('auditor','POST','incidents',input)).scope,registered.scope);
-  const patients=new Set(), events=new Set();
+  const patients=new Set(), events=new Set(), others=new Set();
   for(let place='0.0';place!==null;){
     const page=(await ok('auditor','GET',`incidents/${id}?subjects=${place}`)).subjects;
     for(const p of page.identified){assert.ok(p.patient.patientId.length!==4014||p.events===5);patients.add(p.patient.patientId);}
@@ -563,11 +563,14 @@ async function pagedIncidentHttp(port,witness,ok,call,reader,patient) {
   }
   for(let place='0.0';place!==null;){
     const page=(await ok('auditor','GET',`incidents/${id}?events=${place}`)).events;
-    for(const eventId of page.identified.flatMap(p=>p.eventIds))events.add(eventId);
+    for(const eventId of [...page.identified,...page.identifiedLocally].flatMap(p=>p.eventIds))events.add(eventId);
+    for(const eventId of page.others)others.add(eventId);
     place=page.next;
   }
   assert.deepEqual([patients.size,[...patients].filter(p=>p.length===4014).length],[registered.scope.subjects.identified,220]);
-  assert.ok(events.size<=rows&&reads.every(event=>events.has(event.eventId)));
+  // Every preserved row is on a page: under the subjects it names, or by its event alone when it names none.
+  assert.ok(reads.every(event=>events.has(event.eventId)));
+  assert.equal(new Set([...events,...others]).size,rows);
   // The pages recorded what they showed: the incident with each shown patient, by the patient's own snapshot.
   const [shown]=await witness.$queryRaw`SELECT payload FROM emr_access.access_entry WHERE stream='viewing' AND payload::jsonb->>'surface'='GET emr-audit/incidents/:id'
     AND payload::jsonb @> ${JSON.stringify({targets:[{recordId:known(id),versionId:known(id)}]})}::jsonb ORDER BY sequence LIMIT 1`;

@@ -107,6 +107,11 @@ if (require.main === module) {
         f.events.splice(0, f.events.length, ...Array.from({ length: q.ledger.count }, (_, i) => ({ ...structuredClone(first), eventId: `SYN-READ-${i}`, occurredAt: at,
           targets: [{ ...structuredClone(first.targets[0]), versionId: known(`SYN-VERSION-${i}`), patientLinkSnapshot: known({
             patientId: `SYN-P${String(i % q.ledger.patients).padStart(3, '0')}`, assigningAuthority: 'SYN-SITE', linkId: `SYN-LINK-${i % q.ledger.patients}` }) }] })));
+        // The newest row is an auditor's own read of the incident list: an event of the period that names no patient.
+        if (q.ledger.listRead) {
+          const seed = fixture(); await seed.controller.registerIncident({}, intake()); await seed.controller.listIncidents({});
+          f.events.unshift({ ...structuredClone(seed.records.at(-1)), eventId: 'SYN-LIST-READ', occurredAt: at });
+        }
         Object.assign(INCIDENT_LIMITS, q.limits);
         process.stdout.write(JSON.stringify({ status: 200, body: {} }) + '\n'); return;
       }

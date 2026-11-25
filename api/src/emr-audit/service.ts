@@ -891,7 +891,8 @@ export class EmrAuditService {
     });
   }
   /** One page of a paged incident, and what showing it discloses. Its subjects come from the index; its events from one
-   *  preserved part, scoped by the contract as a small incident's are - as many rows as one response can record. */
+   *  preserved part, scoped by the contract as a small incident's are - as many rows as one response can record. Every
+   *  row of the part is on some page: under the subjects it names, or among `others` when it names none. */
   private async incidentPage(tx: Tx, ctx: RequestWorkContext, state: IncidentState, scope: F.IncidentScope, page: { subjects?: unknown; events?: unknown }) {
     const copy = partsOf(state.snapshot.copy), subjects = page.subjects !== undefined;
     if (!copy || subjects === (page.events !== undefined)) refuse('AuditRequestInvalid');
@@ -918,8 +919,12 @@ export class EmrAuditService {
       if (shown.reasons.some(reason => reason.kind === 'ledger-unreadable')) refuse('IncidentSnapshotUnreadable');
       if (take > 1 && recordBytes(shown.auditEvent.targets) > INCIDENT_LIMITS.pageBytes) continue;
       const end = second + take, next = end < rows.length ? `${first}.${end}` : first + 1 < copy.parts ? `${first + 1}.0` : null;
+      // A preserved row that names no subject (the auditor's own list read, a refused request) is shown by its event alone.
+      const named = new Set([...shown.identified, ...shown.identifiedLocally].flatMap(subject => subject.eventIds));
+      const others = rows.slice(second, end).map(row => (row.entry as { payload: { event: { eventId: string } } }).payload.event.eventId)
+        .filter(eventId => !named.has(eventId));
       return { targets: [...shown.auditEvent.targets], body: { incidentId: state.incidentId, events: { from: `${first}.${second}`, next,
-        identified: shown.identified, identifiedLocally: shown.identifiedLocally } } };
+        identified: shown.identified, identifiedLocally: shown.identifiedLocally, others } } };
     }
   }
   async incidentAction(request: IncomingMessage, id: string, action: 'read' | 'finding' | 'notice' | 'close' | 'draft', input?: unknown,

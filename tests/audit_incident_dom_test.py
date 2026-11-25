@@ -122,6 +122,25 @@ class Incidents(AuditPage):
                          'There are too many subjects to list here, so only their numbers are given. Open the subjects and the access records a page at a time with Load Subjects and Load Events on the incident screen. The subjects shown on each opened page are recorded in the access record.')
         self.screenshot('incident-large-period.png')
 
+    def test_events_without_a_subject_are_listed_and_an_unrecorded_patient_condition_is_not_shown(self):
+        self.backend_call(ledger=dict(count=600, patients=1, listRead=True), limits=dict(wholeRows=200, partRows=500, requestMs=0, pageEvents=120))
+        day = lambda delta: (datetime.now(timezone.utc) + timedelta(days=delta)).strftime('%Y-%m-%dT00:00')
+        self.open(); self.register('SYN-EVERY', period=(day(-2), day(1)))
+        scope = self.section.locator('#audit-incident-scope')
+        expect(scope).to_contain_text('Access Records: 601'); expect(scope).not_to_contain_text('Patient Condition')
+        self.click('Load Events')
+        expect(self.section.locator('#audit-incident-event-list')).to_contain_text('Events Without a Subject: SYN-LIST-READ')
+        # A range that began before the retention end of its rows names nobody: its patient condition is said, not shown.
+        patient = self.section.get_by_label('Incident Patient ID', exact=True)
+        patient.fill('SYN-P000'); self.section.get_by_label('Incident Assigning Authority', exact=True).fill('SYN-SITE')
+        self.register('SYN-OLD', period=(day(-730), day(1)))
+        expect(scope).to_contain_text('Patient Condition: Set at Registration, Not Shown Here'); expect(scope).not_to_contain_text('SYN-P000')
+        expect(patient).to_have_value('')
+        self.assertEqual([target['recordId']['value'] for target in self.backend_call(inspect=True)['body']['records'][-1]['targets']], ['SYN-OLD'])
+        with self.page.expect_download() as event: self.click('Download Draft')
+        draft = event.value.path().read_text(encoding='utf-8')
+        self.assertIn('Patient Condition: Set at Registration, Not Shown Here', draft); self.assertNotIn('SYN-P000', draft)
+
     def test_a_collection_that_stops_says_so_and_register_again_continues_it(self):
         period = self.large_period(); self.open()
         self.hold_registration = 2; self.register('SYN-STOPPED', saved=False, period=period)

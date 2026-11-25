@@ -885,11 +885,16 @@
   // A subject with its events by ID (a range answered whole, a page of events) or by their number (a paged range).
   const incidentSubjectLines = shown => [
     ...shown.identified.map(p => `Patient: ${p.patient.patientId} / ${p.patient.assigningAuthority}\nEvents: ${p.eventIds ? p.eventIds.join(', ') : p.events}\nFirst / Last: ${p.firstAt} / ${p.lastAt}`),
-    ...shown.identifiedLocally.map(p => `Local Patient: ${fact(p.source.sourcePatientId)} / ${fact(p.source.sourceInstitution)}\nStudies: ${p.studyIds.join(', ')}\nEvents: ${p.eventIds ? p.eventIds.join(', ') : p.events}`)];
+    ...shown.identifiedLocally.map(p => `Local Patient: ${fact(p.source.sourcePatientId)} / ${fact(p.source.sourceInstitution)}\nStudies: ${p.studyIds.join(', ')}\nEvents: ${p.eventIds ? p.eventIds.join(', ') : p.events}`),
+    // A page of events also lists the preserved records that name no subject, so every record of the range can be found.
+    ...(shown.others?.length ? [`Events Without a Subject: ${shown.others.join(', ')}`] : [])];
   function incidentScopeText(scope, say = kinText) {
     const paged = scope.subjects;
     return [scope.subjectsIdentifiable ? say('원장 조회 범위에서 식별되었습니다.') : say('영향 대상자를 전부 특정할 수 없습니다. 아래 식별된 일부를 전체 대상 또는 0명으로 해석하지 마세요.'),
-      `Period: ${scope.filters.from} — ${scope.filters.to}`, ...scope.reasons.map(r => say('확인 근거: {0}', r.note || r.code || r.kind)),
+      `Period: ${scope.filters.from} — ${scope.filters.to}`,
+      // A patient condition the answer could not record is not in it: the scope says it was set, not who.
+      ...(paged?.withheld?.length ? ['Patient Condition: Set at Registration, Not Shown Here'] : []),
+      ...scope.reasons.map(r => say('확인 근거: {0}', r.note || r.code || r.kind)),
       ...(!paged ? incidentSubjectLines(scope) : [`Identified Patients: ${paged.identified}\nLocal Patients: ${paged.identifiedLocally}\nAccess Records: ${paged.events}`,
         ...(paged.all ? incidentSubjectLines(paged.all) : [say('대상이 많아 여기에는 수만 적습니다. 대상과 접근 기록은 사건 화면의 Load Subjects · Load Events로 쪽마다 엽니다. 연 쪽에 보인 대상은 접근 기록에 남습니다.')])])].join('\n\n');
   }

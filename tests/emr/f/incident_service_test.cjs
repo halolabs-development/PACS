@@ -299,6 +299,48 @@ test('a paged range that began before the retention end of its rows cannot say i
   assert.deepEqual([r.status, r.scope.subjectsIdentifiable, r.scope.subjects.identified, incidents(f)[0].body.snapshot.copy.rows], ['Open', false, 0, 900]);
   assert.deepEqual(r.scope.reasons.find(reason => reason.kind === 'ledger-unreadable'), { kind: 'ledger-unreadable', code: 'LedgerRetentionElapsed' });
 });
+test('the pages of events show every preserved row, also one that names no subject', async t => {
+  limits(t, { wholeRows: 200, partRows: 500 });
+  // An auditor's own read of the incident list, in the period: an event that names no patient.
+  const seed = fixture(); await seed.controller.registerIncident({}, intake()); await seed.controller.listIncidents({});
+  const listRead = seed.records.at(-1);
+  assert.ok(listRead.targets.length && listRead.targets.every(target => target.patientLinkSnapshot.status !== 'known'));
+  const f = fixture(), input = intake('EVERY-ROW'); ledger(f, 900);
+  f.events.splice(450, 0, { ...structuredClone(listRead), eventId: 'SYN-LIST-READ' });
+  current(f, input);
+  const r = await registered(f, input);
+  assert.equal(r.scope.subjects.events, 901);
+  const named = new Set(), others = [];
+  for (let from = '0.0'; from !== null;) {
+    const page = await recording(f, () => f.controller.readIncident({}, 'EVERY-ROW', undefined, from)), events = page.answer.events;
+    const shown = events.identified.flatMap(p => p.eventIds);
+    assert.equal(page.records.flatMap(record => record.targets).length, 1 + shown.length, 'a row that names nobody adds no target to the record');
+    for (const id of shown) named.add(id);
+    others.push(...events.others); from = events.next;
+  }
+  assert.deepEqual([named.size, others], [900, ['SYN-LIST-READ']], 'the rows on the pages are the rows the summary counts');
+});
+test('a paged answer repeats the patient its range was asked for only with the record of that patient', async t => {
+  limits(t, { wholeRows: 200, partRows: 500 });
+  const patient = { patientId: 'SYN-ONLY-PATIENT', assigningAuthority: 'SYN-SITE' };
+  // Readable: the one patient is a subject in the answer and in its record, and the condition is repeated.
+  const f = fixture(), input = intake('ONE-PATIENT'); ledger(f, 900, () => patient.patientId); current(f, input); input.query.patient = patient;
+  await registered(f, input);
+  const read = await recording(f, () => f.controller.readIncident({}, 'ONE-PATIENT'));
+  assert.deepEqual([read.answer.scope.filters.patient, 'withheld' in read.answer.scope.subjects], [patient, false]);
+  assert.deepEqual(read.records.flatMap(record => record.targets).map(target => target.patientLinkSnapshot.value?.patientId ?? target.recordId.value),
+    ['ONE-PATIENT', patient.patientId]);
+  // Unreadable (the range began before the retention end of its rows): the answer names nobody, in its conditions either.
+  const g = fixture(), old = intake('ONE-PATIENT-OLD'); ledger(g, 900, () => patient.patientId); current(g, old, 729); old.query.patient = patient;
+  await registered(g, old);
+  for (const call of [() => g.controller.readIncident({}, 'ONE-PATIENT-OLD'), () => g.controller.incidentDraft({}, 'ONE-PATIENT-OLD', 'possibility'),
+      () => g.controller.registerIncident({}, old)]) {
+    const shown = await recording(g, call), scope = shown.answer.scope;
+    assert.deepEqual([scope.filters.patient, scope.subjects.withheld, scope.filters.from], [null, ['patient'], old.query.from]);
+    assert.equal(JSON.stringify(shown.answer).includes(patient.patientId), false, 'no patient is shown');
+    assert.deepEqual(shown.records.flatMap(record => record.targets).map(target => target.recordId.value), ['ONE-PATIENT-OLD'], 'and the record is the incident alone');
+  }
+});
 test('a later auditor never becomes the author of the registration scope finding', async () => {
   const first = fixture(), input = intake();
   await first.controller.registerIncident({}, input);

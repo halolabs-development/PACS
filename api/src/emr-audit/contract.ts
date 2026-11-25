@@ -512,8 +512,10 @@ export interface IncidentScope {
   identified?: readonly { patient: { patientId: string; assigningAuthority: string }; eventIds: readonly string[]; firstAt: string; lastAt: string }[];
   identifiedLocally?: readonly LocallyIdentifiedSubject[];
   /** Only on a paged scope (incidentScopeSummary): how many subjects and preserved events it has, and every subject
-   * (`all`) when they fit one response — otherwise they are read, and recorded, a page at a time. */
-  subjects?: { identified: number; identifiedLocally: number; events: number; all: IncidentSubjectIndex | null };
+   * (`all`) when they fit one response — otherwise they are read, and recorded, a page at a time. `withheld`: the
+   * conditions of the range that name a patient this answer's record does not name; they are not in `filters`. */
+  subjects?: { identified: number; identifiedLocally: number; events: number; all: IncidentSubjectIndex | null;
+    withheld?: readonly ('patient' | 'sourcePatientId')[] };
   /** False when the people affected cannot be identified: the possible-leak notice of 제34조② (시행령 제39조의2①1) applies.
    * Locally identified subjects are listed but do not make the scope identifiable (reason `identified-locally`). */
   subjectsIdentifiable: boolean;
@@ -637,7 +639,9 @@ export function incidentSubjectTargets(incidentId: string, shown: IncidentSubjec
 /** The scope of a paged range, from what its registration fixed (the evidence's ceiling and row count, its index's
  * subject counts, or the failure that made it unreadable) under the registering auditor. `all` is the whole index when it
  * fits one response: those subjects are then part of the answer and of its record. An unreadable range names nobody and
- * is reported as such, as incidentScope reports it. */
+ * is reported as such, as incidentScope reports it. The range's own conditions may name a patient: the answer repeats
+ * such a condition only when its record names that patient too (a subject in `all`); otherwise the condition is left out
+ * of `filters` and listed in `subjects.withheld`, so no patient is shown without the record of it. */
 export function incidentScopeSummary(authority: AuditAuthority, plan: InvestigationPlan,
   fixed: { incidentId: string; top: number; failure: string | null; events: number; identified: number; identifiedLocally: number; all: IncidentSubjectIndex | null },
   determinations: readonly IncidentDetermination[] = []): Readonly<IncidentScope> {
@@ -653,8 +657,14 @@ export function incidentScopeSummary(authority: AuditAuthority, plan: Investigat
   if (v.failure !== null) reasons.push({ kind: 'ledger-unreadable', code: v.failure });
   if (v.identifiedLocally) reasons.push({ kind: 'identified-locally', subjects: v.identifiedLocally });
   reasons.push(...recorded);
-  const scope = freeze({ institutionId: plan.institutionId, filters: plan.filters, top: v.top,
-    subjects: { identified: v.identified, identifiedLocally: v.identifiedLocally, events: v.events, all: v.all },
+  const asked = plan.filters, withheld: ('patient' | 'sourcePatientId')[] = [];
+  if (asked.patient && !v.all?.identified.some(p => p.patient.patientId === asked.patient.patientId &&
+      p.patient.assigningAuthority === asked.patient.assigningAuthority)) withheld.push('patient');
+  if (asked.sourcePatientId && !v.all?.identifiedLocally.some(p => p.source.sourcePatientId.status === 'known' &&
+      p.source.sourcePatientId.value === asked.sourcePatientId)) withheld.push('sourcePatientId');
+  const scope = freeze({ institutionId: plan.institutionId,
+    filters: withheld.length ? { ...asked, ...Object.fromEntries(withheld.map(name => [name, null])) } : asked, top: v.top,
+    subjects: { identified: v.identified, identifiedLocally: v.identifiedLocally, events: v.events, all: v.all, ...(withheld.length ? { withheld } : {}) },
     subjectsIdentifiable: reasons.length === 0, reasons,
     auditEvent: { action: 'download' as const, targets: v.all ? incidentSubjectTargets(v.incidentId, v.all) : [] } });
   incidentScopes.add(scope);

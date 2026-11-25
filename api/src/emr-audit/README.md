@@ -45,11 +45,14 @@ larger range is one incident all the same, in a paged form:
   (`incidentScopeSummary`: identifiability, reasons, subject and row counts) without
   reading a part: the database hashes the parts and the index where they are and the
   chain is compared. Subjects that all fit one response (100 subjects, 512 KiB of record)
-  are in the summary and in its record; otherwise the record is the incident alone.
+  are in the summary and in its record; otherwise the record is the incident alone. A
+  patient the range was asked for is repeated in the summary's `filters` only when that
+  record names them; otherwise the condition is left out and `subjects.withheld` says so.
 - `?subjects=` pages the index (a long study list continues on the next page) and records
   each shown patient by their own snapshot and each local subject once per shown study,
   with the incident as the record. `?events=` reads one preserved part and answers its
-  events as a whole range's are, as many rows as one response can record.
+  events as a whole range's are, as many rows as one response can record; a row that
+  names no subject is listed by its event (`others`), so every preserved row is on a page.
 - Rows of a range that began before the retention end of viewing rows could be removed
   between two parts: such a registration is saved as unreadable (`LedgerRetentionElapsed`).
 - More than 5,000,000 rows is refused as `IncidentRangeTooLarge`, remembered so the same
