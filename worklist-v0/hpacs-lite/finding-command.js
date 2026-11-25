@@ -385,10 +385,11 @@
       if (!target) return finish(refusal('invalid'));
       // Never substitute the selected study for a source of another study (review C7); the only other
       // study is the row's own comparison study, and it goes to that study's viewport alone.
-      // Another original of the reading's own exam (expected.own) is reached like the comparison study: its viewport activated,
-      // then the frame. It needs no comparison study of the row.
-      const cross = target.studyUid !== expected.uid, mine = Array.isArray(expected.own) && expected.own.includes(target.studyUid);
-      if (cross && !mine && (!uid(job.comparison) || job.comparison !== target.studyUid)) return finish(refusal('foreign'));
+      // An original of the reading's own exam (expected.own: a split part's original) is this reading's own image: it goes the
+      // ordinary way, in the viewer opened on this reading, and needs no comparison study of the row.
+      const mine = Array.isArray(expected.own) && expected.own.includes(target.studyUid);
+      const cross = target.studyUid !== expected.uid && !mine;
+      if (cross && (!uid(job.comparison) || job.comparison !== target.studyUid)) return finish(refusal('foreign'));
       const choice = safe(job.choose);
       if (!choice || choice.kind === 'refused') return finish(refusal(choice && choice.reason ? choice.reason : 'no-viewer'));
       const before = safe(choice.probe), reason = precheck(before, expected, cross);

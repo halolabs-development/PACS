@@ -1275,6 +1275,18 @@ test('exam reading: sources of the reading\'s own originals are not comparison s
   assert.equal(command.precheck(view({ uid: PART, selection: PART, scope: X, reading: X, activate: true }), exam, true), 'no-viewer');
 });
 
+test('exam reading: Go to Image of the part\'s own source goes the ordinary way in that part\'s viewer (no activation, not a comparison)', async () => {
+  const PART = '1.2.840.99.2', nav = command.createNavigator({ ...clock() });
+  const j = job({ expected: { ...expected, uid: PART, own: [X] }, view: { uid: PART, selection: PART, scope: X, reading: PART, activate: false } });
+  const result = await nav.run(j.value);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(invoked(j.log), 1, 'the viewer\'s own navigation, as for an ordinary study');
+  assert.equal(result.phase, undefined, 'no comparison activation phase');
+  // Without the reading's own originals the same source is another study and is refused as before.
+  const other = job({ expected: { ...expected, uid: PART }, view: { uid: PART, selection: PART, scope: X, reading: PART } });
+  assert.equal((await nav.run(other.value)).reason, 'foreign');
+});
+
 test('comparison pre-call and identity: an activation tool is required; a loading history is tolerated only while the command waits', () => {
   assert.equal(command.precheck(view({ activate: false }), expected), null, 'B1 does not need it');
   assert.equal(command.precheck(view({ activate: false }), expected, true), 'tool-missing');

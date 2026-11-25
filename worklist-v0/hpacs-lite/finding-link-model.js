@@ -810,9 +810,11 @@
       if (!state || typeof state !== 'object') { s.history = null; return; }
       if (state.ended) { end(); return; }
       const exam = examOf();
-      let heads = Array.isArray(state.heads) ? state.heads : [];
+      const heads = Array.isArray(state.heads) ? state.heads : [];
       // An exam window offers only the marks of this exam's own series (a split part's original also holds the other part's).
-      if (exam && exam !== 'pending' && exam.role) heads = heads.filter(h => { try { return exam.role(state.scope, h.seriesUid) === 'current'; } catch (_) { return false; } });
+      // The comparison viewport's marks below stay whole: their mid-edit state guards the comparison list.
+      const mine = exam && exam !== 'pending' && exam.role
+        ? heads.filter(h => { try { return exam.role(state.scope, h.seriesUid) === 'current'; } catch (_) { return false; } }) : heads;
       const key = JSON.stringify([state.scope, state.suspended, exam === 'pending' ? 'pending' : exam && exam.report,
         heads.map(h => [h.id, h.revision, h.hidden, h.referenceStatus, h.working])]);
       const changed = key !== s.historyKey;
@@ -822,7 +824,7 @@
       s.exam = exam;
       const anchor = anchorOf(state.scope), report = exam ? exam.report : anchor, moved = anchor !== s.scope || report !== s.report;
       if (moved) s.heads = new Map();
-      if (exam ? exam.own.includes(state.scope) : state.scope === anchor) s.heads = new Map(heads.map(h => [h.id, h]));
+      if (exam ? exam.own.includes(state.scope) : state.scope === anchor) s.heads = new Map(mine.map(h => [h.id, h]));
       if (moved) { setScope(anchor, report); return; }
       // While the comparison viewport is active its panel marks items being edited; a changed saved set
       // (or a new activation) re-reads the comparison list.
@@ -920,7 +922,10 @@
           if (!page || !Array.isArray(page.items) || (cursor && page.nextCursor === cursor)) throw new Error('Invalid page');
           items.push(...page.items); cursor = page.nextCursor;
         } while (cursor);
-        const heads = items.map(item => comparisonHead(item, study)).filter(h => !h.hidden);
+        // A prior exam that is itself a split part offers only its own series' marks (its original holds the other part's too).
+        const role = s.exam && s.exam.role;
+        const heads = items.map(item => comparisonHead(item, study)).filter(h => !h.hidden &&
+          (!role || (() => { try { return role(study, h.seriesUid) === 'prior'; } catch (_) { return false; } })()));
         if (!current()) return;
         work.commit(workAt, () => { s.pair.heads = new Map(heads.map(h => [h.id, h])); s.pair.status = 'ready'; s.pair.refused = false; });
       } catch (error) {
@@ -1166,7 +1171,8 @@
       const ticket = s.generation;
       const target = { studyUid: source.studyUid ?? s.scope, seriesUid: source.seriesUid, sopUid: source.sopUid, frame: source.frame, itemId: source.itemId };
       // The comparison study, or another original of this exam than the one the active viewport shows, is reached by activating it.
-      const elsewhere = !own(target.studyUid) || (!!s.exam && target.studyUid !== liveScope());
+      const live = s.exam ? liveScope() : '';
+      const elsewhere = !own(target.studyUid) || (!!live && target.studyUid !== live);
       if (elsewhere && validTarget(target)) return navigateAcross(e, target, source.revision);
       let result;
       if (typeof go !== 'function') result = refusal('tool-missing');

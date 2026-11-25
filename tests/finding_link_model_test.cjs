@@ -624,6 +624,27 @@ test('exam window: every original of a merged exam is the exam\'s own; the prior
   assert.equal(store.state().report, A); assert.equal(store.state().entries.get(e.id), e);
 });
 
+test('exam window: the comparison list keeps its mid-edit guard and, for a prior that is a split part, only that part\'s marks', async () => {
+  const P = '7.8.9', PRIOR_OWN = '7.8.9.1', PRIOR_OTHER = '7.8.9.2';
+  const exam = () => ({ current: { reportUid: PART, sources: [{ studyUid: A, series: { mode: 'include', uids: [OTHER] } }] },
+    prior: { reportUid: '7.8.9.99', sources: [{ studyUid: P, series: { mode: 'include', uids: [PRIOR_OWN] } }] },
+    role: (study, series) => study === A && series === OTHER ? 'current' : study === P && series === PRIOR_OWN ? 'prior' : null });
+  const t = transport(); const { store } = makeStore(t, { studies: [A, P], exam });
+  const item = (id, series) => ({ id, studyUid: P, revision: 1, hidden: false, authorSub: 'reader-1',
+    item: { kind: 'length', seriesUid: series, sopUid: series + '.1', frame: 1, label: 'L', baseline: { calculator: 'kin-native-manual-v1', values: [5] } } });
+  const inPart = 'aaaaaaaa-0000-4000-8000-000000000001', otherPart = 'aaaaaaaa-0000-4000-8000-000000000002';
+  store.syncHistory(history(A, [])); await tick();
+  assert.equal(store.pairOf(), P);
+  t.state.responses.push({ status: 200, body: { items: [item(inPart, PRIOR_OWN), item(otherPart, PRIOR_OTHER)], nextCursor: null } });
+  // The comparison viewport is active and its mark is being edited.
+  store.syncHistory(history(P, [{ id: inPart, revision: 1, hidden: false, referenceStatus: 'verified', working: true, seriesUid: PRIOR_OWN }])); await tick();
+  assert.deepEqual([...store.state().pair.heads.keys()], [inPart], 'only the prior part\'s own series');
+  assert.deepEqual([...store.state().pair.working], [inPart], 'the mark being edited stays unselectable');
+  const e = store.newDraft();
+  assert.equal(store.toggleSource(e, inPart, P), false, 'a comparison mark mid-edit is not linked');
+  assert.equal(store.toggleSource(e, otherPart, P), false, 'the prior original\'s other part is not offered');
+});
+
 test('store save sends the exact pairs once, replays the same body on retry and refreshes links', async () => {
   const t = transport(); const { store } = makeStore(t);
   store.syncHistory(history(A, [{ id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false }])); await tick();
