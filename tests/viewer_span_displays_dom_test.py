@@ -389,6 +389,53 @@ class SpanDisplaysDOMTest(unittest.TestCase):
         self.assertNotIn(REFUSED, self.toasts())
         self.assertEqual(dict(rect=there, pair=[box(LEFT), box(RIGHT)]), self.stored())
 
+    # ── A saved place barely over the next display's edge (a window's resize border) ──
+    def keep_on_one_display(self):
+        """The window the next opening gets behaves as a browser does: it moves and resizes a window, but a window that
+        would cross a display edge is put on one display - the one its top-left corner is on."""
+        self.page.evaluate("""() => { const popup = __opener, move = popup.moveTo, size = popup.resizeTo;
+          const keep = () => { const r = { left: popup.screenX, top: popup.screenY, width: popup.outerWidth, height: popup.outerHeight };
+            const on = screensCache.find(s => r.left >= s.left && r.left < s.left + s.width && r.top >= s.top && r.top < s.top + s.height) || screensCache[0];
+            if (r.left >= on.left && r.top >= on.top && r.left + r.width <= on.left + on.width && r.top + r.height <= on.top + on.height) return;
+            Object.assign(popup, { screenX: on.left, screenY: on.top, outerWidth: Math.min(r.width, on.width), outerHeight: Math.min(r.height, on.height) }); };
+          popup.moveTo = (x, y) => { move(x, y); keep(); }; popup.resizeTo = (w, h) => { size(w, h); keep(); }; }""")
+
+    def open_kept_on_one_display(self, stored):
+        self.page.evaluate("""stored => { localStorage.setItem('kin.ohif.current.rect', JSON.stringify(stored));
+          const b = document.createElement('button'); b.id = 'syn-open'; b.textContent = 'Open';
+          b.onclick = () => { window.__result = openOhifWindow('1.2.1'); }; document.body.append(b); }""", stored)
+        self.page.evaluate("at => __opening(at, false)", dict(left=100, top=50, width=1600, height=900))
+        self.keep_on_one_display()
+        self.page.locator('#syn-open').click()
+        self.assertEqual('accepted', self.page.evaluate('__result.status'))
+
+    def test_20_a_window_that_filled_one_monitor_by_its_edges_opens_on_that_monitor_without_the_span_notice(self):
+        # The reader dragged the window's edges to fill the right monitor (not maximized): the outer rectangle the browser
+        # reports includes the invisible resize border, 2 px over the left monitor and 7 px past the right edge.
+        border = dict(left=RIGHT['left'] - 2, top=0, width=1929, height=1047)
+        self.assertEqual([box(RIGHT), []], self.page.evaluate(
+            "rect => { const p = ohifPlacement(rect); return [[p.left, p.top, p.width, p.height], spanTargets(rect)]; }", border))
+        self.open_kept_on_one_display(border)
+        self.page.wait_for_function("rect => JSON.stringify(__stored().rect) === JSON.stringify(rect)", arg=RIGHT, timeout=6000)
+        self.assertEqual([RIGHT['left'], RIGHT['top'], RIGHT['width'], RIGHT['height']],
+                         self.page.evaluate("[__opener.screenX, __opener.screenY, __opener.outerWidth, __opener.outerHeight]"))
+        self.page.wait_for_timeout(500)
+        self.assertEqual(dict(rect=RIGHT, pair=None), self.stored())
+        self.assertEqual([], [text for text in self.toasts() if '걸쳐' in text or '자동 창 배치' in text])
+
+    def test_21_a_window_the_reader_laid_over_both_monitors_still_comes_back_over_both(self):
+        # Laid over both monitors by hand (1920 px on each, its border just past the outer edges).
+        spanned = dict(left=-2, top=0, width=3844, height=1042)
+        self.assertEqual([spanned, [box(LEFT), box(RIGHT)]], self.page.evaluate(
+            "rect => [ohifPlacement(rect), spanTargets(rect).map(s => [s.left, s.top, s.width, s.height])]", spanned))
+        # The browser keeps the reopened window on one monitor: the reader is asked to drag it, and once it is over both
+        # its place and the two monitors are saved (the page gives the browser its 15 s placement deadline first).
+        self.open_kept_on_one_display(spanned)
+        self.page.wait_for_function("text => __toasts.some(t => String(t.message) === text)", arg=REFUSED, timeout=20000)
+        self.page.evaluate("rect => __at(rect)", spanned)
+        self.said(REACHED)
+        self.assertEqual(dict(rect=spanned, pair=[box(LEFT), box(RIGHT)]), self.stored())
+
 
 if __name__ == "__main__":
     unittest.main()
