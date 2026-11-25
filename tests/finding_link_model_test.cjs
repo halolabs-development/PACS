@@ -645,6 +645,97 @@ test('exam window: the comparison list keeps its mid-edit guard and, for a prior
   assert.equal(store.toggleSource(e, otherPart, P), false, 'the prior original\'s other part is not offered');
 });
 
+/* The Go to Image route table (paths.md, "Go to Image · Link Comparison Items 경우 표"): one row per case, the same rule for the viewer's
+ * Findings panel and the Report Editor. S ordinary study, P comparison, O a split part's original, X/Y a merged exam's originals. */
+test('routeOf: every row of the Go to Image route table', () => {
+  const S = '1.1', P = '9.9', O = '2.2', X = '3.3', Y = '3.4', Q = '7.7';
+  const rows = [
+    // [row, study, own, comparison, active, route]
+    ['R1 ordinary, own, own viewport active', S, [S], '', '', 'direct'],
+    ['R2 ordinary + comparison, own, comparison viewport active (viewer refuses scope, as before)', S, [S], P, '', 'direct'],
+    ['R3 ordinary + comparison, comparison source', P, [S], P, '', 'activate'],
+    ['R4 ordinary, unrelated study', Q, [S], P, '', 'foreign'],
+    ['R5 split part, own original active', O, [O], '', O, 'direct'],
+    ['R6 split part, active viewport unknown', O, [O], '', '', 'direct'],
+    ['R7 split part + prior, comparison viewport active', O, [O], P, P, 'activate'],
+    ['R8 split part + prior, comparison source', P, [O], P, O, 'activate'],
+    ['R9 split part, current and prior parts of one original (no comparison list)', O, [O], '', O, 'direct'],
+    ['R10 merged, X source, X active', X, [X, Y], '', X, 'direct'],
+    ['R11 merged, Y source, X active', Y, [X, Y], '', X, 'activate'],
+    ['R12 merged, Y source, Y active', Y, [X, Y], '', Y, 'direct'],
+    ['R13 merged, X source, Y active', X, [X, Y], '', Y, 'activate'],
+    ['R14 merged + prior, comparison source', P, [X, Y], P, X, 'activate'],
+    ['R15 merged + prior, Y source, comparison active', Y, [X, Y], P, P, 'activate'],
+    ['R16 merged, unrelated study', Q, [X, Y], P, X, 'foreign'],
+  ];
+  for (const [row, study, own, comparison, active, route] of rows) assert.equal(model.routeOf(study, own, comparison, active), route, row);
+});
+
+/* The viewer's Findings panel follows the table in a window opened on an exam: a merged exam's other original is reached by activating
+ * its own viewport, the active one moves directly; and a split part whose prior is the other part of the same original has no
+ * comparison list (its marks sit on this reading's own original, which a comparison list cannot link). */
+function examViewer(viewports, start) {
+  const v = { view: { scope: viewports[start], subject: 'reader-1', ended: false, suspended: false, loading: false, generation: 1, viewportId: start, image: null, heads: [] },
+    activations: [], calls: [] };
+  v.history = () => ({ ...v.view });
+  v.activate = study => {
+    v.activations.push(study);
+    const ids = Object.keys(viewports).filter(id => viewports[id] === study);
+    if (ids.length !== 1) return { ok: false, reason: ids.length ? 'viewport-ambiguous' : 'viewport-missing' };
+    const changed = v.view.viewportId !== ids[0];
+    Object.assign(v.view, { viewportId: ids[0], scope: study, generation: v.view.generation + (changed ? 1 : 0) });
+    return { ok: true, viewportId: ids[0], changed };
+  };
+  v.navigate = async target => {
+    v.calls.push(target.studyUid);
+    if (target.studyUid !== v.view.scope) return { ok: false, reason: 'scope' };
+    v.view.image = { study: target.studyUid, seriesUid: target.seriesUid, sopUid: target.sopUid, frame: target.frame };
+    return { ok: true, highlighted: false, annotation: 'shown' };
+  };
+  return v;
+}
+test('exam window Go to Image: a merged exam\'s other original activates its viewport; the active original moves directly', async () => {
+  const exam = () => ({ current: { reportUid: A, sources: [{ studyUid: A, series: { mode: 'all', uids: [] } }, { studyUid: B, series: { mode: 'all', uids: [] } }] },
+    prior: null, role: () => 'current' });
+  const t = transport();
+  const onB = { itemId: ITEM, revision: 2, studyUid: B, kind: 'length', seriesUid: '4.5.6.1', sopUid: '4.5.6.1.2', frame: 1, frameOfReferenceUid: '1.9', label: 'L',
+    values: [20], calculator: 'kin-native-manual-v1', sourceDigest: 'd', authorActor: 'Reader' };
+  const base = t.head(F1, 1); base.item.sources.push(onB);
+  t.state.items = [base];
+  const v = examViewer({ 'vp-a': A, 'vp-b': B }, 'vp-a');
+  const { store } = makeStore(t, { studies: null, exam, history: v.history, activate: v.activate, navigate: v.navigate });
+  store.syncHistory(history(A, [])); await tick();
+  const e = store.state().entries.get(F1); assert.ok(e, 'the merged reading\'s finding is listed');
+  // B's source while A's viewport is active: B's viewport is activated, then the move; the arrival names no comparison study.
+  const r1 = await store.navigate(e, 1);
+  assert.equal(r1.ok, true, JSON.stringify(r1)); assert.deepEqual([v.activations, v.calls], [[B], [B]]);
+  assert.equal(e.message.includes('비교 검사'), false);
+  // B's viewport active: B's source moves directly.
+  const r2 = await store.navigate(e, 1);
+  assert.equal(r2.ok, true); assert.deepEqual([v.activations, v.calls], [[B], [B, B]]);
+  // A's source while B's viewport is active: A's viewport is activated.
+  const r3 = await store.navigate(e, 0);
+  assert.equal(r3.ok, true, JSON.stringify(r3)); assert.deepEqual([v.activations, v.calls], [[B, A], [B, B, A]]);
+});
+
+test('exam window: a prior that is the other part of the same original has no comparison list; its marks are not offered', async () => {
+  const PRIOR_PART = '1.2.3.98', THEIRS = '1.2.3.8';
+  const exam = () => ({ current: { reportUid: PART, sources: [{ studyUid: A, series: { mode: 'include', uids: [OTHER] } }] },
+    prior: { reportUid: PRIOR_PART, sources: [{ studyUid: A, series: { mode: 'include', uids: [THEIRS] } }] },
+    role: (study, series) => study === A && series === OTHER ? 'current' : study === A && series === THEIRS ? 'prior' : null });
+  const t = transport(); const { store } = makeStore(t, { studies: [A], exam });
+  const mine = { id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false, seriesUid: OTHER };
+  const theirs = { id: 'ffffffff-0000-4000-8000-000000000003', revision: 1, hidden: false, referenceStatus: 'verified', working: false, seriesUid: THEIRS };
+  store.syncHistory(history(A, [mine, theirs])); await tick();
+  assert.equal(store.pairOf(), '', 'no comparison list');
+  assert.equal(store.state().pair.status, 'none');
+  assert.deepEqual(t.log.map(x => x.url), ['/api/me', '/api/studies/' + PART + '/findings?includeHidden=true&limit=100'], 'no comparison list is read');
+  const e = store.newDraft();
+  assert.equal(store.toggleSource(e, ITEM, A), true, 'this part\'s own mark links');
+  assert.equal(store.toggleSource(e, theirs.id, A), false, 'the other part\'s mark is not offered');
+  assert.deepEqual(e.draft.sources, [{ itemId: ITEM, revision: 2 }]);
+});
+
 test('store save sends the exact pairs once, replays the same body on retry and refreshes links', async () => {
   const t = transport(); const { store } = makeStore(t);
   store.syncHistory(history(A, [{ id: ITEM, revision: 2, hidden: false, referenceStatus: 'verified', working: false }])); await tick();

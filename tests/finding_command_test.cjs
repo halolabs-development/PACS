@@ -1287,6 +1287,36 @@ test('exam reading: Go to Image of the part\'s own source goes the ordinary way 
   assert.equal((await nav.run(other.value)).reason, 'foreign');
 });
 
+/* A merged exam read on X with its other original B (paths.md, route table rows 12-16): B's source, while X's viewport is active, is
+ * reached by activating B's viewport (as before the reading named its originals, when B counted as the comparison study), with an
+ * ordinary arrival; while B's viewport is active it moves directly. An ordinary study keeps moving directly whatever is active. */
+test('exam reading: a merged exam\'s other original is reached by activating its viewport; the active original moves directly', async () => {
+  const c = clock(), nav = command.createNavigator(c);
+  const merged = { ...expected, own: [X, B] }, onB = () => P_SOURCE({ studyUid: B }), B_TARGET = { ...P_TARGET, studyUid: B };
+  const j = crossJob({ clock: c, comparison: null }); j.job.expected = merged; j.job.source = onB();
+  const running = nav.run(j.job);
+  await c.advance(1000);
+  assert.deepEqual(await running, { ok: true, highlighted: false, annotation: 'key', latest: true }, 'arrival without the comparison phase');
+  assert.deepEqual(calledWith(j.log, 'activate'), [B]); assert.deepEqual(calledWith(j.log, 'navigate'), [B_TARGET]);
+  assert.equal(command.arrivalText(j.announced[0], '영상 창 1').includes(' · 비교 검사 영상 칸'), false);
+  // A refused activation keeps its phase text, as for the comparison study.
+  const missing = crossJob({ clock: c, comparison: null, activation: { ok: false, reason: 'viewport-missing' } });
+  missing.job.expected = merged; missing.job.source = onB();
+  assert.deepEqual(await nav.run(missing.job), { ok: false, reason: 'viewport-missing', phase: 'before', latest: true });
+  // B's own viewport active: the viewer's own move, no activation.
+  const direct = job({ expected: merged, source: onB(), view: { historyScope: B } });
+  assert.equal((await nav.run(direct.value)).ok, true); assert.equal(invoked(direct.log), 1);
+  // X while B's viewport is active: X's viewport is activated (needs the activation tool).
+  const back = job({ expected: merged, view: { historyScope: B, activate: false } });
+  assert.deepEqual(await nav.run(back.value), { ok: false, reason: 'tool-missing', latest: true }); assert.equal(invoked(back.log), 0);
+  // A study that is neither an original nor the row's comparison study is refused before a target is chosen.
+  const foreign = job({ expected: merged, source: P_SOURCE() });
+  assert.equal((await nav.run(foreign.value)).reason, 'foreign'); assert.deepEqual(foreign.log, []);
+  // An ordinary study: its own source moves directly even while another viewport is active (the viewer answers that).
+  const plainStudy = job({ view: { historyScope: P } });
+  assert.equal((await nav.run(plainStudy.value)).ok, true); assert.equal(invoked(plainStudy.log), 1);
+});
+
 test('comparison pre-call and identity: an activation tool is required; a loading history is tolerated only while the command waits', () => {
   assert.equal(command.precheck(view({ activate: false }), expected), null, 'B1 does not need it');
   assert.equal(command.precheck(view({ activate: false }), expected, true), 'tool-missing');

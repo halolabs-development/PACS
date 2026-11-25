@@ -385,17 +385,24 @@
       if (!target) return finish(refusal('invalid'));
       // Never substitute the selected study for a source of another study (review C7); the only other
       // study is the row's own comparison study, and it goes to that study's viewport alone.
-      // An original of the reading's own exam (expected.own: a split part's original) is this reading's own image: it goes the
-      // ordinary way, in the viewer opened on this reading, and needs no comparison study of the row.
-      const mine = Array.isArray(expected.own) && expected.own.includes(target.studyUid);
-      const cross = target.studyUid !== expected.uid && !mine;
-      if (cross && (!uid(job.comparison) || job.comparison !== target.studyUid)) return finish(refusal('foreign'));
+      // An original of the reading's own exam (expected.own: a split part's original, a merged exam's originals) is this reading's
+      // own image, in the viewer opened on this reading, and needs no comparison study of the row. Where it goes is links.routeOf,
+      // the rule the viewer's own Findings panel follows: `cross` = through the activation of its viewport (crossNavigate).
+      const exam = Array.isArray(expected.own) && expected.own.length > 0;
+      const own = exam ? expected.own : [expected.uid];
+      const mine = own.includes(target.studyUid);
+      const comparison = uid(job.comparison) ? job.comparison : '';
+      if (links.routeOf(target.studyUid, own, comparison, '') === 'foreign') return finish(refusal('foreign'));
       const choice = safe(job.choose);
       if (!choice || choice.kind === 'refused') return finish(refusal(choice && choice.reason ? choice.reason : 'no-viewer'));
-      const before = safe(choice.probe), reason = precheck(before, expected, cross);
+      const before = safe(choice.probe);
+      const active = exam && before && uid(before.historyScope) ? before.historyScope : '';
+      const cross = links.routeOf(target.studyUid, own, comparison, active) === 'activate';
+      const reason = precheck(before, expected, cross);
       if (reason) return finish(refusal(reason));
       let pending, settled = false, phase = 'before';
-      const marked = result => cross ? { ...result, phase } : result;
+      // The phase names a comparison viewport on arrival; an own original's arrival is the ordinary one (a refusal keeps it).
+      const marked = result => cross && !(mine && result.ok) ? { ...result, phase } : result;
       const live = () => !settled && seq === sequence && sameIdentity(before, safe(choice.probe), cross);
       const control = { stopped: () => live() ? null : 'superseded', phase: name => { phase = name; },
         wait: ms => new Promise(resolve => later(resolve, ms)) };

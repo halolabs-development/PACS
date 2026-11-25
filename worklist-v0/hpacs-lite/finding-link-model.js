@@ -448,6 +448,19 @@
   }
   const sameImage = (image, target) => !!image && image.study === target.studyUid && image.seriesUid === target.seriesUid &&
     image.sopUid === target.sopUid && image.frame === target.frame;
+  /* Go to Image for one 2D source: the one rule the viewer's Findings panel and the Report Editor both follow.
+   * `own`: the originals of the reading's exam (an ordinary study: itself; a split part: its one original; a merged exam: every
+   * original); `comparison`: the one comparison study ('' none); `active`: for an exam reading, the study the active viewport shows
+   * ('' unknown, and always '' for an ordinary study).
+   * 'direct' = the viewer's own move in the active viewport; 'activate' = make the one viewport showing that study active, then move
+   * (crossNavigate); 'foreign' = refused. A comparison source is activated. An own source moves directly, except in an exam reading
+   * whose active viewport shows another study (a merged exam's other original, the comparison study): then its own viewport is
+   * activated. An ordinary study moves directly as before (another study's active viewport is refused with 'scope'). */
+  function routeOf(study, own, comparison, active) {
+    const mine = Array.isArray(own) && own.includes(study);
+    if (!mine) return !!study && study === comparison ? 'activate' : 'foreign';
+    return !!active && active !== study ? 'activate' : 'direct';
+  }
   const POLL_MS = 100;
   /* `env` reads ONE viewer document at call time: state() is its kinViewerHistoryState, activate(study)
    * its kinViewerHistoryActivate and navigate(target) its kinViewerHistoryNavigate. `control` belongs to
@@ -664,7 +677,9 @@
       return { report: current.reportUid, own, prior, role: typeof value.role === 'function' ? value.role : null };
     }
     const anchorOf = scope => s.exam ? s.exam.own[0] : studies && studies.length === 2 && studies.includes(scope) ? studies[0] : scope;
-    const pairOf = () => s.exam ? (s.exam.prior.length === 1 && s.scope === s.exam.own[0] ? s.exam.prior[0] : '')
+    // A prior that is the other part of this same original has no comparison list: its marks sit on this reading's own study, whose
+    // list is this reading's (as a window naming one study twice had none before).
+    const pairOf = () => s.exam ? (s.exam.prior.length === 1 && s.scope === s.exam.own[0] && !s.exam.own.includes(s.exam.prior[0]) ? s.exam.prior[0] : '')
       : studies && studies.length === 2 && s.scope === studies[0] ? studies[1] : '';
     // A study whose marks are this reading's own: the anchor, or any original of the window's exam.
     const own = study => !!study && (s.exam ? s.exam.own.includes(study) : study === s.scope);
@@ -1170,10 +1185,10 @@
       const go = deps.navigate;
       const ticket = s.generation;
       const target = { studyUid: source.studyUid ?? s.scope, seriesUid: source.seriesUid, sopUid: source.sopUid, frame: source.frame, itemId: source.itemId };
-      // The comparison study, or another original of this exam than the one the active viewport shows, is reached by activating it.
-      const live = s.exam ? liveScope() : '';
-      const elsewhere = !own(target.studyUid) || (!!live && target.studyUid !== live);
-      if (elsewhere && validTarget(target)) return navigateAcross(e, target, source.revision);
+      // routeOf: the comparison study, or an exam's original the active viewport does not show, is reached by activating it; a study
+      // of neither kind is refused there.
+      const route = routeOf(target.studyUid, s.exam ? s.exam.own : [s.scope], pairOf(), s.exam ? liveScope() : '');
+      if (route !== 'direct' && validTarget(target)) return navigateAcross(e, target, source.revision);
       let result;
       if (typeof go !== 'function') result = refusal('tool-missing');
       else {
@@ -1289,7 +1304,7 @@
   }
 
   const api = { LINK_STATES, LINK_LABELS, NAVIGATION_REASONS, ACTIVATION_REASONS, CROSS_REASONS, LIMITS, linkState, sourceStatus, valueText, valueSay, reasonText, annotationText,
-    phaseText, validReply, validTarget, plainState, viewerResult, activationResult, crossNavigate, comparisonHead,
+    phaseText, validReply, validTarget, plainState, viewerResult, activationResult, routeOf, crossNavigate, comparisonHead,
     commandBody, draftProblem, itemOnly, errorMessage, createStore,
     SCHEMA, SCHEMA_HEADER, CHARACTERISTICS, LESION_LOCATION, SIZE, LOCATION_TERMS, CHARACTERISTIC_TERMS, appendTerm, quickEntry, JOB_VERSIONS, JOB_LINK_STATES, JOB_LINK_LABELS, RESTORE_STATES, RESTORE_REASONS, POINTS,
     OLD_API_TEXT, MODULE_MISMATCH_TEXT, CONTINUE_REFUSED_TEXT, LOCATION_TEXT, LIVE_TEXT,
