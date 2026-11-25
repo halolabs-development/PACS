@@ -26,6 +26,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect
 
+from invariants_live import drop_viewer_rows
 from test_worklist import ROOT, WorklistE2E, psql
 
 
@@ -389,7 +390,7 @@ class ExamMergeE2E(WorklistE2E):
 
     def finding_on(self, reading, item, title, status=200):
         r = self.stack.request('POST', f'/studies/{reading}/findings', 'doctor', dict(requestId=str(uuid.uuid4()), item=dict(
-            schemaVersion=4, title=title, text='', characteristics='', lesionLocation='', size='', primary=0,
+            schemaVersion=1, title=title, text='', primary=0,
             sources=[dict(itemId=item['id'], revision=item['revision'])])))
         self.assertEqual(r.status, status, r.text)
         return r.body
@@ -416,6 +417,8 @@ class ExamMergeE2E(WorklistE2E):
         listed by neither part, while the report citation naming it and its history stay readable. Ordinary studies are
         covered by the findings suites unchanged."""
         patient, (a,) = self.patient(1)
+        # The viewer rows this case writes reference the studies: removed before them (cleanups run last-registered first).
+        self.addCleanup(drop_viewer_rows, a.uid)
         self.add_series(patient, a.uid)
         series = self.series_instances(a.uid)
         self.assertEqual(len(series), 2)
@@ -428,6 +431,7 @@ class ExamMergeE2E(WorklistE2E):
         self.assertEqual(split.status, 200, split.text)
         second = next(row for row in self.listed().values() if row.get('examScope', {}).get('part') == 1 and
                       row['examScope']['sources'][0]['studyUid'] == a.uid)['uid']
+        self.addCleanup(drop_viewer_rows, second)
 
         # The second part: a Length on its own series, saved by the viewer on the original UID, becomes a finding of the part.
         mark = self.length_on(a.uid, series[moved][0])
