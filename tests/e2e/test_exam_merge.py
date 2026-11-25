@@ -322,6 +322,51 @@ class ExamMergeE2E(WorklistE2E):
         reader.get_by_role('button', name=re.compile(r'Related Report · Exam 2')).click()
         expect(reader.locator('#hist-body')).to_contain_text('SYNTHETIC SECOND REPORT', timeout=30000)
 
+    def test_exam_merge_04_original_loss_and_patient_change_refuse_scope(self):
+        patient, (a, b) = self.patient(2)
+        merged = self.stack.request('POST', '/exam-groups', 'tech', {'baseUid': a.uid, 'uids': [a.uid, b.uid]})
+        self.assertEqual(merged.status, 200, merged.text)
+        group = merged.body['group']['id']
+        original = self.stack.first_instance_id(b.uid)
+        path = '/instances/' + original
+        raw = self.stack.orthanc_bytes(path + '/file')
+        ds = dcmread(io.BytesIO(raw))
+        self.assertEqual(str(ds.StudyInstanceUID), b.uid)
+        self.assertEqual(str(ds.PatientID), patient)
+        self.assertIn(b.uid, self.stack.active)
+        # Both mutations operate only on the run-owned original and restore its exact bytes.
+        self.assertEqual(self.stack._orthanc_request('DELETE', path).status, 200)
+        try:
+            absent = self.stack.request('GET', f'/studies/{a.uid}/exam-scope', 'doctor')
+            self.assertIn(absent.status, (404, 409), absent.text)
+            # The list does not pass the merged exam off as an ordinary row, and names nothing of the lost original.
+            row = self.listed()[a.uid]
+            self.assertEqual((row.get('examUnavailable'), row.get('examUnavailableKind')), (True, 'merge'))
+            self.assertNotIn('examScope', row)
+            self.assertNotIn(b.uid, json.dumps(row))
+            ds.PatientID = patient + '-CHANGED'
+            changed = io.BytesIO(); ds.save_as(changed, write_like_original=False)
+            self.assertEqual(self.stack._orthanc_request('POST', '/instances', changed.getvalue()).status, 200)
+            identity = self.stack.request('GET', f'/studies/{a.uid}/exam-scope', 'doctor')
+            self.assertEqual(identity.status, 409, identity.text)
+            self.assertEqual(identity.body['code'], 'EXAM_SCOPE_CHANGED')
+            refused = self.stack.request('POST', f'/studies/{a.uid}/report/commit', 'doctor', {
+                'action': 'save', 'baseVersion': 0, 'findings': 'MUST NOT SAVE', 'conclusion': '', 'recommendation': ''})
+            self.assertIn(refused.status, (404, 409), refused.text)
+            self.assertEqual(psql(f'SELECT count(*) FROM "ReportVersion" WHERE uid={lit(a.uid)}'), ['0'])
+            done = self.stack.request('POST', f'/exam-groups/{group}/dissolve', 'tech', {})
+            self.assertEqual(done.status, 200, done.text)
+        finally:
+            lookup = self.stack._orthanc_request('POST', '/tools/lookup', str(ds.SOPInstanceUID).encode('ascii'))
+            self.assertEqual(lookup.status, 200)
+            for current in lookup.body:
+                if current.get('Type') != 'Instance':
+                    continue
+                detail = dcmread(io.BytesIO(self.stack.orthanc_bytes('/instances/' + current['ID'] + '/file')))
+                self.assertEqual(str(detail.StudyInstanceUID), b.uid)
+                self.assertEqual(self.stack._orthanc_request('DELETE', '/instances/' + current['ID']).status, 200)
+            self.assertEqual(self.stack._orthanc_request('POST', '/instances', raw).status, 200)
+
     def series_instances(self, uid):
         """Every instance of a synthetic original, by series: {seriesUid: [dataset, ...]} in instance order."""
         found = self.stack._orthanc_request('POST', '/tools/lookup', uid.encode())
@@ -428,51 +473,6 @@ class ExamMergeE2E(WorklistE2E):
         before = self.stack.request('GET', f'/studies/{a.uid}/report/citations', 'doctor')
         self.assertEqual(before.status, 200, before.text)
         self.assertEqual([(e['findingId'], e['state'] != 'source-unavailable') for e in before.body['draft']], [(old['id'], True)])
-
-    def test_exam_merge_04_original_loss_and_patient_change_refuse_scope(self):
-        patient, (a, b) = self.patient(2)
-        merged = self.stack.request('POST', '/exam-groups', 'tech', {'baseUid': a.uid, 'uids': [a.uid, b.uid]})
-        self.assertEqual(merged.status, 200, merged.text)
-        group = merged.body['group']['id']
-        original = self.stack.first_instance_id(b.uid)
-        path = '/instances/' + original
-        raw = self.stack.orthanc_bytes(path + '/file')
-        ds = dcmread(io.BytesIO(raw))
-        self.assertEqual(str(ds.StudyInstanceUID), b.uid)
-        self.assertEqual(str(ds.PatientID), patient)
-        self.assertIn(b.uid, self.stack.active)
-        # Both mutations operate only on the run-owned original and restore its exact bytes.
-        self.assertEqual(self.stack._orthanc_request('DELETE', path).status, 200)
-        try:
-            absent = self.stack.request('GET', f'/studies/{a.uid}/exam-scope', 'doctor')
-            self.assertIn(absent.status, (404, 409), absent.text)
-            # The list does not pass the merged exam off as an ordinary row, and names nothing of the lost original.
-            row = self.listed()[a.uid]
-            self.assertEqual((row.get('examUnavailable'), row.get('examUnavailableKind')), (True, 'merge'))
-            self.assertNotIn('examScope', row)
-            self.assertNotIn(b.uid, json.dumps(row))
-            ds.PatientID = patient + '-CHANGED'
-            changed = io.BytesIO(); ds.save_as(changed, write_like_original=False)
-            self.assertEqual(self.stack._orthanc_request('POST', '/instances', changed.getvalue()).status, 200)
-            identity = self.stack.request('GET', f'/studies/{a.uid}/exam-scope', 'doctor')
-            self.assertEqual(identity.status, 409, identity.text)
-            self.assertEqual(identity.body['code'], 'EXAM_SCOPE_CHANGED')
-            refused = self.stack.request('POST', f'/studies/{a.uid}/report/commit', 'doctor', {
-                'action': 'save', 'baseVersion': 0, 'findings': 'MUST NOT SAVE', 'conclusion': '', 'recommendation': ''})
-            self.assertIn(refused.status, (404, 409), refused.text)
-            self.assertEqual(psql(f'SELECT count(*) FROM "ReportVersion" WHERE uid={lit(a.uid)}'), ['0'])
-            done = self.stack.request('POST', f'/exam-groups/{group}/dissolve', 'tech', {})
-            self.assertEqual(done.status, 200, done.text)
-        finally:
-            lookup = self.stack._orthanc_request('POST', '/tools/lookup', str(ds.SOPInstanceUID).encode('ascii'))
-            self.assertEqual(lookup.status, 200)
-            for current in lookup.body:
-                if current.get('Type') != 'Instance':
-                    continue
-                detail = dcmread(io.BytesIO(self.stack.orthanc_bytes('/instances/' + current['ID'] + '/file')))
-                self.assertEqual(str(detail.StudyInstanceUID), b.uid)
-                self.assertEqual(self.stack._orthanc_request('DELETE', '/instances/' + current['ID']).status, 200)
-            self.assertEqual(self.stack._orthanc_request('POST', '/instances', raw).status, 200)
 
 
 def load_tests(loader, tests, pattern):

@@ -1745,7 +1745,8 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual(declared, ['test_exam_merge_01_three_studies_one_exam_viewer_report_unmerge',
             'test_exam_merge_02_late_image_and_approved_refusal',
             'test_exam_merge_03_split_second_viewer_report_late_series_unsplit',
-            'test_exam_merge_04_original_loss_and_patient_change_refuse_scope'])
+            'test_exam_merge_04_original_loss_and_patient_change_refuse_scope',
+            'test_exam_merge_05_split_part_finding_is_that_parts_own'])
 
     def test_three_d_cursor_accuracy_profile_is_exact_and_dispatch_only(self):
         import ast
