@@ -3,6 +3,9 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { fixture, intake, notice, exemption, delay } = require('./incident_harness.cjs');
+const { INCIDENT_LIMITS } = require('../../../api/src/emr-audit/service.ts');
+const { consumerSource } = require('../../../api/src/emr-viewing/consumer-read.ts');
+const { LocalReadResponse, localReadEvents, localReadFollowup } = require('../../../api/src/emr-viewing/local-read.ts');
 const forms = ['possibility', 'confirmed', 'not-a-leak', 'report', 'medical', 'network'];
 const known = value => ({ status: 'known', value });
 // A ledger of `count` reads of five patients in the incident's period.
@@ -73,10 +76,228 @@ test('a damaged copy reads as unidentified, never as nobody affected, and takes 
     { code: 'IncidentSnapshotUnreadable' });
   assert.equal(f.requests.length, 1);
 });
-test('a range too large to record in one commit is refused before anything is saved', async () => {
-  const f = fixture(), input = intake('TOO-LARGE'); ledger(f, 3400, i => `SYN-${String(i % 5).repeat(2000)}`);
+// The same registration sent until its evidence is preserved, as the page sends it: how many requests it took.
+async function registered(f, input) {
+  for (let requests = 1; ; requests++) {
+    const answer = await f.controller.registerIncident({}, input);
+    if (answer.status !== 'Registering') return Object.assign(answer, { requests });
+    assert.deepEqual(Object.keys(answer), ['incidentId', 'status', 'collected']);
+  }
+}
+const incidents = f => f.requests.filter(r => r.body.kind === 'incident');
+const recent = (input, days = 2) => { input.query = { from: new Date(Date.now() - days * 86_400_000).toISOString(), to: new Date(Date.now() + 86_400_000).toISOString() }; return input; };
+// The fixture's ledger as rows of the last hour, and a registration of the last days days over them.
+function current(f, input, days) { const at = new Date(Date.now() - 3600_000).toISOString(); for (const event of f.events) event.occurredAt = at; return recent(input, days); }
+function limits(t, patch) { const before = { ...INCIDENT_LIMITS }; Object.assign(INCIDENT_LIMITS, patch); t.after(() => Object.assign(INCIDENT_LIMITS, before)); }
+// What one response recorded: the records written by a call, which the ledger must be able to hold unfinished at once.
+async function recording(f, call) { const from = f.records.length, answer = await call(); return { answer, records: f.records.slice(from) }; }
+/* The ledger rows a reader leaves at an institution whose list holds `list` studies, as measured on a running stack: the
+ * viewer reads the whole list three times for each study opened, and each listed study leaves a prepared and an ended
+ * row. Built by the product's own list-read recorder; the rows are made as they are read, newest first. */
+function openings(f, list, count) {
+  const reader = { id: 'synthetic-reader', issuer: 'synthetic', subject: 'reader' };
+  const facts = { issuer: reader.issuer, subject: reader.subject, actor: reader, roles: ['radiologist'], rightsVersion: 3, institution: 'SYN-SITE',
+    binding: { method: 'session', sessionRef: 'authref:00000000-0000-4000-8000-000000000000' }, requestId: 'SYN-LIST-REQUEST',
+    ingress: known({ address: '192.0.2.12', source: 'trusted-proxy' }), surface: 'GET studies' };
+  const body = Array.from({ length: list }, (_, i) => ({ uid: `1.2.826.0.1.3680043.8.498.${10 ** 15 + i}.${10 ** 15 + 7 * i}` }));
+  const prepared = localReadEvents(facts, new LocalReadResponse(body, body.map((row, i) => consumerSource('study-metadata', row.uid, 'SYN-SITE', row.uid, null, [i],
+    { sourcePatientId: `SYN-PID-${i}`, sourceInstitution: 'SYN-HOSPITAL' }))));
+  const ended = prepared.map(event => localReadFollowup(event, 'ended')), total = count * 3 * list * 2, start = Date.now() - 6 * 3600_000;
+  const id = n => `00000000-0000-4000-8000-${n.toString(16).padStart(12, '0')}`;
+  f.events = new Proxy({ length: total }, { get: (_, key) => {
+    if (key === 'length') return total;
+    const n = total - 1 - Number(key), row = n % (2 * list), event = row < list ? prepared[row] : ended[row - list];
+    return { ...event, eventId: id(n), occurredAt: new Date(start + n).toISOString(), relatedEventId: row < list ? null : id(n - list) };
+  } });
+  return total;
+}
+for (const [name, list, count] of [['the period of an alert (50 studies opened in ten minutes)', 209, 50], ['a reader\'s day of 200 studies', 209, 200]])
+  test(`${name} at a 209-study list registers as one incident, reopens, and is decided, notified and closed whole`, { timeout: 600_000 }, async () => {
+    const f = fixture(), input = recent(intake('ORDINARY')), rows = openings(f, list, count);
+    const registering = registered(f, input); let finished = false; registering.then(() => { finished = true; }, () => { finished = true; });
+    await f.controller.listIncidents({});
+    assert.equal(finished, false, 'another request is answered while the evidence is being preserved');
+    const first = await registering, saved = incidents(f);
+    assert.deepEqual([first.status, saved.length, saved[0].body.snapshot.copy.rows], ['Open', 1, rows]);
+    assert.deepEqual(first.scope.subjects, { identified: 0, identifiedLocally: list, events: rows, all: null });
+    assert.equal('identified' in first.scope || 'identifiedLocally' in first.scope, false, 'no list stands in for the paged subjects');
+    assert.equal(first.scope.subjectsIdentifiable, false);
+    // Every request answered and recorded the incident alone: no response held more than one of the ledger's records.
+    const answers = f.records.filter(r => r.surface === 'POST emr-audit/incidents');
+    assert.ok(answers.length >= first.requests && answers.every(r => r.targets.length === 1 && r.targets[0].recordId.value === 'ORDINARY'));
+    assert.deepEqual((await f.controller.listIncidents({})).incidents.map(i => [i.incidentId, i.status]), [['ORDINARY', 'Open']]);
+    f.events = [];   // the viewing rows reach their retention end
+    const reads = f.copyReads, opened = await recording(f, () => f.controller.readIncident({}, 'ORDINARY'));
+    assert.deepEqual(opened.answer.scope, first.scope);
+    assert.deepEqual([f.copyReads - reads, opened.records.length], [0, 1], 'reopening reads no part and records the incident');
+    await f.controller.registerIncident({}, input);   // the same request again after a lost answer
+    assert.equal(incidents(f).length, 1);
+    // Its subjects, a page at a time: each page records the subjects it shows.
+    const subjects = [];
+    for (let from = '0.0'; from !== null;) {
+      const page = await recording(f, () => f.controller.readIncident({}, 'ORDINARY', from));
+      assert.equal(page.records.flatMap(r => r.targets).length, 1 + page.answer.subjects.identifiedLocally.length);
+      assert.ok(page.records.length <= INCIDENT_LIMITS.wholeRecords);
+      subjects.push(...page.answer.subjects.identifiedLocally); from = page.answer.subjects.next;
+    }
+    assert.deepEqual([subjects.length, new Set(subjects.map(s => s.source.sourcePatientId.value)).size], [list, list]);
+    assert.ok(subjects.every(s => s.events === 6 * count && s.studyIds.length === 1));
+    // Decision, notice and closure are taken on the whole range.
+    let r = await f.controller.incidentNotice({}, 'ORDINARY', notice(first.plan.obligations[0]));
+    assert.equal(r.plan.obligations[0].status, 'met');
+    r = await f.controller.incidentFinding({}, 'ORDINARY', { operationId: 'no-leak', facts: { ...input.facts, status: 'not-a-leak', possibleGround: null,
+      determinationAt: '2026-11-01T02:30:00.000Z', evidenceId: 'SYN-NO-LEAK' } });
+    assert.deepEqual(r.scope, first.scope);
+    await assert.rejects(f.controller.closeIncident({}, 'ORDINARY', { evidenceId: 'close' }), { code: 'IncidentDutiesOpen' });
+    const followUp = notice(r.plan.obligations.find(o => o.kind === 'not-a-leak'), 'no-leak-notice'); followUp.notice.sentAt = '2026-11-01T02:45:00.000Z';
+    await f.controller.incidentNotice({}, 'ORDINARY', followUp);
+    r = await f.controller.closeIncident({}, 'ORDINARY', { evidenceId: 'close' });
+    assert.deepEqual([r.status, r.scope.subjects.events, incidents(f).length], ['Closed', rows, 1 + r.history.length]);
+  });
+test('a range whose record does not fit one response is one incident, kept in parts and read a page at a time', async () => {
+  const f = fixture(), input = intake('WIDE'); ledger(f, 3400, i => `SYN-${String(i % 5).repeat(2000)}`); current(f, input);
+  const first = await recording(f, () => registered(f, input)), r = first.answer, copy = incidents(f)[0].body.snapshot.copy;
+  assert.deepEqual([r.status, incidents(f).length, copy.format, copy.rows], ['Open', 1, 'gzip-json-ledger-rows-v2', 3400]);
+  // Five patients fit one response: they are in the answer, and in its record with the incident.
+  assert.deepEqual(r.scope.subjects.all.identified.map(p => [p.patient.patientId.length, p.events]), Array(5).fill([2004, 680]));
+  assert.equal(first.records.at(-1).action, 'write');
+  assert.deepEqual(first.records.at(-1).targets.map(t => t.patientLinkSnapshot.value?.patientId ?? t.recordId.value).sort(),
+    ['WIDE', ...r.scope.subjects.all.identified.map(p => p.patient.patientId)].sort());
+  for (const form of forms) {
+    const draft = await recording(f, () => f.controller.incidentDraft({}, 'WIDE', form));
+    assert.deepEqual(draft.answer.scope, r.scope);
+    assert.deepEqual([draft.records.length, draft.records[0].action, draft.records[0].targets.length], [1, 'download', 6]);
+  }
+  // The events themselves are read from the preserved rows, as many as one response can record.
+  f.events = [];
+  const events = new Set(), pages = [];
+  for (let from = '0.0'; from !== null;) {
+    const page = await recording(f, () => f.controller.readIncident({}, 'WIDE', undefined, from));
+    assert.ok(page.records.length <= INCIDENT_LIMITS.wholeRecords);
+    const shown = page.answer.events.identified.flatMap(p => p.eventIds);
+    assert.equal(page.records.flatMap(r => r.targets).length, 1 + shown.length, 'each shown event of each patient is recorded');
+    for (const id of shown) events.add(id);
+    pages.push(shown.length); from = page.answer.events.next;
+  }
+  assert.deepEqual([events.size, pages.every(n => n > 0 && n <= INCIDENT_LIMITS.pageEvents)], [3400, true]);
+  for (const place of ['9.0', '0.999999', 'x', '0']) await assert.rejects(f.controller.readIncident({}, 'WIDE', undefined, place), { code: 'AuditRequestInvalid' });
+  await assert.rejects(f.controller.readIncident({}, 'WIDE', '0.0', '0.0'), { code: 'AuditRequestInvalid' });
+});
+test('a paged registration is continued by its own request, belongs to its auditor and input, and is no incident until complete', async t => {
+  limits(t, { wholeRows: 200, partRows: 500, requestMs: 0 });
+  const f = fixture(), input = intake('STEPS'); ledger(f, 2600); current(f, input);
+  const one = await recording(f, () => f.controller.registerIncident({}, input));
+  assert.deepEqual(one.answer, { incidentId: 'STEPS', status: 'Registering', collected: { rows: 500 } });
+  assert.deepEqual(one.records.map(r => r.targets), [[{ kind: 'access-audit', patientLinkSnapshot: { status: 'not-applicable', reason: 'non-record-target' },
+    studyId: { status: 'not-applicable', reason: 'non-record-target' }, recordId: known('STEPS'), versionId: { status: 'not-applicable', reason: 'non-record-target' } }]]);
+  // Nothing is registered yet: it is not listed, opened, decided on, closed, or the replacement of another incident.
+  assert.deepEqual((await f.controller.listIncidents({})).incidents, []);
+  await f.controller.registerIncident({}, recent(intake('OTHER'), 3)).then(a => assert.equal(a.status, 'Registering'));
+  for (const call of [() => f.controller.readIncident({}, 'STEPS'), () => f.controller.incidentFinding({}, 'STEPS', { operationId: 'x', facts: input.facts }),
+      () => f.controller.closeIncident({}, 'STEPS', { evidenceId: 'x' }), () => f.controller.incidentDraft({}, 'STEPS', 'possibility'),
+      () => f.controller.readIncident({}, 'STEPS', '0.0')]) await assert.rejects(call(), { code: 'IncidentNotFound' });
+  // Another input, or another auditor, is not this registration.
+  const before = JSON.stringify([f.requests, [...f.copies.keys()]]);
+  await assert.rejects(f.controller.registerIncident({}, { ...input, incidentType: 'other' }), { code: 'IncidentConflict' });
+  await assert.rejects(f.controller.registerIncident({}, { ...input, facts: { ...input.facts, evidenceId: 'SYN-OTHER' } }), { code: 'IncidentConflict' });
+  const other = fixture(undefined, undefined, { id: 'second-auditor', issuer: 'synthetic', subject: 'second' });
+  other.requests.push(...f.requests); other.events = f.events;
+  await assert.rejects(other.controller.registerIncident({}, input), { code: 'IncidentConflict' });
+  assert.equal(JSON.stringify([f.requests, [...f.copies.keys()]]), before);
+  // Rows read after the ceiling was taken, and the event that was unfinished then, are not this incident's evidence.
+  f.events.unshift({ ...structuredClone(f.events[0]), eventId: 'SYN-LATER' });
+  const r = await registered(f, input), state = incidents(f).find(i => i.body.incidentId === 'STEPS').body;
+  assert.deepEqual([r.status, r.requests, state.snapshot.copy.parts, state.snapshot.copy.rows, r.scope.subjects.events], ['Open', 5, 6, 2600, 2600]);
+  assert.deepEqual(r.scope.subjects.all.identified.map(p => p.events), Array(5).fill(520));
+  assert.deepEqual((await f.controller.listIncidents({})).incidents.map(i => i.incidentId), ['STEPS']);
+  const again = JSON.stringify(f.requests);
+  assert.deepEqual((await f.controller.registerIncident({}, input)).scope, r.scope);
+  assert.equal(JSON.stringify(f.requests), again);
+  await assert.rejects(f.controller.registerIncident({}, { ...input, incidentType: 'other' }), { code: 'IncidentConflict' });
+});
+test('the evidence of a paged registration is the ledger at the moment its ceiling was taken', async t => {
+  limits(t, { wholeRows: 200, partRows: 500, requestMs: 0 });
+  const f = fixture(), input = intake('MOMENT'); ledger(f, 1300, () => 'SYN-A'); current(f, input);
+  // Unfinished when the ceiling was taken: whether it commits afterwards or not, it was not in the ledger then.
+  f.pending = ['SYN-READ-700'];
+  const r = await registered(f, input);
+  assert.deepEqual([r.scope.subjects.events, r.scope.subjects.all.identified[0].events], [1299, 1299]);
+  const shown = new Set();
+  for (let from = '0.0'; from !== null;) {
+    const page = await f.controller.readIncident({}, 'MOMENT', undefined, from);
+    for (const id of page.events.identified.flatMap(p => p.eventIds)) shown.add(id);
+    from = page.events.next;
+  }
+  assert.deepEqual([shown.size, shown.has('SYN-READ-700'), shown.has('SYN-READ-699')], [1299, false, true]);
+});
+test('a range past the protective bound is refused in the same words, and the same ID then takes a narrower range', async t => {
+  limits(t, { wholeRows: 200, partRows: 500, requestMs: 0, maxRows: 1200 });
+  const f = fixture(), input = intake('BOUND'); ledger(f, 2600); current(f, input);
+  await assert.rejects(registered(f, input), { code: 'IncidentRangeTooLarge' });
+  const refused = JSON.stringify([f.requests, [...f.copies.keys()]]);
   await assert.rejects(f.controller.registerIncident({}, input), { code: 'IncidentRangeTooLarge' });
-  assert.deepEqual([f.requests.length, f.copies.size, f.records.length], [0, 0, 0]);
+  assert.equal(JSON.stringify([f.requests, [...f.copies.keys()]]), refused, 'the same request is answered from the refusal');
+  assert.deepEqual([incidents(f).length, (await f.controller.listIncidents({})).incidents.length], [0, 0]);
+  f.events.splice(0, 1500);
+  const r = await registered(f, recent(intake('BOUND'), 1));
+  assert.deepEqual([r.status, r.scope.subjects.events, incidents(f).length], ['Open', 1100, 1]);
+});
+test('more subjects than one response shows are read a page at a time, a long study list continuing on the next', async t => {
+  limits(t, { wholeRows: 200, pageBytes: 40_000 });
+  const f = fixture(), input = intake('MANY'); input.determinations = [];
+  ledger(f, 900, i => `SYN-P${String(i % 450).padStart(3, '0')}`);
+  // One local subject seen in 300 studies beside them.
+  const local = structuredClone(f.events[0]); local.surface = 'POST emr-audit/investigations';
+  f.events.push(...Array.from({ length: 300 }, (_, i) => ({ ...local, eventId: `SYN-LOCAL-${i}`, targets: [{ kind: 'access-audit',
+    studyId: known(`1.2.826.0.1.3680043.8.498.${'9'.repeat(20)}.${i}`), recordId: known(`SYN-RECORD-${i}`), versionId: known(`SYN-VERSION-${i}`),
+    sourcePatientId: known('LOCAL-PATIENT'), sourceInstitution: known('SYN-SITE') }] })));
+  current(f, input);
+  const first = await recording(f, () => registered(f, input));
+  assert.deepEqual(first.answer.scope.subjects, { identified: 450, identifiedLocally: 1, events: 1200, all: null });
+  assert.deepEqual(first.records.at(-1).targets.length, 1, 'a summary discloses no subject');
+  const patients = [], studies = []; let continued = 0;
+  for (let from = '0.0'; from !== null;) {
+    const page = await recording(f, () => f.controller.readIncident({}, 'MANY', from)), s = page.answer.subjects;
+    assert.ok(s.identified.length <= INCIDENT_LIMITS.pageSubjects && page.records.length <= INCIDENT_LIMITS.wholeRecords);
+    const targets = page.records.flatMap(r => r.targets);
+    assert.equal(targets.length, 1 + s.identified.length + s.identifiedLocally.reduce((n, p) => n + p.studyIds.length, 0));
+    assert.deepEqual(targets.filter(t => t.patientLinkSnapshot?.status === 'known').map(t => [t.patientLinkSnapshot.value.patientId, t.recordId.value, t.versionId.value]),
+      s.identified.map(p => [p.patient.patientId, 'MANY', 'MANY']));
+    assert.ok(s.identified.every(p => !('link' in p) && p.events === 2));
+    patients.push(...s.identified.map(p => p.patient.patientId)); studies.push(...s.identifiedLocally.flatMap(p => p.studyIds));
+    continued += s.identifiedLocally.length; from = s.next;
+  }
+  assert.deepEqual([patients.length, new Set(patients).size, studies.length, new Set(studies).size], [450, 450, 300, 300]);
+  assert.ok(continued > 1, 'the local subject\'s studies continue on a next page');
+  for (const place of ['451.0', '3.1', '450.300', '-1.0']) await assert.rejects(f.controller.readIncident({}, 'MANY', place), { code: 'AuditRequestInvalid' });
+  // A range answered whole has no pages: its subjects are in its answer.
+  const small = fixture(); await small.controller.registerIncident({}, intake());
+  await assert.rejects(small.controller.readIncident({}, 'SYN-INCIDENT', '0.0'), { code: 'AuditRequestInvalid' });
+});
+test('a damaged part of a paged incident reads as unidentified, never as nobody affected, and takes no new decision', async t => {
+  limits(t, { wholeRows: 200, partRows: 500 });
+  const f = fixture(), input = intake('DAMAGED-PART'); ledger(f, 1300); current(f, input);
+  const r = await registered(f, input), copy = incidents(f)[0].body.snapshot.copy, part = f.copies.get(`${copy.key}:1`);
+  assert.equal(r.scope.subjects.identified, 5);
+  part.body[part.body.length - 1] ^= 1;
+  const read = await f.controller.readIncident({}, 'DAMAGED-PART');
+  assert.deepEqual([read.scope.subjectsIdentifiable, read.scope.subjects.identified, read.scope.subjects.all], [false, 0, null]);
+  assert.ok(read.scope.reasons.some(reason => reason.kind === 'ledger-unreadable'));
+  const before = f.requests.length;
+  await assert.rejects(f.controller.incidentFinding({}, 'DAMAGED-PART', { operationId: 'more', facts: { ...input.facts, evidenceId: 'SYN-FINDING-2' } }),
+    { code: 'IncidentSnapshotUnreadable' });
+  for (const page of [['0.0'], [undefined, '0.0']]) await assert.rejects(f.controller.readIncident({}, 'DAMAGED-PART', ...page), { code: 'IncidentSnapshotUnreadable' });
+  assert.equal(f.requests.length, before);
+  // A missing part is the same: a count that still matches does not vouch for the rows.
+  part.body[part.body.length - 1] ^= 1; f.copies.delete(`${copy.key}:2`);
+  assert.equal((await f.controller.readIncident({}, 'DAMAGED-PART')).scope.subjectsIdentifiable, false);
+});
+test('a paged range that began before the retention end of its rows cannot say its copy is complete', async t => {
+  limits(t, { wholeRows: 200, partRows: 500 });
+  const f = fixture(), input = intake('OLD-RANGE'); ledger(f, 900); current(f, input, 729);
+  const r = await registered(f, input);
+  assert.deepEqual([r.status, r.scope.subjectsIdentifiable, r.scope.subjects.identified, incidents(f)[0].body.snapshot.copy.rows], ['Open', false, 0, 900]);
+  assert.deepEqual(r.scope.reasons.find(reason => reason.kind === 'ledger-unreadable'), { kind: 'ledger-unreadable', code: 'LedgerRetentionElapsed' });
 });
 test('a later auditor never becomes the author of the registration scope finding', async () => {
   const first = fixture(), input = intake();

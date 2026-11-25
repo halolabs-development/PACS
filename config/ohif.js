@@ -6300,6 +6300,12 @@ window.KinLanguageTerms = {
     ["계약상 확인 또는 이행할 의무가 남아 종결하지 않았습니다. Open Incident로 확인하세요.", "Not closed: contractual duties to confirm or fulfill remain. Check them with Open Incident.", "m"],
     ["사건 상태를 확인하지 못했습니다 ({e0}). 입력은 유지했습니다. Open Incident로 다시 확인하세요.", "Could not confirm the incident status ({e0}). Your input was kept. Check again with Open Incident.", "m"],
     ["이 기간의 접근 기록이 너무 많아 한 사건으로 등록할 수 없습니다. 기간이나 조건을 좁혀 다시 등록하세요.", "This period has too many access records to register as one incident. Narrow the period or conditions and register again.", "m"],
+    // A large period's incident (audit.js incidentRequest, incidentPage): registered over several requests, read a page at a time.
+    ["접근 기록을 모으고 있습니다. 지금까지 {n0}건입니다. 끝날 때까지 이 화면을 열어 두세요.", "Collecting the access records: {n0} so far. Keep this page open until it finishes.", "m"],
+    ["접근 기록을 다 모으지 못해 사건이 아직 등록되지 않았습니다 ({e0}). 입력은 유지했습니다. Register Incident를 다시 누르면 이어서 모읍니다.", "The access records were not all collected, so the incident is not registered yet ({e0}). Your input was kept. Press Register Incident again to continue collecting.", "m"],
+    ["대상이 많아 여기에는 수만 적습니다. 대상과 접근 기록은 사건 화면의 Load Subjects · Load Events로 쪽마다 엽니다. 연 쪽에 보인 대상은 접근 기록에 남습니다.", "There are too many subjects to list here, so only their numbers are given. Open the subjects and the access records a page at a time with Load Subjects and Load Events on the incident screen. The subjects shown on each opened page are recorded in the access record.", "m"],
+    ["한 쪽을 열었습니다. 같은 단추로 다음 쪽을 엽니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다.", "Opened one page. The same button opens the next page. The subjects shown on the opened page were recorded in the access record.", "m"],
+    ["마지막 쪽까지 열었습니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다.", "Opened through the last page. The subjects shown on the opened pages were recorded in the access record.", "m"],
     ["화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다.", "Inspection finished on screen. No further records were saved. The hash and incident count above are the report values saved at the start. Any unconfirmed or unresolved items remain open.", "m"],
     ["조건이 바뀌었습니다. Search로 조회하세요.", "Filters changed. Use Search to run the query.", "m"],
     ["세션을 확인하고 다시 로그인하세요.", "Check your session and sign in again.", "m"],

@@ -272,6 +272,7 @@ if(process.argv.includes('--serve')){
     await rightsAndInspection(port,db,witness,ok,call,identities.auditor,patient,signed);
     await incidentsHttp(witness,ok,call,query,recordId,patient,identities.officer);
     await largeIncidentHttp(port,witness,ok,identities.doctor,patient);
+    await pagedIncidentHttp(port,witness,ok,call,identities.doctor,patient);
     const c2input=copy();c2input.request.scope=[{recordId:signed.recordId,versions:'all'}];
     const stale=await ok('auditor','POST','issuances',c2input);
     const added=await c2.approve('addendum',signed.versionId);
@@ -511,6 +512,82 @@ async function largeIncidentHttp(port,witness,ok,reader,patient) {
   assert.equal(history[0].n,2);
   assert.equal((await witness.$queryRaw`SELECT count(*)::int AS n FROM emr_audit.fixed_copy WHERE issuance_id=${'incident-snapshot:'+id}`)[0].n,1);
   console.log('F incident HTTP/PG: large range kept once as a fixed copy, read back the same, replay and finding add no copy PASS');
+}
+
+// A range whose record does not fit one response (1,100 reads of 220 patients with long identifiers, about 10 MB of rows):
+// one incident preserved in two parts on PostgreSQL, answered as a summary, its subjects and events a page at a time, its
+// parts vouched for by the database's own hash. The dump and restore below keep every part.
+async function pagedIncidentHttp(port,witness,ok,call,reader,patient) {
+  const from=new Date(Date.now()-1000).toISOString(), work=port.begin(), long=i=>`synthetic-${String(i%220).padStart(3,'0')}-${'9'.repeat(4000)}`;
+  const read=i=>({formatVersion:1,surface:'GET studies/:uid/report/versions',eventId:randomUUID(),
+    userId:known(reader),rolesAtTime:known(['radiologist']),actingInstitution:known('synthetic-hospital'),managingInstitution:known('synthetic-hospital'),
+    occurredAt:new Date().toISOString(),trustedProxyIp:known({address:'127.0.0.1',source:'trusted-proxy'}),cause:'user-view',
+    context:{basis:'worklist',studyId:null,relatedStudyId:null,reason:null},executor:'member',
+    targets:[{kind:'report-version',patientLinkSnapshot:known({...patient,patientId:long(i),linkId:JSON.stringify([patient.assigningAuthority,long(i)])}),
+      studyId:known('2.25.902'),recordId:known('synthetic-paged-'+i),versionId:known('synthetic-paged-version-'+i)}],
+    action:'provide-prepared',result:'prepared',requestId:randomUUID(),auditLinkId:'audit:'+randomUUID(),relatedEventId:null});
+  const reads=Array.from({length:1100},(_,i)=>read(i));
+  try{for(let i=0;i<1100;i+=10)await Promise.all(reads.slice(i,i+10).map(event=>work.append(event)));}finally{work.end();}
+  const id=randomUUID(), at=new Date(Date.now()-5000).toISOString();
+  const input={incidentId:id,incidentType:'other',query:{from,to:new Date(Date.now()+60000).toISOString()},
+    determinations:[{kind:'access-outside-ledger',note:'Synthetic access outside ledger'}],
+    facts:{incidentId:id,awarenessAt:at,determinationAt:at,status:'possible',possibleGround:'illegal-access-unidentifiable',
+      detailsComplete:true,newlyConfirmedAt:null,reportTriggers:[],medicalIncident:null,evidenceId:'synthetic-paged-finding'}};
+  let registered;
+  for(let requests=0;;requests++){
+    registered=await ok('auditor','POST','incidents',input);
+    if(registered.status!=='Registering')break;
+    assert.deepEqual(Object.keys(registered),['incidentId','status','collected']);
+    // Not an incident until its evidence is preserved.
+    assert.equal((await call('auditor','GET',`incidents/${id}`)).body.code,'IncidentNotFound');
+    assert.ok(requests<20);
+  }
+  const rows=registered.scope.subjects.events;
+  assert.equal(registered.status,'Open');assert.ok(rows>=1100);
+  // The period also holds what the steps above left in its last second: the count is at least this step's own.
+  assert.ok(registered.scope.subjects.identified>=220);
+  assert.deepEqual([registered.scope.subjects.all,'identified' in registered.scope],[null,false]);
+  const [saved]=await witness.$queryRaw`SELECT body FROM emr_audit.request_event WHERE request_id=${id} ORDER BY sequence DESC LIMIT 1`;
+  const copy=saved.body.snapshot.copy, stored=()=>witness.$queryRaw`SELECT issuance_id AS key,sha256 FROM emr_audit.fixed_copy WHERE issuance_id LIKE ${copy.key+':%'} ORDER BY issuance_id`;
+  assert.deepEqual([copy.format,copy.parts,copy.rows],['gzip-json-ledger-rows-v2',2,rows]);
+  const copies=await stored();
+  assert.deepEqual(copies.map(c=>c.key.slice(copy.key.length)),[':0',':0:subjects',':1',':1:subjects',':subjects']);
+  assert.equal((await ok('auditor','GET','incidents')).incidents.filter(i=>i.incidentId===id).length,1);
+  assert.deepEqual((await ok('auditor','GET',`incidents/${id}`)).scope,registered.scope);
+  assert.deepEqual((await ok('auditor','POST','incidents',input)).scope,registered.scope);
+  const patients=new Set(), events=new Set();
+  for(let place='0.0';place!==null;){
+    const page=(await ok('auditor','GET',`incidents/${id}?subjects=${place}`)).subjects;
+    for(const p of page.identified){assert.ok(p.patient.patientId.length!==4014||p.events===5);patients.add(p.patient.patientId);}
+    place=page.next;
+  }
+  for(let place='0.0';place!==null;){
+    const page=(await ok('auditor','GET',`incidents/${id}?events=${place}`)).events;
+    for(const eventId of page.identified.flatMap(p=>p.eventIds))events.add(eventId);
+    place=page.next;
+  }
+  assert.deepEqual([patients.size,[...patients].filter(p=>p.length===4014).length],[registered.scope.subjects.identified,220]);
+  assert.ok(events.size<=rows&&reads.every(event=>events.has(event.eventId)));
+  // The pages recorded what they showed: the incident with each shown patient, by the patient's own snapshot.
+  const [shown]=await witness.$queryRaw`SELECT payload FROM emr_access.access_entry WHERE stream='viewing' AND payload::jsonb->>'surface'='GET emr-audit/incidents/:id'
+    AND payload::jsonb @> ${JSON.stringify({targets:[{recordId:known(id),versionId:known(id)}]})}::jsonb ORDER BY sequence LIMIT 1`;
+  const targets=JSON.parse(shown.payload).targets;
+  assert.ok(targets.some(t=>t.patientLinkSnapshot?.value?.patientId===long(0)&&t.patientLinkSnapshot.value.linkId===JSON.stringify([patient.assigningAuthority,long(0)])));
+  const found=await ok('auditor','POST',`incidents/${id}/findings`,{operationId:'paged-more',facts:{...input.facts,evidenceId:'synthetic-paged-finding-2'}});
+  assert.deepEqual(found.scope,registered.scope);
+  assert.deepEqual((await ok('auditor','GET',`incidents/${id}/drafts/possibility`)).scope,registered.scope);
+  assert.deepEqual(await stored(),copies);
+  // A part changed after registration: the database's hash no longer vouches for it, and no new finding is taken.
+  const [part]=await witness.$queryRaw`SELECT body FROM emr_audit.fixed_copy WHERE issuance_id=${copy.key+':1'}`;
+  const damaged=Buffer.from(part.body);damaged[damaged.length-1]^=1;
+  await witness.$executeRaw`UPDATE emr_audit.fixed_copy SET body=${damaged} WHERE issuance_id=${copy.key+':1'}`;
+  const unreadable=(await ok('auditor','GET',`incidents/${id}`)).scope;
+  assert.deepEqual([unreadable.subjectsIdentifiable,unreadable.subjects.identified,unreadable.reasons.some(r=>r.kind==='ledger-unreadable')],[false,0,true]);
+  assert.equal((await call('auditor','POST',`incidents/${id}/findings`,{operationId:'paged-damaged',facts:{...input.facts,evidenceId:'synthetic-paged-finding-3'}})).body.code,'IncidentSnapshotUnreadable');
+  assert.equal((await call('auditor','GET',`incidents/${id}?subjects=0.0`)).body.code,'IncidentSnapshotUnreadable');
+  await witness.$executeRaw`UPDATE emr_audit.fixed_copy SET body=${Buffer.from(part.body)} WHERE issuance_id=${copy.key+':1'}`;
+  assert.deepEqual((await ok('auditor','GET',`incidents/${id}`)).scope,registered.scope);
+  console.log('F incident HTTP/PG: paged range preserved in parts as one incident, summary, subject and event pages recorded, replay and finding add no copy, damaged part unreadable PASS');
 }
 
 async function rightsAndInspection(port,db,witness,ok,call,auditor,patient,signed) {
