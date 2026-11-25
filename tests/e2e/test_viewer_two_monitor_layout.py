@@ -399,6 +399,68 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertEqual(0, viewer.evaluate('__reached'))
         self.assertNotIn('적용 Monitor 1·Monitor 2', status.inner_text())
 
+    def test_two_14_a_series_dropped_into_a_cell_then_patient_tabs_there_and_back_keep_the_viewer(self):
+        # Three patients in one window over both displays, one cell per monitor; on the second patient's tab a series is
+        # dragged from the strip into the right monitor's cell, as a reader fills it. Then tab to the first patient, to the
+        # second and back: each time that patient's tab is chosen and its images are drawn (the viewer is not left blank),
+        # and the window stays Open in Viewer Windows with Span Displays available.
+        p, viewer, a, b = self.setup_viewer('TWO14')
+        c = ThumbnailSeriesE2E.multiple(self, 'TWO14C-' + uuid.uuid4().hex[:10], 'two monitor C', '20260801')
+        errors = []
+        viewer.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
+        viewer.on('pageerror', lambda error: errors.append(str(error)))
+        two = '() => { const s = services.viewportGridService.getState(); return s.layout.numCols === 2 && s.viewports.size === 2; }'
+        self.stretch(viewer)
+        self.layout(viewer, 'Layout-0-0')
+        self.until(viewer, two)
+        self.until(viewer, ON_SEAM)
+        self.shows(viewer, a.uid)
+        for fixture in (b, c):
+            self.choose(p, fixture)
+            p.locator('#m-filmbox').click()
+            viewer.wait_for_url('**StudyInstanceUIDs=' + fixture.uid + '**', timeout=45000)
+            self.shows(viewer, fixture.uid)
+        tabs = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab]')
+        selected = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab][aria-selected=true]')
+        expect(tabs).to_have_count(3)
+
+        def to(fixture):
+            tabs.filter(has_text=fixture.patient_id).click()
+            viewer.wait_for_url('**StudyInstanceUIDs=' + fixture.uid + '**', timeout=45000)
+            expect(tabs).to_have_count(3, timeout=30000)
+            expect(selected).to_contain_text(fixture.patient_id)
+            self.shows(viewer, fixture.uid)
+            self.until(viewer, '() => !KinViewerPatientTabs.settling()')
+            self.until(viewer, two)
+
+        to(b)
+        right = next(cell for cell in viewer.evaluate(GRID)['cells'] if cell[1] >= 0.5)
+        card = viewer.get_by_role('region', name='Series', exact=True).locator('button.kin-series-card').first
+        preview = card.locator('.kin-series-preview')
+        expect(preview.locator('img')).to_be_visible(timeout=30000)
+        start, (x, y) = preview.bounding_box(), self.cell_centre(viewer, right)
+        viewer.mouse.move(start['x'] + start['width'] / 2, start['y'] + start['height'] / 2)
+        viewer.mouse.down()
+        viewer.mouse.move(x, y, steps=15)
+        viewer.mouse.up()
+        self.shows(viewer, b.uid, right[0])
+        viewer.wait_for_timeout(1500)
+        for fixture in (a, b, a):
+            to(fixture)
+        self.assertEqual([], [text for text in errors if 'HTML5 backends' in text])
+        self.until(viewer, ON_SEAM)
+        # Viewer Windows still has that window Open, and Span Displays can be pressed for it.
+        self.manager(p)
+        p.locator('#viewer-windows-displays').click()
+        targets = p.evaluate('''async () => Array.from((await getScreenDetails()).screens,
+          s => ({ left: s.availLeft, top: s.availTop, width: s.availWidth, height: s.availHeight })).filter(s => s.left < 0).sort((x, y) => x.left - y.left)''')
+        self.assertEqual(2, len(targets))
+        for number, target in enumerate(targets, 1):
+            p.get_by_label('Viewer Display ' + str(number)).select_option(json.dumps([target[k] for k in ['left', 'top', 'width', 'height']], separators=(',', ':')))
+        expect(p.locator('.viewer-window-row')).to_have_count(1)
+        expect(p.locator('.viewer-window-row p').first).to_contain_text(' · Open · ', timeout=15000)
+        expect(self.control(p, 0, 'span')).to_be_enabled()
+
 
 def load_tests(loader, tests, pattern):
     # Only the cases this module declares; the inherited cases run in their own profiles.
