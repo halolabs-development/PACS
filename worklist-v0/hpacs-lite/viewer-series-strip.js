@@ -183,9 +183,13 @@ window.KinViewerSeriesStrip = (() => {
       if (!target) return;
       event.preventDefault(); event.stopImmediatePropagation(); event.dataTransfer.dropEffect = 'copy';
     }, { capture: true, signal: events.signal });
+    // The drop goes on to the window: the stock viewer's drag layer (react-dnd's HTML5 backend) took this drag as a native
+    // one at its start (the card's preview image makes it carry files and links) and ends it only on a drop that reaches
+    // the window. Stopped here, that drag stayed open, and the next viewer mount (a patient tab) failed with "two HTML5
+    // backends" and left a blank page. No stock cell takes such a drop (they take only display sets): nothing else acts.
     document.addEventListener('drop', event => {
       const target = dragTarget(event); if (!target) return;
-      event.preventDefault(); event.stopImmediatePropagation();
+      event.preventDefault();
       const source = dragging; finishDrag(); assign(source.series, source.study, target[0], source.patient);
     }, { capture: true, signal: events.signal });
     document.addEventListener('dragend', finishDrag, { signal: events.signal });

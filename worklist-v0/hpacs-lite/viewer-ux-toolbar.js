@@ -460,7 +460,9 @@ window.KinViewerUXToolbar = (() => {
       node.ondragstart = event => { if (saving || !loaded) { event.preventDefault(); return; } dragged = id; event.dataTransfer.setData('text/plain', id); event.dataTransfer.effectAllowed = 'move'; more.open = true; };
       node.ondragend = () => { dragged = null; };
       node.ondragover = event => { if (dragged) event.preventDefault(); };
-      node.ondrop = event => { if (!dragged) return; event.preventDefault(); event.stopPropagation(); move(dragged, parent === bar, id); };
+      // Not stopped: the drop goes on to the window, where the stock viewer's drag layer ends the drag it took at the start
+      // (viewer-series-strip.js). The bar's own drop below leaves a drop on a tool to that tool.
+      node.ondrop = event => { if (!dragged) return; event.preventDefault(); move(dragged, parent === bar, id); };
     }
     function render() {
       applyMammography();
@@ -593,7 +595,8 @@ window.KinViewerUXToolbar = (() => {
     }
     for (const [target, visible] of [[bar, true], [more, false]]) {
       target.ondragover = event => { if (dragged) { event.preventDefault(); if (!visible) more.open = true; } };
-      target.ondrop = event => { if (!dragged) return; event.preventDefault(); move(dragged, visible); };
+      // Not defaultPrevented: the stock drag layer already prevents a native drop's default at the window's capture.
+      target.ondrop = event => { if (!dragged || event.target.closest?.('[data-tool]')) return; event.preventDefault(); move(dragged, visible); };
     }
     async function request(options) {
       const response = await fetch('/api/workspace-shortcuts', { credentials: 'same-origin', cache: 'no-store', signal: abort.signal,
