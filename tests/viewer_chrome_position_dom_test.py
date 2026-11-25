@@ -612,6 +612,55 @@ class ChromePositionDOMTest(unittest.TestCase):
                 self.assertTrue(page.evaluate("() => document.activeElement?.getAttribute('aria-label') === 'Next Tools'"), '%s -%dpx' % (side, change))
                 bar = page.evaluate("s => { const b = document.querySelector('.kin-ux-tools-bar'); return [b[s], b.scrollWidth - b.clientWidth, b.scrollHeight - b.clientHeight]; }", scroll)
                 self.assertGreaterEqual(bar[0], min(before, bar[1] if scroll == 'scrollLeft' else bar[2]) - 1, '%s -%dpx' % (side, change))
+
+    def test_16_a_drop_the_strip_or_a_tool_takes_still_reaches_the_window(self):
+        # The stock viewer's drag layer (react-dnd's HTML5 backend) starts its own drag on dragstart at the window and ends
+        # it only on a drop that reaches the window. A drop the viewer's rows take and stop before the window left that
+        # drag open, and the next viewer mount (a patient tab) then failed with "two HTML5 backends" and left a blank page.
+        page = self.open()
+        # As that layer does at the window for a native drag: its capture handler prevents the drop's default first
+        # (handleTopDropCapture), and its own end comes on the drop's way back up (recorded here).
+        page.evaluate("""() => { window.synWindowDrops = [];
+          addEventListener('drop', event => event.preventDefault(), true);
+          addEventListener('drop', event => synWindowDrops.push([event.defaultPrevented, event.target.closest?.('[data-tool]')?.dataset.tool
+            || event.target.closest?.('[data-cy=viewport-pane]')?.id || event.target.closest?.('summary, [role=toolbar]')?.tagName || null])); }""")
+        def drag(source, target, at=0.5):
+            a = source.bounding_box()
+            b = target.bounding_box() if not isinstance(target, tuple) else dict(x=target[0], y=target[1] - 1, width=0, height=2)
+            page.mouse.move(a['x'] + a['width'] * 0.2, a['y'] + a['height'] / 2)
+            page.mouse.down()
+            page.mouse.move(b['x'] + b['width'] * at, b['y'] + b['height'] / 2, steps=12)
+            page.mouse.up()
+            page.evaluate(FRAME)
+        def settled(puts):
+            page.wait_for_function("n => synServer.puts.length === n && document.querySelector('.kin-ux-toolbar .kin-ux-tools-bar [data-tool]')?.draggable", arg=puts)
+        # A series card onto a cell: the strip takes it (it asks for that series there) and the drop reaches the window.
+        drag(page.locator('.kin-series-card').nth(1), page.locator('#pane-right'))
+        self.assertEqual([[True, 'pane-right']], page.evaluate('synWindowDrops'))
+        self.assertTrue(page.evaluate("() => synNotes.some(note => note.title === 'Series')"))
+        # A tool onto another tool: the toolbar moves it before that tool (once) and the drop reaches the window.
+        bar = page.locator('.kin-ux-toolbar .kin-ux-tools-bar')
+        drag(bar.locator('[data-tool="Zoom"]'), bar.locator('[data-tool="Pan"]'))
+        settled(1)
+        self.assertEqual(['WindowLevel', 'Zoom', 'Pan'], page.evaluate("() => synServer.puts[0].viewerSettings.bar.slice(0, 3)"))
+        self.assertEqual([[True, 'pane-right'], [True, 'Pan']], page.evaluate('synWindowDrops'))
+        # A tool dropped on itself moves nothing, and is not taken to the end of the bar by the bar's own drop either.
+        drag(bar.locator('[data-tool="Zoom"]'), bar.locator('[data-tool="Zoom"]'), at=0.9)
+        page.wait_for_timeout(500)
+        self.assertEqual(1, page.evaluate("() => synServer.puts.length"))
+        self.assertEqual(3, len(page.evaluate('synWindowDrops')))
+        # A tool onto the bar past its last tool goes to the end; a tool onto More leaves the bar. Both reach the window.
+        end = page.evaluate("""() => { const bar = document.querySelector('.kin-ux-toolbar .kin-ux-tools-bar'), r = bar.getBoundingClientRect();
+          const x = r.right - 3, y = r.top + r.height / 2, hit = document.elementFromPoint(x, y);
+          return hit && bar.contains(hit) && !hit.closest('[data-tool]') ? [x, y] : null; }""")
+        self.assertIsNotNone(end, 'the bar has room past its last tool')
+        drag(bar.locator('[data-tool="WindowLevel"]'), tuple(end))
+        settled(2)
+        self.assertEqual('WindowLevel', page.evaluate("() => synServer.puts[1].viewerSettings.bar.at(-1)"))
+        drag(bar.locator('[data-tool="Pan"]'), page.locator('.kin-ux-toolbar .kin-ux-more > summary'))
+        settled(3)
+        self.assertNotIn('Pan', page.evaluate("() => synServer.puts[2].viewerSettings.bar"))
+        self.assertEqual([[True, 'pane-right'], [True, 'Pan'], [True, 'Zoom'], [True, 'DIV'], [True, 'SUMMARY']], page.evaluate('synWindowDrops'))
     # ── A window across two displays ──
     def test_10_a_window_across_two_displays_copies_rows_on_top_or_bottom_only(self):
         page = self.open(span=683, series=20)

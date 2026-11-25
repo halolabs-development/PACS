@@ -177,11 +177,10 @@
         if (!span) return defaultOhifRect(currentScreenRect());
         return stored && rectInsideScreen(stored, span) ? stored : span;
       }
-      if (stored && monitorPermissionGranted()) {
-        const touched = screensCache.filter(target => overlapArea(stored, target) > 0);
-        // Also restore a manually spanned window without fitting it to one screen.
-        if (touched.length >= 2) return stored;
-      }
+      // Also restore a manually spanned window without fitting it to one screen. Spanned is the one judgement of a window
+      // over two displays (KinViewerDisplayLayout.covered, as spanReached judges a dragged window): a window that filled
+      // one display by its edges, its resize border a few px over the next one, is that one display's.
+      if (stored && monitorPermissionGranted() && KinViewerDisplayLayout.covered(stored, screensCache).length >= 2) return stored;
       // 권한 없이 현재 화면 하나로 clamp하면 다른 모니터의 저장 자리를 끌어온다.
       if (stored) return monitorPermissionGranted() && screensCache.length
         ? clampOhifRect(stored, screensCache) : stored;
@@ -198,12 +197,12 @@
     }
 
     // The displays a viewer window was to stand over when the browser kept it on one (it moves a window over one display
-    // only): the known displays the intended rectangle reaches, when they are two or more. Without the display access
-    // nothing is known: [].
+    // only): the known displays the intended rectangle is laid over (KinViewerDisplayLayout.covered), when they are two or
+    // more. Without the display access nothing is known: [].
     function spanTargets(intended) {
       if (!intended || !monitorPermissionGranted()) return [];
-      const touched = screensCache.filter(target => overlapArea(intended, target) > 0);
-      return touched.length >= 2 ? touched : [];
+      const over = KinViewerDisplayLayout.covered(intended, screensCache);
+      return over.length >= 2 ? over : [];
     }
     // The two displays chosen for the viewer window (Viewer Displays), as they are among the displays known now; null when
     // none are chosen, one of them is not there, or the display access is not given.
