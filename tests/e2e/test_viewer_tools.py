@@ -148,6 +148,35 @@ class ViewerToolsE2E(ViewerHistoryE2E):
         page.mouse.move(*point); page.mouse.down()
         page.mouse.move(point[0] + dx, point[1] + dy, steps=10); page.mouse.up()
 
+    def test_tools_key_image_modalities(self):
+        # A Key Image is kept on a single-frame ultrasound (US Image Storage, no NumberOfFrames) and on frame 2 of a 3-frame XA:
+        # Add Key Image, a title, Save -> the server keeps the shown series, SOP and frame.
+        folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-tools'))
+        folder.mkdir(parents=True, exist_ok=True)
+        for modality, index in [('US', 0), ('XA', 1)]:
+            with self.subTest(modality=modality):
+                fixture = self.modality_fixture(modality)
+                work, page = self.open_tools_viewer(fixture)
+                try:
+                    cell = page.evaluate('() => services.viewportGridService.getActiveViewportId()')
+                    if index:
+                        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getImageIds?.().length === 3', arg=cell, timeout=60000)
+                        page.evaluate('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(n)', [cell, index])
+                        page.wait_for_function('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).getCurrentImageId().endsWith("/frames/" + (n + 1))', arg=[cell, index])
+                    shown = page.evaluate('''id => { const m = cornerstone.metaData.get('instance', services.cornerstoneViewportService.getCornerstoneViewport(id).getCurrentImageId());
+                        return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID }; }''', cell)
+                    page.get_by_role('button', name='Add Key Image', exact=True).click()
+                    row = page.locator('#kin-viewer-history section[data-kind=key]').last
+                    row.get_by_label('Key Title').fill('VTOOLS key ' + modality)
+                    row.get_by_role('button', name='Save', exact=True).click()
+                    expect(row).to_contain_text('저장 완료', timeout=30000)
+                    keys = [i['item'] for i in self.saved(fixture) if i['item']['kind'] == 'key']
+                    self.assertEqual([(k['title'], k['seriesUid'], k['sopUid'], k['frame']) for k in keys],
+                                     [('VTOOLS key ' + modality, shown['series'], shown['sop'], index + 1)])
+                finally:
+                    page.screenshot(path=str(folder / (modality + '-key.png')))
+                    page.close(); work.close()
+
     def test_tools_ellipse_modalities(self):
         folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-tools'))
         folder.mkdir(parents=True, exist_ok=True)
