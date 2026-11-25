@@ -498,11 +498,24 @@ export interface LocallyIdentifiedSubject {
   source: Pick<LocalReadTarget, 'sourcePatientId' | 'sourceInstitution'>;
   studyIds: readonly string[]; eventIds: readonly string[]; firstAt: string; lastAt: string;
 }
+/** The subjects of a paged scope: who, how many of their events, and between when — the events themselves are read from
+ * the preserved evidence a page at a time. `link` is the patient's own snapshot in one of those events, kept for the
+ * record of a response that shows them. A local subject keeps its studies; `from` continues a study list cut by a page. */
+export interface IncidentSubjectIndex {
+  identified: { patient: { patientId: string; assigningAuthority: string }; link?: PatientLinkSnapshot; events: number; firstAt: string; lastAt: string }[];
+  identifiedLocally: { source: LocallyIdentifiedSubject['source']; studyIds: string[]; events: number; firstAt: string; lastAt: string }[];
+}
 export interface IncidentScope {
   institutionId: string; filters: InvestigationFilters; top: number | null;
   auditEvent: { action: 'provide-prepared' | 'download'; targets: readonly InvestigationAuditTarget[] };
-  identified: readonly { patient: { patientId: string; assigningAuthority: string }; eventIds: readonly string[]; firstAt: string; lastAt: string }[];
-  identifiedLocally: readonly LocallyIdentifiedSubject[];
+  /** Absent from a paged scope (`subjects`): its subjects and events are not in this answer, which is never nobody. */
+  identified?: readonly { patient: { patientId: string; assigningAuthority: string }; eventIds: readonly string[]; firstAt: string; lastAt: string }[];
+  identifiedLocally?: readonly LocallyIdentifiedSubject[];
+  /** Only on a paged scope (incidentScopeSummary): how many subjects and preserved events it has, and every subject
+   * (`all`) when they fit one response — otherwise they are read, and recorded, a page at a time. `withheld`: the
+   * conditions of the range that name a patient this answer's record does not name; they are not in `filters`. */
+  subjects?: { identified: number; identifiedLocally: number; events: number; all: IncidentSubjectIndex | null;
+    withheld?: readonly ('patient' | 'sourcePatientId')[] };
   /** False when the people affected cannot be identified: the possible-leak notice of 제34조② (시행령 제39조의2①1) applies.
    * Locally identified subjects are listed but do not make the scope identifiable (reason `identified-locally`). */
   subjectsIdentifiable: boolean;
@@ -510,22 +523,26 @@ export interface IncidentScope {
     { kind: IncidentDetermination['kind']; note: string; by: ImmutableIdentity })[];
 }
 const incidentScopes = new WeakSet<object>();
-/** Every matching event of an export plan (period, patient, actor, address, event types). Refused and failed requests
- * provided nothing and name no one. A ledger read or integrity failure is itself the fact that the subjects cannot be
- * identified, and is reported as such — never as "nobody affected". Local reads name their subjects in
- * identifiedLocally by the observed source PatientID only; that list is never dropped and never counted as identified. */
-export async function incidentScope(authority: AuditAuthority, plan: InvestigationPlan, ledger: InvestigationLedger,
-  determinations: readonly IncidentDetermination[] = []): Promise<Readonly<IncidentScope>> {
+/** The registering auditor's scope plan and recorded findings, as every scope constructor takes them. */
+function incidentScopeAuthor(authority: AuditAuthority, plan: InvestigationPlan, determinations: readonly IncidentDetermination[]) {
   requireScope(authority, 'investigate');
   if (!plans.has(plan) || plan.mode !== 'export') refuse('IncidentScopeNeedsCompleteRead');
   if (plan.institutionId !== authority.institutionId || !sameIdentity(plan.auditor, authority.subject)) refuse('AuditScopeNotGranted');
-  const recorded = guarded('IncidentDeterminationRefused', () => {
+  return guarded('IncidentDeterminationRefused', () => {
     if (!Array.isArray(determinations)) throw new Error('Expected a list');
     return determinations.map(d => {
       const v = object(d, ['kind', 'note']);
       return { kind: choice(v.kind, ['access-outside-ledger', 'records-not-attributable']), note: string(v.note), by: authority.subject };
     });
   });
+}
+/** Every matching event of an export plan (period, patient, actor, address, event types). Refused and failed requests
+ * provided nothing and name no one. A ledger read or integrity failure is itself the fact that the subjects cannot be
+ * identified, and is reported as such — never as "nobody affected". Local reads name their subjects in
+ * identifiedLocally by the observed source PatientID only; that list is never dropped and never counted as identified. */
+export async function incidentScope(authority: AuditAuthority, plan: InvestigationPlan, ledger: InvestigationLedger,
+  determinations: readonly IncidentDetermination[] = []): Promise<Readonly<IncidentScope>> {
+  const recorded = incidentScopeAuthor(authority, plan, determinations);
   const reasons: IncidentScope['reasons'][number][] = [];
   let page: Readonly<InvestigationPage> | null = null;
   try { page = await readInvestigationPage(plan, ledger); } catch (error) {
@@ -567,6 +584,89 @@ export async function incidentScope(authority: AuditAuthority, plan: Investigati
   const scope = freeze({ institutionId: plan.institutionId, filters: plan.filters, top: page?.top ?? null, identified, identifiedLocally,
     subjectsIdentifiable: reasons.length === 0, reasons,
     auditEvent: page ? investigationLedgerEvent(page) : { action: 'download' as const, targets: [] } });
+  incidentScopes.add(scope);
+  return scope;
+}
+
+// A range whose every event and target do not fit one response is scoped a slice of its evidence at a time, by the same
+// incidentScope: each slice's subjects fold into an index, and the scope answered is the summary of that index.
+const localSubjectKey = (p: IncidentSubjectIndex['identifiedLocally'][number]) =>
+  JSON.stringify([p.source.sourcePatientId, p.source.sourceInstitution, p.source.sourcePatientId.status === 'known' ? null : p.studyIds[0] ?? null]);
+/** The subjects of one slice's scope, as counts. A scope that could not be read has none to give: its failure is the fact. */
+export function incidentSubjects(scope: Readonly<IncidentScope>): IncidentSubjectIndex {
+  if (!incidentScopes.has(scope) || !scope.identified || !scope.identifiedLocally) refuse('IncidentScopeRequired');
+  const links = new Map<string, PatientLinkSnapshot>();
+  for (const t of scope.auditEvent.targets) if ('patientLinkSnapshot' in t && t.patientLinkSnapshot.status === 'known') {
+    const key = JSON.stringify([t.patientLinkSnapshot.value.patientId, t.patientLinkSnapshot.value.assigningAuthority]);
+    if (!links.has(key)) links.set(key, t.patientLinkSnapshot.value);
+  }
+  return { identified: scope.identified.map(p => ({ patient: p.patient, link: links.get(JSON.stringify([p.patient.patientId, p.patient.assigningAuthority])),
+      events: p.eventIds.length, firstAt: p.firstAt, lastAt: p.lastAt })),
+    identifiedLocally: scope.identifiedLocally.map(p => ({ source: p.source, studyIds: [...p.studyIds], events: p.eventIds.length, firstAt: p.firstAt, lastAt: p.lastAt })) };
+}
+/** One index of several slices': an event is in one slice only, so a subject's counts add; the order is incidentScope's. */
+export function mergeIncidentSubjects(parts: readonly IncidentSubjectIndex[]): IncidentSubjectIndex {
+  const identified = new Map<string, IncidentSubjectIndex['identified'][number]>(), local = new Map<string, IncidentSubjectIndex['identifiedLocally'][number]>();
+  const span = (g: { events: number; firstAt: string; lastAt: string }, p: { events: number; firstAt: string; lastAt: string }) => {
+    g.events += p.events; if (p.firstAt < g.firstAt) g.firstAt = p.firstAt; if (p.lastAt > g.lastAt) g.lastAt = p.lastAt;
+  };
+  for (const part of parts) {
+    for (const p of part.identified) {
+      const key = JSON.stringify([p.patient.patientId, p.patient.assigningAuthority]), g = identified.get(key);
+      if (g) span(g, p); else identified.set(key, { ...p });
+    }
+    for (const p of part.identifiedLocally) {
+      const key = localSubjectKey(p), g = local.get(key);
+      if (!g) { local.set(key, { ...p, studyIds: [...p.studyIds] }); continue; }
+      span(g, p); for (const studyId of p.studyIds) if (!g.studyIds.includes(studyId)) g.studyIds.push(studyId);
+    }
+  }
+  return { identified: [...identified.values()].sort((a, b) => a.patient.patientId.localeCompare(b.patient.patientId) ||
+      a.patient.assigningAuthority.localeCompare(b.patient.assigningAuthority)),
+    identifiedLocally: [...local.values()].sort((a, b) => JSON.stringify([a.source, a.studyIds]).localeCompare(JSON.stringify([b.source, b.studyIds]))) };
+}
+/** What showing these subjects of an incident discloses: each patient by their own snapshot, each local subject by its
+ * observed identifiers once per shown study. The accessed record is the incident; no event is shown, so none is named. */
+export function incidentSubjectTargets(incidentId: string, shown: IncidentSubjectIndex): InvestigationAuditTarget[] {
+  const record = { status: 'known' as const, value: incidentId }, unresolved = { status: 'unresolved' as const, reason: 'not-resolved' as const };
+  return [...shown.identified.map(p => {
+    if (!p.link) refuse('IncidentScopeRequired');
+    return { kind: 'access-audit' as const, patientLinkSnapshot: { status: 'known' as const, value: p.link }, studyId: unresolved, recordId: record, versionId: record };
+  }), ...shown.identifiedLocally.flatMap(p => (p.studyIds.length ? p.studyIds : [null]).map(studyId => ({ kind: 'access-audit' as const,
+    studyId: studyId === null ? unresolved : { status: 'known' as const, value: studyId }, recordId: record, versionId: record,
+    sourcePatientId: p.source.sourcePatientId, sourceInstitution: p.source.sourceInstitution })))];
+}
+/** The scope of a paged range, from what its registration fixed (the evidence's ceiling and row count, its index's
+ * subject counts, or the failure that made it unreadable) under the registering auditor. `all` is the whole index when it
+ * fits one response: those subjects are then part of the answer and of its record. An unreadable range names nobody and
+ * is reported as such, as incidentScope reports it. The range's own conditions may name a patient: the answer repeats
+ * such a condition only when its record names that patient too (a subject in `all`); otherwise the condition is left out
+ * of `filters` and listed in `subjects.withheld`, so no patient is shown without the record of it. */
+export function incidentScopeSummary(authority: AuditAuthority, plan: InvestigationPlan,
+  fixed: { incidentId: string; top: number; failure: string | null; events: number; identified: number; identifiedLocally: number; all: IncidentSubjectIndex | null },
+  determinations: readonly IncidentDetermination[] = []): Readonly<IncidentScope> {
+  const recorded = incidentScopeAuthor(authority, plan, determinations);
+  const v = guarded('IncidentScopeRequired', () => {
+    const failure = fixed.failure === null ? null : string(fixed.failure), readable = failure === null;
+    const all = readable && fixed.all ? fixed.all : null;
+    if (all && (all.identified.length !== fixed.identified || all.identifiedLocally.length !== fixed.identifiedLocally)) throw new Error('Index of another scope');
+    return { incidentId: string(fixed.incidentId), failure, top: readable ? integer(fixed.top) : null, events: integer(fixed.events),
+      identified: readable ? integer(fixed.identified) : 0, identifiedLocally: readable ? integer(fixed.identifiedLocally) : 0, all };
+  });
+  const reasons: IncidentScope['reasons'][number][] = [];
+  if (v.failure !== null) reasons.push({ kind: 'ledger-unreadable', code: v.failure });
+  if (v.identifiedLocally) reasons.push({ kind: 'identified-locally', subjects: v.identifiedLocally });
+  reasons.push(...recorded);
+  const asked = plan.filters, withheld: ('patient' | 'sourcePatientId')[] = [];
+  if (asked.patient && !v.all?.identified.some(p => p.patient.patientId === asked.patient.patientId &&
+      p.patient.assigningAuthority === asked.patient.assigningAuthority)) withheld.push('patient');
+  if (asked.sourcePatientId && !v.all?.identifiedLocally.some(p => p.source.sourcePatientId.status === 'known' &&
+      p.source.sourcePatientId.value === asked.sourcePatientId)) withheld.push('sourcePatientId');
+  const scope = freeze({ institutionId: plan.institutionId,
+    filters: withheld.length ? { ...asked, ...Object.fromEntries(withheld.map(name => [name, null])) } : asked, top: v.top,
+    subjects: { identified: v.identified, identifiedLocally: v.identifiedLocally, events: v.events, all: v.all, ...(withheld.length ? { withheld } : {}) },
+    subjectsIdentifiable: reasons.length === 0, reasons,
+    auditEvent: { action: 'download' as const, targets: v.all ? incidentSubjectTargets(v.incidentId, v.all) : [] } });
   incidentScopes.add(scope);
   return scope;
 }
