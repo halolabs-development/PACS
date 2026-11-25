@@ -449,17 +449,19 @@
   const sameImage = (image, target) => !!image && image.study === target.studyUid && image.seriesUid === target.seriesUid &&
     image.sopUid === target.sopUid && image.frame === target.frame;
   /* Go to Image for one 2D source: the one rule the viewer's Findings panel and the Report Editor both follow.
-   * `own`: the originals of the reading's exam (an ordinary study: itself; a split part: its one original; a merged exam: every
-   * original); `comparison`: the one comparison study ('' none); `active`: for an exam reading, the study the active viewport shows
-   * ('' unknown, and always '' for an ordinary study).
+   * `report`: the UID the reading is written on; `own`: the originals of its exam (an ordinary study: itself; a split part: its one
+   * original; a merged exam: every original); `comparison`: the one comparison study ('' none); `active`: the study the active
+   * viewport shows ('' unknown).
    * 'direct' = the viewer's own move in the active viewport; 'activate' = make the one viewport showing that study active, then move
-   * (crossNavigate); 'foreign' = refused. A comparison source is activated. An own source moves directly, except in an exam reading
-   * whose active viewport shows another study (a merged exam's other original, the comparison study): then its own viewport is
-   * activated. An ordinary study moves directly as before (another study's active viewport is refused with 'scope'). */
-  function routeOf(study, own, comparison, active) {
+   * (crossNavigate); 'foreign' = refused. A comparison source is activated. An own source moves directly, except in a grouped
+   * reading (its originals are not just its own UID: a split part, a merged exam) whose active viewport shows another study: then its
+   * own viewport is activated. Any other reading (an ordinary study, whatever its comparison is) moves directly as before: another
+   * study's active viewport is refused with 'scope'. */
+  function routeOf(study, report, own, comparison, active) {
     const mine = Array.isArray(own) && own.includes(study);
     if (!mine) return !!study && study === comparison ? 'activate' : 'foreign';
-    return !!active && active !== study ? 'activate' : 'direct';
+    const grouped = own.length > 1 || own[0] !== report;
+    return grouped && !!active && active !== study ? 'activate' : 'direct';
   }
   const POLL_MS = 100;
   /* `env` reads ONE viewer document at call time: state() is its kinViewerHistoryState, activate(study)
@@ -1187,7 +1189,7 @@
       const target = { studyUid: source.studyUid ?? s.scope, seriesUid: source.seriesUid, sopUid: source.sopUid, frame: source.frame, itemId: source.itemId };
       // routeOf: the comparison study, or an exam's original the active viewport does not show, is reached by activating it; a study
       // of neither kind is refused there.
-      const route = routeOf(target.studyUid, s.exam ? s.exam.own : [s.scope], pairOf(), s.exam ? liveScope() : '');
+      const route = routeOf(target.studyUid, s.report, s.exam ? s.exam.own : [s.scope], pairOf(), s.exam ? liveScope() : '');
       if (route !== 'direct' && validTarget(target)) return navigateAcross(e, target, source.revision);
       let result;
       if (typeof go !== 'function') result = refusal('tool-missing');

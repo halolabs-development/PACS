@@ -648,29 +648,31 @@ test('exam window: the comparison list keeps its mid-edit guard and, for a prior
 /* The Go to Image route table (paths.md, "Go to Image · Link Comparison Items 경우 표"): one row per case, the same rule for the viewer's
  * Findings panel and the Report Editor. S ordinary study, P comparison, O a split part's original, X/Y a merged exam's originals. */
 test('routeOf: every row of the Go to Image route table', () => {
-  const S = '1.1', P = '9.9', O = '2.2', X = '3.3', Y = '3.4', Q = '7.7';
+  // PART is a split part's own UID over original O; the first part is read on O itself (row 2c).
+  const S = '1.1', P = '9.9', O = '2.2', PART = '2.2.99', X = '3.3', Y = '3.4', Q = '7.7';
   const rows = [
-    // [row, study, own, comparison, active, route]
-    ['R1 ordinary, own, own viewport active', S, [S], '', '', 'direct'],
-    ['R2 ordinary + comparison, own, comparison viewport active (viewer refuses scope, as before)', S, [S], P, '', 'direct'],
-    ['R3 ordinary + comparison, comparison source', P, [S], P, '', 'activate'],
-    ['R4 ordinary, unrelated study', Q, [S], P, '', 'foreign'],
-    ['R5 split part, own original active', O, [O], '', O, 'direct'],
-    ['R6 split part, active viewport unknown', O, [O], '', '', 'direct'],
-    ['R7 split part + prior, comparison viewport active', O, [O], P, P, 'activate'],
-    ['R8 split part + prior, comparison source', P, [O], P, O, 'activate'],
-    ['R9 split part, current and prior parts of one original (no comparison list)', O, [O], '', O, 'direct'],
-    ['R10 merged, X source, X active', X, [X, Y], '', X, 'direct'],
-    ['R11 merged, Y source, X active', Y, [X, Y], '', X, 'activate'],
-    ['R12 merged, Y source, Y active', Y, [X, Y], '', Y, 'direct'],
-    ['R13 merged, X source, Y active', X, [X, Y], '', Y, 'activate'],
-    ['R14 merged + prior, comparison source', P, [X, Y], P, X, 'activate'],
-    ['R15 merged + prior, Y source, comparison active', Y, [X, Y], P, P, 'activate'],
-    ['R16 merged, unrelated study', Q, [X, Y], P, X, 'foreign'],
+    // [table row, study, report, own, comparison, active, route]
+    ['1 ordinary, own, own viewport active', S, S, [S], '', S, 'direct'],
+    ['2 ordinary + comparison, own, comparison viewport active (the viewer refuses scope, as before)', S, S, [S], P, P, 'direct'],
+    ['2b ordinary + a split part as comparison, own, comparison viewport active', S, S, [S], P, P, 'direct'],
+    ['2c first part (read on its original) + comparison, own, comparison viewport active', O, O, [O], P, P, 'direct'],
+    ['3 ordinary + comparison, comparison source', P, S, [S], P, S, 'activate'],
+    ['4 ordinary, unrelated study', Q, S, [S], P, S, 'foreign'],
+    ['5 split part, own original active', O, PART, [O], '', O, 'direct'],
+    ['5c split part, active viewport unknown', O, PART, [O], '', '', 'direct'],
+    ['6 split part + prior, comparison viewport active', O, PART, [O], P, P, 'activate'],
+    ['7 split part + prior, comparison source', P, PART, [O], P, O, 'activate'],
+    ['9 split part, current and prior parts of one original (no comparison list)', O, PART, [O], '', O, 'direct'],
+    ['10 merged, X source, X active', X, X, [X, Y], '', X, 'direct'],
+    ['11 merged, Y source, X active', Y, X, [X, Y], '', X, 'activate'],
+    ['12 merged, Y source, Y active', Y, X, [X, Y], '', Y, 'direct'],
+    ['13 merged, X source, Y active', X, X, [X, Y], '', Y, 'activate'],
+    ['15 merged + prior, comparison source', P, X, [X, Y], P, X, 'activate'],
+    ['16 merged + prior, Y source, comparison active', Y, X, [X, Y], P, P, 'activate'],
+    ['17 merged, unrelated study', Q, X, [X, Y], P, X, 'foreign'],
   ];
-  for (const [row, study, own, comparison, active, route] of rows) assert.equal(model.routeOf(study, own, comparison, active), route, row);
+  for (const [row, study, report, own, comparison, active, route] of rows) assert.equal(model.routeOf(study, report, own, comparison, active), route, row);
 });
-
 /* The viewer's Findings panel follows the table in a window opened on an exam: a merged exam's other original is reached by activating
  * its own viewport, the active one moves directly; and a split part whose prior is the other part of the same original has no
  * comparison list (its marks sit on this reading's own original, which a comparison list cannot link). */
@@ -716,6 +718,24 @@ test('exam window Go to Image: a merged exam\'s other original activates its vie
   // A's source while B's viewport is active: A's viewport is activated.
   const r3 = await store.navigate(e, 0);
   assert.equal(r3.ok, true, JSON.stringify(r3)); assert.deepEqual([v.activations, v.calls], [[B, A], [B, B, A]]);
+});
+
+// Row 2b: an ordinary study opened with a split part as its comparison is a window with an exam scope, yet its reading is the ordinary
+// one: its own source, pressed while the comparison viewport is active, is refused by the viewer as before (no activation).
+test('exam window Go to Image: an ordinary reading compared with a split part keeps the direct move of an ordinary study', async () => {
+  const P = '7.8.9', PRIOR_PART = '7.8.9.99';
+  const exam = () => ({ current: { reportUid: A, sources: [{ studyUid: A, series: { mode: 'all', uids: [] } }] },
+    prior: { reportUid: PRIOR_PART, sources: [{ studyUid: P, series: { mode: 'include', uids: ['7.8.9.1'] } }] },
+    role: study => study === P ? 'prior' : 'current' });
+  const t = transport(); t.state.items = [t.head(F1, 1)];
+  const v = examViewer({ 'vp-a': A, 'vp-p': P }, 'vp-a');
+  const { store } = makeStore(t, { studies: [A, P], exam, history: v.history, activate: v.activate, navigate: v.navigate });
+  store.syncHistory(history(A, [])); await tick();
+  const e = store.state().entries.get(F1); assert.ok(e);
+  Object.assign(v.view, { scope: P, viewportId: 'vp-p' });
+  const result = await store.navigate(e, 0);
+  assert.equal(result.reason, 'scope'); assert.deepEqual([v.activations, v.calls], [[], [A]]);
+  assert.equal(e.message, '현재 검사의 영상 칸이 선택되어 있지 않아 이동하지 않았습니다. 현재 검사의 영상 칸을 선택한 뒤 다시 누르세요.');
 });
 
 test('exam window: a prior that is the other part of the same original has no comparison list; its marks are not offered', async () => {

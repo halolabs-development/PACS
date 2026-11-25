@@ -388,16 +388,15 @@
       // An original of the reading's own exam (expected.own: a split part's original, a merged exam's originals) is this reading's
       // own image, in the viewer opened on this reading, and needs no comparison study of the row. Where it goes is links.routeOf,
       // the rule the viewer's own Findings panel follows: `cross` = through the activation of its viewport (crossNavigate).
-      const exam = Array.isArray(expected.own) && expected.own.length > 0;
-      const own = exam ? expected.own : [expected.uid];
+      const own = Array.isArray(expected.own) && expected.own.length > 0 ? expected.own : [expected.uid];
       const mine = own.includes(target.studyUid);
       const comparison = uid(job.comparison) ? job.comparison : '';
-      if (links.routeOf(target.studyUid, own, comparison, '') === 'foreign') return finish(refusal('foreign'));
+      if (links.routeOf(target.studyUid, expected.uid, own, comparison, '') === 'foreign') return finish(refusal('foreign'));
       const choice = safe(job.choose);
       if (!choice || choice.kind === 'refused') return finish(refusal(choice && choice.reason ? choice.reason : 'no-viewer'));
       const before = safe(choice.probe);
-      const active = exam && before && uid(before.historyScope) ? before.historyScope : '';
-      const cross = links.routeOf(target.studyUid, own, comparison, active) === 'activate';
+      const active = before && uid(before.historyScope) ? before.historyScope : '';
+      const cross = links.routeOf(target.studyUid, expected.uid, own, comparison, active) === 'activate';
       const reason = precheck(before, expected, cross);
       if (reason) return finish(refusal(reason));
       let pending, settled = false, phase = 'before';

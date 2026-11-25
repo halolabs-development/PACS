@@ -1315,6 +1315,13 @@ test('exam reading: a merged exam\'s other original is reached by activating its
   // An ordinary study: its own source moves directly even while another viewport is active (the viewer answers that).
   const plainStudy = job({ view: { historyScope: P } });
   assert.equal((await nav.run(plainStudy.value)).ok, true); assert.equal(invoked(plainStudy.log), 1);
+  // The first part of a split exam is read on its original itself: the same direct move (route table row 2c).
+  const firstPart = job({ expected: { ...expected, own: [X] }, view: { historyScope: P } });
+  assert.equal((await nav.run(firstPart.value)).ok, true); assert.equal(invoked(firstPart.log), 1);
+  // The second part, read on its own UID, with the comparison viewport active: its original's viewport is activated (row 6).
+  const PART = '1.2.840.99.2';
+  const secondPart = job({ expected: { ...expected, uid: PART, own: [X] }, view: { uid: PART, selection: PART, scope: X + ',' + P, reading: PART, historyScope: P, activate: false } });
+  assert.deepEqual(await nav.run(secondPart.value), { ok: false, reason: 'tool-missing', latest: true }); assert.equal(invoked(secondPart.log), 0);
 });
 
 test('comparison pre-call and identity: an activation tool is required; a loading history is tolerated only while the command waits', () => {
