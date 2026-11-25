@@ -1012,6 +1012,10 @@
     const id = incidentEl('id').value.trim(); let path = 'incidents', body;
     try {
       if (mode === 'register') {
+        // The form of a shown incident repeats its registration from the answer. An answer that withheld the patient
+        // condition leaves the form without it: sent, it would be another registration under the same incident ID.
+        if (incidentSnapshot?.incidentId === id && incidentSnapshot.scope.subjects?.withheld?.length)
+          throw Error('이미 등록된 사건입니다. 등록할 때 정한 환자 조건이 이 화면에 표시되지 않아 같은 등록을 다시 보내지 않았습니다. 아래는 저장된 사건 상태입니다.');
         const v = Object.fromEntries(new FormData(incidentEl('register')));
         if (!!v.patientId !== !!v.assigningAuthority) throw Error('환자 ID와 발급 기관을 함께 입력하세요.');
         body = { incidentId: id, incidentType: v.incidentType, facts: incidentFacts(), query: { from: utcInput(v.from), to: utcInput(v.to),

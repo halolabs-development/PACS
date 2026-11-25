@@ -141,6 +141,37 @@ class Incidents(AuditPage):
         draft = event.value.path().read_text(encoding='utf-8')
         self.assertIn('Patient Condition: Set at Registration, Not Shown Here', draft); self.assertNotIn('SYN-P000', draft)
 
+    def test_register_again_answers_the_shown_incident_and_sends_no_registration_without_its_patient_condition(self):
+        self.backend_call(ledger=dict(count=600, patients=1), limits=dict(wholeRows=200, partRows=500, requestMs=0, pageEvents=120))
+        day = lambda delta: (datetime.now(timezone.utc) + timedelta(days=delta)).strftime('%Y-%m-%dT00:00')
+        scope, state, message = (self.section.locator('#audit-incident-' + name) for name in ['scope', 'state', 'message'])
+        patient, authority = (self.section.get_by_label(label, exact=True) for label in ['Incident Patient ID', 'Incident Assigning Authority'])
+        saved = '저장된 사건 상태입니다. 음수 남은 시간은 기한 경과를 뜻하며 기록을 막지 않습니다.'
+        self.open()
+        # A range answered with its patient condition: the form repeats the registration and the same incident answers.
+        patient.fill('SYN-P000'); authority.fill('SYN-SITE'); self.register('SYN-RECENT', period=(day(-2), day(1)))
+        expect(scope).not_to_contain_text('Patient Condition'); expect(patient).to_have_value('SYN-P000')
+        sent = self.registrations; self.click('Register Incident')
+        expect(message).to_have_text(saved); expect(state).to_contain_text('SYN-RECENT')
+        self.assertEqual(self.registrations, sent + 1)
+        # A range whose answer withholds the condition (it began before the retention end of its rows): the form no longer
+        # holds what was registered, so Register Incident sends nothing and the saved incident stays shown.
+        patient.fill('SYN-P000'); authority.fill('SYN-SITE'); self.register('SYN-OLD', period=(day(-730), day(1)))
+        expect(scope).to_contain_text('Patient Condition: Set at Registration, Not Shown Here'); expect(patient).to_have_value('')
+        words = '이미 등록된 사건입니다. 등록할 때 정한 환자 조건이 이 화면에 표시되지 않아 같은 등록을 다시 보내지 않았습니다. 아래는 저장된 사건 상태입니다.'
+        sent = self.registrations; self.click('Register Incident')
+        expect(message).to_have_text(words); expect(state).to_contain_text('SYN-OLD\nStatus: Open')
+        expect(self.section.locator('#audit-incident-detail')).to_be_visible()
+        # Opened again from the list it is the same.
+        self.click('Load Incidents'); self.section.locator('#audit-incident-listing').get_by_role('button', name='SYN-OLD').click()
+        expect(scope).to_contain_text('Patient Condition: Set at Registration, Not Shown Here')
+        self.click('Register Incident'); expect(message).to_have_text(words); expect(state).to_contain_text('SYN-OLD\nStatus: Open')
+        self.assertEqual(self.registrations, sent, 'no registration was sent without the patient condition')
+        self.assertEqual(self.english(words), 'This incident is already registered. The patient condition set at registration is not shown on this page, '
+                         'so the same registration was not sent again. The saved incident status is below.')
+        # Another incident ID in the same form is a registration of its own.
+        self.register('SYN-NEXT', period=(day(-2), day(1))); self.assertGreater(self.registrations, sent)
+
     def test_a_collection_that_stops_says_so_and_register_again_continues_it(self):
         period = self.large_period(); self.open()
         self.hold_registration = 2; self.register('SYN-STOPPED', saved=False, period=period)

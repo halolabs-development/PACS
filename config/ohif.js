@@ -6306,6 +6306,7 @@ window.KinLanguageTerms = {
     ["대상이 많아 여기에는 수만 적습니다. 대상과 접근 기록은 사건 화면의 Load Subjects · Load Events로 쪽마다 엽니다. 연 쪽에 보인 대상은 접근 기록에 남습니다.", "There are too many subjects to list here, so only their numbers are given. Open the subjects and the access records a page at a time with Load Subjects and Load Events on the incident screen. The subjects shown on each opened page are recorded in the access record.", "m"],
     ["한 쪽을 열었습니다. 같은 단추로 다음 쪽을 엽니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다.", "Opened one page. The same button opens the next page. The subjects shown on the opened page were recorded in the access record.", "m"],
     ["마지막 쪽까지 열었습니다. 연 쪽에 보인 대상은 접근 기록에 남았습니다.", "Opened through the last page. The subjects shown on the opened pages were recorded in the access record.", "m"],
+    ["이미 등록된 사건입니다. 등록할 때 정한 환자 조건이 이 화면에 표시되지 않아 같은 등록을 다시 보내지 않았습니다. 아래는 저장된 사건 상태입니다.", "This incident is already registered. The patient condition set at registration is not shown on this page, so the same registration was not sent again. The saved incident status is below.", "m"],
     ["화면에서 점검 작업을 마쳤습니다. 추가 기록은 저장하지 않았습니다. 위 해시와 사건 수는 시작할 때 저장한 보고서 값입니다. 미확인·미해결 사항이 있으면 계속 남습니다.", "Inspection finished on screen. No further records were saved. The hash and incident count above are the report values saved at the start. Any unconfirmed or unresolved items remain open.", "m"],
     ["조건이 바뀌었습니다. Search로 조회하세요.", "Filters changed. Use Search to run the query.", "m"],
     ["세션을 확인하고 다시 로그인하세요.", "Check your session and sign in again.", "m"],
