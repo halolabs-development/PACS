@@ -404,8 +404,11 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         # dragged from the strip into the right monitor's cell, as a reader fills it. Then tab to the first patient, to the
         # second and back: each time that patient's tab is chosen and its images are drawn (the viewer is not left blank),
         # and the window stays Open in Viewer Windows with Span Displays available.
-        p, viewer, a, b = self.setup_viewer('TWO14')
-        c = ThumbnailSeriesE2E.multiple(self, 'TWO14C-' + uuid.uuid4().hex[:10], 'two monitor C', '20260801')
+        a, b, c = (ThumbnailSeriesE2E.multiple(self, 'TWO14' + name + '-' + uuid.uuid4().hex[:10], 'two monitor ' + name, '20260801')
+                   for name in 'ABC')
+        p = self.sign_in(self.device())
+        self.grant(p)
+        viewer = self.open_first(p, a)
         errors = []
         viewer.on('console', lambda message: errors.append(message.text) if message.type == 'error' else None)
         viewer.on('pageerror', lambda error: errors.append(str(error)))
