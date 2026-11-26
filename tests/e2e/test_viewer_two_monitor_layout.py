@@ -76,6 +76,11 @@ PUT = '''async ([id, uid, index]) => { services.viewportGridService.setDisplaySe
   const v = view(); if (!v) return false; await v.setImageIdIndex(index);
   while (Date.now() < end && v.getCornerstoneImage?.()?.imageId !== v.getImageIds()[index]) await pause();
   return on() && v.getCornerstoneImage?.()?.imageId === v.getImageIds()[index]; }'''
+# One cell goes to the given image of what it shows: true once that very image is drawn there.
+SCROLL = '''async ([id, index]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), end = Date.now() + 30000;
+  if (!v) return false; await v.setImageIdIndex(index);
+  while (Date.now() < end && v.getCornerstoneImage?.()?.imageId !== v.getImageIds()[index]) await new Promise(r => setTimeout(r, 100));
+  return v.getCornerstoneImage?.()?.imageId === v.getImageIds()[index]; }'''
 # Each monitor holds `each` cells, none across the display edge and none under the rows on either monitor (the series
 # strip, the toolbar and their fixed copies). Independent of the product: real screens, the panes and rows as drawn.
 LAID = '''async each => { const d = await getScreenDetails(), left = screenX + (outerWidth - innerWidth) / 2;
@@ -680,7 +685,13 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
           .sort((x, y) => (x.SeriesNumber ?? 0) - (y.SeriesNumber ?? 0)).map(s => s.displaySetInstanceUID)''', a.uid)
         self.assertGreaterEqual(len(sets), 2, sets)
         for k, cell in enumerate(cells):
-            self.assertTrue(viewer.evaluate(PUT, [cell[2], sets[k % 2], k // 2]), cell)
+            self.assertTrue(viewer.evaluate(PUT, [cell[2], sets[k % 2], 0]), cell)
+        # Once each cell's new series has settled (its own first image shown), the lower cells go to their next image.
+        viewer.wait_for_timeout(2500)
+        for k, cell in enumerate(cells):
+            if k // 2:
+                self.assertTrue(viewer.evaluate(SCROLL, [cell[2], k // 2]), cell)
+        self.until(viewer, 'async () => new Set((await (' + SIDES + ')()).map(c => c[2]).filter(Boolean)).size === 4')
         viewer.wait_for_timeout(2500)
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
         before = viewer.evaluate(SIDES)
@@ -699,6 +710,31 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
         self.comes_back(viewer, before)
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
+
+    def test_two_18_the_window_resized_after_the_rule_then_a_tab_round_trip_keeps_each_cell_on_its_monitor(self):
+        # The same rule; then the reader makes the window a little shorter, still over both displays: the rule's rows go
+        # back to the account's, the cells stay where the rule put them. Then the next patient and back by the tab.
+        p, viewer, a, b = self.setup_viewer('TWO18')
+        left, _ = self.displays
+        self.stretch(viewer)
+        self.shows(viewer, a.uid)
+        self.apply_rule(viewer, HIGH_RULES, 'high.json')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
+        self.until(viewer, LAID, 1)
+        first = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])[0]
+        self.shows(viewer, a.uid, first[0])
+        viewer.evaluate('''async id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          await v.setImageIdIndex(v.getImageIds().length - 1); }''', first[0])
+        viewer.wait_for_timeout(2500)
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1000))
+        self.until(viewer, "() => !document.body.hasAttribute('data-kin-monitor-rows')")
+        viewer.wait_for_timeout(2500)
+        before = viewer.evaluate(SIDES)
+        self.assertEqual([[1, 0], [2, 0]], [c[:2] for c in before], before)
+        self.assertTrue(all(c[2] for c in before), before)
+        self.assertNotEqual(before[0][2], before[1][2])
+        self.tab_round_trip(p, viewer, a, b)
+        self.comes_back(viewer, before)
 
 
 def load_tests(loader, tests, pattern):

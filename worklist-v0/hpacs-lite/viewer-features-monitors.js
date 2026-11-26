@@ -104,6 +104,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   //  toolbar, so it stays on top of the first one (Viewer Settings must stay reachable).
   //  areas: each applied monitor's image area (its part less its rows), left to right, as fractions of the grid - where a
   //  grid picked later is laid while these rows stand (fit).
+  //  positions: each rect's place key (positionId 'col-row') in the plain grid it stands for (places), or null.
   function split(model, rule, covered, column, grid) {
     const list = rule?.monitors?.list;
     if (!list || !covered.length || !grid || !(grid.width > 0) || !(grid.height > 0)) return null;
@@ -136,13 +137,17 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       .sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
     const shown = new Set(rects.map(r => r.cell).filter(cell => cell !== null));
     const hidden = rule.layout.cells.map((_, index) => index).filter(index => !shown.has(index));
+    const fractions = areas.map(a => ({ monitor: a.monitor, x: round((a.left - grid.left) / grid.width), y: round((a.top - grid.top) / grid.height),
+      width: round(a.width / grid.width), height: round(a.height / grid.height) }));
+    // Each rectangle's place key (positionId 'col-row'), its place in the plain grid it stands for (places): the native
+    // grid would otherwise key it by its rectangle rounded to the grid, which can give two cells one key.
+    const at = places(rects, fractions), keys = at && at.map(p => p.col + '-' + p.row);
     return {
       rects: rects.map(({ x, y, width, height }) => ({ x, y, width, height })), cells: rects.map(r => r.cell),
+      positions: keys && new Set(keys).size === keys.length ? keys : null,
       numRows: Math.max(...parts.map(part => part.entry.rows)), numCols: parts.reduce((sum, part) => sum + part.entry.cols, 0),
       rows: { toolbar: { original: placed.toolbar[0] || null, copy: placed.toolbar[1] || null }, thumbs: { original: placed.thumbs[0] || null, copy: placed.thumbs[1] || null } },
-      applied: parts.map(part => part.region.monitor), hidden, toolbarKept,
-      areas: areas.map(a => ({ monitor: a.monitor, x: round((a.left - grid.left) / grid.width), y: round((a.top - grid.top) / grid.height),
-        width: round(a.width / grid.width), height: round(a.height / grid.height) })),
+      applied: parts.map(part => part.region.monitor), hidden, toolbarKept, areas: fractions,
     };
   }
 
@@ -161,24 +166,37 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
     return rects;
   }
 
-  // The cells of the native grid in the order of the plain grid they stand for, where that order becomes places again: a
-  // patient tab keeps its cells in this order and puts them back as a plain grid, position by position, which a standing
-  // rule then lays on its monitors (fit: row by row, left to right across the monitors). With a rule's monitor areas
-  // (split's areas, two or more) a cell belongs to the area its centre is over, and the order is its row inside that
-  // monitor, then the monitor (left to right), then its place across: one monitor's images may start higher than the
-  // other's, so the order on screen (top to bottom) can list the right monitor's cells before the left's. Without such
-  // areas the cells are kept in the order they are listed (the plain grid's own).
-  function order(cells, areas) {
-    const list = Array.isArray(cells) ? [...cells] : [];
-    if (!Array.isArray(areas) || areas.length < 2 || !areas.every(a => a && finite(a.x, a.width)) ||
-        !list.every(c => c && finite(c.x, c.y, c.width))) return list;
+  // The place in the plain grid each cell stands for, laid on a rule's monitor areas (split's areas, two or more): a cell
+  // belongs to the area its centre is over; its row is its row inside that monitor (one monitor's images may start higher
+  // than the other's) and its column the monitor's own columns after those of the monitors to its left - the places fit
+  // lays a plain grid on. [{ col, row }] in the cells' order; null without such areas.
+  function places(cells, areas) {
+    if (!Array.isArray(cells) || !Array.isArray(areas) || areas.length < 2 || !areas.every(a => a && finite(a.x, a.width)) ||
+        !cells.every(c => c && finite(c.x, c.y, c.width))) return null;
     const lefts = areas.map(a => a.x).sort((a, b) => a - b), key = v => Math.round(v * 1e4);
     const monitor = c => { const centre = c.x + c.width / 2; let m = 0; lefts.forEach((left, i) => { if (centre >= left) m = i; }); return m; };
-    const tops = new Map();
-    for (const c of list) { const m = monitor(c); if (!tops.has(m)) tops.set(m, new Set()); tops.get(m).add(key(c.y)); }
-    const row = c => [...tops.get(monitor(c))].sort((a, b) => a - b).indexOf(key(c.y));
-    return list.map((c, i) => ({ c, i, row: row(c), m: monitor(c) }))
-      .sort((a, b) => a.row - b.row || a.m - b.m || a.c.x - b.c.x || a.i - b.i).map(e => e.c);
+    const tops = lefts.map(() => new Set()), lines = lefts.map(() => new Set());
+    for (const c of cells) { tops[monitor(c)].add(key(c.y)); lines[monitor(c)].add(key(c.x)); }
+    const rank = (set, value) => [...set].sort((a, b) => a - b).indexOf(value);
+    const before = m => lines.slice(0, m).reduce((sum, set) => sum + set.size, 0);
+    return cells.map(c => { const m = monitor(c); return { col: before(m) + rank(lines[m], key(c.x)), row: rank(tops[m], key(c.y)) }; });
+  }
+  // The cells of the native grid in the order of the plain grid they stand for, where that order becomes places again: a
+  // patient tab keeps its cells in this order and puts them back as a plain grid, position by position (row by row, left
+  // to right), which a standing rule then lays on its monitors (fit). The order is the cells' places in that grid, row
+  // then column: on a rule's monitor areas (places) - the order on screen (top to bottom) can list the right monitor's
+  // cells before the left's - or else the place key each cell carries (positionId 'col-row': the rule's split and fit
+  // give every cell its own; the rows can be taken back when the window moves while the cells stay). Without either the
+  // cells are kept in the order they are listed (the plain grid's own).
+  function order(cells, areas) {
+    const list = Array.isArray(cells) ? [...cells] : [];
+    let at = places(list, areas);
+    if (!at) {
+      const keys = list.map(c => /^(\d+)-(\d+)$/.exec(String(c?.positionId ?? '')));
+      if (list.length && keys.every(Boolean) && new Set(list.map(c => c.positionId)).size === list.length) at = keys.map(k => ({ col: +k[1], row: +k[2] }));
+    }
+    if (!at) return list;
+    return list.map((c, i) => ({ c, i, ...at[i] })).sort((a, b) => a.row - b.row || a.col - b.col || a.i - b.i).map(e => e.c);
   }
 
   // Which monitor (index into screens) a window rectangle stands on: the display holding its centre.
@@ -247,7 +265,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, order, monitorOf, validRects, place, edges, pair };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, places, order, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);

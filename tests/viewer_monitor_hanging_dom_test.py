@@ -92,7 +92,8 @@ BESIDE = """() => {
 # findOrCreateViewport answers (the same viewport id keeps its viewport); the Layout menu's command builds the plain grid
 # and keeps the cell of every position there already is (a new position is empty). A layout lands a moment later and is
 # announced. Each cell's viewport has drawn the first image of the series it shows. synApplySplit lays a rule's split as
-# Hanging Protocols does (and registers it, kinViewerSplitRects); synMenu picks a layout from the Layout menu.
+# Hanging Protocols does (each rectangle with its place key, and registers it, kinViewerSplitRects); synMenu picks a
+# layout from the Layout menu.
 GRID = """() => {
   const listeners = new Set(), views = new Map(); let made = 0;
   window.synSets = new Map();
@@ -139,7 +140,8 @@ GRID = """() => {
     viewports.set(id, { ...old, displaySetInstanceUIDs: [series(uid)], displaySetOptions: [{}] }); viewport(id).held = uid;
     state = { ...state, viewports }; for (const fn of [...listeners]) fn({}); };
   window.synApplySplit = split => { window.kinViewerSplitRects = structuredClone(split.rects);
-    grid.setLayout({ numRows: split.numRows, numCols: split.numCols, activeViewportId: 'hp-0', layoutOptions: split.rects,
+    grid.setLayout({ numRows: split.numRows, numCols: split.numCols, activeViewportId: 'hp-0',
+      layoutOptions: split.rects.map((rect, i) => split.positions ? { ...rect, positionId: split.positions[i] } : rect),
       findOrCreateViewport: index => ({ displaySetInstanceUIDs: split.cells[index] === null ? [] : [series('ds-hp-' + index)], viewportOptions: { viewportId: 'hp-' + index } }) }); };
   // Each cell as client px, top to bottom then left to right: [id, left, top, right, bottom, display set].
   window.synCells = () => { const g = document.querySelector('[data-cy=viewport-grid]').getBoundingClientRect();

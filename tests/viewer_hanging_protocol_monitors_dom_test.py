@@ -91,6 +91,9 @@ class HangingProtocolMonitorsDOMTest(unittest.TestCase):
         call = self.page.evaluate('setCalls.at(-1)')
         self.assertEqual(4, len(call['layoutOptions']))
         self.assertGreaterEqual(call['numRows'] * call['numCols'], 4)
+        # Each rectangle is asked for with its place in the plain grid it stands for (column across the monitors, row on
+        # its monitor), not left to the native grid's rounding of the rectangle.
+        self.assertEqual(['0-0', '1-0', '0-1', '1-1'], [o.get('positionId') for o in call['layoutOptions']])
         screen = self.screen()
         # Top to bottom, then left to right: monitor 1 top (Current), monitor 2 top (vacancy), monitor 1 bottom (Related), monitor 2 bottom (Current).
         self.assertEqual([['ds-current'], [], ['ds-related'], ['ds-current']], [cell['sets'] for cell in screen])
@@ -103,6 +106,16 @@ class HangingProtocolMonitorsDOMTest(unittest.TestCase):
         self.assertEqual(applied['viewportIds'], self.page.evaluate('announced.at(-1).viewportIds'))
         expect(self.page.locator('#kin-hp-status')).to_contain_text('Monitors: synthetic')
         self.assertEqual([['prepare', 'Brain CT'], ['commit', 'Brain CT']], self.page.evaluate('monitorCalls'))
+
+    def test_01b_where_the_displays_meet_off_the_middle_every_rectangle_keeps_a_place_key_of_its_own(self):
+        # Monitor 1 holds 700 of the window's 2000 px and each monitor shows 1 x 2: rounded to the 4-column grid, two of
+        # the four rectangles would share one key, and the Layout menu (which keeps the cell of each key) would drop one.
+        self.page.evaluate("window.monitorRegions = [{ monitor: 0, left: 0, right: 700 }, { monitor: 1, left: 700, right: 2000 }]")
+        self.seed(split_library([monitor('1x2'), monitor('1x2')]))
+        self.apply()
+        call = self.page.evaluate('setCalls.at(-1)')
+        self.assertEqual(['0-0', '1-0', '2-0', '3-0'], [o.get('positionId') for o in call['layoutOptions']])
+        self.assertEqual([0, 0.175, 0.35, 0.675], [round(o['x'], 3) for o in call['layoutOptions']])
 
     def test_02_save_with_hanging_protocol_writes_each_viewport_back_to_its_rule_cell(self):
         self.seed(split_library([monitor('2x1'), monitor('2x1')]))

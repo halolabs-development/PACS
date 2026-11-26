@@ -104,6 +104,26 @@ test('order: each monitor\'s rows, then the monitor, then across - also where on
   const listed=[cells[3],cells[0],cells[2],cells[1]];
   assert.deepEqual(plan.order(listed,null),listed);
   assert.deepEqual(plan.order(listed,[s.areas[0]]),listed);
+  // Each rectangle's place key is that place in the plain 2 x 4 (column across both monitors, row on its monitor).
+  assert.deepEqual(s.positions,['2-0','3-0','0-0','1-0','2-1','3-1','0-1','1-1']);
+  assert.deepEqual(plan.places(cells,s.areas).map(p=>p.col+'-'+p.row),s.positions);
+  // The rows taken back (the window moved) while the cells stay: the keys the cells carry give the same order.
+  const keyed=cells.map((c,i)=>({...c,positionId:s.positions[i]}));
+  assert.deepEqual(plan.order(keyed,null).map(c=>c.viewportId),['v0','v1','v4','v5','v2','v3','v6','v7']);
+  // Keys that are not one per cell are not an order: as listed.
+  const twice=keyed.map((c,i)=>i===1?{...c,positionId:keyed[0].positionId}:c);
+  assert.deepEqual(plan.order(twice,null),twice);
+});
+
+test('split: where the displays meet off the middle each rectangle still has a place key of its own',()=>{
+  // Monitor 1 holds 700 of the window's 2000 px: rounded to the 4-column grid, two of the four would share key 1-0.
+  const r=rule(['a','b','c','d'],[monitor('1x2'),monitor('1x2')],1,4);
+  const regions=[{monitor:0,left:0,right:700},{monitor:1,left:700,right:2000}],column={left:0,right:2000,top:0,bottom:1000};
+  const s=plan.split(model,r,regions,column,{left:0,top:0,width:2000,height:1000});
+  assert.deepEqual(s.rects.map(x=>Math.round(x.x*4)+'-'+Math.round(x.y*1)),['0-0','1-0','1-0','3-0']);
+  assert.deepEqual(s.positions,['0-0','1-0','2-0','3-0']);
+  // One monitor: no place keys (the native grid keys a plain split as before).
+  assert.equal(plan.split(model,r,[regions[0]],column,{left:0,top:0,width:2000,height:1000}).positions,null);
 });
 
 test('split: a monitor without a toolbar gives the original to the next; no toolbar anywhere keeps it on top',()=>{
