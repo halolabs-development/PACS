@@ -719,11 +719,12 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         x, y = self.cell_centre(viewer, high)
         viewer.mouse.dblclick(x, y)
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
-        # While enlarged: monitor 2 shows one cell, of its own series; monitor 1's two cells stand in their rows with
-        # monitor 1's series. (Which image of its series a cell shows while one is enlarged is the enlarge's own matter:
-        # it is put back by the second double click, checked below.)
+        # While enlarged: monitor 2 shows one cell - the very cell that was clicked - of its own series; monitor 1's two
+        # cells are the cells they were, in their rows, with monitor 1's series. (Which image of its series a cell shows
+        # while one is enlarged is the enlarge's own matter: it is put back by the second double click, checked below.)
         self.until(viewer, DRAWN)
         viewer.wait_for_timeout(1500)
+        self.assertEqual([cells[0], cells[1], [2, 0, cells[2][2]]], viewer.evaluate(SIDE_IDS))
         series = lambda image: image.split('/series/')[1].split('/')[0] if image else None
         self.assertNotEqual(series(before[0][2]), series(before[2][2]))
         self.assertEqual([[c[0], c[1], series(c[2])] for c in before[:3]], [[c[0], c[1], series(c[2])] for c in viewer.evaluate(SIDES)])
@@ -783,6 +784,10 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertTrue(all(c[3] for c in before), before)
         self.assertNotEqual(before[0][3], before[1][3])
         ids = [c[2] for c in viewer.evaluate(SIDE_IDS)]
+        # The series that are not on screen, in the order the viewer lists its series: what the new columns must show.
+        unseen = viewer.evaluate('''() => { const shown = new Set([...services.viewportGridService.getState().viewports.values()].flatMap(c => c.displaySetInstanceUIDs || []));
+          return services.displaySetService.getActiveDisplaySets().filter(s => s.images?.length && !shown.has(s.displaySetInstanceUID)).map(s => s.SeriesInstanceUID); }''')
+        self.assertGreaterEqual(len(unseen), 1, 'a series of this study that is not on screen')
         self.layout(viewer, 'Layout-3-0')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
         self.until(viewer, LAID, 2)
@@ -791,6 +796,10 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
         wide = viewer.evaluate(PLACES)
         self.assertEqual([[1, 0, 0], [1, 0, 1], [2, 0, 0], [2, 0, 1]], [c[:3] for c in wide], wide)
+        # The new second columns have drawn those series: monitor 1's the first of them, monitor 2's the next (or, the study
+        # having no more, nothing).
+        series = lambda image: image.split('/series/')[1].split('/')[0] if image else None
+        self.assertEqual([unseen[0], unseen[1] if len(unseen) > 1 else None], [series(wide[1][3]), series(wide[3][3])], wide)
         # The first column of each monitor: the cell that monitor had (the viewport it was), on the image it had drawn.
         self.assertEqual(before, [c for c in wide if c[2] == 0], wide)
         cells = viewer.evaluate(GRID)['cells']
@@ -819,8 +828,10 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
 
     def test_two_20_monitors_holding_different_rows_come_back_after_a_tab_round_trip(self):
         # Two rows on monitor 1 and one cell on monitor 2 (three cells), each on an image of its own; the next patient and
-        # back by the tab: the three cells again, each on its monitor, in its row, on its image.
+        # back by the tab: the three cells again, each on its monitor, in its row, on its image. They follow the display edge
+        # when the window is made narrower from one side, and come back the same after another round trip.
         p, viewer, a, b = self.setup_viewer('TWO20')
+        left, _ = self.displays
         self.stretch(viewer)
         self.shows(viewer, a.uid)
         self.apply_rule(viewer, UNEVEN_RULES, 'uneven.json')
@@ -842,6 +853,16 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         before = viewer.evaluate(SIDES)
         self.assertEqual([[1, 0], [1, 1], [2, 0]], [c[:2] for c in before], before)
         self.assertEqual(3, len({c[2] for c in before if c[2]}), before)
+        self.tab_round_trip(p, viewer, a, b)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
+        self.comes_back(viewer, before)
+        self.assertTrue(viewer.evaluate(LAID, [2, 1]), json.dumps(viewer.evaluate(SEAM_STATE)))
+        # The window made narrower from its left: the display edge is no longer in its middle. The cells follow it.
+        self.bounds(viewer, dict(left=left['left'] + 400, top=0, width=3440, height=1080))
+        self.until(viewer, LAID, [2, 1])
+        self.comes_back(viewer, before)
+        self.assertTrue(viewer.evaluate(LAID, [2, 1]), json.dumps(viewer.evaluate(SEAM_STATE)))
+        # The next patient and back once more, the rule not applied again: the same three cells.
         self.tab_round_trip(p, viewer, a, b)
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
         self.comes_back(viewer, before)

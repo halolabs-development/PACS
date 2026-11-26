@@ -2048,7 +2048,7 @@ class MeasurementCiTests(unittest.TestCase):
         self.assertEqual(profile['project_prefix'], 'kin-two-monitor-ci-')
         command, outer = ci.guarded_profile_run(profile, *profile['suites'][0], 2000)
         self.assertNotIn('--class', command)
-        self.assertEqual(outer, 935)
+        self.assertEqual(outer, 1235)
         for name, other in ci.PROFILES.items():
             if name != 'two-monitor-layout':
                 self.assertNotEqual(profile['out'], other['out'], name)

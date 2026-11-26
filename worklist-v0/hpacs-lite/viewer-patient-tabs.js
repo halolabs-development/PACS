@@ -342,14 +342,15 @@ window.KinViewerPatientTabs = (() => {
         : kinText("판독 화면이 {0}의 검사를 열었는지 확인하지 못했고({1})", to.patient.name, why)), current?.patient.name || kinText("없음"))) };
     } finally { if (moving === ticket) moving = null; }
   }
-  // The cells stand in the rectangles registered for this screen (kinViewerSplitRects: an applied Hanging Protocol's
-  // split, or a layout laid on its monitors) - what such a rule leaves on screen once its rows are taken back.
-  function registered(cells) {
-    const rects = window.kinViewerSplitRects;
-    if (!Array.isArray(rects) || rects.length !== cells.length) return false;
+  // The monitors' areas the cells on screen were laid on, when they stand in the rectangles registered for this screen
+  // with such areas (kinViewerSplitRects and kinViewerSplitAreas: an applied Hanging Protocol's split, a layout laid on
+  // its monitors, a screen this module put back) - also once the rule's rows are gone. null otherwise.
+  function registeredAreas(cells) {
+    const rects = window.kinViewerSplitRects, on = window.kinViewerSplitAreas;
+    if (!Array.isArray(rects) || rects.length !== cells.length || !on || on.rects !== rects || !Array.isArray(on.areas)) return null;
     const sorted = list => [...list].sort((a, b) => a.y - b.y || a.x - b.x), near = (a, b) => Math.abs(a - b) < 1e-4;
     const mine = sorted(cells), theirs = sorted(rects);
-    return mine.every((cell, index) => ['x', 'y', 'width', 'height'].every(key => near(cell[key], theirs[index][key])));
+    return mine.every((cell, index) => ['x', 'y', 'width', 'height'].every(key => near(cell[key], theirs[index][key]))) ? on.areas : null;
   }
   function capture() {
     if (!current) return;
@@ -357,12 +358,12 @@ window.KinViewerPatientTabs = (() => {
     const plan = window.KinViewerMonitorPlan;
     // A screen laid on monitors - each monitor a grid of its own: an applied Hanging Protocol's split, a layout picked on
     // it - is kept as each monitor's rows and columns and every cell's monitor and place there, read from where the cells
-    // stand (KinViewerMonitorPlan.laid) on the rule's image areas: those of the rule whose rows stand, or - its rows taken
-    // back since (the window moved or resized), its cells still where it laid them (registered) - those it had measured.
+    // stand (KinViewerMonitorPlan.laid) on the monitors' areas: the image areas of the rule whose rows stand, or - no rule's
+    // rows standing (taken back when the window moved, or by a patient switch) - the areas the cells were laid on, while
+    // they still stand in the rectangles registered with them (registeredAreas).
     let stood = null;
     try {
-      const standing = window.KinViewerMonitorRows?.areas, areas = Array.isArray(standing) && standing.length >= 2 ? standing
-        : registered(listed) ? window.KinViewerMonitors?.left?.() : null;
+      const standing = window.KinViewerMonitorRows?.areas, areas = Array.isArray(standing) && standing.length >= 2 ? standing : registeredAreas(listed);
       if (areas && typeof plan?.laid === 'function') stood = plan.laid(listed, areas);
     } catch (_) { stood = null; }
     // Any other screen is kept as the plain grid of its rows and columns, position by position: the cells as listed, or by
@@ -386,26 +387,23 @@ window.KinViewerPatientTabs = (() => {
   }
   // Where a saved screen is put back: the grid to ask for, and for each of its positions the saved cell that goes there
   // (slots). A plain grid: its rows and columns, cell by cell. A screen kept from monitors (capture) comes back with every
-  // cell on its monitor, in its row and column there, in the order KinViewerMonitorPlan.lay gives (row by row, monitor by
-  // monitor). A patient switch has taken the rule's rows away (they stand again once the rule is applied again), so:
-  //  - monitors holding the same grid come back as the plain grid of all their columns, which a window over two displays
-  //    puts on the display edge as any plain grid (viewer-display-span.js);
-  //  - monitors holding different grids are laid on the monitors' parts of the grid as they are now (the sides of the
-  //    display edge; a rule's image areas if its rows stand; else equal parts), and those rectangles are registered as
-  //    this screen's split (kinViewerSplitRects), as a rule registers its own.
+  // cell on its monitor, in its row and column there. A patient switch has taken the rule's rows away (they stand again
+  // once the rule is applied again), so the monitors get equal parts of the grid, laid by KinViewerMonitorPlan.lay (row
+  // by row, monitor by monitor): the edge between the parts is the grid's middle, which a window over two displays keeps
+  // on the display edge - also when a side panel opens or the window is resized (viewer-display-span.js placeGrid).
+  //  - Monitors holding the same grid: that is the plain grid of all their columns, asked for as one.
+  //  - Monitors holding different grids: the laid rectangles, registered as this screen's split with the parts they were
+  //    laid on (kinViewerSplitRects, kinViewerSplitAreas) - the next round trip reads the cells against those.
   function placement(saved) {
-    if (!saved.monitors) return { numRows: saved.rows, numCols: saved.cols, slots: saved.cells.map((_, index) => index), rects: null };
+    if (!saved.monitors) return { numRows: saved.rows, numCols: saved.cols, slots: saved.cells.map((_, index) => index), rects: null, areas: null };
     const count = saved.monitors.length, first = saved.monitors[0];
-    let parts = null;
-    try { parts = window.kinViewerMonitorPartsNow?.() || null; } catch (_) { parts = null; }
     const alike = saved.monitors.every(shape => shape.rows === first.rows && shape.cols === first.cols);
-    const areas = !alike && parts?.areas.length === count ? parts.areas
-      : saved.monitors.map((_, index) => ({ x: index / count, y: 0, width: 1 / count, height: 1 }));
+    const areas = saved.monitors.map((_, index) => ({ x: index / count, y: 0, width: 1 / count, height: 1 }));
     const target = window.KinViewerMonitorPlan?.lay?.(areas, saved.monitors);
     if (!target) return null;
     const slots = target.cells.map(cell => saved.cells.findIndex(view => view.place.monitor === cell.monitor && view.place.row === cell.row && view.place.col === cell.col));
     if (slots.length !== saved.cells.length || slots.some(index => index < 0)) return null;
-    return { numRows: target.numRows, numCols: target.numCols, slots,
+    return { numRows: target.numRows, numCols: target.numCols, slots, areas,
       rects: alike ? null : target.cells.map(({ x, y, width, height, positionId }) => ({ x, y, width, height, positionId })) };
   }
   function restore() {
@@ -476,7 +474,10 @@ window.KinViewerPatientTabs = (() => {
         queueMicrotask(() => onImage().catch(error => { if (mounted && epoch === mountEpoch) status.textContent = error.message; }));
       });
     restoreSubscription = () => subscription.unsubscribe();
-    if (target.rects) window.kinViewerSplitRects = target.rects.map(({ x, y, width, height }) => ({ x, y, width, height })).sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
+    if (target.rects) {
+      const list = target.rects.map(({ x, y, width, height }) => ({ x, y, width, height })).sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
+      window.kinViewerSplitRects = list; window.kinViewerSplitAreas = { rects: list, areas: target.areas };
+    }
     services.viewportGridService.setLayout({ numRows: target.numRows, numCols: target.numCols, activeViewportId: ids[saved.active],
       isHangingProtocolLayout: false, ...(target.rects ? { layoutOptions: target.rects } : {}),
       findOrCreateViewport: position => { const index = target.slots[position];

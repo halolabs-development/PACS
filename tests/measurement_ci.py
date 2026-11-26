@@ -670,7 +670,8 @@ PROFILES = {
         # Dispatch only (Focused integration): one viewer window over two synthetic CDP displays on a real stack - the first
         # layout after stretching, one column per monitor, the double click per monitor, Span Displays the browser refuses.
         # The module's load_tests is the allowlist (test_two_*), so no class is passed and no inherited case runs.
-        'suite_timeout': 900,
+        # Twenty cases on one stack take about twelve minutes.
+        'suite_timeout': 1200,
         'suites': (('e2e/test_viewer_two_monitor_layout.py', None, 'ci-two-monitor-layout'),),
     },
     'image-report': {

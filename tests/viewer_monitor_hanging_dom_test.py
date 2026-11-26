@@ -626,6 +626,30 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.pick(page, 1, 2, 2)
         self.assertEqual(([one[0]], [now[1][1]]), self.on_monitors(page))
 
+    def test_07h_cells_put_back_on_the_two_halves_of_the_grid_follow_the_display_edge(self):
+        # No rule's rows: two rows beside one cell, laid on the two halves of the grid - as a patient tab puts back a
+        # screen whose monitors held different grids. The displays meet left of the window's middle: the window keeps the
+        # grid's middle on the display edge, also after its image column changes width (a side panel, a resize), so no
+        # cell lies across the edge.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        page.wait_for_timeout(1500)
+        page.evaluate("""() => { const rects = [{ x: 0, y: 0, width: 0.5, height: 0.5, positionId: '0-0' }, { x: 0.5, y: 0, width: 0.5, height: 1, positionId: '1-0' },
+            { x: 0, y: 0.5, width: 0.5, height: 0.5, positionId: '0-1' }];
+          synServices.viewportGridService.setLayout({ numRows: 2, numCols: 2, layoutOptions: rects,
+            findOrCreateViewport: index => ({ displaySetInstanceUIDs: ['ds-' + (index + 1)], viewportOptions: { viewportId: 'tab-' + index } }) }); }""")
+        page.wait_for_function('synGridState().rects.length === 3')
+        page.wait_for_timeout(2500)
+        one, two = self.on_monitors(page)
+        self.assertEqual([['tab-0', 'ds-1'], ['tab-2', 'ds-3']], one)
+        self.assertEqual([['tab-1', 'ds-2']], two)
+        seam = lambda: [round(c[3]) for c in page.evaluate('synCells()') if c[0] == 'tab-0'] + [round(c[1]) for c in page.evaluate('synCells()') if c[0] == 'tab-1']
+        self.assertEqual([SEAM, SEAM], seam())
+        page.set_viewport_size({'width': 1100, 'height': 900})
+        page.wait_for_timeout(2500)
+        self.assertEqual(([['tab-0', 'ds-1'], ['tab-2', 'ds-3']], [['tab-1', 'ds-2']]), self.on_monitors(page))
+        self.assertEqual([SEAM, SEAM], seam())
+        self.assertEqual(3, page.evaluate('synGridState().rects.length'))
+
     def test_07f_without_a_rules_rows_the_layout_menu_is_the_stock_command(self):
         # The same window over two displays with no rule applied: every pick runs the stock command, which keeps cells by
         # their column in the whole window, and nothing lays rectangles of its own.
@@ -970,44 +994,50 @@ class MonitorHangingDOMTest(unittest.TestCase):
 # A patient tab of a window whose screen stands on two monitors: the shipped hanging-protocol-model.js,
 # viewer-features-monitors.js and viewer-patient-tabs.js on a synthetic viewport grid (2000 x 1000, the displays meeting
 # at 1000), synthetic viewports (each cell on a frame of its own) and a synthetic patient lookup. The screen is the split
-# of a rule (KinViewerMonitorPlan.split), registered as Hanging Protocols registers it. synRound: the next patient is
-# opened in the window (the route remounts the tabs on the stock one-cell grid), `between` runs while that patient is
-# shown, then the first patient's tab is chosen again; answers the layout the tab asked the grid for, or null.
+# of a rule (KinViewerMonitorPlan.split), registered as Hanging Protocols registers it: its rectangles and, with them,
+# the image areas they were laid on. The grid takes every layout it is asked for (synAsked lists them, by study). The
+# route remounts the tabs on the stock one-cell grid whenever another patient is shown.
 TABS = """async ([monitors, state]) => {
   const rule = { layout: { rows: 2, cols: 4, cells: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] },
     monitors: { count: monitors.length, list: monitors } };
   const box = { left: 0, top: 0, right: 2000, bottom: 1000 };
   const split = KinViewerMonitorPlan.split(KinHangingProtocolModel, rule, [{ monitor: 0, left: 0, right: 1000 }, { monitor: 1, left: 1000, right: 2000 }],
     box, { left: 0, top: 0, width: 2000, height: 1000 });
-  window.synEdges = [0.5]; window.kinViewerMonitorEdgesNow = () => synEdges;
-  // The rule's rows stand, or were taken back (the monitors module then still knows the areas it had measured) - or no
-  // rule was ever applied (state.left false).
-  window.synRows = on => { window.KinViewerMonitorRows = on ? { areas: split.areas, copies: {} } : null;
-    window.KinViewerMonitors = { left: () => on || state.left === false ? null : split.areas.map(area => ({ ...area })) }; };
+  // The rule's rows stand, or are gone (taken back when the window moved; taken away by a patient switch).
+  window.synRows = on => { window.KinViewerMonitorRows = on ? { areas: split.areas, copies: {} } : null; };
   synRows(state.rows !== false);
   window.kinViewerSplitRects = state.registered === false ? null : split.rects.map(rect => ({ ...rect }));
+  window.kinViewerSplitAreas = state.registered === false ? null : { rects: window.kinViewerSplitRects, areas: split.areas.map(area => ({ ...area })) };
   window.kinViewerFrameCoverageConfirm = () => true;
   const uid = () => new URLSearchParams(location.search).get('StudyInstanceUIDs');
   const cells = state.plain ? Array.from({ length: 4 }, (_, i) => ({ x: (i % 2) / 2, y: Math.floor(i / 2) / 2, width: 0.5, height: 0.5 }))
     : split.rects.map((rect, i) => ({ ...rect, positionId: split.positions[i] }));
   const sets = cells.map((_, i) => ({ StudyInstanceUID: '1.2.1', SeriesInstanceUID: 'series-' + i, displaySetInstanceUID: 'set-' + i }));
-  const first = () => ({ layout: { layoutType: 'grid', numRows: state.plain ? 2 : split.numRows, numCols: state.plain ? 2 : split.numCols }, activeViewportId: 'v0',
-    viewports: new Map(cells.map((cell, i) => ['v' + i, { ...cell, viewportId: 'v' + i, displaySetInstanceUIDs: [sets[i].displaySetInstanceUID] }])) });
-  let grid = first();
+  // What each viewport has drawn: [the set's index, the frame].
+  const drawn = new Map(cells.map((_, i) => ['v' + i, [i, i + 3]]));
+  let grid = { layout: { layoutType: 'grid', numRows: state.plain ? 2 : split.numRows, numCols: state.plain ? 2 : split.numCols }, activeViewportId: 'v0',
+    viewports: new Map(cells.map((cell, i) => ['v' + i, { ...cell, viewportId: 'v' + i, displaySetInstanceUIDs: [sets[i].displaySetInstanceUID] }])) };
   // Each cell where it stands and what it shows: [x, y, width, height, series, frame].
   window.synBefore = [...grid.viewports.values()].map((cell, i) => [cell.x, cell.y, cell.width, cell.height, sets[i].SeriesInstanceUID, i + 3]);
   window.synAsked = [];
   const viewports = { EVENTS: { VIEWPORT_DATA_CHANGED: 'data' }, subscribe(event, fn) { viewports.notify = fn; return { unsubscribe() {} }; },
-    getCornerstoneViewport(id) { const i = Number(String(id).slice(1));
-      return { type: 'stack', getCurrentImageId: () => 'image-' + i + '-' + (i + 3), getCurrentImageIdIndex: () => i + 3 }; } };
+    getCornerstoneViewport(id) { const at = drawn.get(id);
+      return { type: 'stack', getCurrentImageId: () => at ? 'image-' + at[0] + '-' + at[1] : undefined, getCurrentImageIdIndex: () => at ? at[1] : 0 }; } };
   const services = { cornerstoneViewportService: viewports,
     viewportGridService: { getState: () => grid, setLayout(asked) {
-      const count = asked.layoutOptions ? asked.layoutOptions.length : asked.numRows * asked.numCols;
-      synAsked.push({ rows: asked.numRows, cols: asked.numCols, keys: asked.layoutOptions ? asked.layoutOptions.map(option => option.positionId) : null,
-        cells: Array.from({ length: count }, (_, i) => { const cell = asked.findOrCreateViewport(i), rect = asked.layoutOptions?.[i];
-          const set = sets.find(value => value.displaySetInstanceUID === cell.displaySetInstanceUIDs[0]);
-          return [...(rect ? [rect.x, rect.y, rect.width, rect.height] : [(i % asked.numCols) / asked.numCols, Math.floor(i / asked.numCols) / asked.numRows, 1 / asked.numCols, 1 / asked.numRows]),
-            set?.SeriesInstanceUID ?? null, cell.viewportOptions.initialImageOptions?.index ?? null]; }) }); } },
+      const count = asked.layoutOptions ? asked.layoutOptions.length : asked.numRows * asked.numCols, next = new Map(), listed = [];
+      for (let i = 0; i < count; i++) {
+        const cell = asked.findOrCreateViewport(i), option = asked.layoutOptions?.[i];
+        const rect = option ? { x: option.x, y: option.y, width: option.width, height: option.height }
+          : { x: (i % asked.numCols) / asked.numCols, y: Math.floor(i / asked.numCols) / asked.numRows, width: 1 / asked.numCols, height: 1 / asked.numRows };
+        const set = sets.findIndex(value => value.displaySetInstanceUID === cell.displaySetInstanceUIDs[0]), frame = cell.viewportOptions.initialImageOptions?.index ?? null;
+        const id = cell.viewportOptions.viewportId;
+        next.set(id, { ...rect, positionId: option?.positionId || Math.round(rect.x * asked.numCols) + '-' + Math.round(rect.y * asked.numRows), viewportId: id, displaySetInstanceUIDs: [...cell.displaySetInstanceUIDs] });
+        if (set >= 0) drawn.set(id, [set, frame]);
+        listed.push([rect.x, rect.y, rect.width, rect.height, set >= 0 ? sets[set].SeriesInstanceUID : null, frame]);
+      }
+      synAsked.push({ study: uid(), rows: asked.numRows, cols: asked.numCols, keys: asked.layoutOptions ? asked.layoutOptions.map(option => option.positionId) : null, cells: listed });
+      grid = { layout: { layoutType: 'grid', numRows: asked.numRows, numCols: asked.numCols }, activeViewportId: asked.activeViewportId, viewports: next }; } },
     displaySetService: { getDisplaySetByUID: id => sets.find(set => set.displaySetInstanceUID === id), getActiveDisplaySets: () => sets } };
   window.KinViewerInfoBar = { identity: () => ({ instance: { StudyInstanceUID: uid() } }) };
   const mount = () => KinViewerPatientTabs.mount({ services, session: { state: () => 'active', readOnly: () => false }, refreshChrome() {} });
@@ -1029,8 +1059,13 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop()
 
-    def round_trip(self, monitors, between=None, **state):
-        """The screen before ([x, y, width, height, series, frame] per cell) and the layout asked for on the way back."""
+    # A patient switch takes the rule's rows away in the shipped viewer (its modules are made anew).
+    GONE = '() => synRows(false)'
+
+    def round_trip(self, monitors, between=GONE, trips=1, **state):
+        """The next patient is opened in the window, `between` runs while that patient is shown (by default the rule's rows
+        are taken away, as the viewer does), then the first patient's tab is chosen again - `trips` times. Answers the screen
+        before ([x, y, width, height, series, frame] per cell) and the layouts asked for the first patient on the way back."""
         page = self.browser.new_page(); errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         self.addCleanup(page.close)
@@ -1047,26 +1082,23 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
         for name in ['hanging-protocol-model.js', 'viewer-features-monitors.js', 'viewer-patient-tabs.js']:
             page.add_script_tag(path=str(HPACS / name))
         page.evaluate(TABS, [monitors, state])
-        self.assertTrue(page.evaluate("kinViewerOpenPatient('/ohif/viewer?StudyInstanceUIDs=1.2.2')"))
-        page.evaluate('synReady')
-        if between:
-            page.evaluate(between)
-        page.get_by_role('tab', name='SYN 1.2.1', exact=False).click()
-        page.wait_for_url('**StudyInstanceUIDs=1.2.1')
-        page.evaluate('synReady')
+        for _ in range(trips):
+            self.assertTrue(page.evaluate("kinViewerOpenPatient('/ohif/viewer?StudyInstanceUIDs=1.2.2')"))
+            page.evaluate('synReady')
+            if between:
+                page.evaluate(between)
+            page.get_by_role('tab', name='SYN 1.2.1', exact=False).click()
+            page.wait_for_url('**StudyInstanceUIDs=1.2.1')
+            page.evaluate('synReady')
         self.assertEqual([], errors)
-        asked = page.evaluate('synAsked')
-        self.assertLessEqual(len(asked), 1, asked)
-        return page.evaluate('synBefore'), (asked[0] if asked else None), page
+        asked = [layout for layout in page.evaluate('synAsked') if layout['study'] == '1.2.1']
+        self.assertLessEqual(len(asked), trips, asked)
+        return page.evaluate('synBefore'), asked
 
     @staticmethod
     def placed(cells):
         """Cells as a set of (x, y, width, height, series, frame), rounded: where each series stands, whatever the order."""
         return sorted(tuple(round(v, 4) if isinstance(v, float) else v for v in cell) for cell in cells)
-
-    # A patient switch takes the rule's rows away in the shipped viewer (its modules are made anew): `gone` does so
-    # while the other patient is shown.
-    GONE = '() => synRows(false)'
 
     @staticmethod
     def where(cells, edge=0.5):
@@ -1076,67 +1108,67 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
         rank = lambda cell, axis: sorted({round(other[axis], 4) for other in cells if side(other) == side(cell)}).index(round(cell[axis], 4))
         return sorted((side(cell), rank(cell, 1), rank(cell, 0), cell[4], cell[5]) for cell in cells)
 
-    def test_01_a_rule_whose_monitors_hold_different_rows_comes_back_cell_for_cell(self):
+    HALVES = sorted([(0, 0, 0.5, 0.5), (0, 0.5, 0.5, 0.5), (0.5, 0, 0.5, 1)])
+
+    def test_01_a_rule_whose_monitors_hold_different_rows_comes_back_cell_for_cell_every_time(self):
         # Two rows on monitor 1, one cell on monitor 2: three cells on a 2 x 2 base. Before, a screen that was no full
         # grid was not kept at all: the patient came back as first opened, every cell's series and frame lost. It comes
-        # back laid on the two sides of the display edge: every cell on its monitor, in its row, on its series and frame.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], between=self.GONE)
+        # back laid on the two halves of the grid (the window keeps their edge on the display edge): every cell on its
+        # monitor, in its row, on its series and frame.
+        before, asked = self.round_trip([monitor('2x1'), monitor('1x1')])
         self.assertEqual(3, len(before))
-        self.assertIsNotNone(asked, 'the tab asked for no layout: its screen was not kept')
-        self.assertEqual([2, 2], [asked['rows'], asked['cols']])
-        self.assertEqual(self.where(before), self.where(asked['cells']))
-        self.assertEqual(sorted([(0, 0, 0.5, 0.5), (0, 0.5, 0.5, 0.5), (0.5, 0, 0.5, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
-        self.assertEqual(3, len(set(asked['keys'])))
-        # Were the rule's rows standing, the cells would come back on its image areas: the very rectangles they had.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')])
-        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        self.assertEqual(1, len(asked), 'the tab asked for no layout: its screen was not kept')
+        self.assertEqual([2, 2], [asked[0]['rows'], asked[0]['cols']])
+        self.assertEqual(self.where(before), self.where(asked[0]['cells']))
+        self.assertEqual(self.HALVES, sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked[0]['cells']))
+        self.assertEqual(3, len(set(asked[0]['keys'])))
+        # And again, without the rule applied anew: the screen the tab itself put back is kept the same way.
+        before, asked = self.round_trip([monitor('2x1'), monitor('1x1')], trips=3)
+        self.assertEqual(3, len(asked), 'a later round trip lost the screen')
+        for layout in asked:
+            self.assertEqual(self.where(before), self.where(layout['cells']))
+            self.assertEqual(self.HALVES, sorted(tuple(round(v, 4) for v in cell[:4]) for cell in layout['cells']))
 
     def test_02_different_columns_and_a_monitor_whose_images_start_higher(self):
         # One column on monitor 1, two on monitor 2 (2 x 3 base); monitor 2 with no strip and its toolbar at the bottom,
         # so its cells stand higher and are listed first.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x2', thumbs='none', toolbar='bottom')], between=self.GONE)
+        before, asked = self.round_trip([monitor('2x1'), monitor('2x2', thumbs='none', toolbar='bottom')], trips=2)
         self.assertEqual(6, len(before))
         self.assertLess(before[0][1], min(cell[1] for cell in before if cell[0] < 0.5))
-        self.assertEqual([2, 3], [asked['rows'], asked['cols']])
-        self.assertEqual(self.where(before), self.where(asked['cells']))
+        self.assertEqual(2, len(asked))
+        for layout in asked:
+            self.assertEqual([2, 3], [layout['rows'], layout['cols']])
+            self.assertEqual(self.where(before), self.where(layout['cells']))
         # One cell on each monitor: the plain 1 x 2, the left monitor's series on the left.
-        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], between=self.GONE)
-        self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual(self.where(before), self.where(asked['cells']))
+        before, asked = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], trips=2)
+        for layout in asked:
+            self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: layout[key] for key in ('rows', 'cols', 'keys')})
+            self.assertEqual(self.where(before), self.where(layout['cells']))
         # Two rows of two on each monitor: the plain 2 x 4, row by row and monitor by monitor.
-        before, asked, _ = self.round_trip([monitor('2x2'), monitor('2x2', thumbs='none', toolbar='bottom')], between=self.GONE)
-        self.assertEqual({'rows': 2, 'cols': 4, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual(self.where(before), self.where(asked['cells']))
+        before, asked = self.round_trip([monitor('2x2'), monitor('2x2', thumbs='none', toolbar='bottom')])
+        self.assertEqual({'rows': 2, 'cols': 4, 'keys': None}, {key: asked[0][key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.where(before), self.where(asked[0]['cells']))
 
     def test_03_the_rows_taken_back_before_the_tab_is_left_each_cell_still_comes_back_on_its_monitor(self):
-        # The rows were taken back before the tab was left (the window resized): the cells still stand where the rule put
-        # them and are read against the areas it had measured.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x1', thumbs='none', toolbar='bottom')], rows=False)
-        self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual(self.where(before), self.where(asked['cells']))
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False)
-        self.assertEqual(self.where(before), self.where(asked['cells']))
+        # The rows were taken back before the tab was left (the window moved or resized): the cells still stand where the
+        # rule put them, and are read against the image areas registered with its rectangles.
+        before, asked = self.round_trip([monitor('2x1'), monitor('2x1', thumbs='none', toolbar='bottom')], rows=False)
+        self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: asked[0][key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.where(before), self.where(asked[0]['cells']))
+        before, asked = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False)
+        self.assertEqual(self.where(before), self.where(asked[0]['cells']))
+        self.assertEqual(self.HALVES, sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked[0]['cells']))
+
     def test_04_a_plain_grid_and_a_screen_no_rule_left_are_kept_as_before(self):
         # No rule: a plain 2 x 2 comes back as its rows and columns, cell by cell, with no rectangles of the tab's own.
-        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1')], rows=False, registered=False, plain=True, left=False)
-        self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        before, asked = self.round_trip([monitor('1x1'), monitor('1x1')], rows=False, registered=False, plain=True, trips=2)
+        self.assertEqual(2, len(asked))
+        for layout in asked:
+            self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: layout[key] for key in ('rows', 'cols', 'keys')})
+            self.assertEqual(self.placed(before), self.placed(layout['cells']))
         # Three cells on a 2 x 2 base that no rule registered (a cell enlarged in a window with no rule): not kept, as before.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, registered=False, left=False)
-        self.assertIsNone(asked)
-
-    def test_05_the_window_moved_sideways_since_the_rule_the_cells_are_still_told_by_where_the_rule_laid_them(self):
-        # The rows were taken back because the window was moved: the display edge now runs through monitor 1's cells
-        # (30 % of the grid). The cells are read against the areas the rule had measured, not against that edge; laid
-        # again, monitors holding different grids go on the two sides of the edge as it is now.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, between='() => { window.synEdges = [0.3]; }')
-        self.assertIsNotNone(asked)
-        self.assertEqual(sorted([(0, 0, 0.3, 0.5), (0, 0.5, 0.3, 0.5), (0.3, 0, 0.7, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
-        self.assertEqual(self.where(before), self.where(asked['cells'], 0.3))
-        # Monitors holding the same grid: the plain grid of their columns, each monitor's series on its side.
-        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], rows=False, between='() => { window.synEdges = [0.3]; }')
-        self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual(self.where(before), self.where(asked['cells']))
+        before, asked = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, registered=False)
+        self.assertEqual([], asked)
 
 if __name__ == '__main__':
     unittest.main()

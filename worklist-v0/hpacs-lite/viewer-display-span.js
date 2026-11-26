@@ -171,13 +171,19 @@ window.KinViewerDisplaySpan = (() => {
       const ordered = [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
       const pairs = ordered.map((cell, index) => ({ cell, rect: rects[index], positionId: (index % cols) + '-' + Math.floor(index / cols) }));
       dividing = true; laid = Date.now();
-      window.kinViewerSplitRects = pairs.map(pair => ({ ...pair.rect })).sort(onScreen);
+      register(pairs.map(pair => pair.rect), areas);
       // Each cell stays the viewport it is: its id, what it shows and how.
       Promise.resolve().then(() => grid.setLayout({ numRows: rows, numCols: cols, activeViewportId: state.activeViewportId, isHangingProtocolLayout: false,
         layoutOptions: pairs.map(pair => ({ ...pair.rect, positionId: pair.positionId })),
         findOrCreateViewport: index => same(pairs[index].cell) })).catch(() => {}).then(() => { dividing = false; schedule(); });
     }
-    const onScreen = (a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x;
+    // Laid rectangles as this screen's split (kinViewerSplitRects, in the order on screen: top to bottom, then left to
+    // right) and, with them, the monitors' areas they were laid on (kinViewerSplitAreas; viewer-features-monitors.js lay).
+    function register(rects, areas) {
+      const list = rects.map(({ x, y, width, height }) => ({ x, y, width, height })).sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
+      window.kinViewerSplitRects = list;
+      window.kinViewerSplitAreas = { rects: list, areas: areas.map(area => ({ ...area })) };
+    }
     // A cell asked for again as the viewport it is: its id, what it shows and how.
     function same(cell) {
       const sets = [...(cell.displaySetInstanceUIDs || [])];
@@ -223,7 +229,7 @@ window.KinViewerDisplaySpan = (() => {
         if (old && !used.has(old.viewportOptions.viewportId) && old.displaySetInstanceUIDs.every(known)) next[index] = take(same(old));
       });
       target.cells.forEach((place, index) => { if (!next[index]) next[index] = fresh(shown); });
-      window.kinViewerSplitRects = target.cells.map(({ x, y, width, height }) => ({ x, y, width, height })).sort(onScreen);
+      register(target.cells, areas);
       // The active cell stays the active one while it is still on screen; else the grid chooses (as for the stock command).
       const active = next.some(cell => cell.viewportOptions?.viewportId === state.activeViewportId) ? { activeViewportId: state.activeViewportId } : {};
       Promise.resolve(grid.setLayout({ numRows: target.numRows, numCols: target.numCols, ...active, isHangingProtocolLayout: false,

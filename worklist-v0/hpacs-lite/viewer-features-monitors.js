@@ -161,6 +161,9 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   // the base grid (the most rows, all the columns). null for areas or shapes that cannot be laid.
   // This is the one way cells are put on monitors: a picked layout (fit), a layout picked while a rule stands and a
   // patient tab's saved screen (viewer-display-span.js, viewer-patient-tabs.js); the rule's own split lays the same way.
+  // Whoever registers laid rectangles as this screen's split (kinViewerSplitRects) says with them the areas they were
+  // laid on (kinViewerSplitAreas: { rects: that very list, areas }), so that the cells can be read against those areas
+  // (laid) for as long as they stand in those rectangles - also after the rule's rows are gone.
   const boxes = areas => Array.isArray(areas) && areas.every(a => a && finite(a.x, a.y, a.width, a.height) && a.width > 0 && a.height > 0);
   function lay(areas, shapes) {
     if (!boxes(areas) || !Array.isArray(shapes) || !areas.length || areas.length !== shapes.length ||
@@ -355,20 +358,6 @@ if (typeof window === 'object') {
     return window.KinViewerMonitorPlan.pair(info.screens, { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
       outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight }, info.zoom, { left: box.left, width: box.width });
   };
-  // The monitors' parts of the viewport grid now, left to right, as fractions of it - where a screen kept from monitors
-  // is laid again (KinViewerMonitorPlan.lay; a patient tab, viewer-patient-tabs.js): { areas, rule }. While an applied
-  // rule's rows stand over two or more monitors, their image areas as the rule measured them (rule: true); else the
-  // parts of the grid on each display, from the display edges of the last reading (rule: false). null: one monitor
-  // under the grid, or not known.
-  window.kinViewerMonitorPartsNow = () => {
-    const areas = window.KinViewerMonitorRows?.areas;
-    if (Array.isArray(areas) && areas.length >= 2) return { areas: areas.map(area => ({ ...area })), rule: true };
-    let edges = null;
-    try { edges = window.kinViewerMonitorEdgesNow(); } catch (_) { edges = null; }
-    if (!Array.isArray(edges) || !edges.length) return null;
-    const cuts = [0, ...edges, 1];
-    return { areas: cuts.slice(1).map((right, index) => ({ x: cuts[index], y: 0, width: right - cuts[index], height: 1 })), rule: false };
-  };
   // Read the access the reader already gave once now, so the first double click knows the displays.
   kinViewerScreensInfo().catch(() => {});
 
@@ -432,9 +421,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   const body = document.body;
   // active: the rows as an applied rule leaves them ({ chrome, css, noThumbs, copies, watching }), or null: the account's
   // own. epoch: the prepare() that owns the rows now; a newer one, or clear(), takes them from an older one.
-  // left: the image areas of the rule whose rows were taken back last, while no rule's rows stand - its cells stay where
-  // it laid them, and are still read against those areas (a patient tab keeps them by their monitor, viewer-patient-tabs.js).
-  let active = null, epoch = 0, watch = null, left = null;
+  let active = null, epoch = 0, watch = null;
   const event = () => window.dispatchEvent(new Event('kin-viewer-second-display'));
   const account = () => window.KinViewerChromePosition?.normalize(store.get('chrome'));
   const frames = n => new Promise(resolve => { const step = left => left ? requestAnimationFrame(() => step(left - 1)) : resolve(); step(n); });
@@ -467,7 +454,6 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   }
   function show(state) {
     stopWatch();
-    left = state ? null : active?.areas || left;
     active = state;
     if (!state) {
       window.KinViewerMonitorRows = null; body.removeAttribute('data-kin-monitor-rows'); body.removeAttribute('data-kin-monitor-no-thumbs');
@@ -651,7 +637,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     reaching = { timer, mine };
     window.addEventListener('kin-viewer-image-work', stopReaching);
   }
-  window.KinViewerMonitors = { prepare, reaching: () => !!reaching, left: () => left && left.map(area => ({ ...area })),
+  window.KinViewerMonitors = { prepare, reaching: () => !!reaching,
     clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──

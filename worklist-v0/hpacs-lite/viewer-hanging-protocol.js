@@ -511,6 +511,9 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
         // The split geometry on screen, apart from which rule is applied: a Job saves it (version 16) and a later apply
         // rolls back to it even after the series in its cells were changed (viewer-volume-job.js).
         if(shown.rects)root.kinViewerSplitRects=shown.rects.map(r=>({...r}));
+        // With them, the monitors' image areas they were laid on (viewer-features-monitors.js lay): a patient tab reads the
+        // cells against these for as long as they stand in those rectangles.
+        if(shown.rects)root.kinViewerSplitAreas=Array.isArray(prepared?.split?.areas)?{rects:root.kinViewerSplitRects,areas:prepared.split.areas.map(area=>({...area}))}:null;
         // The planes on screen are now this panel's own (ownedPlanes), not the ones a Job restored.
         root.kinViewerSplitPlanes=null;
         appliedCursor={scope:result.scope,ruleId:result.rule.id};appliedFingerprint=navigationFingerprint();appliedName=result.rule.name;appliedScope=result.scope;
