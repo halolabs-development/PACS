@@ -694,6 +694,13 @@ class MeasurementCiTests(unittest.TestCase):
                 self.assertEqual(command[command.index('--mode') + 1], 'live')
                 self.assertEqual(command[command.index('--timeout') + 1], '540')
                 self.assertEqual(outer, 575)
+            # The invariants suite runs under its own measured allowance through the shared per-suite budget.
+            filename, class_name, unit = candidate.BASE[0]
+            command, outer = ci.guarded_profile_run(ci.PROFILES['measurements'], filename, class_name, unit,
+                                                   candidate.CANDIDATE_DEADLINE_SECONDS)
+            self.assertEqual(command[command.index('--module') + 1], 'tests/invariants_live.py')
+            self.assertEqual(command[command.index('--timeout') + 1], '1080')
+            self.assertEqual(outer, 1115)
         self.assertEqual(ci.PROFILES['measurements'], original)
         self.assertEqual(ci.profile_deadline_seconds('measurements'), 3300)
 
