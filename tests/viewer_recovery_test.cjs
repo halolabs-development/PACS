@@ -85,7 +85,7 @@ async function harness() {
   extension.onModeEnter(); await flush();
   const all = () => document.body.all();
   const button = name => { const found = all().filter(e => e.tagName === 'button' && e.textContent === name); assert.equal(found.length, 1, `button ${name}: ${found.length}`); return found[0]; };
-  return { window, document, pages, calls, commands, measurements, annotations, notices, dialogs, extension, services,
+  return { window, document, viewport, pages, calls, commands, measurements, annotations, notices, dialogs, extension, services,
     setReply: f => { reply = f; }, defaultReply: reply, setMe: value => { me = value; },
     button, click: async name => { button(name).click(); await flush(); },
     input: (label, value) => { const e = all().find(e => e.attributes['aria-label'] === label && !e.disabled); assert.ok(e, label); e.value = value; e.dispatchEvent(new Event('input')); },
@@ -245,6 +245,39 @@ test('Add Key Image keeps frame 2 once frame 2 is on the screen', async () => {
   h.frames(2, 2);
   const item = await saveKey(h, 'shown frame', 'k');
   assert.deepEqual([item.kind, item.seriesUid, item.sopUid, item.frame], ['key', '1.2', '1.3', 2]);
+});
+
+test('Add Key Image makes nothing while the cell has not finished drawing the image it holds', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.frames(2, 2); h.viewport.viewportStatus = 'preRender'; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  h.viewport.viewportStatus = 'rendered';
+  const item = await saveKey(h, 'drawn frame', 'd');
+  assert.equal(item.frame, 2);
+});
+
+test('Add Key Image makes nothing in Tile, Unfolded or Slab views, which do not show one image of the stack', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  for (const [setup, words] of [[() => { h.window.kinNavigate = { laid: () => 'tile' }; }, /Tile 보기에서는 Key Image를 만들 수 없습니다/],
+    [() => { h.window.kinNavigate = { laid: () => 'unfolded' }; }, /Unfolded 보기에서는 Key Image를 만들 수 없습니다/],
+    [() => { delete h.window.kinNavigate; h.window.kinMgSlab = { on: () => true }; }, /Slab을 보는 동안에는 Key Image를 만들 수 없습니다/]]) {
+    setup(); await h.click('Add Key Image');
+    assert.equal(sections(h), before); assert.match(h.text(), words);
+  }
+  h.window.kinMgSlab = { on: () => false };
+  assert.equal((await saveKey(h, 'stack view', 's')).frame, 1);
+});
+
+test('Add Key Image in a paused video cell keeps its frame, and makes nothing while the video seeks', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.volumeCell(); h.viewport.type = 'video'; h.viewport.videoElement = { seeking: true, readyState: 4 }; h.frames(3, 0);
+  await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  h.viewport.videoElement.seeking = false;
+  assert.equal((await saveKey(h, 'video frame', 'v')).frame, 3);
 });
 
 test('Add Key Image in a volume cell (MPR, no loaded-image read) names its current original slice', async () => {

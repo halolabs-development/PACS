@@ -5973,6 +5973,9 @@ window.KinLanguageTerms = {
     ["입력은 유지했습니다.", "Your input was kept.", "m"],
     ["화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다", "The image drawn on screen could not be confirmed, so this point cannot be used for measurement", "l"],
     ["고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.", "The selected image is not shown in this cell yet, so no Key Image was made. Press again once it is shown.", "m"],
+    ["Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.", "A Key Image cannot be made in Tile view. Press it in Stack view.", "m"],
+    ["Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.", "A Key Image cannot be made in Unfolded view. Press it in Folded (Cine) view.", "m"],
+    ["Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a slab is shown. Set Slab Thickness to 1 slice, then press it.", "m"],
     ["이 {0}를 표시하지 못했습니다.", "Could not display this {0}.", "m"],
     ["{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", "{0}This viewer does not support displaying {1} yet. The original image series can still be opened.", "m"],
     ["{0}{1} 파일을 읽지 못했습니다{2}. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", "{0}Could not read the {1} file{2}. Reopen the series, and if this continues, contact your administrator.", "m"],
@@ -11879,6 +11882,31 @@ function kinCreateViewerHistory() {
     const matches = (r, item) => r?.study === scope && r.seriesUid === item.seriesUid && r.sopUid === item.sopUid && r.frame === item.frame;
     const current = () => reference(viewport()?.getCurrentImageId?.());
     const valid = ticket => !ended && ticket === generation && (!current() || current().study === scope);
+    // Why a Key Image naming `r` would not be the image the reader sees in cell `v`, if so ('' when it is). The one rule of
+    // Add Key Image (it fixes series, SOP and frame when pressed; Save sends only those):
+    //   a stack cell names the image it was asked for as soon as that load starts and keeps naming it after the load fails,
+    //   while the image before stays on the screen; the loaded image is drawn a moment later still. So the image the cell
+    //   holds must be the one named and the cell must have finished drawing it. Laid out as tiles (Navigate: Tile, Unfolded)
+    //   the named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
+    //   A video cell names the frame of its playing position: not yet shown while it seeks or before it has a frame.
+    //   A volume cell (MPR) has no loaded-image read and names the original slice it shows, as before.
+    function keyImageNotShown(v, r) {
+      if (!v) return '';
+      if (v.type === 'video') {
+        const video = v.videoElement;
+        return video && (video.seeking || !(video.readyState >= 2)) ? kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.") : '';
+      }
+      if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') return '';
+      let laid = null, slab = false;
+      try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) {}
+      try { slab = window.kinMgSlab?.on?.(v.id) === true; } catch (_) {}
+      if (laid === 'unfolded') return kinText("Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.");
+      if (laid) return kinText("Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.");
+      if (slab) return kinText("Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.");
+      const drawn = v.viewportStatus === undefined || v.viewportStatus === (cs.Enums?.ViewportStatus?.RENDERED || 'rendered');
+      return drawn && matches(reference(kinViewerShownImageId(v)), r) ? '' :
+        kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
+    }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
     // 이유로 돌지 못했어도(settle은 감시자의 실패를 삼킨다) 전환 뒤에 도착한 작성자 목록은 그려지지 않는다.
@@ -12292,15 +12320,8 @@ function kinCreateViewerHistory() {
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
         const r = current(); if (!r || r.study !== scope) return;
-        // A stack cell names the image it was asked for as soon as that load starts, and keeps naming it after the load fails,
-        // while the image before stays on the screen. A Key Image is made only when the image on the screen is the one it names;
-        // otherwise nothing is made (the reader presses again once it is shown). A volume cell (MPR) has no loaded-image read
-        // and names the slice it shows, as before.
-        const v = viewport();
-        if (v && (v.type === 'stack' || typeof v.getCornerstoneImage === 'function') && !matches(reference(kinViewerShownImageId(v)), r)) {
-          status.textContent = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
-          return;
-        }
+        const why = keyImageNotShown(viewport(), r);
+        if (why) { status.textContent = why; return; }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
         // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.

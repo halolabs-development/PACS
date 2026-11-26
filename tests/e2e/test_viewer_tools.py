@@ -187,8 +187,9 @@ class ViewerToolsE2E(ViewerHistoryE2E):
         page.unroute(matcher, frame_two)
         for n in (0, 1):
             page.evaluate('([id, n]) => { services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(n); }', [cell, n])
-            page.wait_for_function('([id, f]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id); return v.getCurrentImageId().endsWith("/frames/" + f) && v.getCornerstoneImage?.()?.imageId?.endsWith("/frames/" + f); }',
-                                   arg=[cell, n + 1], timeout=30000)
+            page.wait_for_function('''([id, f]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+                return v.getCurrentImageId().endsWith("/frames/" + f) && !!v.getCornerstoneImage?.()?.imageId?.endsWith("/frames/" + f) &&
+                    v.viewportStatus === cornerstone.Enums.ViewportStatus.RENDERED; }''', arg=[cell, n + 1], timeout=30000)
         self.assertEqual(page.evaluate(frames, cell), ['2', '2'])
 
     def test_tools_key_image_modalities(self):
