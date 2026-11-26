@@ -141,10 +141,11 @@ window.KinViewerDisplaySpan = (() => {
         near(cell.x, (index % cols) / cols) && near(cell.width, 1 / cols) && near(cell.y, Math.floor(index / cols) / rows) && near(cell.height, 1 / rows));
     }
     // An applied Hanging Protocol with monitors stands: its rows are on each monitor's part of the window (placed) and they
-    // cover the grid's edges there. A plain grid picked afterwards - the Layout menu, a protocol of another patient - is
-    // laid on the monitors' image areas the rule measured (placed.areas; KinViewerMonitorPlan.fit, the rule's own way of
-    // laying cells): each monitor takes half of its columns, none under a row or across the display edge. One column is
-    // first made one cell per monitor (divide, with all its conditions), and that grid is then laid the same way. Laid only
+    // cover the grid's edges there. A plain grid that arrives afterwards - a protocol of another patient, a prior opened in
+    // a new grid, a layout the stock command built (monitorPick did not take it) - is laid on the monitors' image areas
+    // the rule measured (placed.areas; KinViewerMonitorPlan.fit, the rule's own way of laying cells): each monitor takes
+    // half of its columns, none under a row or across the display edge. One column is first made one cell per monitor
+    // (divide, with all its conditions), and that grid is then laid the same way. Laid only
     // over two monitors, a grid of an even number of columns, every cell a stack or empty; never the rule's own split, a
     // saved split or any other shape (not plain), and never under an operation that owns the screen (holder: asked again
     // once it ends, at most once per 2 s). The rectangles are registered as this screen's split (kinViewerSplitRects), as
@@ -164,24 +165,113 @@ window.KinViewerDisplaySpan = (() => {
       // A cell that shows a set shows it as a drawn image stack (not a PDF, a report or a series still loading): looked at
       // again each second.
       if (!showing.every(shows) || holder() || dividing || Date.now() - laid < 2000) { owed = true; return; }
-      // Cell i of the plain grid (its order: plan.order, the one a patient tab keeps) takes rectangle i and keeps its
-      // place and its order in that grid: its place key (positionId) - the next Layout pick keeps the cells of the places
-      // it still has, as from the plain grid - and its position in the native list. The registered copy is in the order
-      // on screen (top to bottom, then left to right), as the rule registers its split and as the readers of
-      // kinViewerSplitRects compare it.
-      const ordered = plan.order([...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0)), areas);
+      // Cell i of the plain grid (row by row) takes rectangle i and keeps its place key there (positionId 'col-row'). The
+      // registered copy is in the order on screen (top to bottom, then left to right), as the rule registers its split
+      // and as the readers of kinViewerSplitRects compare it.
+      const ordered = [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
       const pairs = ordered.map((cell, index) => ({ cell, rect: rects[index], positionId: (index % cols) + '-' + Math.floor(index / cols) }));
       dividing = true; laid = Date.now();
-      window.kinViewerSplitRects = pairs.map(pair => ({ ...pair.rect }))
-        .sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
+      window.kinViewerSplitRects = pairs.map(pair => ({ ...pair.rect })).sort(onScreen);
       // Each cell stays the viewport it is: its id, what it shows and how.
       Promise.resolve().then(() => grid.setLayout({ numRows: rows, numCols: cols, activeViewportId: state.activeViewportId, isHangingProtocolLayout: false,
         layoutOptions: pairs.map(pair => ({ ...pair.rect, positionId: pair.positionId })),
-        findOrCreateViewport: index => {
-          const cell = pairs[index].cell, sets = [...(cell.displaySetInstanceUIDs || [])];
-          return { displaySetInstanceUIDs: sets, displaySetOptions: cell.displaySetOptions || sets.map(() => ({})),
-            viewportOptions: { ...(cell.viewportOptions || {}), viewportId: cell.viewportId, allowUnmatchedView: true } };
-        } })).catch(() => {}).then(() => { dividing = false; schedule(); });
+        findOrCreateViewport: index => same(pairs[index].cell) })).catch(() => {}).then(() => { dividing = false; schedule(); });
+    }
+    const onScreen = (a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x;
+    // A cell asked for again as the viewport it is: its id, what it shows and how.
+    function same(cell) {
+      const sets = [...(cell.displaySetInstanceUIDs || [])];
+      return { displaySetInstanceUIDs: sets, displaySetOptions: cell.displaySetOptions || sets.map(() => ({})),
+        viewportOptions: { ...(cell.viewportOptions || {}), viewportId: cell.viewportOptions?.viewportId ?? cell.viewportId, allowUnmatchedView: true } };
+    }
+    // A layout picked from the Layout menu while an applied Hanging Protocol's rows stand over two monitors and the cells
+    // stand on its monitors' image areas (KinViewerMonitorPlan.laid): each monitor is a grid of its own, and the pick is
+    // the Layout menu's own rule on each of them. R x C gives every monitor R rows and half the columns (one column: one
+    // each). On each monitor the place (row, column) keeps the cell that stands there - the viewport it is, what it shows
+    // and how; a place that is no more drops its cell; a new place gets the cell that last stood there under this rule
+    // (as the menu brings a row back), else the next series that is not on screen (fresh). No cell goes to the other
+    // monitor, and no viewport is asked for twice. It is one layout, laid by KinViewerMonitorPlan.lay and registered as
+    // this screen's split; a series still loading or a playing Cine does not put it off (the reader asked for it now, as
+    // the stock command would act now; what a cell is is read from what it shows, stack).
+    // The stock command keeps cells by their column in the whole window: with more columns the right monitor's first
+    // cell would stand on the left monitor, with fewer the left monitor's second cell on the right one.
+    // Answers false - the stock command then runs as it always did, and a plain grid it leaves is laid by fitMonitors -
+    // without such rows, when the cells are not laid on them (a plain grid over the monitors), for an odd number of
+    // columns, a cell that is no image stack, the mammography hanging or a protocol with its own layout callback.
+    let memory = { rows: null, cells: new Map() };
+    function monitorPick(rows, cols) {
+      const placed = window.KinViewerMonitorRows || null, areas = placed?.areas, plan = window.KinViewerMonitorPlan, grid = services.viewportGridService;
+      if (!Array.isArray(areas) || areas.length !== 2 || typeof plan?.laid !== 'function' || typeof grid.setLayout !== 'function') return false;
+      if (!Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 || cols !== 1 && cols % 2) return false;
+      const state = grid.getState(), cells = [...state.viewports.values()];
+      if ((state.layout?.layoutType ?? 'grid') !== 'grid' || mammography() || layoutCallback()) return false;
+      const stood = plan.laid(cells, areas), target = stood && plan.lay(areas, areas.map(() => ({ rows, cols: cols === 1 ? 1 : cols / 2 })));
+      if (!target || !cells.every(stack)) return false;
+      // The cell of each place while these rows stand: a new Apply, or the rows taken back, starts anew. A cell is
+      // remembered at the one place it stood on last.
+      if (memory.rows !== placed) memory = { rows: placed, cells: new Map() };
+      const at = place => place.monitor + ':' + place.row + ':' + place.col;
+      const standing = new Map(cells.map((cell, index) => [at(stood.places[index]), cell]));
+      // A viewport on screen now is never taken from the memory (it would be asked for twice, and be one cell).
+      const used = new Set(cells.map(cell => cell.viewportId)), shown = [];
+      for (const [place, old] of memory.cells) if (used.has(old.viewportOptions.viewportId)) memory.cells.delete(place);
+      for (const [place, cell] of standing) memory.cells.set(place, same(cell));
+      const take = cell => { used.add(cell.viewportOptions.viewportId); shown.push(...cell.displaySetInstanceUIDs); return cell; };
+      const next = target.cells.map(place => standing.has(at(place)) ? take(same(standing.get(at(place)))) : null);
+      target.cells.forEach((place, index) => {
+        const old = next[index] ? null : memory.cells.get(at(place));
+        if (old && !used.has(old.viewportOptions.viewportId) && old.displaySetInstanceUIDs.every(known)) next[index] = take(same(old));
+      });
+      target.cells.forEach((place, index) => { if (!next[index]) next[index] = fresh(shown); });
+      window.kinViewerSplitRects = target.cells.map(({ x, y, width, height }) => ({ x, y, width, height })).sort(onScreen);
+      const active = used.has(state.activeViewportId) ? { activeViewportId: state.activeViewportId } : {};
+      Promise.resolve(grid.setLayout({ numRows: target.numRows, numCols: target.numCols, ...active, isHangingProtocolLayout: false,
+        layoutOptions: target.cells.map(({ x, y, width, height, positionId }) => ({ x, y, width, height, positionId })),
+        findOrCreateViewport: index => next[index] })).catch(() => {}).then(schedule);
+      return true;
+    }
+    const known = uid => { try { return !!services.displaySetService?.getDisplaySetByUID?.(uid); } catch (_) { return false; } };
+    // A cell that is empty or shows one series as an image stack, by what it shows (its display set and its viewport's
+    // type), drawn yet or not. Not an MPR plane, a 3D view, a PDF or a report.
+    function stack(cell) {
+      const uids = cell.displaySetInstanceUIDs || [];
+      if (!uids.length) return true;
+      if (uids.length !== 1 || (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack') return false;
+      try {
+        const set = services.displaySetService?.getDisplaySetByUID?.(uids[0]), view = services.cornerstoneViewportService?.getCornerstoneViewport?.(cell.viewportId);
+        return !!set && Array.isArray(set.images) && (!view || view.type === 'stack');
+      } catch (_) { return false; }
+    }
+    // A new place shows the next series that is not on screen (shown: the display sets already taken), in the order the
+    // viewer lists its series (the series strip's; config series-order.js keeps the display sets so), as an image stack -
+    // what the Layout menu's own fill gives in a window of one study - or nothing when every series is on screen. Chosen
+    // here, from the display sets alone: the stock fill would make the default protocol the active one.
+    function fresh(shown) {
+      try {
+        const set = (services.displaySetService?.getActiveDisplaySets?.() || []).find(value => value?.images?.length && !shown.includes(value.displaySetInstanceUID));
+        if (!set) return {};
+        shown.push(set.displaySetInstanceUID);
+        return { displaySetInstanceUIDs: [set.displaySetInstanceUID], displaySetOptions: [{}], viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } };
+      } catch (_) { return {}; }
+    }
+    // The protocol on screen acts on a layout change itself (an MPR hanging leaves its planes): that pick is the stock command's.
+    function layoutCallback() {
+      try { return !!services.hangingProtocolService?.getActiveProtocol?.()?.protocol?.callbacks?.onLayoutChange; } catch (_) { return true; }
+    }
+    // The Layout menu's command (setViewportGridLayout) asks monitorPick first, while this window's span is mounted; every
+    // other pick goes to the stock command untouched.
+    let unguard = null;
+    function guardLayout() {
+      let native = null;
+      try { native = commands?.getCommand?.('setViewportGridLayout', 'DEFAULT'); } catch (_) { native = null; }
+      if (typeof native?.commandFn !== 'function' || typeof commands.registerCommand !== 'function') return;
+      const guarded = { ...native, commandFn: options => {
+        let taken = false;
+        try { taken = !ended && monitorPick(options?.numRows, options?.numCols); } catch (_) { taken = false; }
+        if (!taken) return native.commandFn(options);
+      } };
+      commands.registerCommand('DEFAULT', 'setViewportGridLayout', guarded);
+      unguard = () => { try { if (commands.getCommand('setViewportGridLayout', 'DEFAULT') === guarded) commands.registerCommand('DEFAULT', 'setViewportGridLayout', native); } catch (_) {} };
     }
     // The cell shows its display set now as a drawn image stack: its stack viewport's current image is the image it has
     // drawn, and is one of that set's own images - for a part of one multi-frame file (a display set per time point,
@@ -442,8 +532,9 @@ window.KinViewerDisplaySpan = (() => {
       frame = null;
       if (ended) return;
       // An applied Hanging Protocol with monitors has split the grid at the display edge and placed the toolbar and the
-      // strip on each monitor itself (viewer-features-monitors.js): its split is left as it made it, a plain grid picked
-      // afterwards is laid on its monitors' image areas (fitMonitors), and those two rows are copied where it says. The
+      // strip on each monitor itself (viewer-features-monitors.js): its split is left as it made it, a layout picked from
+      // the Layout menu afterwards is laid on its monitors by monitorPick, a plain grid that arrives otherwise (another
+      // patient's protocol, a prior opened in a new grid) by fitMonitors, and those two rows are copied where it says. The
       // patient tabs, which it does not place, keep following Second Display.
       const placed = window.KinViewerMonitorRows || null;
       const list = seams();
@@ -503,11 +594,11 @@ window.KinViewerDisplaySpan = (() => {
     placed.observe(document.body, { attributes: true, attributeFilter: ['data-kin-chrome', 'data-kin-toolbar-side', 'data-kin-thumbs-side', 'data-kin-toolbar-hide', 'data-kin-thumbs-hide'] });
     const root = document.getElementById('root');
     if (root) rooted.observe(root, { childList: true, subtree: true });
-    bindGroup(); observeColumn(); schedule();
+    bindGroup(); observeColumn(); guardLayout(); schedule();
     return {
       seams, refresh: schedule,
       dispose() {
-        if (ended) return; ended = true;
+        if (ended) return; ended = true; unguard?.(); unguard = null;
         if (link?.slot === 0) { try { channel?.postMessage({ type: 'gone' }); } catch (_) {} }
         cancelAnimationFrame(frame); cancelAnimationFrame(sideFrame); clearInterval(timer); abort.abort(); resized.disconnect(); rooted.disconnect(); placed.disconnect();
         for (const state of mirrors.values()) clearTimeout(state.timer);

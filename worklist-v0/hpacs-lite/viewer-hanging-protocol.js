@@ -296,9 +296,9 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
       const ruleCells=result.rule.layout.cells;
       if(!split)return {rows:result.rule.layout.rows,cols:result.rule.layout.cols,rects:null,ruleCells:ruleCells.map((_,index)=>index),
         cells:[...result.cells],planes:ruleCells.map(plane)};
-      // positions: each rectangle's place key in the plain grid it stands for (KinViewerMonitorPlan.places), so that the
-      // native grid does not key it by its rectangle rounded (two cells could share one key: a later Layout pick, which
-      // keeps the cell of each key, would drop one) and a patient tab puts each cell back on its own monitor.
+      // positions: each rectangle's place key (KinViewerMonitorPlan.split), so that the native grid does not key it by its
+      // rectangle rounded to the base grid (two cells could share one key: a later Layout pick by the stock command, which
+      // keeps the cell of each key, would drop one).
       return {rows:split.numRows,cols:split.numCols,rects:split.rects.map(r=>({...r})),positions:Array.isArray(split.positions)&&split.positions.length===split.rects.length?[...split.positions]:null,ruleCells:[...split.cells],
         cells:split.cells.map(index=>index===null?null:result.cells[index]),planes:split.cells.map(index=>index===null?null:plane(ruleCells[index]))};
     }

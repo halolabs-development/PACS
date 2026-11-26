@@ -2074,7 +2074,9 @@ class MeasurementCiTests(unittest.TestCase):
                           'test_two_15_a_layout_picked_after_a_monitor_rule_is_laid_on_each_monitors_images',
                           'test_two_16_where_monitor_2s_images_start_higher_a_tab_round_trip_keeps_each_cell_on_its_monitor',
                           'test_two_17_a_cell_enlarged_and_put_back_then_a_tab_round_trip_keeps_each_cell_on_its_monitor',
-                          'test_two_18_the_window_resized_after_the_rule_then_a_tab_round_trip_keeps_each_cell_on_its_monitor'])
+                          'test_two_18_the_window_resized_after_the_rule_then_a_tab_round_trip_keeps_each_cell_on_its_monitor',
+                          'test_two_19_more_columns_and_fewer_keep_each_monitors_cell_on_that_monitor',
+                          'test_two_20_monitors_holding_different_rows_come_back_after_a_tab_round_trip'])
         self.assertNotIn('two-monitor-layout', self.catalog.text(automatic_only=True))
         dispatch = (ci.ROOT/'.github/workflows/output-integration.yml').read_text(encoding='utf-8')
         self.assertIn('- two-monitor-layout', dispatch)

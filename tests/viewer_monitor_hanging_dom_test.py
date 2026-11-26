@@ -13,6 +13,7 @@ with a synthetic Hanging Protocols panel handle and, where two displays are need
 emulated: the actual move of a window between two physical displays is checked on a real desktop."""
 import json
 import unittest
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import sync_playwright, expect
 
@@ -87,22 +88,27 @@ BESIDE = """() => {
 }"""
 
 
-# A viewport grid that follows the pinned viewer where laying cells depends on it, in place of the harness's static one:
-# setLayout builds one cell per position (layoutOptions: those rectangles; else the plain grid), each from what
-# findOrCreateViewport answers (the same viewport id keeps its viewport); the Layout menu's command builds the plain grid
-# and keeps the cell of every position there already is (a new position is empty). A layout lands a moment later and is
-# announced. Each cell's viewport has drawn the first image of the series it shows. synApplySplit lays a rule's split as
-# Hanging Protocols does (each rectangle with its place key, and registers it, kinViewerSplitRects); synMenu picks a
-# layout from the Layout menu.
+# A viewport grid that follows the pinned viewer (OHIF v3.9.1) where laying cells depends on it, in place of the harness's
+# static one: setLayout builds one cell per position (layoutOptions: those rectangles; else the plain grid), each from
+# what findOrCreateViewport answers (the same viewport id keeps its viewport - two positions answered with one id are
+# one cell). The Layout menu's command (setViewportGridLayout in the DEFAULT context, which a module may wrap) is the
+# stock one: it remembers every cell there is by its place key - for good, as the pinned store does - builds the plain
+# grid, puts into each position the cell remembered for its key, and fills a position with none as the default
+# protocol does (getMissingViewport: the study's next series not on screen, or nothing); synStock lists the picks it
+# ran. A layout lands a moment later and is announced. Each cell's viewport has drawn the first image of the series it
+# shows (synLoading: not yet). synApplySplit lays a rule's split as Hanging Protocols does (each rectangle with its
+# place key, and registers it, kinViewerSplitRects); synMenu picks a layout from the Layout menu.
 GRID = """() => {
   const listeners = new Set(), views = new Map(); let made = 0;
   window.synSets = new Map();
   const series = uid => { if (!synSets.has(uid)) synSets.set(uid, { displaySetInstanceUID: uid, images: [0, 1, 2].map(n => ({ SOPInstanceUID: 'sop:' + uid + ':' + n })) }); return uid; };
-  const viewport = id => { if (!views.has(id)) views.set(id, { id, type: 'stack', held: null, element: document.body.appendChild(document.createElement('div')),
+  const viewport = id => { if (!views.has(id)) views.set(id, { id, type: 'stack', held: null, loading: false, element: document.body.appendChild(document.createElement('div')),
       getImageIds() { return this.held ? [0, 1, 2].map(n => 'img:' + this.held + ':' + n) : []; },
       getCurrentImageId() { return this.held ? 'img:' + this.held + ':0' : undefined; },
-      getCornerstoneImage() { const imageId = this.getCurrentImageId(); return imageId ? { imageId } : undefined; } });
+      getCornerstoneImage() { const imageId = this.getCurrentImageId(); return imageId && !this.loading ? { imageId } : undefined; } });
     return views.get(id); };
+  // A cell whose series is still loading: its image is not drawn yet.
+  window.synLoading = (id, loading = true) => { viewport(id).loading = loading; };
   const entry = (id, rect, positionId, sets, options) => { if (sets.length) viewport(id).held = sets[0];
     return { viewportId: id, positionId, x: rect.x, y: rect.y, width: rect.width, height: rect.height, displaySetInstanceUIDs: [...sets],
       displaySetOptions: sets.map(() => ({})), viewportOptions: { viewportType: 'stack', ...options, viewportId: id } }; };
@@ -118,22 +124,40 @@ GRID = """() => {
       synLayouts.push({ numRows, numCols, layoutOptions: layoutOptions ? structuredClone(layoutOptions) : null });
       const viewports = new Map();
       // As the pinned grid: a position's key is its option's positionId, or else its place rounded to the grid.
+      const shared = {};
       (layoutOptions || plainRects(numRows, numCols)).forEach((rect, index) => {
         const positionId = rect.positionId || Math.round(rect.x * numCols) + '-' + Math.round(rect.y * numRows);
-        const asked = findOrCreateViewport(index, positionId, {}) || {};
+        const asked = findOrCreateViewport(index, positionId, shared) || {};
         const id = asked.viewportOptions?.viewportId || 'v' + (++made);
         viewports.set(id, entry(id, rect, positionId, asked.displaySetInstanceUIDs || [], asked.viewportOptions || {}));
       });
       land({ layout: { layoutType: 'grid', numRows, numCols }, activeViewportId: viewports.has(activeViewportId) ? activeViewportId : [...viewports.keys()][0], viewports });
       return Promise.resolve();
     } };
-  window.synLayoutCommands = { runCommand(name, { numRows, numCols }) {
-    if (name !== 'setViewportGridLayout') return;
-    const kept = new Map([...state.viewports.values()].map(cell => [cell.positionId, cell]));
-    grid.setLayout({ numRows, numCols, activeViewportId: state.activeViewportId, findOrCreateViewport: (index, positionId) => {
-      const old = kept.get(positionId);
-      return old ? { displaySetInstanceUIDs: old.displaySetInstanceUIDs, viewportOptions: old.viewportOptions } : { displaySetInstanceUIDs: [], viewportOptions: {} }; } });
-  } };
+  // The study's series, in the order the default protocol offers them to a new cell.
+  window.synStudy = ['ds-1', 'ds-2', 'ds-3', 'ds-4', 'ds-5', 'ds-6', 'ds-7', 'ds-8'];
+  const protocols = { getState: () => ({ protocolId: 'default', stageIndex: 0 }),
+    getMissingViewport(protocolId, stage, options) { const uid = synStudy.find(value => !options.inDisplay.includes(value));
+      return { viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true }, displaySetsInfo: uid ? [{ displaySetInstanceUID: series(uid), displaySetOptions: {} }] : [] }; } };
+  const byPosition = {}, inDisplay = [];
+  window.synStock = [];
+  const stock = { commandFn({ numRows, numCols }) { setTimeout(() => {
+    synStock.push([numRows, numCols]);
+    const now = {};
+    for (const cell of state.viewports.values()) if (cell.positionId) now[cell.positionId] = byPosition[cell.positionId] = { ...cell, viewportOptions: { ...cell.viewportOptions } };
+    for (let row = 0; row < numRows; row++) for (let col = 0; col < numCols; col++) inDisplay.push(...(now[col + '-' + row]?.displaySetInstanceUIDs || []));
+    grid.setLayout({ numRows, numCols, findOrCreateViewport: (index, positionId, options) => {
+      const old = byPosition[positionId];
+      if (old) return { ...old };
+      if (!options.inDisplay) options.inDisplay = [...inDisplay];
+      const missing = protocols.getMissingViewport('default', 0, options), sets = missing.displaySetsInfo.map(info => info.displaySetInstanceUID);
+      options.inDisplay.push(...sets);
+      return { displaySetInstanceUIDs: sets, displaySetOptions: missing.displaySetsInfo.map(info => info.displaySetOptions), viewportOptions: { ...missing.viewportOptions } }; } });
+  }, 0); } };
+  const contexts = { DEFAULT: { setViewportGridLayout: stock } };
+  window.synLayoutCommands = { getCommand: (name, context = 'DEFAULT') => contexts[context]?.[name],
+    registerCommand(context, name, definition) { (contexts[context] ||= {})[name] = definition; },
+    runCommand(name, options) { return this.getCommand(name)?.commandFn(options); } };
   window.synMenu = (rows, cols) => synLayoutCommands.runCommand('setViewportGridLayout', { numRows: rows, numCols: cols });
   // Another series put into one cell (dragged from the strip): the layout stays, the cell shows the new set.
   window.putSeries = (id, uid) => { const viewports = new Map(state.viewports), old = viewports.get(id);
@@ -147,13 +171,22 @@ GRID = """() => {
   window.synCells = () => { const g = document.querySelector('[data-cy=viewport-grid]').getBoundingClientRect();
     return [...state.viewports.values()].sort((a, b) => a.y - b.y || a.x - b.x).map(c => [c.viewportId, g.left + c.x * g.width, g.top + c.y * g.height,
       g.left + (c.x + c.width) * g.width, g.top + (c.y + c.height) * g.height, c.displaySetInstanceUIDs[0] || null]); };
+  // One cell takes the whole of its monitor's cells' area, as the double click's maximize leaves the screen: the other
+  // cells of that monitor are gone, every other cell stays (same viewports, same place keys).
+  window.synEnlarge = id => { const seam = synSeam / innerWidth, cells = [...state.viewports.values()], it = state.viewports.get(id), side = c => c.x + c.width / 2 > seam;
+    const mates = cells.filter(c => side(c) === side(it)), x = Math.min(...mates.map(c => c.x)), y = Math.min(...mates.map(c => c.y));
+    const area = { x, y, width: Math.max(...mates.map(c => c.x + c.width)) - x, height: Math.max(...mates.map(c => c.y + c.height)) - y };
+    const kept = cells.filter(c => c === it || !mates.includes(c));
+    grid.setLayout({ numRows: state.layout.numRows, numCols: state.layout.numCols, activeViewportId: id,
+      layoutOptions: kept.map(c => ({ ...(c === it ? area : { x: c.x, y: c.y, width: c.width, height: c.height }), positionId: c.positionId })),
+      findOrCreateViewport: index => ({ displaySetInstanceUIDs: kept[index].displaySetInstanceUIDs, viewportOptions: kept[index].viewportOptions }) }); };
   // The place key of each cell, in the order the native grid lists them.
   window.synOrder = () => [...state.viewports.values()].map(c => c.positionId);
   window.synGridState = () => ({ rows: state.layout.numRows, cols: state.layout.numCols, rects: [...state.viewports.values()].map(c => ({ x: c.x, y: c.y, width: c.width, height: c.height })) });
   Object.assign(synServices, { viewportGridService: grid,
     cornerstoneViewportService: { ...synServices.cornerstoneViewportService, getCornerstoneViewport: id => state.viewports.has(id) ? viewport(id) : null },
-    displaySetService: { ...synServices.displaySetService, getDisplaySetByUID: uid => synSets.get(uid) },
-    cineService: { getState: () => ({ cines: {} }) }, hangingProtocolService: { getState: () => ({ protocolId: 'default' }) } });
+    displaySetService: { ...synServices.displaySetService, getDisplaySetByUID: uid => synSets.get(uid), getActiveDisplaySets: () => synStudy.map(uid => synSets.get(series(uid))) },
+    cineService: { getState: () => ({ cines: {} }) }, hangingProtocolService: protocols });
   cornerstone.metaData.get = (type, imageId) => type === 'instance' && /^img:/.test(imageId || '') ? { SOPInstanceUID: 'sop:' + imageId.slice(4) } : null;
   // The browser of a desktop with two displays says it has more than one.
   Object.defineProperty(screen, 'isExtended', { configurable: true, get: () => true });
@@ -383,6 +416,22 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertAlmostEqual(boxes['grid']['bottom'], max(c[4] for c in two), delta=1, msg=state)
         return cells
 
+    def on_monitors(self, page):
+        """Each monitor's cells as [id, display set], row by row and left to right on that monitor: (monitor 1, monitor 2).
+        From where the cells are drawn, independent of the product's own reading."""
+        seam, cells = page.evaluate('window.synSeam ?? innerWidth / 2'), page.evaluate('synCells()')
+        side = lambda keep: [[c[0], c[5]] for c in sorted((c for c in cells if keep(c)), key=lambda c: (round(c[2]), c[1]))]
+        one, two = side(lambda c: c[3] <= seam + 0.5), side(lambda c: c[1] >= seam - 0.5)
+        self.assertEqual(len(cells), len(one) + len(two), 'a cell lies across the display edge: ' + json.dumps(cells))
+        return one, two
+
+    def pick(self, page, rows, cols, count):
+        """The reader picks rows x cols from the Layout menu; the grid of `count` cells has landed and had its moment
+        (the page measures on the grid's announcement and once a second)."""
+        page.evaluate('([rows, cols]) => synMenu(rows, cols)', [rows, cols])
+        page.wait_for_function('count => synGridState().rects.length === count', arg=count, timeout=6000, polling=100)
+        page.wait_for_timeout(2500)
+
     def test_07b_a_layout_picked_from_the_menu_after_the_rule_stands_is_laid_on_each_monitor(self):
         # The rule of a reading desk: monitor 1 with its strip on the left and its toolbar at the bottom, monitor 2 with
         # both on top (their fixed copies). The window covers both displays, which meet left of its middle.
@@ -398,54 +447,56 @@ class MonitorHangingDOMTest(unittest.TestCase):
         # The rule's own split is left as it is.
         page.wait_for_timeout(2100)
         self.assertEqual(split, page.evaluate('synGridState()'))
+        one, two = self.on_monitors(page)
+        self.assertEqual([4, 4], [len(one), len(two)])
+        # The picks the stock command has run so far (the first grid of one column was divided by it).
+        layouts, stock = page.evaluate('synLayouts.length'), page.evaluate('synStock')
 
-        def pick(rows, cols, count):
-            # The Layout menu's grid lands; whatever lays it on the monitors has had its moment (the page measures on the
-            # grid's announcement and once a second).
-            page.evaluate('([rows, cols]) => synMenu(rows, cols)', [rows, cols])
-            page.wait_for_function('([rows, count]) => synGridState().rows === rows && synGridState().rects.length === count', arg=[rows, count], timeout=5000, polling=250)
-            page.wait_for_timeout(2500)
-
-        # The reader picks 1 x 2 from the Layout menu: one cell on each monitor's image area, each the cell it was.
-        before = [c[0] for c in page.evaluate('synCells()')][:2]
-        pick(1, 2, 2)
-        cells = self.laid_on_monitors(page, 1)
-        self.assertEqual(before, [c[0] for c in cells])
-        # Each cell keeps the place key of its place in the picked grid, listed in that grid's order - asked for by name,
-        # not left to the native grid's rounding of the moved rectangles (which can give two cells one key).
+        # The reader picks 1 x 2 from the Layout menu: one cell on each monitor's image area - the first cell of that
+        # monitor, the viewport it was with what it showed. Monitor 1's second cell does not go to monitor 2.
+        self.pick(page, 1, 2, 2)
+        self.laid_on_monitors(page, 1)
+        self.assertEqual(([one[0]], [two[0]]), self.on_monitors(page))
+        # Laid in one layout by the page itself: the stock command, which keeps cells by their column in the whole
+        # window, did not run.
+        self.assertEqual(layouts + 1, page.evaluate('synLayouts.length'))
+        self.assertEqual(stock, page.evaluate('synStock'))
+        # Each cell has the place key of its place (asked for by name, not left to the native grid's rounding of the
+        # rectangles, which can give two cells one key).
         self.assertEqual(['0-0', '1-0'], page.evaluate('synLayouts.at(-1).layoutOptions.map(o => o.positionId)'))
         self.assertEqual(['0-0', '1-0'], page.evaluate('synOrder()'))
         # Registered as this screen's split (the double click's maximize and a later Apply's rollback know it).
         self.assertEqual(page.evaluate('synGridState().rects'), page.evaluate('kinViewerSplitRects'))
-        # 2 x 2: two cells on each monitor.
-        pick(2, 2, 4)
+        # 2 x 2: two rows on each monitor; the lower place of each monitor gets the cell that stood there under this
+        # rule (as the Layout menu brings a row back).
+        self.pick(page, 2, 2, 4)
         self.assertEqual(['0-0', '1-0', '0-1', '1-1'], page.evaluate('synOrder()'))
-        cells = self.laid_on_monitors(page, 2)
-        # The top cell of each monitor (the 2 x 2's top row); the reader puts another series into the right one.
-        top = lambda cells: [min((c for c in cells if c[3] <= SEAM + 0.5), key=lambda c: c[2]), min((c for c in cells if c[1] >= SEAM - 0.5), key=lambda c: c[2])]
-        page.evaluate("id => putSeries(id, 'ds-reader')", top(cells)[1][0])
-        tops = top(page.evaluate('synCells()'))
-        self.assertEqual('ds-reader', tops[1][5])
-        # Back to 1 x 2: the top row stays, each cell with what it shows.
-        pick(1, 2, 2)
-        cells = self.laid_on_monitors(page, 1)
-        self.assertEqual([[c[0], c[5]] for c in tops], [[c[0], c[5]] for c in cells])
-        # 1 x 1 picked from the four cells of 2 x 2: one cell on each monitor (the one column is made two, then laid); the
-        # top left cell stays the first.
-        pick(2, 2, 4)
         self.laid_on_monitors(page, 2)
-        first = page.evaluate('synCells()')[0]
-        page.evaluate('synMenu(1, 1)')
-        page.wait_for_function('() => synGridState().rows === 1 && synGridState().rects.length === 2', timeout=6000, polling=250)
-        page.wait_for_timeout(2500)
-        cells = self.laid_on_monitors(page, 1)
-        self.assertEqual(first[0], cells[0][0])
-        self.assertEqual(first[5], cells[0][5])
+        self.assertEqual(([one[0], one[2]], [two[0], two[2]]), self.on_monitors(page))
+        # The reader puts another series into monitor 2's top cell.
+        page.evaluate("id => putSeries(id, 'ds-reader')", two[0][0])
+        # Back to 1 x 2: the top row stays, each cell with what it shows.
+        self.pick(page, 1, 2, 2)
+        self.laid_on_monitors(page, 1)
+        self.assertEqual(([one[0]], [[two[0][0], 'ds-reader']]), self.on_monitors(page))
+        # 1 x 1 picked from the four cells of 2 x 2: one cell on each monitor at once (no cell over both monitors first).
+        self.pick(page, 2, 2, 4)
+        self.laid_on_monitors(page, 2)
+        layouts = page.evaluate('synLayouts.length')
+        self.pick(page, 1, 1, 2)
+        self.laid_on_monitors(page, 1)
+        self.assertEqual(([one[0]], [[two[0][0], 'ds-reader']]), self.on_monitors(page))
+        self.assertEqual(layouts + 1, page.evaluate('synLayouts.length'))
+        self.assertEqual(2, page.evaluate('synLayouts.at(-1).layoutOptions.length'))
+        # 1 x 4: two columns on each monitor, the second the cell the rule had put there.
+        self.pick(page, 1, 4, 4)
+        self.laid_on_monitors(page, 2)
+        self.assertEqual(([one[0], one[1]], [[two[0][0], 'ds-reader'], two[1]]), self.on_monitors(page))
+        self.assertEqual(stock, page.evaluate('synStock'))
         # Settled: nothing more is laid.
         count = page.evaluate('synLayouts.length')
         page.wait_for_timeout(2500)
         self.assertEqual(count, page.evaluate('synLayouts.length'))
-
     def test_07c_where_one_monitors_images_start_higher_the_cells_keep_the_picked_grids_order(self):
         # Monitor 1 with both rows on top, monitor 2 with its toolbar at the bottom: monitor 2's images start higher.
         page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
@@ -473,6 +524,123 @@ class MonitorHangingDOMTest(unittest.TestCase):
         rects = page.evaluate('kinViewerSplitRects')
         self.assertEqual(sorted(rects, key=lambda r: (round(r['y'], 6), r['x'])), rects)
 
+    def apply(self, page, rule, cells):
+        self.assertIn('적용 Monitor 1·Monitor 2.', self.prepare(page, rule)['note'])
+        page.evaluate('synApplySplit(synAnswer.split)')
+        page.evaluate('synAnswer.commit()')
+        page.wait_for_function('count => synGridState().rects.length === count', arg=cells)
+        page.wait_for_timeout(2100)
+
+    def test_07d_more_or_fewer_columns_keep_each_monitors_cells_on_that_monitor(self):
+        # One cell on each monitor (monitor 2's images start higher), a different series in each. With the stock command
+        # alone a cell is kept by its column in the whole window: picking 1 x 4 would put monitor 2's series into monitor
+        # 1's second column, and 1 x 2 picked from 1 x 4 monitor 1's second cell on monitor 2.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, [monitor('1x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='none', toolbar='bottom')], 2)
+        (left,), (right,) = self.on_monitors(page)
+        self.assertNotEqual(left[1], right[1])
+        stock = page.evaluate('synStock')
+        # 1 x 4: each monitor keeps its cell in its first column; the new second columns get, as the Layout menu fills a
+        # new place, the study's next series that are not on screen.
+        self.pick(page, 1, 4, 4)
+        one, two = self.on_monitors(page)
+        self.assertEqual([left, right], [one[0], two[0]])
+        self.assertEqual(['ds-1', 'ds-2'], [one[1][1], two[1][1]])
+        self.assertNotIn(one[1][0], [left[0], right[0]])
+        self.assertEqual(['0-0', '1-0', '2-0', '3-0'], page.evaluate('synOrder()'))
+        # 1 x 2 picked while monitor 2's series is still loading (its image not drawn yet): each monitor keeps its first
+        # cell all the same, at once.
+        page.evaluate('id => synLoading(id)', right[0])
+        layouts = page.evaluate('synLayouts.length')
+        page.evaluate('synMenu(1, 2)')
+        page.wait_for_function('synGridState().rects.length === 2', timeout=3000, polling=50)
+        self.assertEqual(([left], [right]), self.on_monitors(page))
+        self.assertEqual(layouts + 1, page.evaluate('synLayouts.length'))
+        page.evaluate('id => synLoading(id, false)', right[0])
+        page.wait_for_timeout(2500)
+        self.assertEqual(([left], [right]), self.on_monitors(page))
+        # 1 x 4 again: the second columns come back as they were.
+        self.pick(page, 1, 4, 4)
+        self.assertEqual((one, two), self.on_monitors(page))
+        # 2 x 4 from there: the first row stays; and back to 2 x 2 each monitor keeps its first column.
+        self.pick(page, 2, 4, 8)
+        top = lambda cells: cells[:len(cells) // 2]
+        now = self.on_monitors(page)
+        self.assertEqual((one, two), (top(now[0]), top(now[1])))
+        self.pick(page, 2, 2, 4)
+        after = self.on_monitors(page)
+        self.assertEqual(([now[0][0], now[0][2]], [now[1][0], now[1][2]]), after)
+        self.assertEqual(stock, page.evaluate('synStock'))
+
+    def test_07e_monitors_holding_different_grids_are_each_laid_as_their_own(self):
+        # Two rows on monitor 1, one cell on monitor 2 (three cells on a 2 x 2 base).
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, [monitor('2x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='top', toolbar='top')], 3)
+        one, two = self.on_monitors(page)
+        self.assertEqual([2, 1], [len(one), len(two)])
+        stock = page.evaluate('synStock')
+        # 2 x 2: monitor 1 keeps both of its rows, monitor 2 its cell and a new one below it.
+        self.pick(page, 2, 2, 4)
+        now = self.on_monitors(page)
+        self.assertEqual((one, two), (now[0], now[1][:1]))
+        self.assertEqual('ds-1', now[1][1][1])
+        # 1 x 2: the top cell of each monitor; 2 x 2 again: each lower cell is back.
+        self.pick(page, 1, 2, 2)
+        self.assertEqual((one[:1], two), self.on_monitors(page))
+        self.pick(page, 2, 2, 4)
+        self.assertEqual(now, self.on_monitors(page))
+        self.assertEqual(stock, page.evaluate('synStock'))
+
+    def test_07g_a_layout_picked_while_a_cell_is_enlarged_asks_for_no_viewport_twice(self):
+        # Two rows on each monitor; 2 x 2 picked once (the page has seen every cell on its place). Then monitor 2's lower
+        # cell is enlarged over its monitor - it now stands on that monitor's first place - and 2 x 2 is picked again: the
+        # enlarged cell stays the first, the place below gets a new cell, and no viewport is asked for twice (asked for
+        # twice it would be one cell, and the grid one cell short).
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, [monitor('2x1', thumbs='top', toolbar='top'), monitor('2x1', thumbs='top', toolbar='top')], 4)
+        self.pick(page, 2, 2, 4)
+        one, two = self.on_monitors(page)
+        page.evaluate('id => synEnlarge(id)', two[1][0])
+        page.wait_for_function('synGridState().rects.length === 3')
+        page.wait_for_timeout(1200)
+        self.assertEqual((one, [two[1]]), self.on_monitors(page))
+        self.pick(page, 2, 2, 4)
+        now = self.on_monitors(page)
+        self.assertEqual(one, now[0])
+        self.assertEqual(two[1], now[1][0])
+        self.assertEqual(4, len({cell[0] for cell in now[0] + now[1]}))
+        self.assertNotIn(now[1][1][0], [cell[0] for cell in one + two])
+        # 1 x 2 picked while enlarged shows the enlarged cell on its monitor (not the cell it had covered).
+        page.evaluate('id => synEnlarge(id)', now[1][1][0])
+        page.wait_for_function('synGridState().rects.length === 3')
+        page.wait_for_timeout(1200)
+        self.pick(page, 1, 2, 2)
+        self.assertEqual(([one[0]], [now[1][1]]), self.on_monitors(page))
+
+    def test_07f_without_a_rules_rows_the_layout_menu_is_the_stock_command(self):
+        # The same window over two displays with no rule applied: every pick runs the stock command, which keeps cells by
+        # their column in the whole window, and nothing lays rectangles of its own.
+        page = self.open(displays=TWO_DISPLAYS, grid=GRID)
+        page.evaluate('synMenu(1, 2)')
+        page.wait_for_function('synGridState().rects.length === 2 && synGridState().cols === 2', timeout=6000, polling=100)
+        page.wait_for_timeout(2500)
+        first, second = page.evaluate('synCells()')
+        page.evaluate("id => putSeries(id, 'ds-reader')", second[0])
+        page.evaluate('synMenu(1, 4)')
+        page.wait_for_function('synGridState().rects.length === 4', timeout=6000, polling=100)
+        page.wait_for_timeout(2500)
+        cells = page.evaluate('synCells()')
+        self.assertEqual([[first[0], first[5]], [second[0], 'ds-reader']], [[c[0], c[5]] for c in cells[:2]])
+        self.assertIn([1, 4], page.evaluate('synStock'))
+        self.assertTrue(all(layout['layoutOptions'] is None for layout in page.evaluate('synLayouts')))
+        # A rule applied and its rows taken back again (KinViewerMonitors.clear, as when the window is moved): the stock
+        # command again.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, [monitor('1x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='none', toolbar='bottom')], 2)
+        page.evaluate('KinViewerMonitors.clear()')
+        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+        page.evaluate('synMenu(1, 4)')
+        page.wait_for_function('synStock.some(pick => pick[0] === 1 && pick[1] === 4)', timeout=6000, polling=100)
     def test_08_the_worklist_window_is_read_and_asked_to_its_monitor_once_the_rule_stands(self):
         page = self.open(displays=TWO_DISPLAYS)
         page.evaluate("""() => { window.synPlaceCalls = []; window.synPlaceAnswer = { result: 'here', rect: null };
@@ -789,6 +957,170 @@ class MonitorHangingDOMTest(unittest.TestCase):
             self.assertIsNone(page.evaluate("document.body.getAttribute('data-kin-monitor-rows')"))
             self.assertEqual(1, page.evaluate(released))
 
+
+# A patient tab of a window whose screen stands on two monitors: the shipped hanging-protocol-model.js,
+# viewer-features-monitors.js and viewer-patient-tabs.js on a synthetic viewport grid (2000 x 1000, the displays meeting
+# at 1000), synthetic viewports (each cell on a frame of its own) and a synthetic patient lookup. The screen is the split
+# of a rule (KinViewerMonitorPlan.split), registered as Hanging Protocols registers it. synRound: the next patient is
+# opened in the window (the route remounts the tabs on the stock one-cell grid), `between` runs while that patient is
+# shown, then the first patient's tab is chosen again; answers the layout the tab asked the grid for, or null.
+TABS = """async ([monitors, state]) => {
+  const rule = { layout: { rows: 2, cols: 4, cells: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] },
+    monitors: { count: monitors.length, list: monitors } };
+  const box = { left: 0, top: 0, right: 2000, bottom: 1000 };
+  const split = KinViewerMonitorPlan.split(KinHangingProtocolModel, rule, [{ monitor: 0, left: 0, right: 1000 }, { monitor: 1, left: 1000, right: 2000 }],
+    box, { left: 0, top: 0, width: 2000, height: 1000 });
+  window.synEdges = [0.5]; window.kinViewerMonitorEdgesNow = () => synEdges;
+  // The rule's rows stand, or were taken back (the monitors module then still knows the areas it had measured) - or no
+  // rule was ever applied (state.left false).
+  window.synRows = on => { window.KinViewerMonitorRows = on ? { areas: split.areas, copies: {} } : null;
+    window.KinViewerMonitors = { left: () => on || state.left === false ? null : split.areas.map(area => ({ ...area })) }; };
+  synRows(state.rows !== false);
+  window.kinViewerSplitRects = state.registered === false ? null : split.rects.map(rect => ({ ...rect }));
+  window.kinViewerFrameCoverageConfirm = () => true;
+  const uid = () => new URLSearchParams(location.search).get('StudyInstanceUIDs');
+  const cells = state.plain ? Array.from({ length: 4 }, (_, i) => ({ x: (i % 2) / 2, y: Math.floor(i / 2) / 2, width: 0.5, height: 0.5 }))
+    : split.rects.map((rect, i) => ({ ...rect, positionId: split.positions[i] }));
+  const sets = cells.map((_, i) => ({ StudyInstanceUID: '1.2.1', SeriesInstanceUID: 'series-' + i, displaySetInstanceUID: 'set-' + i }));
+  const first = () => ({ layout: { layoutType: 'grid', numRows: state.plain ? 2 : split.numRows, numCols: state.plain ? 2 : split.numCols }, activeViewportId: 'v0',
+    viewports: new Map(cells.map((cell, i) => ['v' + i, { ...cell, viewportId: 'v' + i, displaySetInstanceUIDs: [sets[i].displaySetInstanceUID] }])) });
+  let grid = first();
+  // Each cell where it stands and what it shows: [x, y, width, height, series, frame].
+  window.synBefore = [...grid.viewports.values()].map((cell, i) => [cell.x, cell.y, cell.width, cell.height, sets[i].SeriesInstanceUID, i + 3]);
+  window.synAsked = [];
+  const viewports = { EVENTS: { VIEWPORT_DATA_CHANGED: 'data' }, subscribe(event, fn) { viewports.notify = fn; return { unsubscribe() {} }; },
+    getCornerstoneViewport(id) { const i = Number(String(id).slice(1));
+      return { type: 'stack', getCurrentImageId: () => 'image-' + i + '-' + (i + 3), getCurrentImageIdIndex: () => i + 3 }; } };
+  const services = { cornerstoneViewportService: viewports,
+    viewportGridService: { getState: () => grid, setLayout(asked) {
+      const count = asked.layoutOptions ? asked.layoutOptions.length : asked.numRows * asked.numCols;
+      synAsked.push({ rows: asked.numRows, cols: asked.numCols, keys: asked.layoutOptions ? asked.layoutOptions.map(option => option.positionId) : null,
+        cells: Array.from({ length: count }, (_, i) => { const cell = asked.findOrCreateViewport(i), rect = asked.layoutOptions?.[i];
+          const set = sets.find(value => value.displaySetInstanceUID === cell.displaySetInstanceUIDs[0]);
+          return [...(rect ? [rect.x, rect.y, rect.width, rect.height] : [(i % asked.numCols) / asked.numCols, Math.floor(i / asked.numCols) / asked.numRows, 1 / asked.numCols, 1 / asked.numRows]),
+            set?.SeriesInstanceUID ?? null, cell.viewportOptions.initialImageOptions?.index ?? null]; }) }); } },
+    displaySetService: { getDisplaySetByUID: id => sets.find(set => set.displaySetInstanceUID === id), getActiveDisplaySets: () => sets } };
+  window.KinViewerInfoBar = { identity: () => ({ instance: { StudyInstanceUID: uid() } }) };
+  const mount = () => KinViewerPatientTabs.mount({ services, session: { state: () => 'active', readOnly: () => false }, refreshChrome() {} });
+  await mount();
+  addEventListener('popstate', () => { window.synReady = (async () => {
+    KinViewerPatientTabs.dispose();
+    grid = { layout: { layoutType: 'grid', numRows: 1, numCols: 1 }, activeViewportId: 'stock', viewports: new Map([['stock', { viewportId: 'stock', x: 0, y: 0, width: 1, height: 1, displaySetInstanceUIDs: [] }]]) };
+    await mount(); viewports.notify({ viewportId: 'stock' }); await new Promise(resolve => setTimeout(resolve, 50));
+  })(); });
+}"""
+
+
+class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.pw = sync_playwright().start(); cls.browser = cls.pw.chromium.launch()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close(); cls.pw.stop()
+
+    def round_trip(self, monitors, between=None, **state):
+        """The screen before ([x, y, width, height, series, frame] per cell) and the layout asked for on the way back."""
+        page = self.browser.new_page(); errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        self.addCleanup(page.close)
+
+        def serve(route):
+            url = urlparse(route.request.url)
+            if url.path == '/api/studies':
+                study = parse_qs(url.query)['uids'][0]
+                route.fulfill(json={'studies': [dict(uid=study, sourcePatientKey=study, name='SYN ' + study, id=study)]})
+            else:
+                route.fulfill(body='<div class="bg-secondary-dark z-20"><span id="kin-viewer-brand"></span></div>', content_type='text/html')
+        page.route(ORIGIN + '/**', serve)
+        page.goto(ORIGIN + '/ohif/viewer?StudyInstanceUIDs=1.2.1')
+        for name in ['hanging-protocol-model.js', 'viewer-features-monitors.js', 'viewer-patient-tabs.js']:
+            page.add_script_tag(path=str(HPACS / name))
+        page.evaluate(TABS, [monitors, state])
+        self.assertTrue(page.evaluate("kinViewerOpenPatient('/ohif/viewer?StudyInstanceUIDs=1.2.2')"))
+        page.evaluate('synReady')
+        if between:
+            page.evaluate(between)
+        page.get_by_role('tab', name='SYN 1.2.1', exact=False).click()
+        page.wait_for_url('**StudyInstanceUIDs=1.2.1')
+        page.evaluate('synReady')
+        self.assertEqual([], errors)
+        asked = page.evaluate('synAsked')
+        self.assertLessEqual(len(asked), 1, asked)
+        return page.evaluate('synBefore'), (asked[0] if asked else None), page
+
+    @staticmethod
+    def placed(cells):
+        """Cells as a set of (x, y, width, height, series, frame), rounded: where each series stands, whatever the order."""
+        return sorted(tuple(round(v, 4) if isinstance(v, float) else v for v in cell) for cell in cells)
+
+    def test_01_a_rule_whose_monitors_hold_different_rows_comes_back_cell_for_cell(self):
+        # Two rows on monitor 1, one cell on monitor 2: three cells on a 2 x 2 base. Before, a screen that was no full
+        # grid was not kept at all: the patient came back as first opened, every cell's series and frame lost.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')])
+        self.assertEqual(3, len(before))
+        self.assertIsNotNone(asked, 'the tab asked for no layout: its screen was not kept')
+        self.assertEqual([2, 2], [asked['rows'], asked['cols']])
+        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        self.assertEqual(3, len(set(asked['keys'])))
+
+    def test_02_different_columns_and_a_monitor_whose_images_start_higher(self):
+        # One column on monitor 1, two on monitor 2 (2 x 3 base); monitor 2 with no strip and its toolbar at the bottom,
+        # so its cells stand higher and are listed first.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x2', thumbs='none', toolbar='bottom')])
+        self.assertEqual(6, len(before))
+        self.assertLess(before[0][1], min(cell[1] for cell in before if cell[0] < 0.5))
+        self.assertEqual([2, 3], [asked['rows'], asked['cols']])
+        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        # One cell on each monitor: the left monitor's series comes back on the left.
+        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')])
+        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+
+    def test_03_the_rows_taken_back_meanwhile_each_cell_still_comes_back_on_its_monitor(self):
+        # The rows were taken back before the tab was left (the window resized): the cells still stand where the rule put
+        # them, told apart by the display edge. Monitors holding the same grid come back as the plain grid of their
+        # columns, row by row and monitor by monitor - which the window then puts on the display edge as any plain grid.
+        monitors = [monitor('2x1'), monitor('2x1', thumbs='none', toolbar='bottom')]
+        before, asked, _ = self.round_trip(monitors, rows=False)
+        self.assertIsNone(asked['keys'])
+        self.assertEqual([2, 2], [asked['rows'], asked['cols']])
+        side = lambda cells: sorted((cell[0] >= 0.5, round(cell[1] * 2) if cell[1] in (0, 0.5) else None, cell[4], cell[5]) for cell in cells)
+        rows = {True: sorted({cell[1] for cell in before if cell[0] >= 0.5}), False: sorted({cell[1] for cell in before if cell[0] < 0.5})}
+        was = sorted((cell[0] >= 0.5, rows[cell[0] >= 0.5].index(cell[1]), cell[4], cell[5]) for cell in before)
+        self.assertEqual(was, side(asked['cells']))
+        # Taken back while the other patient was shown, monitors holding different grids: laid on the two sides of the
+        # display edge, every cell on its monitor and row.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], between='() => synRows(false)')
+        self.assertEqual(3, len(asked['cells']))
+        self.assertEqual(sorted([(0, 0, 0.5, 0.5), (0, 0.5, 0.5, 0.5), (0.5, 0, 0.5, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
+        left = lambda cells: sorted((cell[4], cell[5]) for cell in cells if cell[0] < 0.5)
+        self.assertEqual(left(before), left(asked['cells']))
+        top = lambda cells: min((cell for cell in cells if cell[0] < 0.5), key=lambda cell: cell[1])[4]
+        self.assertEqual(top(before), top(asked['cells']))
+
+    def test_04_a_plain_grid_and_a_screen_no_rule_left_are_kept_as_before(self):
+        # No rule: a plain 2 x 2 comes back as its rows and columns, cell by cell, with no rectangles of the tab's own.
+        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1')], rows=False, registered=False, plain=True, left=False)
+        self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        # Three cells on a 2 x 2 base that no rule registered (a cell enlarged in a window with no rule): not kept, as before.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, registered=False, left=False)
+        self.assertIsNone(asked)
+
+    def test_05_the_window_moved_sideways_since_the_rule_the_cells_are_still_told_by_where_the_rule_laid_them(self):
+        # The rows were taken back because the window was moved: the display edge now runs through monitor 1's cells
+        # (30 % of the grid). The cells are read against the areas the rule had measured, not against that edge; laid
+        # again, monitors holding different grids go on the two sides of the edge as it is now.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, between='() => { window.synEdges = [0.3]; }')
+        self.assertIsNotNone(asked)
+        self.assertEqual(sorted([(0, 0, 0.3, 0.5), (0, 0.5, 0.3, 0.5), (0.3, 0, 0.7, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
+        left = lambda cells, edge: sorted((cell[4], cell[5]) for cell in cells if cell[0] < edge)
+        self.assertEqual(left(before, 0.5), left(asked['cells'], 0.3))
+        # Monitors holding the same grid: the plain grid of their columns, each monitor's series on its side.
+        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], rows=False, between='() => { window.synEdges = [0.3]; }')
+        self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual([cell[4:] for cell in sorted(before)], [cell[4:] for cell in sorted(asked['cells'])])
 
 if __name__ == '__main__':
     unittest.main()

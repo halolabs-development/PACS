@@ -102,9 +102,11 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
   //  rows: { toolbar, thumbs } -> { original: band | null, copy: band | null } (band: client px + side + monitor).
   //  applied: the monitors shown; hidden: rule cells no applied monitor shows; toolbarKept: no applied monitor shows a
   //  toolbar, so it stays on top of the first one (Viewer Settings must stay reachable).
-  //  areas: each applied monitor's image area (its part less its rows), left to right, as fractions of the grid - where a
-  //  grid picked later is laid while these rows stand (fit).
-  //  positions: each rect's place key (positionId 'col-row') in the plain grid it stands for (places), or null.
+  //  areas: each applied monitor's image area (its part less its rows), left to right, as fractions of the grid - where
+  //  cells are laid while these rows stand (lay), and against which a cell's monitor and place are read (laid).
+  //  positions: each rect's place key (positionId 'col-row': its row on its monitor, and its column there after the
+  //  columns of the monitors to its left - the keys lay gives), so that no two cells share one: the native grid would
+  //  otherwise key a rectangle by its place rounded to the base grid. null for one monitor (keyed by the native grid).
   function split(model, rule, covered, column, grid) {
     const list = rule?.monitors?.list;
     if (!list || !covered.length || !grid || !(grid.width > 0) || !(grid.height > 0)) return null;
@@ -116,6 +118,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
     const toolbarKept = !showing('toolbar').length;
     const rows = { toolbar: toolbarKept ? [{ part: parts[0], side: 'top' }] : showing('toolbar'), thumbs: showing('thumbs') };
     const positions = [], placed = { toolbar: [], thumbs: [] }, areas = [];
+    let before = 0;
     for (const part of parts) {
       const box = { left: part.region.left, right: part.region.right, top: column.top, bottom: column.bottom };
       const own = {};
@@ -128,77 +131,92 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       areas.push({ monitor: part.region.monitor, left: area.left, top: area.top, width: area.right - area.left, height: area.bottom - area.top });
       cells.forEach((cell, index) => {
         const col = index % c, line = Math.floor(index / c);
-        positions.push({ cell, left: area.left + col * w, top: area.top + line * h, width: w, height: h });
+        positions.push({ cell, left: area.left + col * w, top: area.top + line * h, width: w, height: h, key: (before + col) + '-' + line });
       });
+      before += c;
     }
     const round = v => Math.round(v * 1e6) / 1e6;
-    const rects = positions.map(p => ({ cell: p.cell, x: round((p.left - grid.left) / grid.width), y: round((p.top - grid.top) / grid.height),
+    const rects = positions.map(p => ({ cell: p.cell, key: p.key, x: round((p.left - grid.left) / grid.width), y: round((p.top - grid.top) / grid.height),
       width: round(p.width / grid.width), height: round(p.height / grid.height) }))
       .sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
     const shown = new Set(rects.map(r => r.cell).filter(cell => cell !== null));
     const hidden = rule.layout.cells.map((_, index) => index).filter(index => !shown.has(index));
     const fractions = areas.map(a => ({ monitor: a.monitor, x: round((a.left - grid.left) / grid.width), y: round((a.top - grid.top) / grid.height),
       width: round(a.width / grid.width), height: round(a.height / grid.height) }));
-    // Each rectangle's place key (positionId 'col-row'), its place in the plain grid it stands for (places): the native
-    // grid would otherwise key it by its rectangle rounded to the grid, which can give two cells one key.
-    const at = places(rects, fractions), keys = at && at.map(p => p.col + '-' + p.row);
     return {
       rects: rects.map(({ x, y, width, height }) => ({ x, y, width, height })), cells: rects.map(r => r.cell),
-      positions: keys && new Set(keys).size === keys.length ? keys : null,
+      positions: parts.length > 1 ? rects.map(r => r.key) : null,
       numRows: Math.max(...parts.map(part => part.entry.rows)), numCols: parts.reduce((sum, part) => sum + part.entry.cols, 0),
       rows: { toolbar: { original: placed.toolbar[0] || null, copy: placed.toolbar[1] || null }, thumbs: { original: placed.thumbs[0] || null, copy: placed.thumbs[1] || null } },
       applied: parts.map(part => part.region.monitor), hidden, toolbarKept, areas: fractions,
     };
   }
 
-  // A plain grid of rows x cols (one the Layout menu builds) laid on the monitors' image areas of an applied rule (split's
-  // areas), as the rule lays its own cells: each area takes an equal share of the columns and every row, so no cell lies
-  // under a row or across a display edge. The rectangles are in the grid's position order (row by row, left to right
+  // Per-monitor grids laid on the monitors' image areas (left to right: an applied rule's split.areas, or the parts of the
+  // grid on each display): monitor m takes shapes[m] = { rows, cols }, its area shared out in equal rows and columns as
+  // the rule lays its own cells - no cell under a row or across a display edge. One entry per cell, in the base grid's
+  // order (row by row; within a row monitor by monitor, column by column - a monitor with fewer rows has no cell in the
+  // lower ones): { monitor, row, col, x, y, width, height, positionId }. positionId: the cell's place key in the base
+  // grid, 'col-row', with the columns of the monitors to its left counted first - every cell its own. numRows / numCols:
+  // the base grid (the most rows, all the columns). null for areas or shapes that cannot be laid.
+  // This is the one way cells are put on monitors: a picked layout (fit), a layout picked while a rule stands and a
+  // patient tab's saved screen (viewer-display-span.js, viewer-patient-tabs.js); the rule's own split lays the same way.
+  const boxes = areas => Array.isArray(areas) && areas.every(a => a && finite(a.x, a.y, a.width, a.height) && a.width > 0 && a.height > 0);
+  function lay(areas, shapes) {
+    if (!boxes(areas) || !Array.isArray(shapes) || !areas.length || areas.length !== shapes.length ||
+        !shapes.every(s => s && Number.isInteger(s.rows) && Number.isInteger(s.cols) && s.rows >= 1 && s.cols >= 1)) return null;
+    const round = v => Math.round(v * 1e6) / 1e6, numRows = Math.max(...shapes.map(s => s.rows)), cells = [];
+    for (let row = 0; row < numRows; row++) {
+      let before = 0;
+      shapes.forEach((shape, monitor) => {
+        const area = areas[monitor], w = area.width / shape.cols, h = area.height / shape.rows;
+        if (row < shape.rows) for (let col = 0; col < shape.cols; col++)
+          cells.push({ monitor, row, col, x: round(area.x + col * w), y: round(area.y + row * h), width: round(w), height: round(h), positionId: (before + col) + '-' + row });
+        before += shape.cols;
+      });
+    }
+    return { numRows, numCols: shapes.reduce((sum, s) => sum + s.cols, 0), cells };
+  }
+  // A plain grid of rows x cols (one the Layout menu builds) laid on the monitors' image areas: each area takes an equal
+  // share of the columns and every row (lay). The rectangles are in the grid's position order (row by row, left to right
   // across the monitors). null when the columns do not share out evenly between the areas, or for fewer than two areas.
   function fit(areas, rows, cols) {
-    if (!Array.isArray(areas) || areas.length < 2 || !Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 ||
-        cols % areas.length || !areas.every(a => a && finite(a.x, a.y, a.width, a.height) && a.width > 0 && a.height > 0)) return null;
-    const per = cols / areas.length, round = v => Math.round(v * 1e6) / 1e6, rects = [];
-    for (let line = 0; line < rows; line++) for (let col = 0; col < cols; col++) {
-      const area = areas[Math.floor(col / per)], w = area.width / per, h = area.height / rows;
-      rects.push({ x: round(area.x + (col % per) * w), y: round(area.y + line * h), width: round(w), height: round(h) });
-    }
-    return rects;
+    if (!Array.isArray(areas) || areas.length < 2 || !Number.isInteger(rows) || !Number.isInteger(cols) || rows < 1 || cols < 1 || cols % areas.length) return null;
+    const laidOut = lay(areas, areas.map(() => ({ rows, cols: cols / areas.length })));
+    return laidOut && laidOut.cells.map(({ x, y, width, height }) => ({ x, y, width, height }));
   }
 
-  // The place in the plain grid each cell stands for, laid on a rule's monitor areas (split's areas, two or more): a cell
-  // belongs to the area its centre is over; its row is its row inside that monitor (one monitor's images may start higher
-  // than the other's) and its column the monitor's own columns after those of the monitors to its left - the places fit
-  // lays a plain grid on. [{ col, row }] in the cells' order; null without such areas.
-  function places(cells, areas) {
-    if (!Array.isArray(cells) || !Array.isArray(areas) || areas.length < 2 || !areas.every(a => a && finite(a.x, a.width)) ||
-        !cells.every(c => c && finite(c.x, c.y, c.width))) return null;
-    const lefts = areas.map(a => a.x).sort((a, b) => a - b), key = v => Math.round(v * 1e4);
-    const monitor = c => { const centre = c.x + c.width / 2; let m = 0; lefts.forEach((left, i) => { if (centre >= left) m = i; }); return m; };
-    const tops = lefts.map(() => new Set()), lines = lefts.map(() => new Set());
-    for (const c of cells) { tops[monitor(c)].add(key(c.y)); lines[monitor(c)].add(key(c.x)); }
+  // Where the cells of the native grid stand on the monitors' areas (two or more, as for lay): each cell on the area its
+  // centre is over and inside it, each area's cells a regular grid there - as many as its rows x columns, one per place.
+  // A cell's monitor and place are read here, from where it stands, and nowhere else: its row and column are those on its
+  // own monitor (one monitor's images may start higher than the other's, and the monitors may hold different grids).
+  // Answers { shapes: [{ rows, cols }] per area, places: [{ monitor, row, col }] in the cells' order }, or null when the
+  // cells do not stand so: a plain grid lying over the areas (a cell under a row or across the display edge), an area
+  // with no cell, cells that are no grid.
+  function laid(cells, areas) {
+    if (!Array.isArray(cells) || !cells.length || !boxes(areas) || areas.length < 2 || !cells.every(c => c && finite(c.x, c.y, c.width, c.height))) return null;
+    const EPS = 1e-4, key = v => Math.round(v * 1e4);
+    const inside = (c, a) => c.x >= a.x - EPS && c.y >= a.y - EPS && c.x + c.width <= a.x + a.width + EPS && c.y + c.height <= a.y + a.height + EPS;
+    const monitors = cells.map(c => areas.findIndex(a => { const centre = c.x + c.width / 2; return centre > a.x && centre < a.x + a.width && inside(c, a); }));
+    if (monitors.some(m => m < 0)) return null;
+    const tops = areas.map(() => new Set()), lefts = areas.map(() => new Set());
+    cells.forEach((c, i) => { tops[monitors[i]].add(key(c.y)); lefts[monitors[i]].add(key(c.x)); });
     const rank = (set, value) => [...set].sort((a, b) => a - b).indexOf(value);
-    const before = m => lines.slice(0, m).reduce((sum, set) => sum + set.size, 0);
-    return cells.map(c => { const m = monitor(c); return { col: before(m) + rank(lines[m], key(c.x)), row: rank(tops[m], key(c.y)) }; });
+    const places = cells.map((c, i) => ({ monitor: monitors[i], row: rank(tops[monitors[i]], key(c.y)), col: rank(lefts[monitors[i]], key(c.x)) }));
+    const shapes = areas.map((_, m) => ({ rows: tops[m].size, cols: lefts[m].size }));
+    const count = m => monitors.filter(value => value === m).length;
+    if (shapes.some((s, m) => !s.rows || !s.cols || count(m) !== s.rows * s.cols) ||
+        new Set(places.map(p => [p.monitor, p.row, p.col].join(':'))).size !== places.length) return null;
+    return { shapes, places };
   }
-  // The cells of the native grid in the order of the plain grid they stand for, where that order becomes places again: a
-  // patient tab keeps its cells in this order and puts them back as a plain grid, position by position (row by row, left
-  // to right), which a standing rule then lays on its monitors (fit). The order is the cells' places in that grid, row
-  // then column: on a rule's monitor areas (places) - the order on screen (top to bottom) can list the right monitor's
-  // cells before the left's - or else the place key each cell carries (positionId 'col-row': the rule's split and fit
-  // give every cell its own; the rows can be taken back when the window moves while the cells stay). Without either the
-  // cells are kept in the order they are listed (the plain grid's own).
-  function order(cells, areas) {
-    const list = Array.isArray(cells) ? [...cells] : [];
-    let at = places(list, areas);
-    if (!at) {
-      const keys = list.map(c => /^(\d+)-(\d+)$/.exec(String(c?.positionId ?? '')));
-      if (list.length && keys.every(Boolean) && new Set(list.map(c => c.positionId)).size === list.length) at = keys.map(k => ({ col: +k[1], row: +k[2] }));
-    }
-    if (!at) return list;
-    return list.map((c, i) => ({ c, i, ...at[i] })).sort((a, b) => a.row - b.row || a.col - b.col || a.i - b.i).map(e => e.c);
+  // The cells in the order of the place keys they carry (positionId 'col-row': row by row, then column), when every cell
+  // has a key of its own - the cells a rule left once nothing tells the monitors apart any more (the window on one
+  // display). null otherwise.
+  function keyed(cells) {
+    const list = Array.isArray(cells) ? cells : [], keys = list.map(c => /^(\d+)-(\d+)$/.exec(String(c?.positionId ?? '')));
+    if (!list.length || !keys.every(Boolean) || new Set(list.map(c => c.positionId)).size !== list.length) return null;
+    return list.map((c, i) => ({ c, col: +keys[i][1], row: +keys[i][2] })).sort((a, b) => a.row - b.row || a.col - b.col).map(e => e.c);
   }
-
   // Which monitor (index into screens) a window rectangle stands on: the display holding its centre.
   function monitorOf(screens, rect) {
     if (!rect || !finite(rect.left, rect.top, rect.width, rect.height)) return -1;
@@ -265,7 +283,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, places, order, monitorOf, validRects, place, edges, pair };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, lay, fit, laid, keyed, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);
@@ -337,6 +355,20 @@ if (typeof window === 'object') {
     return window.KinViewerMonitorPlan.pair(info.screens, { screenX: window.screenX, screenY: window.screenY, outerWidth: window.outerWidth,
       outerHeight: window.outerHeight, innerWidth: window.innerWidth, innerHeight: window.innerHeight }, info.zoom, { left: box.left, width: box.width });
   };
+  // The monitors' parts of the viewport grid now, left to right, as fractions of it - where a screen kept from monitors
+  // is laid again (KinViewerMonitorPlan.lay; a patient tab, viewer-patient-tabs.js): { areas, rule }. While an applied
+  // rule's rows stand over two or more monitors, their image areas as the rule measured them (rule: true); else the
+  // parts of the grid on each display, from the display edges of the last reading (rule: false). null: one monitor
+  // under the grid, or not known.
+  window.kinViewerMonitorPartsNow = () => {
+    const areas = window.KinViewerMonitorRows?.areas;
+    if (Array.isArray(areas) && areas.length >= 2) return { areas: areas.map(area => ({ ...area })), rule: true };
+    let edges = null;
+    try { edges = window.kinViewerMonitorEdgesNow(); } catch (_) { edges = null; }
+    if (!Array.isArray(edges) || !edges.length) return null;
+    const cuts = [0, ...edges, 1];
+    return { areas: cuts.slice(1).map((right, index) => ({ x: cuts[index], y: 0, width: right - cuts[index], height: 1 })), rule: false };
+  };
   // Read the access the reader already gave once now, so the first double click knows the displays.
   kinViewerScreensInfo().catch(() => {});
 
@@ -400,7 +432,9 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   const body = document.body;
   // active: the rows as an applied rule leaves them ({ chrome, css, noThumbs, copies, watching }), or null: the account's
   // own. epoch: the prepare() that owns the rows now; a newer one, or clear(), takes them from an older one.
-  let active = null, epoch = 0, watch = null;
+  // left: the image areas of the rule whose rows were taken back last, while no rule's rows stand - its cells stay where
+  // it laid them, and are still read against those areas (a patient tab keeps them by their monitor, viewer-patient-tabs.js).
+  let active = null, epoch = 0, watch = null, left = null;
   const event = () => window.dispatchEvent(new Event('kin-viewer-second-display'));
   const account = () => window.KinViewerChromePosition?.normalize(store.get('chrome'));
   const frames = n => new Promise(resolve => { const step = left => left ? requestAnimationFrame(() => step(left - 1)) : resolve(); step(n); });
@@ -433,6 +467,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
   }
   function show(state) {
     stopWatch();
+    left = state ? null : active?.areas || left;
     active = state;
     if (!state) {
       window.KinViewerMonitorRows = null; body.removeAttribute('data-kin-monitor-rows'); body.removeAttribute('data-kin-monitor-no-thumbs');
@@ -616,7 +651,7 @@ if (typeof window === 'object') window.KinViewerFeatures?.module('monitors', ({ 
     reaching = { timer, mine };
     window.addEventListener('kin-viewer-image-work', stopReaching);
   }
-  window.KinViewerMonitors = { prepare, reaching: () => !!reaching,
+  window.KinViewerMonitors = { prepare, reaching: () => !!reaching, left: () => left && left.map(area => ({ ...area })),
     clear: () => { epoch++; stopReaching(); if (active) show(null); settleWorklist(null, () => false); } };
 
   // ── The window: Viewer Settings › Monitors in Hanging Protocol… ──

@@ -85,36 +85,69 @@ test('split: two 2x1 monitors keep rule cell order per monitor, not the screen o
   assert.deepEqual(s.applied,[0,1]);assert.deepEqual(s.hidden,[]);
 });
 
-test('order: each monitor\'s rows, then the monitor, then across - also where one monitor\'s images start higher',()=>{
+test('laid: each cell\'s monitor and its row and column there are read from where it stands - also where one monitor\'s images start higher',()=>{
   // Monitor 1 with both rows on top, monitor 2 with its toolbar at the bottom: monitor 2's images start higher.
   const r=rule(['a','b','c','d','e','f','g','h'],[monitor('2x2'),monitor('2x2',{thumbs:'none',toolbar:'bottom'})],2,4);
   const regions=[{monitor:0,left:0,right:1000},{monitor:1,left:1000,right:2000}],column={left:0,right:2000,top:0,bottom:1000};
   const s=plan.split(model,r,regions,column,{left:0,top:0,width:2000,height:1000});
   assert.ok(s.areas[1].y<s.areas[0].y);
   const cells=s.rects.map((rect,i)=>({...rect,viewportId:'v'+s.cells[i]}));
-  // On screen (top to bottom) monitor 2's top row comes first; as the plain 2 x 4 it stands for, monitor 1's does.
+  // On screen (top to bottom) monitor 2's top row comes first: the order of the list says nothing of the monitor.
   assert.deepEqual(cells.map(c=>c.viewportId).slice(0,2),['v4','v5']);
-  assert.deepEqual(plan.order(cells,s.areas).map(c=>c.viewportId),['v0','v1','v4','v5','v2','v3','v6','v7']);
-  // Laid again from that order (fit), every cell is back on its own rectangle.
-  const back=plan.fit(s.areas,2,4),own=plan.order(cells,s.areas);
-  own.forEach((c,i)=>assert.deepEqual(back[i],{x:c.x,y:c.y,width:c.width,height:c.height},c.viewportId));
-  // A plain grid keeps its order; so does any list without a rule's monitor areas.
-  const plain=Array.from({length:8},(_,i)=>({viewportId:'p'+i,x:(i%4)/4,y:Math.floor(i/4)/2,width:0.25,height:0.5}));
-  assert.deepEqual(plan.order(plain,s.areas),plain);
-  const listed=[cells[3],cells[0],cells[2],cells[1]];
-  assert.deepEqual(plan.order(listed,null),listed);
-  assert.deepEqual(plan.order(listed,[s.areas[0]]),listed);
-  // Each rectangle's place key is that place in the plain 2 x 4 (column across both monitors, row on its monitor).
+  const stood=plan.laid(cells,s.areas);
+  assert.deepEqual(stood.shapes,[{rows:2,cols:2},{rows:2,cols:2}]);
+  const at=id=>stood.places[cells.findIndex(c=>c.viewportId===id)];
+  assert.deepEqual([at('v0'),at('v1'),at('v2'),at('v3')],[{monitor:0,row:0,col:0},{monitor:0,row:0,col:1},{monitor:0,row:1,col:0},{monitor:0,row:1,col:1}]);
+  assert.deepEqual([at('v4'),at('v5'),at('v6'),at('v7')],[{monitor:1,row:0,col:0},{monitor:1,row:0,col:1},{monitor:1,row:1,col:0},{monitor:1,row:1,col:1}]);
+  // Laid again (lay) every cell is back on its own rectangle, with the place key the split gave it.
+  const back=plan.lay(s.areas,stood.shapes);
+  assert.deepEqual([back.numRows,back.numCols],[2,4]);
+  cells.forEach((c,i)=>{const p=stood.places[i],own=back.cells.find(b=>b.monitor===p.monitor&&b.row===p.row&&b.col===p.col);
+    assert.deepEqual({x:own.x,y:own.y,width:own.width,height:own.height},{x:c.x,y:c.y,width:c.width,height:c.height},c.viewportId);
+    assert.equal(own.positionId,s.positions[i],c.viewportId);});
+  // Each rectangle's place key: its column across both monitors, its row on its own monitor.
   assert.deepEqual(s.positions,['2-0','3-0','0-0','1-0','2-1','3-1','0-1','1-1']);
-  assert.deepEqual(plan.places(cells,s.areas).map(p=>p.col+'-'+p.row),s.positions);
-  // The rows taken back (the window moved) while the cells stay: the keys the cells carry give the same order.
-  const keyed=cells.map((c,i)=>({...c,positionId:s.positions[i]}));
-  assert.deepEqual(plan.order(keyed,null).map(c=>c.viewportId),['v0','v1','v4','v5','v2','v3','v6','v7']);
-  // Keys that are not one per cell are not an order: as listed.
-  const twice=keyed.map((c,i)=>i===1?{...c,positionId:keyed[0].positionId}:c);
-  assert.deepEqual(plan.order(twice,null),twice);
+  // fit is lay with the same grid on every monitor, in the base grid's order (row by row, across the monitors).
+  assert.deepEqual(plan.fit(s.areas,2,4),back.cells.map(({x,y,width,height})=>({x,y,width,height})));
+  assert.deepEqual(back.cells.map(c=>c.positionId),['0-0','1-0','2-0','3-0','0-1','1-1','2-1','3-1']);
+  // A plain grid lying over the monitors (under their rows) does not stand on them; nor do cells without two areas.
+  const plain=Array.from({length:8},(_,i)=>({viewportId:'p'+i,x:(i%4)/4,y:Math.floor(i/4)/2,width:0.25,height:0.5}));
+  assert.equal(plan.laid(plain,s.areas),null);
+  assert.equal(plan.laid(cells,[s.areas[0]]),null);
+  assert.equal(plan.laid(cells,null),null);
+  // A cell across the display edge, and a monitor left without a cell, are not laid either.
+  assert.equal(plan.laid([{x:s.areas[0].x,y:s.areas[0].y,width:0.8,height:0.2},cells[0]],s.areas),null);
+  assert.equal(plan.laid(cells.filter((c,i)=>stood.places[i].monitor===0),s.areas),null);
 });
 
+test('lay: monitors holding different grids - a monitor with fewer rows has no cell in the lower ones, every cell its own key',()=>{
+  const areas=[{x:0.05,y:0.1,width:0.4,height:0.9},{x:0.5,y:0,width:0.5,height:0.95}];
+  const out=plan.lay(areas,[{rows:2,cols:1},{rows:1,cols:1}]);
+  assert.deepEqual([out.numRows,out.numCols],[2,2]);
+  assert.deepEqual(out.cells.map(c=>[c.monitor,c.row,c.col,c.positionId]),[[0,0,0,'0-0'],[1,0,0,'1-0'],[0,1,0,'0-1']]);
+  assert.deepEqual(out.cells[1],{monitor:1,row:0,col:0,x:0.5,y:0,width:0.5,height:0.95,positionId:'1-0'});
+  // Read back: the same shapes and places (a monitor's one cell filling its area is its 1 x 1 - also an enlarged cell).
+  assert.deepEqual(plan.laid(out.cells,areas),{shapes:[{rows:2,cols:1},{rows:1,cols:1}],places:out.cells.map(({monitor,row,col})=>({monitor,row,col}))});
+  // Different columns: 2 x 1 beside 2 x 2 is a base grid of 2 x 3.
+  const wide=plan.lay(areas,[{rows:2,cols:1},{rows:2,cols:2}]);
+  assert.deepEqual([wide.numRows,wide.numCols,wide.cells.length],[2,3,6]);
+  assert.deepEqual(wide.cells.map(c=>c.positionId),['0-0','1-0','2-0','0-1','1-1','2-1']);
+  assert.equal(new Set(wide.cells.map(c=>c.positionId)).size,6);
+  // The two sides of a display edge (no rule's rows): the same reading.
+  const sides=[{x:0,y:0,width:0.46,height:1},{x:0.46,y:0,width:0.54,height:1}];
+  assert.deepEqual(plan.laid(out.cells,sides)?.shapes,[{rows:2,cols:1},{rows:1,cols:1}]);
+  assert.equal(plan.lay(areas,[{rows:1,cols:1}]),null);
+  assert.equal(plan.lay(areas,[{rows:0,cols:1},{rows:1,cols:1}]),null);
+  assert.equal(plan.fit(areas,1,3),null,'an odd number of columns is not shared between two monitors');
+});
+
+test('keyed: the cells by the place keys they carry, only when each has its own',()=>{
+  const cells=[{viewportId:'b',positionId:'1-0'},{viewportId:'c',positionId:'0-1'},{viewportId:'a',positionId:'0-0'},{viewportId:'d',positionId:'1-1'}];
+  assert.deepEqual(plan.keyed(cells).map(c=>c.viewportId),['a','b','c','d']);
+  assert.equal(plan.keyed(cells.map((c,i)=>i===2?{...c,positionId:'1-0'}:c)),null,'two cells with one key');
+  assert.equal(plan.keyed([{viewportId:'x'}]),null);
+  assert.equal(plan.keyed([]),null);
+});
 test('split: where the displays meet off the middle each rectangle still has a place key of its own',()=>{
   // Monitor 1 holds 700 of the window's 2000 px: rounded to the 4-column grid, two of the four would share key 1-0.
   const r=rule(['a','b','c','d'],[monitor('1x2'),monitor('1x2')],1,4);
