@@ -682,6 +682,24 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertEqual([SEAM, SEAM], middle())
         self.assertEqual(count, page.evaluate('synLayouts.length'))
 
+        # Whatever the cells show by then: a PDF put into monitor 1's first cell after the pick (no image stack, and never
+        # one), monitor 2's second cell still loading its series. The four cells are only asked for again as they are.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, rule, 2)
+        self.pick(page, 1, 4, 4)
+        one, two = self.on_monitors(page)
+        page.evaluate("""([document, loading]) => { synSets.set('pdf', { displaySetInstanceUID: 'pdf', Modality: 'DOC' });
+          putSeries(document, 'pdf'); synLoading(loading); }""", [one[0][0], two[1][0]])
+        page.wait_for_timeout(1500)
+        before = self.on_monitors(page)
+        self.assertEqual('pdf', before[0][0][1])
+        page.set_viewport_size({'width': 1100, 'height': 900})
+        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+        page.wait_for_timeout(4500)
+        self.assertEqual(before, self.on_monitors(page))
+        self.assertEqual([SEAM, SEAM], middle())
+        self.assertEqual([1, 4, None], [page.evaluate('synLayouts.at(-1)')[key] for key in ('numRows', 'numCols', 'layoutOptions')])
+
         # A plain grid that arrived under the rule (a prior opened in a new grid) and was laid on its monitors: the same.
         page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
         self.apply(page, rule, 2)

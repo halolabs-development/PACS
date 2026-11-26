@@ -192,8 +192,10 @@ window.KinViewerDisplaySpan = (() => {
     // still stand in those rectangles, the same cells - every one the viewport it is, what it shows and how - are asked
     // for once more as the plain grid of each monitor's rows and all their columns (row by row, monitor by monitor, as
     // KinViewerMonitorPlan.lay orders them): each monitor a half of the grid, whose middle edge is kept on the display
-    // edge as for any plain grid (placeGrid), whatever changes next. Under fitMonitors' conditions: every cell a drawn
-    // image stack or empty, nothing else owning the screen (asked again once that ends, at most once per 2 s).
+    // edge as for any plain grid (placeGrid), whatever changes next. Whatever the cells show by now - an image stack, a
+    // PDF or a report put into a cell since, a series still loading, nothing: no cell is made or chosen here, each is
+    // only asked for again as it is, as the Layout menu's own command asks again for every cell there is. Only what
+    // owns the screen puts it off (holder: asked again once that ends, at most once per 2 s).
     // The rule's own split is not this window's: it stays as the rule left it until the rule is applied again, as before.
     let moored = null;
     function unmoor() {
@@ -207,10 +209,7 @@ window.KinViewerDisplaySpan = (() => {
       // The cells stand elsewhere now (another layout was picked since): looked at again when the grid changes.
       const stood = areas && areas.length === 2 ? plan.laid(cells, areas) : null;
       const shape = stood?.shapes[0];
-      if (!stood || !stood.shapes.every(other => other.rows === shape.rows && other.cols === shape.cols) || mammography()) return;
-      const showing = cells.filter(cell => (cell.displaySetInstanceUIDs || []).length);
-      if (showing.some(cell => (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack')) return;
-      if (!showing.every(shows)) { owed = true; return; }
+      if (!stood || !stood.shapes.every(other => other.rows === shape.rows && other.cols === shape.cols)) return;
       const target = plan.lay(areas.map((_, index) => ({ x: index / areas.length, y: 0, width: 1 / areas.length, height: 1 })), stood.shapes);
       if (!target) return;
       const at = place => place.monitor + ':' + place.row + ':' + place.col;
