@@ -138,6 +138,7 @@ class VolumeCrosshairE2E(VolumeOrientationE2E):
   try:page.wait_for_function(self.RENDER_READY,arg=ids,timeout=timeout)
   except PlaywrightTimeout:self.fail(f'linked planes {ids} drew no IMAGE_RENDERED after their last CAMERA_MODIFIED within {timeout}ms: '+json.dumps(page.evaluate('()=>window.kinRenderProof??null')))
   return page.evaluate('()=>JSON.parse(JSON.stringify({...kinRenderProof,readyAt:performance.now()}))')
+ # TEST-VOLUME-CROSSHAIR (REQ-D-MPR-BASIC-ORTHOGONAL, tests/README.md): cases 09..11.
  def test_crosshair_09_basic_orthogonal_tilted_source_keeps_pivot_pan_zoom_display_and_crosshair(self):
   import numpy as np
   a,p,v=self.starting_tilted();initial=self.cameras(v);native=self.native_planes(v);self.assert_native_axes(initial,native)

@@ -1,4 +1,7 @@
-"""REQ/RISK/TEST-C12M-01..05: product bindings and fail-closed restore paths."""
+"""REQ/RISK/TEST-C12M-01..05: product bindings and fail-closed restore paths.
+
+REQ-S9-U4-13 -> RISK-S9-U4-13 -> the ImportOperation restore phases of ops_product_transfer_fixture.py.
+"""
 import copy
 import hashlib
 import json

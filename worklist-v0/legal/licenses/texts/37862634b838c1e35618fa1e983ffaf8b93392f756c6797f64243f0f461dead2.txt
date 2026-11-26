@@ -1,0 +1,7 @@
+# postgres-16-alpine — license/copyright files of installed packages
+# image: postgres@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d  local id/digests: sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d ["postgres@sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"]
+# replayed package lines of docker-compose.yml db (image used as is; digest = 11-23 audit): true
+# OS: VERSION_ID=3.24.4 PRETTY_NAME="Alpine Linux v3.24"
+# extracted: 2026-11-26T10:24:32+09:00 .. 2026-11-26T10:24:34+09:00 (docker run --rm, throwaway container)
+# packages: 45, license files: 0, packages with >=1 file: 0
+

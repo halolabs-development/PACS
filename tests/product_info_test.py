@@ -94,7 +94,7 @@ class ProductInfoConfigTest(unittest.TestCase):
         by_id = rows(model)
         self.assertEqual([spec[0] for spec in product.ROWS], [row["id"] for row in model["rows"]])
         expected = {
-            "manufacturer.name": "pending", "manufacturer.address": "confirmed", "importer": "not_applicable",
+            "manufacturer.name": "confirmed", "manufacturer.address": "confirmed", "importer": "not_applicable",
             "statutoryLabel": "confirmed", "product.authorization": "unissued", "product.name": "confirmed",
             "product.model": "pending", "manufacturing.serial": "pending", "manufacturing.date": "pending",
             "version.product": "pending", "udi.di": "unissued", "udi.pi": "unissued",
@@ -116,6 +116,7 @@ class ProductInfoConfigTest(unittest.TestCase):
         self.assertIn("927cfce34f31707e17f2bff35c349632fb9e2c3a", by_id["ai.engine"]["value"])
         self.assertIn("1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b", by_id["ai.model"]["value"])
         self.assertEqual("디지털의료기기소프트웨어", by_id["statutoryLabel"]["value"])
+        self.assertEqual("주식회사 헤일로랩스", by_id["manufacturer.name"]["value"])
         # Menus and states are English; the explanation of every row is Korean.
         for row in model["rows"]:
             self.assertRegex(row["label"], r"^[A-Za-z][A-Za-z0-9 ()/-]+$")
