@@ -83,8 +83,32 @@ test('a Key Image on a breast image: the SOP class and frame count of the stored
   }
   // A mark other than a Key Image is still not stored on a mammogram (MG Length has its own calibrated path).
   reject(() => v.verifyViewerReference('2.25.1', { ...item, frameOfReferenceUid: item.frameOfReferenceUid }, { ...mg, FrameOfReferenceUID: item.frameOfReferenceUid }));
-  // An image class outside the list stays refused for a Key Image.
-  reject(() => v.verifyViewerReference('2.25.1', key, { ...mg, SOPClassUID: '1.2.840.10008.5.1.4.1.1.7' }));
+});
+test('a Key Image on any image class the reading workspace displays; never on a non-image object', () => {
+  const plain = { StudyInstanceUID: '2.25.1', SeriesInstanceUID: item.seriesUid, SOPInstanceUID: item.sopUid, Rows: '64', Columns: '64' };
+  const key = { schemaVersion: 1, kind: 'key', seriesUid: item.seriesUid, sopUid: item.sopUid, frame: 1, title: '', description: '' };
+  const S = '1.2.840.10008.5.1.4.1.1.';
+  // Single-frame objects as modalities store them (no NumberOfFrames): ultrasound (a colour Doppler image is one of these),
+  // secondary capture, DX for processing, intra-oral: frame 1 only.
+  for (const sopClass of [S + '6.1', S + '7', S + '1.1.1', S + '1.3']) {
+    v.verifyViewerReference('2.25.1', key, { ...plain, SOPClassUID: sopClass });
+    v.verifyViewerReference('2.25.1', key, { ...plain, SOPClassUID: sopClass, NumberOfFrames: '1' });
+    reject(() => v.verifyViewerReference('2.25.1', { ...key, frame: 2 }, { ...plain, SOPClassUID: sopClass }));
+  }
+  // Multi-frame objects (XA, Enhanced CT, NM, multi-frame secondary capture): the frame is within NumberOfFrames.
+  for (const sopClass of [S + '12.1', S + '2.1', S + '20', S + '7.4']) {
+    v.verifyViewerReference('2.25.1', { ...key, frame: 30 }, { ...plain, SOPClassUID: sopClass, NumberOfFrames: '30' });
+    reject(() => v.verifyViewerReference('2.25.1', { ...key, frame: 31 }, { ...plain, SOPClassUID: sopClass, NumberOfFrames: '30' }));
+    reject(() => v.verifyViewerReference('2.25.1', key, { ...plain, SOPClassUID: sopClass, NumberOfFrames: '0' }));
+  }
+  // The key still names the stored image, never another one.
+  reject(() => v.verifyViewerReference('2.25.1', key, { ...plain, SOPClassUID: S + '6.1', SOPInstanceUID: '2.25.9' }));
+  // Not an image: encapsulated PDF, structured report, segmentation, presentation state, an unknown class.
+  for (const sopClass of [S + '104.1', S + '88.11', S + '66.4', S + '11.1', S + '999', '1.2.3']) {
+    reject(() => v.verifyViewerReference('2.25.1', key, { ...plain, SOPClassUID: sopClass }));
+  }
+  // The other marks keep their own narrower originals: an arrow on ultrasound stays refused.
+  reject(() => v.verifyViewerReference('2.25.1', item, { ...plain, SOPClassUID: S + '6.1', FrameOfReferenceUID: item.frameOfReferenceUid }));
 });
 test('plane/edge bounds, swapped spacing, oblique and rounded IOP preserve input', () => {
   for (const orientation of [[1,0,0,0,1,0], [0,1,0,0,0,1], [0,0,1,1,0,0], [-1,0,0,0,-1,0],

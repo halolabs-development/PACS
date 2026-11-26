@@ -148,6 +148,92 @@ class ViewerToolsE2E(ViewerHistoryE2E):
         page.mouse.move(*point); page.mouse.down()
         page.mouse.move(point[0] + dx, point[1] + dy, steps=10); page.mouse.up()
 
+    def frame_two_late_then_failed(self, page, cell, folder):
+        # Frame 2 of the XA, asked for while frame 1 is on the screen: its load is held (slow network), then refused (failed
+        # load). The cell names frame 2 from the start of the load while frame 1 stays on the screen, and Add Key Image makes
+        # nothing either way. Returns once frame 2 is really on the screen.
+        frames = '''id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+            return [v.getCurrentImageId().split('/frames/')[1], v.getCornerstoneImage?.()?.imageId?.split('/frames/')[1] ?? null]; }'''
+        second = page.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id).getImageIds()[1]', cell)
+        path = second[second.index('/instances/'):]
+        held, failed, mode = [], [], ['hold']
+        def frame_two(route):
+            if mode[0] == 'hold':
+                held.append(route)
+            else:
+                failed.append(route.request.url); route.fulfill(status=503, body='synthetic frame unavailable')
+        matcher = lambda url: path in url
+        page.route(matcher, frame_two)
+        page.evaluate('id => { if (cornerstone.cache.getImageLoadObject(id)) cornerstone.cache.removeImageLoadObject(id); }', second)
+        page.evaluate('id => { services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(1); }', cell)
+        deadline = time.monotonic() + 30
+        while not held and time.monotonic() < deadline:
+            page.wait_for_timeout(100)
+        self.assertTrue(held, 'frame 2 was never asked for')
+        rows = page.locator('#kin-viewer-history section[data-kind=key]')
+        status = page.locator('#kin-viewer-history [role=status]')
+        for phase in ('loading', 'failed'):
+            if phase == 'failed':
+                mode[0] = 'fail'
+                for route in held:
+                    failed.append(route.request.url); route.fulfill(status=503, body='synthetic frame unavailable')
+                page.wait_for_timeout(1500)
+                self.assertTrue(failed)
+            self.assertEqual(page.evaluate(frames, cell), ['2', '1'], phase)
+            page.get_by_role('button', name='Add Key Image', exact=True).click()
+            expect(status).to_contain_text('고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다')
+            expect(rows).to_have_count(0)
+            page.screenshot(path=str(folder / ('XA-key-frame2-' + phase + '.png')))
+        page.unroute(matcher, frame_two)
+        for n in (0, 1):
+            page.evaluate('([id, n]) => { services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(n); }', [cell, n])
+            page.wait_for_function('''([id, f]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+                return v.getCurrentImageId().endsWith("/frames/" + f) && !!v.getCornerstoneImage?.()?.imageId?.endsWith("/frames/" + f) &&
+                    v.viewportStatus === cornerstone.Enums.ViewportStatus.RENDERED; }''', arg=[cell, n + 1], timeout=30000)
+        self.assertEqual(page.evaluate(frames, cell), ['2', '2'])
+
+    def test_tools_key_image_modalities(self):
+        # A Key Image is kept on a single-frame ultrasound (US Image Storage, no NumberOfFrames) and on frame 2 of a 3-frame XA:
+        # Add Key Image, a title, Save -> the server keeps the shown series, SOP and frame. On the XA, frame 2 loading late and
+        # then failing (frame 1 still on the screen) makes no Key Image; once frame 2 is shown, the saved Key Image, Go to Image
+        # and the report preview's key images all name frame 2.
+        folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-tools'))
+        folder.mkdir(parents=True, exist_ok=True)
+        for modality, index in [('US', 0), ('XA', 1)]:
+            with self.subTest(modality=modality):
+                fixture = self.modality_fixture(modality)
+                work, page = self.open_tools_viewer(fixture)
+                try:
+                    cell = page.evaluate('() => services.viewportGridService.getActiveViewportId()')
+                    if index:
+                        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getImageIds?.().length === 3', arg=cell, timeout=60000)
+                        self.frame_two_late_then_failed(page, cell, folder)
+                    shown = page.evaluate('''id => { const m = cornerstone.metaData.get('instance', services.cornerstoneViewportService.getCornerstoneViewport(id).getCurrentImageId());
+                        return { series: m.SeriesInstanceUID, sop: m.SOPInstanceUID }; }''', cell)
+                    page.get_by_role('button', name='Add Key Image', exact=True).click()
+                    row = page.locator('#kin-viewer-history section[data-kind=key]').last
+                    row.get_by_label('Key Title').fill('VTOOLS key ' + modality)
+                    row.get_by_role('button', name='Save', exact=True).click()
+                    expect(row).to_contain_text('저장 완료', timeout=30000)
+                    keys = [i['item'] for i in self.saved(fixture) if i['item']['kind'] == 'key']
+                    self.assertEqual([(k['title'], k['seriesUid'], k['sopUid'], k['frame']) for k in keys],
+                                     [('VTOOLS key ' + modality, shown['series'], shown['sop'], index + 1)])
+                    # The report preview (what the report and its readers cite) names the same series, SOP and frame.
+                    preview = self.stack.request('GET', '/studies/' + fixture.uid + '/report-preview', 'doctor')
+                    self.assertEqual(preview.status, 200, str(preview.body)[:300])
+                    self.assertEqual([(k['item']['seriesUid'], k['item']['sopUid'], k['item']['frame']) for k in preview.body['keys']],
+                                     [(shown['series'], shown['sop'], index + 1)])
+                    if index:
+                        # Go to Image from another frame brings the cell back to the saved frame, on the screen.
+                        page.evaluate('id => { services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(0); }', cell)
+                        page.wait_for_function('id => services.cornerstoneViewportService.getCornerstoneViewport(id).getCornerstoneImage?.()?.imageId?.endsWith("/frames/1")', arg=cell, timeout=30000)
+                        row.get_by_role('button', name='Go to Image', exact=True).click()
+                        page.wait_for_function('''([id, sop]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), shown = v.getCornerstoneImage?.()?.imageId;
+                            return !!shown && shown.endsWith("/instances/" + sop + "/frames/2") && v.getCurrentImageId() === shown; }''', arg=[cell, shown['sop']], timeout=30000)
+                finally:
+                    page.screenshot(path=str(folder / (modality + '-key.png')))
+                    page.close(); work.close()
+
     def test_tools_ellipse_modalities(self):
         folder = Path(os.environ.get('KIN_EVIDENCE_DIR', 'tmp/viewer-tools'))
         folder.mkdir(parents=True, exist_ok=True)
