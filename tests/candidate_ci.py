@@ -20,7 +20,13 @@ SHA = re.compile(r"[0-9a-f]{40}")
 # per-suite allowance (NET has no recorded live measurement yet). These are hang
 # timeouts, not performance targets; recheck after the first complete hosted run.
 # E CI measurements: production build 36s + PostgreSQL/HTTP 22s.
-CANDIDATE_DEADLINE_SECONDS = 1500 + 2100 + 180 + 2 * 540 + 36 + 22
+# The invariants suite outgrew the shared 540s: green hosted runs of the whole suite took 361s (candidate, 2026-11-13),
+# 363-519s (candidate, 2026-11-20) and 414-513s (the hanging-protocols profile, 2026-11-26), and the 2026-11-26
+# candidate run was stopped at 540s with its last cases still to run. It gets about twice the slowest measured run, the
+# margin the hanging-protocols profile uses for the same suite (2 * 540 = 1080); the deadline grows by the difference.
+INVARIANTS_UNIT = "candidate-invariants"
+INVARIANTS_SECONDS = 1080
+CANDIDATE_DEADLINE_SECONDS = 1500 + 2100 + 180 + 2 * 540 + 36 + 22 + (INVARIANTS_SECONDS - 540)
 BASE = (
     # S7-U1a: CriticalResultInvariantTests added six live cases, 83 -> 89 (and the selection 105 -> 112).
     # CN-N01-A: OrderCorrectionInvariantTests added six live cases, 89 -> 95 (and the selection 116 -> 122).
@@ -29,7 +35,7 @@ BASE = (
     # round 6: the pure S9U4RegisterTests control of the identity case's registration check (U4BL-03), 101 -> 102 (129 -> 130).
     # WORKLIST-SPLIT-UID: WorklistSplitUidInvariantTests added six live cases, 95 -> 101 on main (and the selection 124 -> 130
     # after W4-FLOW's 123 -> 124); merged into S9-U4b: 102 + 6 = 108 (the selection 133 -> 139).
-    ("invariants_live.py", None, "candidate-invariants"),
+    ("invariants_live.py", None, INVARIANTS_UNIT),
     # S9-U4b part (c): WorklistE2E.test_s9_u4_download_states and .test_s9_u4_import_retry_and_account_change
     # (REQ-S9-U4-09/10), 15 -> 17 (the selection 131 -> 133).
     ("e2e/test_worklist.py", None, "candidate-worklist"),
@@ -177,7 +183,8 @@ def configure(target, ci, runner, plan_dir):
 
     out = target / "tests/e2e/artifacts/candidate-ci"
     ci.PROFILES["measurements"] = {**ci.PROFILES["measurements"], "out": out,
-        "suite_timeout": 540, "deadline_seconds": CANDIDATE_DEADLINE_SECONDS, "suites": tuple(rows)}
+        "suite_timeout": 540, "suite_budgets": {INVARIANTS_UNIT: INVARIANTS_SECONDS},
+        "deadline_seconds": CANDIDATE_DEADLINE_SECONDS, "suites": tuple(rows)}
     original_run = ci.guarded_profile_run
     original_environment = ci.profile_environment
 

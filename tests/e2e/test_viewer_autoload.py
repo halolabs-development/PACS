@@ -177,7 +177,13 @@ class ViewerAutoloadE2E(ViewerWindowsE2E):
         p.locator(f'#rows tr[data-uid="{b.uid}"]').click(button='right')
         self.assertEqual(p.evaluate('selectedUid'), b.uid)
         self.assertEqual(len(p.context.pages), 1)
-        p.keyboard.press('Escape')
+        # A menu opened with the mouse takes no focus, so Escape does not reach it (context-menu.js closes on Escape only
+        # from inside the menu); a click elsewhere closes it. Left open, the row menu covers the neighbouring row and the
+        # next row click lands on its first item instead. Close it on an inert place, then the list is clear again.
+        p.locator('#roles').click()
+        expect(p.locator('#ctx')).to_be_hidden()
+        self.assertEqual(p.evaluate('selectedUid'), b.uid)
+        self.assertEqual(len(p.context.pages), 1)
         p.evaluate('window.__realOpen=window.open; window.open=()=>null')
         self.choose(p, a)
         expect(p.locator('#toast')).to_contain_text('팝업이 차단되었습니다')

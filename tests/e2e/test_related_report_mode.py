@@ -67,11 +67,13 @@ class RelatedReportModeE2E(TemplatePreservationE2E):
                 request_id = body['relatedInsert']['insertRequestId']
                 # An independent PG connection must see the exact commit before
                 # the browser loses its response; a cancelled request is no proof.
+                # The receipt and the draft belong to one account: a draft row's author is its account's record id and
+                # the receipt keeps the login the request was made under, so they join on the account (owner-identity.ts).
                 rows = [json.loads(row) for row in psql(
                     'SELECT json_build_object(\'state\', r.state, \'applied\', r."appliedRevision", '
                     '\'revision\', d.revision, \'findings\', d.findings)::text '
                     'FROM "ReportDraftInsertReceipt" r JOIN "ReportDraft" d '
-                    'ON d.uid=r."targetUid" AND d.author=r."ownerAuthor" '
+                    'ON d.uid=r."targetUid" AND d."authorSub"=r."ownerSub" '
                     f'WHERE r."insertRequestId"=\'{request_id}\'::uuid')]
                 self.assertEqual(len(rows), 1)
                 self.assertEqual((rows[0]['state'], rows[0]['applied']), ('applied', rows[0]['revision']))
