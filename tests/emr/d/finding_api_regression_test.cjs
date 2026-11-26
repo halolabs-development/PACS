@@ -40,7 +40,8 @@ function readFixture(row, current = caller, transactionRow = row) {
   let reads = 0;
   const tx = { studyState: { findUnique: async () => transactionRow }, $executeRaw: async () => {},
     $queryRaw: async () => ++reads % 2 ? [] : [{ allowed: transactionRow?.institutionId === current.institution && transactionRow.rs !== 'P', rows: '[]' }] };
-  const db = { studyState: { findUnique: async () => row }, $transaction: async fn => fn(tx) };
+  // `$queryRaw` on the service's own client is the exam membership read (readingSources): a study never grouped.
+  const db = { studyState: { findUnique: async () => row }, $transaction: async fn => fn(tx), $queryRaw: async () => [] };
   const svc = new FindingService(db, { prepare: async () => {}, require: async () => {} }, {});
   const scope = async () => {
     if (!row || ![row.institutionId, row.teleInstitutionId].includes(current.institution)) throw new NotFoundException('검사가 없습니다.');
@@ -388,4 +389,43 @@ test('B2-COMMIT a Tech Note replay keeps the accessRecord of its stored receipt 
     const { value: out, work } = await twoRecords(call, written, null, false);
     assert.deepEqual([out.accessRecord, out.latestNote, work.calls], [written ?? undefined, undefined, 0], `first save write=${written}`);
   }
+});
+
+/* Link Saved View on a merged exam (originals X and Y, read on X): the saved view's second study Y is the reading's own original, so
+ * the locked section does not ask for the comparison study's patient check; a real comparison study still needs it. */
+function jobFixture(grouped) {
+  const studies = ['1.2.840.9999.291', '1.2.840.9999.292'], [x] = studies;
+  const groupId = '88888888-1111-4000-8000-000000000000', jobId = '11111111-1111-4000-8000-000000000001';
+  const job = { id: jobId, studyUid: x, studies, version: '1', revision: 1, snapshot: '{"version":1}', title: 'saved view', authorActor: 'reader', hidden: false };
+  const rows = studies.map(study => ({ uid: study, institutionId: 'inst-a', teleInstitutionId: null, rs: 'N' }));
+  const members = grouped ? studies.map((study, part) => ({ logicalUid: study, studyUid: study, part, groupId, seriesUids: [] })) : [];
+  const groups = grouped ? [{ id: groupId, kind: 'merge', baseUid: x, dissolvedAt: null, institutionId: 'inst-a' }] : [];
+  const identities = [];
+  const db = { studyState: { findUnique: async () => rows[0], findMany: async () => rows },
+    studyGroupMember: { findMany: async () => members }, studyGroup: { findMany: async () => groups },
+    $queryRaw: async (sql) => {
+      const q = sql.join('?');
+      if (q.includes('FROM "StudyGroupMember"')) return members;
+      if (q.includes('FROM "FindingRevision"')) return [];
+      if (q.includes('FROM "ViewerJob"')) return [job];
+      if (q.includes('FROM "StudyState"')) return rows;
+      if (q.includes('octet_length(')) return [{ bytes: 400 }];
+      throw new Error('unexpected query ' + q);
+    }, $executeRaw: async () => 1 };
+  const svc = new FindingService(db, { require: async () => {}, allowed: async () => new Set(studies) },
+    { connectStudyIdentity: async study => { identities.push(study); return { patientId: 'SYN1' }; } });
+  const raw = Buffer.from(JSON.stringify({ requestId: '11111111-1111-4000-8000-000000000003',
+    item: { schemaVersion: 4, title: 'finding', text: '', characteristics: '', lesionLocation: '', size: '', sources: [{ jobId, revision: 1 }] } }));
+  return { svc, db, raw, x, studies, identities };
+}
+test('saved view on a merged exam: its other original is the reading\'s own study, not a comparison to patient-check', async () => {
+  const merged = jobFixture(true);
+  const prepared = await merged.svc.prepare(merged.x, merged.raw, caller, undefined, merged.db, '11111111-1111-4000-8000-000000000002', merged.studies);
+  assert.deepEqual(prepared.item.sources[0].studies, merged.studies);
+  assert.deepEqual(merged.identities, [], 'no patient lookup for the exam\'s own original');
+  // The same saved view on an ordinary study names a real comparison study: its patient is checked against the study's own.
+  const plain = jobFixture(false);
+  const compared = await plain.svc.prepare(plain.x, plain.raw, caller, undefined, plain.db, '11111111-1111-4000-8000-000000000002', plain.studies);
+  assert.deepEqual(compared.item.sources[0].studies, plain.studies);
+  assert.deepEqual(plain.identities, plain.studies);
 });

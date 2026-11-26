@@ -423,7 +423,31 @@ export async function currentExamStates(db:any,access:StudyAccessService,c:Calle
     generations:scopes.map(scope=>scope.generation).sort()};
 }
 
-export function scopeIncludesSeries(scope: ResolvedExamScope, studyUid: string, seriesUid: string) {
+/**
+ * The originals whose image marks a finding written on reading UID `uid` may link as its own (not as a comparison study),
+ * each with its series rule: a split part only its own series, a merged exam every original, a study never grouped itself
+ * whole. A finding belongs to the reading it is written on; its marks stay on the originals. A UID whose grouping cannot be
+ * described now (a retired part) answers as a study alone, so what it already holds stays readable as before.
+ * One read for a study never grouped; `grouped` is false then and every rule below is the established one.
+ */
+export async function readingSources(db: any, uid: string): Promise<{ grouped: boolean; sources: ResolvedExamScope['sources'] }> {
+  const alone = { grouped: false, sources: [{ studyUid: uid, series: { mode: 'all' as const, uids: [] as string[] } }] };
+  const members: any[] = await db.$queryRaw`SELECT "groupId" FROM "StudyGroupMember" WHERE "logicalUid"=${uid} OR "studyUid"=${uid}`;
+  if (!members.length) return alone;
+  try { return { grouped: true, sources: (await describeScope(db, { uid, purpose: 'current', state: null })).sources }; }
+  catch (error) { if (error instanceof ConflictException) return alone; throw error; }
+}
+
+/**
+ * The original DICOM study a logical-only UID (a split part other than the first) stands for; any other UID answers itself.
+ * The patient of a part is the patient of its original: no archive resource carries the part's own UID.
+ */
+export async function examOriginalUid(db: any, uid: string): Promise<string> {
+  const members: any[] = await db.$queryRaw`SELECT DISTINCT "studyUid" FROM "StudyGroupMember" WHERE "logicalUid"=${uid}`;
+  return members.length === 1 && studyUidOf(members[0].studyUid) && members[0].studyUid !== uid ? members[0].studyUid : uid;
+}
+
+export function scopeIncludesSeries(scope: Pick<ResolvedExamScope, 'sources'>, studyUid: string, seriesUid: string) {
   const series = scope.sources.find(s => s.studyUid === studyUid)?.series;
   return !!series && (series.mode === 'all' || (series.mode === 'include' ? series.uids.includes(seriesUid) : !series.uids.includes(seriesUid)));
 }

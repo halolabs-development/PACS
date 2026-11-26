@@ -56,9 +56,10 @@ export function measurementLineProblem(line: unknown, insertedText: unknown): 's
   if (!text.endsWith('\n' + line) || blockIsBlank(text.slice(0, text.length - line.length - 1))) return 'suffix';
   return null;
 }
-/** 줄에 들어갈 수 있는 출처: 이 검사의 영상 표식(저장 작업·비교 검사 아님), 링크가 숨김·사라짐이 아님. */
-export function measurementEligible(source: any, linkState: unknown, studyUid: string): boolean {
-  return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' && source.studyUid === studyUid &&
+/** 줄에 들어갈 수 있는 출처: 이 검사의 영상 표식(저장 작업·비교 검사 아님), 링크가 숨김·사라짐이 아님.
+ * `own`: 판독 UID가 묶인 검사의 원본들(나눈 검사의 부분이면 그 원본, 합친 검사면 모든 원본) — 그 원본의 표식도 이 검사의 것이다. */
+export function measurementEligible(source: any, linkState: unknown, studyUid: string, own: readonly string[] = []): boolean {
+  return !!source && source.kind !== 'job' && typeof source.studyUid === 'string' && (source.studyUid === studyUid || own.includes(source.studyUid)) &&
     linkState !== 'hidden' && linkState !== 'missing';
 }
 
