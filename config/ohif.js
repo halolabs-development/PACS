@@ -5972,6 +5972,7 @@ window.KinLanguageTerms = {
     ["{0} 아래는 다시 조회한 상태입니다.{t1}", "{0} Below is the state loaded again.{t1}", "m"],
     ["입력은 유지했습니다.", "Your input was kept.", "m"],
     ["화면에 그려진 영상을 확인할 수 없어 이 점으로 재지 않습니다", "The image drawn on screen could not be confirmed, so this point cannot be used for measurement", "l"],
+    ["고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.", "The selected image is not shown in this cell yet, so no Key Image was made. Press again once it is shown.", "m"],
     ["이 {0}를 표시하지 못했습니다.", "Could not display this {0}.", "m"],
     ["{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", "{0}This viewer does not support displaying {1} yet. The original image series can still be opened.", "m"],
     ["{0}{1} 파일을 읽지 못했습니다{2}. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", "{0}Could not read the {1} file{2}. Reopen the series, and if this continues, contact your administrator.", "m"],
@@ -12291,6 +12292,15 @@ function kinCreateViewerHistory() {
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
         const r = current(); if (!r || r.study !== scope) return;
+        // A stack cell names the image it was asked for as soon as that load starts, and keeps naming it after the load fails,
+        // while the image before stays on the screen. A Key Image is made only when the image on the screen is the one it names;
+        // otherwise nothing is made (the reader presses again once it is shown). A volume cell (MPR) has no loaded-image read
+        // and names the slice it shows, as before.
+        const v = viewport();
+        if (v && (v.type === 'stack' || typeof v.getCornerstoneImage === 'function') && !matches(reference(kinViewerShownImageId(v)), r)) {
+          status.textContent = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
+          return;
+        }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
         // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.

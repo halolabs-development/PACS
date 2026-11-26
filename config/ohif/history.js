@@ -1199,6 +1199,15 @@ function kinCreateViewerHistory() {
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
         const r = current(); if (!r || r.study !== scope) return;
+        // A stack cell names the image it was asked for as soon as that load starts, and keeps naming it after the load fails,
+        // while the image before stays on the screen. A Key Image is made only when the image on the screen is the one it names;
+        // otherwise nothing is made (the reader presses again once it is shown). A volume cell (MPR) has no loaded-image read
+        // and names the slice it shows, as before.
+        const v = viewport();
+        if (v && (v.type === 'stack' || typeof v.getCornerstoneImage === 'function') && !matches(reference(kinViewerShownImageId(v)), r)) {
+          status.textContent = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
+          return;
+        }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
         // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.

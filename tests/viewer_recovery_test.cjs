@@ -48,7 +48,12 @@ async function harness() {
     if (options.method === 'POST') return { status: 409, data: {} };
     return { status: 200, data: { items: copy(pages.get(uid) || []), nextCursor: null } };
   };
-  const viewport = { getCurrentImageId: () => `/studies/${study}/series/1.2/instances/1.3/frames/1`, render() {} };
+  // The renderer's index (getCurrentImageId) moves to a requested frame when its load starts and stays there when the load
+  // fails; the image on the screen (getCornerstoneImage) stays the one before until the new one arrives. `frames` sets the
+  // two apart; `volumeCell` makes the cell a volume (MPR) cell, which has no loaded-image read.
+  let requested = 1, shown = 1;
+  const imageId = frame => `/studies/${study}/series/1.2/instances/1.3/frames/${frame}`;
+  const viewport = { getCurrentImageId: () => imageId(requested), getCornerstoneImage: () => shown ? { imageId: imageId(shown) } : undefined, render() {} };
   window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'image' } }, metaData: { get() {} } };
   window.cornerstoneTools = { annotation: { locking: { setAnnotationLocked() {}, isAnnotationLocked: () => true },
     state: { getAnnotation: uid => annotations.get(uid), getAllAnnotations: () => [...annotations.values()], removeAnnotation: uid => annotations.delete(uid) } },
@@ -87,6 +92,8 @@ async function harness() {
     values: () => all().filter(e => e.tagName === 'input').map(e => e.value),
     text: () => all().map(e => e.textContent).join('\n'),
     switch: async uid => { study = uid; tick(); await flush(); },
+    frames: (now, onScreen) => { requested = now; shown = onScreen; },
+    volumeCell: () => { delete viewport.getCornerstoneImage; },
     tick: async () => { tick(); await flush(); },
     logout: () => announce({ state: 'ending', session: 'S1' }),
   };
@@ -200,6 +207,51 @@ test('A1/C5 delta: pending create does not block another edit or overwrite its c
   await h.click('Retry Request'); assert.equal(h.calls.filter(c => c.options.method === 'POST').at(-1).options.body, body);
   assert.ok(h.values().includes('edit after commit')); assert.equal(h.window.kinViewerHistoryHasUnsaved(), true);
   assert.equal(h.document.body.all().filter(e => e.tagName === 'section').length, 1);
+});
+
+// Add Key Image keeps the image the reader sees: the stack cell's image on the screen must be the image the Key Image names.
+const NOT_SHOWN = /고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다/;
+const sections = h => h.document.body.all().filter(e => e.tagName === 'section').length;
+async function saveKey(h, title, id) {
+  await h.click('Add Key Image'); h.input('Key Title', title);
+  h.setReply(async (path, options) => options.method === 'POST' ? { status: 200, data: head(id, 1, title) } : h.defaultReply(path, options));
+  await h.click('Save');
+  return JSON.parse(h.calls.find(c => c.options.method === 'POST').options.body).item;
+}
+
+test('Add Key Image makes nothing while the next frame is still loading (frame 1 on the screen, frame 2 asked for)', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.frames(2, 1); await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+});
+
+test('Add Key Image makes nothing after the next frame failed to load and the frame before stays on the screen', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  // The failed load leaves the renderer's index on frame 2; frame 1 stays shown however long the reader waits.
+  h.frames(2, 1); await h.tick(); await h.click('Add Key Image'); await h.tick(); await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  // Nothing on the screen yet (the cell's first image never arrived): nothing is made either.
+  h.frames(1, 0); await h.click('Add Key Image');
+  assert.equal(sections(h), before);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+});
+
+test('Add Key Image keeps frame 2 once frame 2 is on the screen', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  h.frames(2, 1); await h.click('Add Key Image');
+  h.frames(2, 2);
+  const item = await saveKey(h, 'shown frame', 'k');
+  assert.deepEqual([item.kind, item.seriesUid, item.sopUid, item.frame], ['key', '1.2', '1.3', 2]);
+});
+
+test('Add Key Image in a volume cell (MPR, no loaded-image read) names its current original slice', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  h.frames(4, 4); h.volumeCell();
+  const item = await saveKey(h, 'mpr slice', 'm');
+  assert.deepEqual([item.kind, item.frame], ['key', 4]);
 });
 
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {
