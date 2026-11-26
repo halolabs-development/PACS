@@ -984,6 +984,9 @@
       const workAt = work.capture('document');
       if (!work.admits(workAt)) return;
       if (!s.scope || s.ended || s.suspended || !s.subject) return;
+      // A split part's findings are written on its own UID: its original's saved views belong to another reading and could not be
+      // linked to them, so none are offered (a saved view of the part itself is not linkable yet).
+      if (s.report !== s.scope) { s.jobs.sequence++; s.jobs.list = new Map(); s.jobs.status = 'ready'; notify(); return; }
       const ticket = s.generation, seq = ++s.jobs.sequence, anchor = s.scope;
       const current = () => work.admits(workAt) && valid(ticket) && seq === s.jobs.sequence && s.scope === anchor;
       s.jobs.status = 'loading'; notify();

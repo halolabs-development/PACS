@@ -514,11 +514,13 @@ export class FindingService {
           const [job] = await tx.$queryRaw<any[]>`SELECT id::text AS id, "studyUid", studies, hidden, revision, title, "authorActor",
             snapshot::text AS snapshot FROM "ViewerJob" WHERE id = ${ref.jobId}::uuid`;
           const studies = jobStudies(uid, job);
-          // A comparison study that is not locked and reachable here is indistinguishable from an unknown job.
+          // A comparison study that is not locked and reachable here is indistinguishable from an unknown job. A merged exam's
+          // other original is this reading's own study: locked and access-checked, never patient-matched (as a mark of it).
           if (studies.length > 1) {
+            const own = plan.reading.sources.some(source => source.studyUid === studies[1]);
             if (!reachable.has(studies[1])) jobAbsent();
             if (!readable.has(studies[1])) denied();
-            if (!plan.checked.has(studies[1])) conflict();
+            if (!own && !plan.checked.has(studies[1])) conflict();
           }
           const snapshot = parsed(job.snapshot), mark = jobMark(snapshot, studies, ref.markId);
           if (job.hidden || job.revision !== ref.revision) staleJob(ref, job);

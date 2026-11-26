@@ -738,6 +738,24 @@ test('exam window Go to Image: an ordinary reading compared with a split part ke
   assert.equal(e.message, '현재 검사의 영상 칸이 선택되어 있지 않아 이동하지 않았습니다. 현재 검사의 영상 칸을 선택한 뒤 다시 누르세요.');
 });
 
+// Link Saved View: a split part's window offers no saved view of its original (another reading's, which its findings cannot link);
+// a merged exam's window, read on its first original, lists that original's saved views as before.
+test('exam window: Link Saved View offers no original\'s saved view in a split part; a merged exam lists its own', async () => {
+  const t = transport(); const { store } = makeStore(t, { studies: [A], exam: partExam() });
+  store.syncHistory(history(A, [])); await tick();
+  await store.loadJobs();
+  assert.equal(t.log.some(x => x.url.includes('/viewer-jobs')), false, 'no saved view list is read');
+  assert.equal(store.state().jobs.status, 'ready'); assert.equal(store.state().jobs.list.size, 0);
+  const merged = () => ({ current: { reportUid: A, sources: [{ studyUid: A, series: { mode: 'all', uids: [] } }, { studyUid: B, series: { mode: 'all', uids: [] } }] },
+    prior: null, role: () => 'current' });
+  const m = transport(); const kit = makeStore(m, { studies: null, exam: merged });
+  kit.store.syncHistory(history(A, [])); await tick();
+  m.state.responses.push({ status: 200, body: { jobs: [{ id: 'aaaaaaaa-0000-4000-8000-0000000000aa', studyUid: A, revision: 1, hidden: false, snapshotVersion: 6, title: 'MPR', authorActor: 'R' }] } });
+  await kit.store.loadJobs();
+  assert.equal(m.log.at(-1).url, '/api/studies/' + A + '/viewer-jobs?mine=false&includeHidden=false');
+  assert.equal(kit.store.state().jobs.list.size, 1);
+});
+
 test('exam window: a prior that is the other part of the same original has no comparison list; its marks are not offered', async () => {
   const PRIOR_PART = '1.2.3.98', THEIRS = '1.2.3.8';
   const exam = () => ({ current: { reportUid: PART, sources: [{ studyUid: A, series: { mode: 'include', uids: [OTHER] } }] },
