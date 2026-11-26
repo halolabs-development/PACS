@@ -121,7 +121,7 @@ GRID = """() => {
     subscribe(event, fn) { listeners.add(fn); return { unsubscribe() { listeners.delete(fn); } }; },
     getActiveViewportId: () => state.activeViewportId, setActiveViewportId() {},
     setLayout({ numRows, numCols, layoutOptions, findOrCreateViewport, activeViewportId }) {
-      synLayouts.push({ numRows, numCols, layoutOptions: layoutOptions ? structuredClone(layoutOptions) : null });
+      synLayouts.push({ numRows, numCols, layoutOptions: layoutOptions ? structuredClone(layoutOptions) : null, active: activeViewportId ?? null });
       const viewports = new Map();
       // As the pinned grid: a position's key is its option's positionId, or else its place rounded to the grid.
       const shared = {};
@@ -561,6 +561,15 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertEqual(([left], [right]), self.on_monitors(page))
         # 1 x 4 again: the second columns come back as they were.
         self.pick(page, 1, 4, 4)
+        self.assertEqual((one, two), self.on_monitors(page))
+        # The active cell is asked for only while it stays on screen: with monitor 1's second cell active, 1 x 2 (which
+        # drops it) names no active cell - the grid chooses - and 1 x 4 picked on the first cell names that one.
+        page.evaluate('id => { synServices.viewportGridService.getState().activeViewportId = id; }', one[1][0])
+        self.pick(page, 1, 2, 2)
+        self.assertIsNone(page.evaluate('synLayouts.at(-1).active'))
+        page.evaluate('id => { synServices.viewportGridService.getState().activeViewportId = id; }', left[0])
+        self.pick(page, 1, 4, 4)
+        self.assertEqual(left[0], page.evaluate('synLayouts.at(-1).active'))
         self.assertEqual((one, two), self.on_monitors(page))
         # 2 x 4 from there: the first row stays; and back to 2 x 2 each monitor keeps its first column.
         self.pick(page, 2, 4, 8)

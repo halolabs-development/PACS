@@ -224,7 +224,8 @@ window.KinViewerDisplaySpan = (() => {
       });
       target.cells.forEach((place, index) => { if (!next[index]) next[index] = fresh(shown); });
       window.kinViewerSplitRects = target.cells.map(({ x, y, width, height }) => ({ x, y, width, height })).sort(onScreen);
-      const active = used.has(state.activeViewportId) ? { activeViewportId: state.activeViewportId } : {};
+      // The active cell stays the active one while it is still on screen; else the grid chooses (as for the stock command).
+      const active = next.some(cell => cell.viewportOptions?.viewportId === state.activeViewportId) ? { activeViewportId: state.activeViewportId } : {};
       Promise.resolve(grid.setLayout({ numRows: target.numRows, numCols: target.numCols, ...active, isHangingProtocolLayout: false,
         layoutOptions: target.cells.map(({ x, y, width, height, positionId }) => ({ x, y, width, height, positionId })),
         findOrCreateViewport: index => next[index] })).catch(() => {}).then(schedule);
@@ -247,12 +248,13 @@ window.KinViewerDisplaySpan = (() => {
     // what the Layout menu's own fill gives in a window of one study - or nothing when every series is on screen. Chosen
     // here, from the display sets alone: the stock fill would make the default protocol the active one.
     function fresh(shown) {
+      const cell = sets => ({ displaySetInstanceUIDs: sets, displaySetOptions: sets.map(() => ({})), viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } });
       try {
         const set = (services.displaySetService?.getActiveDisplaySets?.() || []).find(value => value?.images?.length && !shown.includes(value.displaySetInstanceUID));
-        if (!set) return {};
+        if (!set) return cell([]);
         shown.push(set.displaySetInstanceUID);
-        return { displaySetInstanceUIDs: [set.displaySetInstanceUID], displaySetOptions: [{}], viewportOptions: { viewportType: 'stack', toolGroupId: 'default', allowUnmatchedView: true } };
-      } catch (_) { return {}; }
+        return cell([set.displaySetInstanceUID]);
+      } catch (_) { return cell([]); }
     }
     // The protocol on screen acts on a layout change itself (an MPR hanging leaves its planes): that pick is the stock command's.
     function layoutCallback() {
