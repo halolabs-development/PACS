@@ -333,6 +333,9 @@ test('Add Key Image makes nothing in a thin MPR cell between two original slices
   // The crosshairs left the plane 0.9 mm past slice 4 (slices 2 mm apart): the cell draws a blend and names slice 4.
   mpr.offset = 0.9; await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
+  // Only 0.08 mm past slice 4 (4% of the spacing): still a blend (96% of slice 4, 4% of slice 5), so still nothing.
+  mpr.offset = 0.08; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
   // On the slice, but the volume is still arriving (slow network): slice 4 may not be on the screen yet.
   mpr.offset = 0; mpr.framesLoaded = 5; mpr.loaded = false; await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);

@@ -11901,7 +11901,8 @@ function kinCreateViewerHistory() {
     //   A volume cell (MPR) has no loaded-image read and names the original slice nearest its plane from the camera and the
     //   series' metadata: a projection (MIP, MinIP, Average or a thick slab) draws several slices, not that one; a plane
     //   between two originals (where the crosshairs left it) draws a blend of both; and the slice may not have arrived yet.
-    //   So a thin plane must lie on the slice it names, and the volume must hold every slice.
+    //   So a thin plane must lie on the slice it names (a plane near it still draws a small blend), and the volume must
+    //   hold every slice.
     function keyImageNotShown(v, r) {
       const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
       if (!v) return '';
@@ -11921,7 +11922,9 @@ function kinCreateViewerHistory() {
           const n = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
           const along = p => p.map(Number).reduce((s, value, k) => s + (value - o[k]) * n[k], 0);
           const spacing = Math.abs(along(b.imagePositionPatient)), off = Math.abs(along(v.getCamera().focalPoint));
-          onSlice = spacing > 0 && Number.isFinite(off) && off <= spacing * 0.05;
+          // Off by under 1/1024 of the spacing, the blend moves no displayed 8-bit value by half a step even between a black
+          // and a white slice, so the screen is that original; scrolling lands within float error of it.
+          onSlice = spacing > 0 && Number.isFinite(off) && off <= spacing / 1024;
         } catch (_) { onSlice = false; }
         return onSlice ? '' : kinText("MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다. 스크롤로 원본 단면에 맞춘 뒤 누르세요.");
       }
