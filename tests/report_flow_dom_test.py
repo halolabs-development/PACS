@@ -1761,6 +1761,36 @@ class ReportFlowPage(unittest.TestCase):
         self.assertEqual([0, 2], [body["baseVersion"] for _, body in self.site.flow_commits])
         self.assertEqual(1, len(self.dialogs))
 
+    def approve_after_another_window_saved(self, english):
+        """Approve under the same refusal (a head this account saved) takes the reload question; returns the question.
+        The fixture answers yes, which copies the text to the clipboard: the page may write it."""
+        self.page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+        self.open()
+        self.open_study(h.PATIENT_B)
+        if english:
+            self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
+        self.type("SYN window two")
+        self.settle(300)
+        self.site.store[h.UID_B]["report"] = {"version": 1, "rs": "T", "findings": "SYN window one", "conclusion": "", "recommendation": ""}
+        mine = "다른 창에서 이 계정으로 v1을 저장했습니다. 이 창의 글은 그대로 있습니다."
+        self.site.commit_answers = [(409, {"code": "REPORT_VERSION_CONFLICT", "message": mine, "head": {"version": 1, "mine": True}})]
+        self.page.evaluate("() => commitReport('approve')")
+        self.wait(lambda: len(self.dialogs) == 1, "the reload question")
+        self.assertEqual(1, len(self.site.flow_commits))
+        return mine, self.dialogs[0]
+
+    def test_approve_after_another_window_saved_asks_in_the_servers_words_without_a_screen_language(self):
+        mine, question = self.approve_after_another_window_saved(english=False)
+        self.assertEqual(mine + "\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)", question)
+
+    def test_approve_after_another_window_saved_asks_in_english_on_an_english_screen(self):
+        """The refusal's sentence carries the version, so the screen says it from the version the refusal names (the
+        glossary's sentence) - the server's Korean copy would stay as received on an English screen."""
+        _, question = self.approve_after_another_window_saved(english=True)
+        self.assertEqual("v1 was saved from another window of this account. The text in this window is unchanged. "
+                         "Load the latest report from the server? (What you were writing will be copied to the clipboard)", question)
+        self.assertEqual([], re.findall(r"[가-힣]", question))
+
 
 # Each mutant is a one-off copy of one bundle source (or main.html) served to the page; the product tree is never written.
 MUTANTS = [

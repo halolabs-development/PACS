@@ -427,10 +427,17 @@
             return { again: { uid, version: head.version } };
           }
           if (route === "reload" || route === "mine") {
-            toast(e.message, "err");
+            /**
+             * A head this same account saved is said by the screen, in the reader's screen language, from the version the
+             * refusal names - the same sentence the server sends. The server's copy carries that number, so it is not a fixed
+             * sentence the screen language matches whole (KinLanguage.server). Other refusals are shown as received.
+             */
+            const said = route === "mine" && Number.isSafeInteger(head?.version)
+              ? kinSayEn("다른 창에서 이 계정으로 v{n0}을 저장했습니다. 이 창의 글은 그대로 있습니다.", head.version) : e.message;
+            toast(String(said), "err");
             const askedEdits = reportEdits;
             // While the report is in its separate window the question is asked there (KinReportPopout), else as before.
-            const question = kinSayEn("{e0}\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)", e.message);
+            const question = kinSayEn("{e0}\n\n서버의 최신 판독문을 불러올까요?\n(지금 쓰던 내용은 클립보드로 복사됩니다)", said);
             const reportWindowNow = window.KinReportPopout?.current?.();
             if (await (reportWindowNow?.asks() ? reportWindowNow.confirm(question) : confirm(question))) {
               // Asked in the report window, the page went on meanwhile: a yes counts only for the same study, selection,
