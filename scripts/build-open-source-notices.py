@@ -74,11 +74,9 @@ def collect(root, files=None, source_offer='link'):
         inputs[path] = hashlib.sha256(data).hexdigest()
         return data
 
-    def add(section, name, version, origin, license_name='', **extra):
-        key = name + '@' + version
-        record = catalog.get('components', {}).get(key, {})
-        originals, missing = [], []
-        for item in record.get('files', []):
+    def verified(items, missing):
+        kept = []
+        for item in items:
             path = str(LEGAL / 'licenses' / item['path']).replace('\\', '/')
             if not (root / path).is_file():
                 missing.append(path)
@@ -87,9 +85,25 @@ def collect(root, files=None, source_offer='link'):
             if not body.strip() or hashlib.sha256(body).hexdigest() != item['sha256']:
                 missing.append(path)
                 continue
-            originals.append(item)
+            kept.append(item)
+        return kept
+
+    def add(section, name, version, origin, license_name='', **extra):
+        key = name + '@' + version
+        record = catalog.get('components', {}).get(key, {})
+        missing = []
+        originals = verified(record.get('files', []), missing)
         if not originals:
             missing.append('라이선스·저작권·해당 NOTICE 원문')
+        if 'inventory' in record:
+            # A package list taken from the image itself; only a list whose bytes match counts as inventoried, and only
+            # while every file it was taken by (the Dockerfile whose package lines were replayed) is unchanged.
+            inventory = verified(record['inventory'], missing)
+            for path, digest in sorted(record.get('inventory_inputs', {}).items()):
+                if not (root / path).is_file() or hashlib.sha256(input_bytes(path)).hexdigest() != digest:
+                    missing.append('패키지 목록을 만든 뒤 바뀐 입력: ' + path)
+                    inventory = []
+            extra['inventory'] = inventory
         missing.extend(record.get('missing', []))
         rows.append(dict(section=section, name=name, version=version, origin=origin,
                          license=license_name or record.get('license') or 'Unverified',
@@ -174,9 +188,13 @@ def collect(root, files=None, source_offer='link'):
             scope='Build/test' if all(p.startswith('tests/') for p in origins) else 'Declared image')
         add('Containers', 'Distribution packages in ' + reference, reference,
             ', '.join(sorted(origins)), scope='Unresolved image package inventory')
-        rows[-1]['missing'].append('이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문')
-        if image_name == 'orthancteam/orthanc':
-            rows[-1]['missing'].append('Orthanc/plugin 바이너리에 포함된 제3자 라이브러리 목록·개별 원문')
+        if rows[-1].get('inventory'):
+            # Inventoried from the image: what the list and its originals still lack is stated by the catalog record.
+            rows[-1]['scope'] = 'Image package inventory'
+        else:
+            rows[-1]['missing'].append('이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문')
+            if image_name == 'orthancteam/orthanc':
+                rows[-1]['missing'].append('Orthanc/plugin 바이너리에 포함된 제3자 라이브러리 목록·개별 원문')
 
     # This upstream matrix is tied to the exact image tag, not to a guessed
     # Orthanc version (the image tag is a bundle release date).
@@ -203,6 +221,15 @@ def collect(root, files=None, source_offer='link'):
         add('OHIF', 'OHIF embedded build', ', '.join(orthanc_images) or 'Unverified',
             'tools/minhoon-studio/dev/extract_ohif.py', scope='Embedded viewer')
         rows[-1]['missing'].append('libOrthancOHIF.so 내 고정 OHIF 빌드의 의존성 목록·라이선스 메타데이터·NOTICE')
+
+    # The viewer's JPEG lossless decoder (worklist-v0/hpacs-lite/kin-sof3.wasm) is libjpeg-turbo built from this pin.
+    sof3_path = 'scripts/build-sof3-wasm.py'
+    if sof3_path in files:
+        tree = ast.parse(input_bytes(sof3_path).decode('utf-8'))
+        pin = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == 'LIBJPEG_TURBO' for t in n.targets))
+        add('OHIF', 'libjpeg-turbo', pin['version'], sof3_path, scope='Viewer JPEG lossless decoder (kin-sof3.wasm)',
+            release=pin['url'], release_sha256=pin['sha256'])
 
     pins_path = 'scripts/asr_engine_attest.py'
     if pins_path in files:
@@ -261,7 +288,8 @@ def render(document):
                   f'<table><caption>{section}: {len(rows)}</caption><thead><tr>' +
                   ''.join('<th scope="col">' + h + '</th>' for h in ('Component', 'Version', 'License', 'Supplier', 'Input', 'Originals', 'Source')) + '</tr></thead><tbody>']
         for row in rows:
-            originals = '<br>'.join('<a href="licenses/' + e(f['path']) + '">' + e(f['name']) + '</a>' for f in row['originals'])
+            originals = '<br>'.join('<a href="licenses/' + e(f['path']) + '">' + e(f['name']) + '</a>'
+                                    for f in row.get('inventory', []) + row['originals'])
             if row['notes']:
                 originals += '<br>' + '<br>'.join(e(note) for note in row['notes'])
             if row['missing']:

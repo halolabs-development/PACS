@@ -258,7 +258,10 @@
       ],
       "license": "MIT",
       "source": "git+https://github.com/nestjs/schematics.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): nestjs",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@nuxtjs/opencollective@0.3.2": {
       "files": [
@@ -271,7 +274,10 @@
       ],
       "license": "MIT",
       "source": "nuxt-contrib/opencollective",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Nuxt Community",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@pkgjs/parseargs@0.11.0": {
       "files": [
@@ -401,7 +407,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@types/eslint@9.6.1": {
       "files": [
@@ -414,7 +423,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@types/estree@1.0.9": {
       "files": [
@@ -427,7 +439,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@types/json-schema@7.0.15": {
       "files": [
@@ -440,7 +455,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@types/node@22.20.1": {
       "files": [
@@ -453,7 +471,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@webassemblyjs/ast@1.14.1": {
       "files": [
@@ -557,7 +578,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Sven Sauleau <sven@sauleau.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@webassemblyjs/leb128@1.13.2": {
       "files": [
@@ -570,7 +594,10 @@
       ],
       "license": "Apache-2.0",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): The Obvious Corporation",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "@webassemblyjs/utf8@1.13.2": {
       "files": [
@@ -868,11 +895,17 @@
           "path": "texts/a89e1147910ec868d0237f610e531073151e63e5311a7fe0dd9ac43a069eb735.txt",
           "sha256": "a89e1147910ec868d0237f610e531073151e63e5311a7fe0dd9ac43a069eb735",
           "source": "https://orthanc.uclouvain.be/downloads/third-party-downloads/OHIF/Viewers-3.9.1.tar.gz#Viewers-3.9.1/yarn.lock"
+        },
+        {
+          "name": "License comments retained in the embedded OHIF assets (OrthancOHIF-1.4)",
+          "path": "texts/8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07.txt",
+          "sha256": "8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07",
+          "source": "orthancteam/orthanc:24.12.0 libOrthancOHIF.so (embedded gzip assets)"
         }
       ],
       "license": "MIT (OHIF); third-party licenses unverified",
       "missing": [
-        "실제 내장 배포 자산에서 확보한 webpack LICENSE.txt는 dicom-microscopy-viewer의 1개입니다. 고정 yarn.lock의 전체 의존성별 LICENSE/NOTICE와 내장 번들의 대응 목록은 아직 확보하지 못했습니다."
+        "내장 자산에 남은 라이선스 주석과 OHIF 3.9.1 LICENSE를 묶었습니다. 번들에 든 모듈 전체 목록은 제공 자산에 없어(source map 내용 없음) 의존성별 LICENSE/NOTICE 대응은 아직 확보하지 못했습니다."
       ],
       "notes": [
         "OrthancOHIF-1.4의 CreateOHIFDist.sh와 orthanc-builder 24.12.0 Dockerfile이 지정한 OHIF 3.9.1 소스의 LICENSE 22개를 동봉했습니다.",
@@ -1265,7 +1298,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/accepts",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "acorn@8.18.0": {
       "files": [
@@ -1278,7 +1314,10 @@
       ],
       "license": "MIT",
       "source": "git+https://github.com/acornjs/acorn.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): various contributors (see AUTHORS)",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "ajv-formats@2.1.1": {
       "files": [
@@ -1486,7 +1525,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/kaelzhang/node-array-timsort.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Marco Ziccardi",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "balanced-match@1.0.2": {
       "files": [
@@ -1551,7 +1593,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/rvagg/bl.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): bl contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "body-parser@1.20.9": {
       "files": [
@@ -1564,7 +1609,10 @@
       ],
       "license": "MIT",
       "source": "expressjs/body-parser",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "brace-expansion@1.1.18": {
       "files": [
@@ -1655,7 +1703,10 @@
       ],
       "license": "MIT",
       "source": "LinusU/buffer-from",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Linus Unnebäck",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "buffer@5.7.1": {
       "files": [
@@ -1789,7 +1840,10 @@
       ],
       "license": "MIT",
       "source": "chalk/chalk",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "chalk@5.6.2": {
       "files": [
@@ -1802,7 +1856,10 @@
       ],
       "license": "MIT",
       "source": "chalk/chalk",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "chardet@0.7.0": {
       "files": [
@@ -2049,7 +2106,9 @@
         }
       ],
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
       ],
@@ -2276,7 +2335,10 @@
       ],
       "license": "MIT",
       "source": "git://github.com/TehShrike/deepmerge.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): James Halliday, Josh Duff, and other contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "defaults@1.0.4": {
       "files": [
@@ -2363,7 +2425,9 @@
         }
       ],
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
       ],
@@ -2443,7 +2507,10 @@
       ],
       "license": "MIT",
       "source": "pillarjs/encodeurl",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "enhanced-resolve@5.24.5": {
       "files": [
@@ -2469,7 +2536,10 @@
       ],
       "license": "MIT",
       "source": "qix-/node-error-ex",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): JD Ballard",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "es-define-property@1.0.1": {
       "files": [
@@ -2547,7 +2617,10 @@
       ],
       "license": "MIT",
       "source": "component/escape-html",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk; Andreas Lubbe; Tiancheng \"Timothy\" Gu",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "escape-string-regexp@1.0.5": {
       "files": [
@@ -2573,7 +2646,10 @@
       ],
       "license": "BSD-2-Clause",
       "source": "eslint/eslint-scope",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): JS Foundation and other contributors, https://js.foundation; Yusuke Suzuki (twitter: @Constellation) and other contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "esprima@4.0.1": {
       "files": [
@@ -2617,7 +2693,10 @@
       ],
       "license": "BSD-2-Clause",
       "source": "https://github.com/estools/esrecurse.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Yusuke Suzuki; Yusuke Suzuki <utatane.tea@gmail.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "estraverse@4.3.0": {
       "files": [
@@ -2630,7 +2709,10 @@
       ],
       "license": "BSD-2-Clause",
       "source": "http://github.com/estools/estraverse.git",
-      "supplier": "Unverified"
+      "supplier": "Unverified",
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ]
     },
     "estraverse@5.3.0": {
       "files": [
@@ -2643,7 +2725,10 @@
       ],
       "license": "BSD-2-Clause",
       "source": "http://github.com/estools/estraverse.git",
-      "supplier": "Unverified"
+      "supplier": "Unverified",
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ]
     },
     "etag@1.8.1": {
       "files": [
@@ -2656,7 +2741,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/etag",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "events@3.3.0": {
       "files": [
@@ -2851,7 +2939,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/forwarded",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "fresh@0.5.2": {
       "files": [
@@ -2903,7 +2994,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/fsevents/fsevents.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "function-bind@1.1.2": {
       "files": [
@@ -3042,7 +3136,10 @@
       ],
       "license": "ISC",
       "source": "https://github.com/isaacs/node-graceful-fs",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter, Ben Noordhuis, and Contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "has-flag@4.0.0": {
       "files": [
@@ -3189,7 +3286,10 @@
       ],
       "license": "ISC",
       "source": "git://github.com/isaacs/inherits",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "inquirer@8.2.6": {
       "files": [
@@ -3384,7 +3484,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/facebook/jest.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Facebook, Inc. and its affiliates",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "jose@5.10.0": {
       "files": [
@@ -3670,7 +3773,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/methods",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk <tj@vision-media.ca>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "mime-db@1.52.0": {
       "files": [
@@ -3683,7 +3789,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/mime-db",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "mime-types@2.1.35": {
       "files": [
@@ -3696,7 +3805,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/mime-types",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "mime@1.6.0": {
       "files": [
@@ -3800,7 +3912,10 @@
       ],
       "license": "MIT",
       "source": "zeit/ms",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Zeit, Inc",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "ms@2.1.3": {
       "files": [
@@ -3813,7 +3928,10 @@
       ],
       "license": "MIT",
       "source": "vercel/ms",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Vercel, Inc",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "multer@2.0.2": {
       "files": [
@@ -3826,7 +3944,10 @@
       ],
       "license": "MIT",
       "source": "expressjs/multer",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Hage Yaapa <http://www.hacksparrow.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "multer@2.5.0": {
       "files": [
@@ -3839,7 +3960,10 @@
       ],
       "license": "MIT",
       "source": "expressjs/multer",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Hage Yaapa <http://www.hacksparrow.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "mute-stream@0.0.8": {
       "files": [
@@ -3878,7 +4002,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/negotiator",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Federico Romero; Isaac Z. Schlueter; Douglas Christopher Wilson",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "neo-async@2.6.2": {
       "files": [
@@ -3891,7 +4018,10 @@
       ],
       "license": "MIT",
       "source": "git@github.com:suguru03/neo-async.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Suguru Motegi",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "nginx:1.27-alpine@nginx:1.27-alpine": {
       "files": [
@@ -4083,7 +4213,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/on-finished",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "onetime@5.1.2": {
       "files": [
@@ -4435,7 +4568,10 @@
       ],
       "license": "MIT",
       "source": "pillarjs/parseurl",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "path-key@3.1.1": {
       "files": [
@@ -4474,7 +4610,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "path-to-regexp@3.3.0": {
       "files": [
@@ -4487,7 +4626,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "path-type@4.0.0": {
       "files": [
@@ -4705,7 +4847,10 @@
       ],
       "license": "BSD-3-Clause",
       "source": "https://github.com/ljharb/qs.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Nathan LaFreniere and other contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "qs@6.16.2": {
       "files": [
@@ -4718,7 +4863,10 @@
       ],
       "license": "BSD-3-Clause",
       "source": "https://github.com/ljharb/qs.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Nathan LaFreniere and other contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "quay.io/keycloak/keycloak:26.7.3@quay.io/keycloak/keycloak:26.7.3": {
       "files": [
@@ -4783,7 +4931,10 @@
       ],
       "license": "MIT",
       "source": "git://github.com/nodejs/readable-stream",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "readdirp@3.6.0": {
       "files": [
@@ -5181,7 +5332,10 @@
       ],
       "license": "MIT",
       "source": "https://github.com/evanw/node-source-map-support",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Evan Wallace",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "source-map@0.6.1": {
       "files": [
@@ -5220,7 +5374,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/statuses",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "streamsearch@1.1.0": {
       "files": [
@@ -5272,7 +5429,10 @@
       ],
       "license": "MIT",
       "source": "git://github.com/nodejs/string_decoder.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "strip-ansi@6.0.1": {
       "files": [
@@ -5495,7 +5655,9 @@
         }
       ],
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
       ],
@@ -5590,7 +5752,10 @@
       ],
       "license": "MIT",
       "source": "jshttp/type-is",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "typedarray@0.0.6": {
       "files": [
@@ -5668,7 +5833,13 @@
       ],
       "license": "MIT",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
+      "missing": [
+        "같은 배포물의 lib/web/fetch/LICENSE(별도 저작권 고지) 원문"
+      ]
     },
     "undici-types@6.21.0": {
       "files": [
@@ -5681,7 +5852,10 @@
       ],
       "license": "MIT",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Unverified"
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ]
     },
     "universalify@2.0.1": {
       "files": [
@@ -5972,6 +6146,723 @@
       "license": "ISC",
       "source": "https://github.com/yargs/yargs-parser.git",
       "supplier": "Ben Coe <ben@npmjs.com>"
+    },
+    "pydicom@2.4.5": {
+      "files": [
+        {
+          "name": "LICENSE (v2.4.5)",
+          "path": "texts/8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b.txt",
+          "sha256": "8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b",
+          "source": "https://raw.githubusercontent.com/pydicom/pydicom/ed4ddeac21de09101ee0732a0a2168dd73491370/LICENSE"
+        }
+      ],
+      "license": "MIT; GDCM-derived private dictionary portions under BSD-3-Clause",
+      "source": "https://github.com/pydicom/pydicom/tree/v2.4.5",
+      "supplier": "Darcy Mason and pydicom contributors",
+      "notes": [
+        "공급자는 원문의 저작권 줄에서 옮겼습니다. 태그 v2.4.5(커밋 ed4ddeac21de09101ee0732a0a2168dd73491370)의 LICENSE입니다."
+      ]
+    },
+    "pynetdicom@2.0.2": {
+      "files": [
+        {
+          "name": "LICENCE.txt (v2.0.2)",
+          "path": "texts/62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc.txt",
+          "sha256": "62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc",
+          "source": "https://raw.githubusercontent.com/pydicom/pynetdicom/e1decc038f7310ec9c545c4519929cf503db46bf/LICENCE.txt"
+        }
+      ],
+      "license": "MIT",
+      "source": "https://github.com/pydicom/pynetdicom/tree/v2.0.2",
+      "supplier": "Patrice Munger and pynetdicom contributors",
+      "notes": [
+        "공급자는 원문의 저작권 줄에서 옮겼습니다. 태그 v2.0.2(커밋 e1decc038f7310ec9c545c4519929cf503db46bf)의 LICENCE.txt입니다."
+      ]
+    },
+    "libjpeg-turbo@3.2.1": {
+      "files": [
+        {
+          "name": "LICENSE.md (3.2.1)",
+          "path": "texts/ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579.txt",
+          "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+          "source": "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/7b4993786d856cbccabfc0ed2f923ba000e326cc/LICENSE.md"
+        },
+        {
+          "name": "README.ijg — IJG License (3.2.1)",
+          "path": "texts/75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6.txt",
+          "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+          "source": "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/7b4993786d856cbccabfc0ed2f923ba000e326cc/README.ijg"
+        }
+      ],
+      "license": "IJG (libjpeg API library; TurboJPEG API off in this build)",
+      "source": "https://github.com/libjpeg-turbo/libjpeg-turbo/tree/3.2.1",
+      "supplier": "The libjpeg-turbo Project; Independent JPEG Group",
+      "notes": [
+        "태그 3.2.1(커밋 7b4993786d856cbccabfc0ed2f923ba000e326cc)의 LICENSE.md와 그것이 가리키는 README.ijg입니다. kin-sof3.wasm은 TurboJPEG API를 끄고(WITH_TURBOJPEG=0) SIMD 없이 지은 libjpeg API 라이브러리를 씁니다.",
+        "This software is based in part on the work of the Independent JPEG Group. (README.ijg가 바이너리 배포의 문서에 두라고 한 문장 — kin-sof3.wasm은 libjpeg API 라이브러리를 정적으로 링크합니다.)"
+      ],
+      "missing": [
+        "kin-sof3.wasm에 함께 링크되는 WASI C 런타임(zig cc의 wasi-libc)의 판·원문"
+      ]
+    },
+    "Distribution packages in node:22-slim@node:22-slim": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014.txt",
+          "sha256": "c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6.txt",
+          "sha256": "35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        },
+        {
+          "name": "corepack and yarn shipped in node:22-slim",
+          "path": "texts/742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5.txt",
+          "sha256": "742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        },
+        {
+          "name": "pip 23.0.1 LICENSE.txt",
+          "path": "texts/846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d.txt",
+          "sha256": "846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d",
+          "source": "supplier tag commit — pip-23.0.1.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Debian (per-package debian/copyright); Node.js image",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 23.0.1)"
+      ],
+      "inventory_inputs": {
+        "api/Dockerfile": "127b5d3ca60e3383d8d9a6e76487c297d2152ed4e7b79ed9b6cd81977f714c82"
+      }
+    },
+    "Distribution packages in python:3.12-slim@python:3.12-slim": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d.txt",
+          "sha256": "ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d",
+          "source": "docker run --rm sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b.txt",
+          "sha256": "56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b",
+          "source": "docker run --rm sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b"
+        },
+        {
+          "name": "pip 25.0.1 LICENSE.txt",
+          "path": "texts/2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076.txt",
+          "sha256": "2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076",
+          "source": "supplier tag commit — pip-25.0.1.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Debian (per-package debian/copyright); Python image",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 25.0.1)"
+      ],
+      "inventory_inputs": {
+        "gateway/agent/Dockerfile": "71d1f8cc291e18486cb9acea34b993dd5f8b70b60d6ceebc2edddd11d24697ac"
+      }
+    },
+    "Distribution packages in debian:bookworm-slim@debian:bookworm-slim": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf.txt",
+          "sha256": "1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf",
+          "source": "docker run --rm sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99.txt",
+          "sha256": "578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99",
+          "source": "docker run --rm sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Debian (per-package debian/copyright)",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [],
+      "inventory_inputs": {
+        "tests/fixtures/asr/Dockerfile": "96765ceaaa32a3e648b30600466e413a0056f54f8b243dbe0e0c2c33a4545df1"
+      }
+    },
+    "Distribution packages in postgres:16-alpine@postgres:16-alpine": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1.txt",
+          "sha256": "1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1",
+          "source": "docker run --rm sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2.txt",
+          "sha256": "37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2",
+          "source": "docker run --rm sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"
+        },
+        {
+          "name": "go 1.24.6 LICENSE / PATENTS (gosu build)",
+          "path": "texts/fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12.txt",
+          "sha256": "fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12",
+          "source": "supplier tag commit — go-1.24.6.txt"
+        },
+        {
+          "name": "golang.org/x/sys 0.1.0 LICENSE / PATENTS",
+          "path": "texts/596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d.txt",
+          "sha256": "596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d",
+          "source": "supplier tag commit — golang-x-sys-0.1.0.txt"
+        },
+        {
+          "name": "gosu 1.20 LICENSE",
+          "path": "texts/107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1.txt",
+          "sha256": "107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1",
+          "source": "supplier tag commit — gosu-1.20.txt"
+        },
+        {
+          "name": "moby/sys user 0.4.1 LICENSE",
+          "path": "texts/fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca.txt",
+          "sha256": "fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca",
+          "source": "supplier tag commit — moby-sys-user-0.4.1.txt"
+        },
+        {
+          "name": "tzdata 2026f LICENSE",
+          "path": "texts/cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7.txt",
+          "sha256": "cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7",
+          "source": "supplier tag commit — tzdata-2026f.txt"
+        },
+        {
+          "name": "SPDX 0BSD",
+          "path": "texts/e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b.txt",
+          "sha256": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/0BSD.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause-Attribution",
+          "path": "texts/088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef.txt",
+          "sha256": "088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause-Attribution.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-4-Clause",
+          "path": "texts/c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f.txt",
+          "sha256": "c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-4-Clause.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX GPL-3.0-or-later",
+          "path": "texts/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt",
+          "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX ICU",
+          "path": "texts/c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50.txt",
+          "sha256": "c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/ICU.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.0-or-later",
+          "path": "texts/86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8.txt",
+          "sha256": "86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX MPL-2.0",
+          "path": "texts/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MPL-2.0.txt"
+        },
+        {
+          "name": "SPDX OLDAP-2.8",
+          "path": "texts/bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded.txt",
+          "sha256": "bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/OLDAP-2.8.txt"
+        },
+        {
+          "name": "SPDX X11",
+          "path": "texts/e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423.txt",
+          "sha256": "e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/X11.txt"
+        },
+        {
+          "name": "SPDX Zlib",
+          "path": "texts/bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d.txt",
+          "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Zlib.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Alpine Linux (per-package apk metadata); PostgreSQL image",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d)에서 이미지를 그대로(설치 줄 없음) 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "Alpine 패키지 43개는 이미지에 라이선스 파일이 없어 apk 선언과 SPDX 표준 원문으로만 묶었습니다 — 패키지별 저작권 줄은 Alpine aports 소스에서 뽑아야 합니다."
+      ]
+    },
+    "Distribution packages in nginx:1.27-alpine@nginx:1.27-alpine": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94.txt",
+          "sha256": "30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94",
+          "source": "docker run --rm sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a.txt",
+          "sha256": "305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a",
+          "source": "docker run --rm sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+        },
+        {
+          "name": "aom 3.11.0 LICENSE / PATENTS",
+          "path": "texts/d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5.txt",
+          "sha256": "d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5",
+          "source": "supplier tag commit — aom-3.11.0.txt"
+        },
+        {
+          "name": "tzdata 2026f LICENSE",
+          "path": "texts/cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7.txt",
+          "sha256": "cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7",
+          "source": "supplier tag commit — tzdata-2026f.txt"
+        },
+        {
+          "name": "SPDX 0BSD",
+          "path": "texts/e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b.txt",
+          "sha256": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/0BSD.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX Beerware",
+          "path": "texts/991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0.txt",
+          "sha256": "991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Beerware.txt"
+        },
+        {
+          "name": "SPDX FTL",
+          "path": "texts/ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f.txt",
+          "sha256": "ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/FTL.txt"
+        },
+        {
+          "name": "SPDX GD",
+          "path": "texts/5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7.txt",
+          "sha256": "5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GD.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX GPL-3.0-or-later",
+          "path": "texts/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt",
+          "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX IJG",
+          "path": "texts/7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a.txt",
+          "sha256": "7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/IJG.txt"
+        },
+        {
+          "name": "SPDX ISC",
+          "path": "texts/521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53.txt",
+          "sha256": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/ISC.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-3.0-or-later",
+          "path": "texts/996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1.txt",
+          "sha256": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX Libpng",
+          "path": "texts/7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287.txt",
+          "sha256": "7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Libpng.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX MPL-2.0",
+          "path": "texts/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MPL-2.0.txt"
+        },
+        {
+          "name": "SPDX X11",
+          "path": "texts/e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423.txt",
+          "sha256": "e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/X11.txt"
+        },
+        {
+          "name": "SPDX Zlib",
+          "path": "texts/bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d.txt",
+          "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Zlib.txt"
+        },
+        {
+          "name": "SPDX bzip2-1.0.6",
+          "path": "texts/0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1.txt",
+          "sha256": "0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/bzip2-1.0.6.txt"
+        },
+        {
+          "name": "SPDX curl",
+          "path": "texts/272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3.txt",
+          "sha256": "272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/curl.txt"
+        },
+        {
+          "name": "SPDX libtiff",
+          "path": "texts/a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44.txt",
+          "sha256": "a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/libtiff.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Alpine Linux (per-package apk metadata); NGINX image",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "Alpine 패키지 62개는 이미지에 라이선스 파일이 없어 apk 선언과 SPDX 표준 원문으로만 묶었습니다 — 패키지별 저작권 줄은 Alpine aports 소스에서 뽑아야 합니다."
+      ],
+      "inventory_inputs": {
+        "proxy/Dockerfile": "b37b568506d8a32725995091b097fd041a3db2a80d6228abd133f8cb566a8d6f"
+      }
+    },
+    "Distribution packages in quay.io/keycloak/keycloak:26.7.3@quay.io/keycloak/keycloak:26.7.3": {
+      "inventory": [
+        {
+          "name": "RPM package list (name, version, source, declared license)",
+          "path": "texts/07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5.txt",
+          "sha256": "07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "jar list (jar, coordinates, pom licenses, license entries)",
+          "path": "texts/aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db.txt",
+          "sha256": "aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "jar licenses declared by Maven Central pom",
+          "path": "texts/6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4.txt",
+          "sha256": "6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a.txt",
+          "sha256": "2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "LICENSE/NOTICE entries inside the jars",
+          "path": "texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt",
+          "sha256": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
+          "source": "extracted from the quay.io/keycloak/keycloak:26.7.3 image (the jars under its lib/; the image of the package list beside it)"
+        },
+        {
+          "name": "OpenJDK 21 legal notices",
+          "path": "texts/a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1.txt",
+          "sha256": "a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "MySQL Connector/J 9.6.0 LICENSE (Universal FOSS Exception)",
+          "path": "texts/f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57.txt",
+          "sha256": "f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57",
+          "source": "supplier tag commit — mysql-connector-j-9.6.0.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX CC0-1.0",
+          "path": "texts/a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499.txt",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/CC0-1.0.txt"
+        },
+        {
+          "name": "SPDX Classpath-exception-2.0",
+          "path": "texts/f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194.txt",
+          "sha256": "f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Classpath-exception-2.0.txt"
+        },
+        {
+          "name": "SPDX EPL-1.0",
+          "path": "texts/f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25.txt",
+          "sha256": "f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/EPL-1.0.txt"
+        },
+        {
+          "name": "SPDX EPL-2.0",
+          "path": "texts/61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c.txt",
+          "sha256": "61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/EPL-2.0.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-only",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-only.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX MIT-0",
+          "path": "texts/59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135.txt",
+          "sha256": "59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT-0.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX UPL-1.0",
+          "path": "texts/2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576.txt",
+          "sha256": "2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/UPL-1.0.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Red Hat (RPM); Maven artifact publishers; Keycloak image",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4)에서 이미지를 그대로(설치 줄 없음) 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "jar 303개와 RPM 8개는 Maven Central pom·RPM 선언과 SPDX 표준 원문으로만 묶었습니다 — 구성요소별 저작권 줄은 해당 소스에서 뽑아야 합니다.",
+        "RPM 패키지 목록이 이름 25개뿐이고 판·소스·라이선스 칸이 비어 있습니다(11-23 감사 목록은 RPM 44행 — ca-certificates·libacl·java-21-openjdk-headless 등이 이 목록에 없음). 이미지에서 RPM 전체 목록과 판을 다시 뽑아야 합니다."
+      ]
+    },
+    "Distribution packages in orthancteam/orthanc:24.12.0@orthancteam/orthanc:24.12.0": {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42.txt",
+          "sha256": "3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42",
+          "source": "docker run --rm sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07"
+        }
+      ],
+      "files": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5.txt",
+          "sha256": "b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5",
+          "source": "docker run --rm sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07"
+        },
+        {
+          "name": "envsubst 0.1.5 LICENSE",
+          "path": "texts/3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83.txt",
+          "sha256": "3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83",
+          "source": "supplier tag commit — envsubst-0.1.5.txt"
+        },
+        {
+          "name": "DCMTK 3.6.8 COPYRIGHT (static in Orthanc)",
+          "path": "texts/7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b.txt",
+          "sha256": "7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b",
+          "source": "supplier tag commit — orthanc-static-dcmtk-3.6.8.txt"
+        },
+        {
+          "name": "civetweb 1.14 LICENSE.md (static in Orthanc)",
+          "path": "texts/3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770.txt",
+          "sha256": "3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770",
+          "source": "supplier tag commit — orthanc-static-civetweb-1.14.txt"
+        },
+        {
+          "name": "OpenSSL 3.1.4 LICENSE.txt (static in Orthanc)",
+          "path": "texts/5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d.txt",
+          "sha256": "5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d",
+          "source": "supplier tag commit — orthanc-static-openssl-3.1.4.txt"
+        },
+        {
+          "name": "GDCM 3.0.24 Copyright.txt (static in the GDCM plugin)",
+          "path": "texts/7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf.txt",
+          "sha256": "7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf",
+          "source": "supplier tag commit — orthanc-gdcm-static-gdcm-3.0.24.txt"
+        },
+        {
+          "name": "zlib 1.3.1 LICENSE (static in the GDCM plugin)",
+          "path": "texts/0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2.txt",
+          "sha256": "0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2",
+          "source": "supplier tag commit — orthanc-gdcm-static-zlib-1.3.1.txt"
+        },
+        {
+          "name": "Boost 1.84.0 LICENSE_1_0.txt (static in the GDCM plugin)",
+          "path": "texts/c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72.txt",
+          "sha256": "c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72",
+          "source": "supplier tag commit — orthanc-gdcm-static-boost-1.84.0.txt"
+        },
+        {
+          "name": "Font Awesome 6.6.0 LICENSE.txt (Orthanc Explorer 2)",
+          "path": "texts/71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0.txt",
+          "sha256": "71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0",
+          "source": "supplier tag commit — orthanc-oe2-fontawesome-6.6.0.txt"
+        },
+        {
+          "name": "Orthanc 1.12.5 source — embedded third-party license files and headers",
+          "path": "texts/d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419.txt",
+          "sha256": "d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419",
+          "source": "supplier tag commit — orthanc-1.12.5-embedded-third-party.txt"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "supplier": "Debian (per-package debian/copyright); Orthanc contributors",
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
+      "missing": [
+        "판 문자열이 없는 정적 구성요소(예: GDCM 플러그인 안의 OpenJPEG·CharLS)와 Orthanc Explorer 2·OHIF 웹 번들 안의 npm 의존성 전체 목록·원문",
+        "이미지에서 저작권 파일을 찾지 못한 Debian 패키지 4개: dirmngr, gpg-agent, libfakeroot, netbase"
+      ],
+      "inventory_inputs": {
+        "gateway/orthanc/Dockerfile": "348e72e889f87aa27b84f7846311a8bc464e77f5e2395feb276dc5056c3395d6"
+      }
     }
   },
   "requirement_resolutions": {

@@ -424,7 +424,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@nestjs/schematics",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@nestjs/schematics",
       "originals": [
         {
@@ -438,7 +440,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/nestjs/schematics.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): nestjs",
       "version": "10.2.3"
     },
     {
@@ -446,7 +448,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@nuxtjs/opencollective",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@nuxtjs/opencollective",
       "originals": [
         {
@@ -460,7 +464,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "nuxt-contrib/opencollective",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Nuxt Community",
       "version": "0.3.2"
     },
     {
@@ -666,7 +670,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@types/eslint",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@types/eslint",
       "originals": [
         {
@@ -680,7 +686,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "9.6.1"
     },
     {
@@ -688,7 +694,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@types/eslint-scope",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@types/eslint-scope",
       "originals": [
         {
@@ -702,7 +710,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "3.7.7"
     },
     {
@@ -710,7 +718,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@types/estree",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@types/estree",
       "originals": [
         {
@@ -724,7 +734,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "1.0.9"
     },
     {
@@ -732,7 +742,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@types/json-schema",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@types/json-schema",
       "originals": [
         {
@@ -746,7 +758,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "7.0.15"
     },
     {
@@ -754,7 +766,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@types/node",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@types/node",
       "originals": [
         {
@@ -768,7 +782,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "22.20.1"
     },
     {
@@ -930,7 +944,9 @@
       "license": "MIT",
       "missing": [],
       "name": "@webassemblyjs/ieee754",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@webassemblyjs/ieee754",
       "originals": [
         {
@@ -944,7 +960,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Sven Sauleau <sven@sauleau.com>",
       "version": "1.13.2"
     },
     {
@@ -952,7 +968,9 @@
       "license": "Apache-2.0",
       "missing": [],
       "name": "@webassemblyjs/leb128",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@webassemblyjs/leb128",
       "originals": [
         {
@@ -966,7 +984,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): The Obvious Corporation",
       "version": "1.13.2"
     },
     {
@@ -1150,7 +1168,9 @@
       "license": "MIT",
       "missing": [],
       "name": "accepts",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/accepts",
       "originals": [
         {
@@ -1164,7 +1184,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/accepts",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.3.8"
     },
     {
@@ -1172,7 +1192,9 @@
       "license": "MIT",
       "missing": [],
       "name": "acorn",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/acorn",
       "originals": [
         {
@@ -1186,7 +1208,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/acornjs/acorn.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): various contributors (see AUTHORS)",
       "version": "8.18.0"
     },
     {
@@ -1524,7 +1546,9 @@
       "license": "MIT",
       "missing": [],
       "name": "array-timsort",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/array-timsort",
       "originals": [
         {
@@ -1538,7 +1562,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/kaelzhang/node-array-timsort.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Marco Ziccardi",
       "version": "1.0.3"
     },
     {
@@ -1634,7 +1658,9 @@
       "license": "MIT",
       "missing": [],
       "name": "bl",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/bl",
       "originals": [
         {
@@ -1648,7 +1674,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/rvagg/bl.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): bl contributors",
       "version": "4.1.0"
     },
     {
@@ -1656,7 +1682,9 @@
       "license": "MIT",
       "missing": [],
       "name": "body-parser",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/body-parser",
       "originals": [
         {
@@ -1670,7 +1698,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "expressjs/body-parser",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.20.9"
     },
     {
@@ -1788,7 +1816,9 @@
       "license": "MIT",
       "missing": [],
       "name": "buffer-from",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/buffer-from",
       "originals": [
         {
@@ -1802,7 +1832,7 @@
       "scope": "Development",
       "section": "API",
       "source": "LinusU/buffer-from",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Linus Unnebäck",
       "version": "1.1.2"
     },
     {
@@ -1964,7 +1994,9 @@
       "license": "MIT",
       "missing": [],
       "name": "chalk",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/chalk",
       "originals": [
         {
@@ -1978,7 +2010,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "chalk/chalk",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)",
       "version": "4.1.2"
     },
     {
@@ -1986,7 +2018,9 @@
       "license": "MIT",
       "missing": [],
       "name": "chalk",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@angular-devkit/schematics-cli/node_modules/chalk",
       "originals": [
         {
@@ -2000,7 +2034,7 @@
       "scope": "Development",
       "section": "API",
       "source": "chalk/chalk",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
       "version": "5.6.2"
     },
     {
@@ -2336,7 +2370,9 @@
     {
       "integrity": "sha512-9vAdYbHj6x2fLKC4+oPH0kFzY/orMZyG2Aj+kNylHxKGJ/Ed4dpNyAQYwJOdqO4zdM7XpVHmyejQDcQHrnuXbw==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "consola",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -2592,7 +2628,9 @@
       "license": "MIT",
       "missing": [],
       "name": "deepmerge",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/deepmerge",
       "originals": [
         {
@@ -2606,7 +2644,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/TehShrike/deepmerge.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): James Halliday, Josh Duff, and other contributors",
       "version": "4.3.1"
     },
     {
@@ -2722,7 +2760,9 @@
     {
       "integrity": "sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "eastasianwidth",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -2846,7 +2886,9 @@
       "license": "MIT",
       "missing": [],
       "name": "encodeurl",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/encodeurl",
       "originals": [
         {
@@ -2860,7 +2902,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "pillarjs/encodeurl",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "2.0.0"
     },
     {
@@ -2890,7 +2932,9 @@
       "license": "MIT",
       "missing": [],
       "name": "error-ex",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/error-ex",
       "originals": [
         {
@@ -2904,7 +2948,7 @@
       "scope": "Development",
       "section": "API",
       "source": "qix-/node-error-ex",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): JD Ballard",
       "version": "1.3.4"
     },
     {
@@ -3022,7 +3066,9 @@
       "license": "MIT",
       "missing": [],
       "name": "escape-html",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/escape-html",
       "originals": [
         {
@@ -3036,7 +3082,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "component/escape-html",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk; Andreas Lubbe; Tiancheng \"Timothy\" Gu",
       "version": "1.0.3"
     },
     {
@@ -3066,7 +3112,9 @@
       "license": "BSD-2-Clause",
       "missing": [],
       "name": "eslint-scope",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/eslint-scope",
       "originals": [
         {
@@ -3080,7 +3128,7 @@
       "scope": "Development",
       "section": "API",
       "source": "eslint/eslint-scope",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): JS Foundation and other contributors, https://js.foundation; Yusuke Suzuki (twitter: @Constellation) and other contributors",
       "version": "5.1.1"
     },
     {
@@ -3110,7 +3158,9 @@
       "license": "BSD-2-Clause",
       "missing": [],
       "name": "esrecurse",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/esrecurse",
       "originals": [
         {
@@ -3142,13 +3192,15 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/estools/esrecurse.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Yusuke Suzuki; Yusuke Suzuki <utatane.tea@gmail.com>",
       "version": "4.3.0"
     },
     {
       "integrity": "sha512-39nnKffWz8xN1BU/2c79n9nB9HDzo0niYUqx6xyqUnyoAnQyyWpOTdZEeiCch8BBu515t4wp9ZmgVfVhn9EBpw==",
       "license": "BSD-2-Clause",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "estraverse",
       "notes": [],
       "origin": "api/package-lock.json:node_modules/estraverse",
@@ -3170,7 +3222,9 @@
     {
       "integrity": "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA==",
       "license": "BSD-2-Clause",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "estraverse",
       "notes": [],
       "origin": "api/package-lock.json:node_modules/esrecurse/node_modules/estraverse",
@@ -3194,7 +3248,9 @@
       "license": "MIT",
       "missing": [],
       "name": "etag",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/etag",
       "originals": [
         {
@@ -3208,7 +3264,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/etag",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "1.8.1"
     },
     {
@@ -3502,7 +3558,9 @@
       "license": "MIT",
       "missing": [],
       "name": "forwarded",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/forwarded",
       "originals": [
         {
@@ -3516,7 +3574,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/forwarded",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "0.2.0"
     },
     {
@@ -3590,7 +3648,9 @@
       "license": "MIT",
       "missing": [],
       "name": "fsevents",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/fsevents",
       "originals": [
         {
@@ -3604,7 +3664,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/fsevents/fsevents.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller",
       "version": "2.3.3"
     },
     {
@@ -3766,7 +3826,9 @@
       "license": "ISC",
       "missing": [],
       "name": "graceful-fs",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/graceful-fs",
       "originals": [
         {
@@ -3780,7 +3842,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/isaacs/node-graceful-fs",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter, Ben Noordhuis, and Contributors",
       "version": "4.2.11"
     },
     {
@@ -3986,7 +4048,9 @@
       "license": "ISC",
       "missing": [],
       "name": "inherits",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/inherits",
       "originals": [
         {
@@ -4000,7 +4064,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "git://github.com/isaacs/inherits",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter",
       "version": "2.0.4"
     },
     {
@@ -4316,7 +4380,9 @@
       "license": "MIT",
       "missing": [],
       "name": "jest-worker",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/jest-worker",
       "originals": [
         {
@@ -4330,7 +4396,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/facebook/jest.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Facebook, Inc. and its affiliates",
       "version": "27.5.1"
     },
     {
@@ -4800,7 +4866,9 @@
       "license": "MIT",
       "missing": [],
       "name": "methods",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/methods",
       "originals": [
         {
@@ -4814,7 +4882,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/methods",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk <tj@vision-media.ca>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.1.2"
     },
     {
@@ -4844,7 +4912,9 @@
       "license": "MIT",
       "missing": [],
       "name": "mime-db",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/mime-db",
       "originals": [
         {
@@ -4858,7 +4928,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/mime-db",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.52.0"
     },
     {
@@ -4866,7 +4936,9 @@
       "license": "MIT",
       "missing": [],
       "name": "mime-types",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/mime-types",
       "originals": [
         {
@@ -4880,7 +4952,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/mime-types",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.1.35"
     },
     {
@@ -4998,7 +5070,9 @@
       "license": "MIT",
       "missing": [],
       "name": "ms",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/ms",
       "originals": [
         {
@@ -5012,7 +5086,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "zeit/ms",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Zeit, Inc",
       "version": "2.0.0"
     },
     {
@@ -5020,7 +5094,9 @@
       "license": "MIT",
       "missing": [],
       "name": "ms",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/@tokenizer/inflate/node_modules/ms",
       "originals": [
         {
@@ -5034,7 +5110,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "vercel/ms",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Vercel, Inc",
       "version": "2.1.3"
     },
     {
@@ -5042,7 +5118,9 @@
       "license": "MIT",
       "missing": [],
       "name": "ms",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/send/node_modules/ms",
       "originals": [
         {
@@ -5056,7 +5134,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "vercel/ms",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Vercel, Inc",
       "version": "2.1.3"
     },
     {
@@ -5064,7 +5142,9 @@
       "license": "MIT",
       "missing": [],
       "name": "multer",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/multer",
       "originals": [
         {
@@ -5078,7 +5158,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "expressjs/multer",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Hage Yaapa <http://www.hacksparrow.com>",
       "version": "2.5.0"
     },
     {
@@ -5130,7 +5210,9 @@
       "license": "MIT",
       "missing": [],
       "name": "negotiator",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/negotiator",
       "originals": [
         {
@@ -5144,7 +5226,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/negotiator",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Federico Romero; Isaac Z. Schlueter; Douglas Christopher Wilson",
       "version": "0.6.3"
     },
     {
@@ -5152,7 +5234,9 @@
       "license": "MIT",
       "missing": [],
       "name": "neo-async",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/neo-async",
       "originals": [
         {
@@ -5166,7 +5250,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git@github.com:suguru03/neo-async.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Suguru Motegi",
       "version": "2.6.2"
     },
     {
@@ -5328,7 +5412,9 @@
       "license": "MIT",
       "missing": [],
       "name": "on-finished",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/on-finished",
       "originals": [
         {
@@ -5342,7 +5428,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/on-finished",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.4.1"
     },
     {
@@ -5482,7 +5568,9 @@
       "license": "MIT",
       "missing": [],
       "name": "parseurl",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/parseurl",
       "originals": [
         {
@@ -5496,7 +5584,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "pillarjs/parseurl",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.3.3"
     },
     {
@@ -5548,7 +5636,9 @@
       "license": "MIT",
       "missing": [],
       "name": "path-to-regexp",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/express/node_modules/path-to-regexp",
       "originals": [
         {
@@ -5562,7 +5652,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
       "version": "0.1.13"
     },
     {
@@ -5570,7 +5660,9 @@
       "license": "MIT",
       "missing": [],
       "name": "path-to-regexp",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/path-to-regexp",
       "originals": [
         {
@@ -5584,7 +5676,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
       "version": "3.3.0"
     },
     {
@@ -5786,33 +5878,47 @@
       "version": "2.3.1"
     },
     {
-      "license": "Unverified",
-      "missing": [
-        "라이선스·저작권·해당 NOTICE 원문"
-      ],
+      "license": "MIT; GDCM-derived private dictionary portions under BSD-3-Clause",
+      "missing": [],
       "name": "pydicom",
-      "notes": [],
+      "notes": [
+        "공급자는 원문의 저작권 줄에서 옮겼습니다. 태그 v2.4.5(커밋 ed4ddeac21de09101ee0732a0a2168dd73491370)의 LICENSE입니다."
+      ],
       "origin": "api/print/requirements.txt",
-      "originals": [],
+      "originals": [
+        {
+          "name": "LICENSE (v2.4.5)",
+          "path": "texts/8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b.txt",
+          "sha256": "8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b",
+          "source": "https://raw.githubusercontent.com/pydicom/pydicom/ed4ddeac21de09101ee0732a0a2168dd73491370/LICENSE"
+        }
+      ],
       "scope": "Declared dependency",
       "section": "API",
-      "source": "",
-      "supplier": "Unverified",
+      "source": "https://github.com/pydicom/pydicom/tree/v2.4.5",
+      "supplier": "Darcy Mason and pydicom contributors",
       "version": "2.4.5"
     },
     {
-      "license": "Unverified",
-      "missing": [
-        "라이선스·저작권·해당 NOTICE 원문"
-      ],
+      "license": "MIT",
+      "missing": [],
       "name": "pynetdicom",
-      "notes": [],
+      "notes": [
+        "공급자는 원문의 저작권 줄에서 옮겼습니다. 태그 v2.0.2(커밋 e1decc038f7310ec9c545c4519929cf503db46bf)의 LICENCE.txt입니다."
+      ],
       "origin": "api/print/requirements.txt",
-      "originals": [],
+      "originals": [
+        {
+          "name": "LICENCE.txt (v2.0.2)",
+          "path": "texts/62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc.txt",
+          "sha256": "62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc",
+          "source": "https://raw.githubusercontent.com/pydicom/pynetdicom/e1decc038f7310ec9c545c4519929cf503db46bf/LICENCE.txt"
+        }
+      ],
       "scope": "Declared dependency",
       "section": "API",
-      "source": "",
-      "supplier": "Unverified",
+      "source": "https://github.com/pydicom/pynetdicom/tree/v2.0.2",
+      "supplier": "Patrice Munger and pynetdicom contributors",
       "version": "2.0.2"
     },
     {
@@ -5820,7 +5926,9 @@
       "license": "BSD-3-Clause",
       "missing": [],
       "name": "qs",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/qs",
       "originals": [
         {
@@ -5834,7 +5942,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/ljharb/qs.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Nathan LaFreniere and other contributors",
       "version": "6.16.2"
     },
     {
@@ -5886,7 +5994,9 @@
       "license": "MIT",
       "missing": [],
       "name": "readable-stream",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/readable-stream",
       "originals": [
         {
@@ -5900,7 +6010,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/nodejs/readable-stream",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
       "version": "3.6.2"
     },
     {
@@ -6568,7 +6678,9 @@
       "license": "MIT",
       "missing": [],
       "name": "source-map-support",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/source-map-support",
       "originals": [
         {
@@ -6582,7 +6694,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/evanw/node-source-map-support",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Evan Wallace",
       "version": "0.5.21"
     },
     {
@@ -6590,7 +6702,9 @@
       "license": "MIT",
       "missing": [],
       "name": "statuses",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/statuses",
       "originals": [
         {
@@ -6604,7 +6718,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/statuses",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.0.2"
     },
     {
@@ -6700,7 +6814,9 @@
       "license": "MIT",
       "missing": [],
       "name": "string_decoder",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/string_decoder",
       "originals": [
         {
@@ -6714,7 +6830,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/nodejs/string_decoder.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
       "version": "1.3.0"
     },
     {
@@ -7078,7 +7194,9 @@
     {
       "integrity": "sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "tr46",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -7224,7 +7342,9 @@
       "license": "MIT",
       "missing": [],
       "name": "type-is",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/type-is",
       "originals": [
         {
@@ -7238,7 +7358,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/type-is",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.6.18"
     },
     {
@@ -7332,9 +7452,13 @@
     {
       "integrity": "sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "같은 배포물의 lib/web/fetch/LICENSE(별도 저작권 고지) 원문"
+      ],
       "name": "undici",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/undici",
       "originals": [
         {
@@ -7348,7 +7472,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
       "version": "6.29.1"
     },
     {
@@ -7356,7 +7480,9 @@
       "license": "MIT",
       "missing": [],
       "name": "undici-types",
-      "notes": [],
+      "notes": [
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
+      ],
       "origin": "api/package-lock.json:node_modules/undici-types",
       "originals": [
         {
@@ -7370,7 +7496,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Unverified",
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
       "version": "6.21.0"
     },
     {
@@ -7909,7 +8035,7 @@
     {
       "license": "MIT (OHIF); third-party licenses unverified",
       "missing": [
-        "실제 내장 배포 자산에서 확보한 webpack LICENSE.txt는 dicom-microscopy-viewer의 1개입니다. 고정 yarn.lock의 전체 의존성별 LICENSE/NOTICE와 내장 번들의 대응 목록은 아직 확보하지 못했습니다.",
+        "내장 자산에 남은 라이선스 주석과 OHIF 3.9.1 LICENSE를 묶었습니다. 번들에 든 모듈 전체 목록은 제공 자산에 없어(source map 내용 없음) 의존성별 LICENSE/NOTICE 대응은 아직 확보하지 못했습니다.",
         "libOrthancOHIF.so 내 고정 OHIF 빌드의 의존성 목록·라이선스 메타데이터·NOTICE"
       ],
       "name": "OHIF embedded build",
@@ -8109,6 +8235,12 @@
           "path": "texts/a89e1147910ec868d0237f610e531073151e63e5311a7fe0dd9ac43a069eb735.txt",
           "sha256": "a89e1147910ec868d0237f610e531073151e63e5311a7fe0dd9ac43a069eb735",
           "source": "https://orthanc.uclouvain.be/downloads/third-party-downloads/OHIF/Viewers-3.9.1.tar.gz#Viewers-3.9.1/yarn.lock"
+        },
+        {
+          "name": "License comments retained in the embedded OHIF assets (OrthancOHIF-1.4)",
+          "path": "texts/8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07.txt",
+          "sha256": "8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07",
+          "source": "orthancteam/orthanc:24.12.0 libOrthancOHIF.so (embedded gzip assets)"
         }
       ],
       "scope": "Embedded viewer",
@@ -8118,116 +8250,722 @@
       "version": "orthancteam/orthanc:24.12.0"
     },
     {
-      "license": "Unverified",
+      "license": "IJG (libjpeg API library; TurboJPEG API off in this build)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "kin-sof3.wasm에 함께 링크되는 WASI C 런타임(zig cc의 wasi-libc)의 판·원문"
       ],
+      "name": "libjpeg-turbo",
+      "notes": [
+        "태그 3.2.1(커밋 7b4993786d856cbccabfc0ed2f923ba000e326cc)의 LICENSE.md와 그것이 가리키는 README.ijg입니다. kin-sof3.wasm은 TurboJPEG API를 끄고(WITH_TURBOJPEG=0) SIMD 없이 지은 libjpeg API 라이브러리를 씁니다.",
+        "This software is based in part on the work of the Independent JPEG Group. (README.ijg가 바이너리 배포의 문서에 두라고 한 문장 — kin-sof3.wasm은 libjpeg API 라이브러리를 정적으로 링크합니다.)"
+      ],
+      "origin": "scripts/build-sof3-wasm.py",
+      "originals": [
+        {
+          "name": "LICENSE.md (3.2.1)",
+          "path": "texts/ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579.txt",
+          "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+          "source": "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/7b4993786d856cbccabfc0ed2f923ba000e326cc/LICENSE.md"
+        },
+        {
+          "name": "README.ijg — IJG License (3.2.1)",
+          "path": "texts/75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6.txt",
+          "sha256": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
+          "source": "https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/7b4993786d856cbccabfc0ed2f923ba000e326cc/README.ijg"
+        }
+      ],
+      "release": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.1/libjpeg-turbo-3.2.1.tar.gz",
+      "release_sha256": "c27ad72a68da151177929aa969ae773a2da5ac2af9ce946079314fdac8cece7f",
+      "scope": "Viewer JPEG lossless decoder (kin-sof3.wasm)",
+      "section": "OHIF",
+      "source": "https://github.com/libjpeg-turbo/libjpeg-turbo/tree/3.2.1",
+      "supplier": "The libjpeg-turbo Project; Independent JPEG Group",
+      "version": "3.2.1"
+    },
+    {
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf.txt",
+          "sha256": "1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf",
+          "source": "docker run --rm sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
+      "missing": [],
       "name": "Distribution packages in debian:bookworm-slim",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "tests/fixtures/asr/Dockerfile, tests/fixtures/asr/Dockerfile",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99.txt",
+          "sha256": "578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99",
+          "source": "docker run --rm sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Debian (per-package debian/copyright)",
       "version": "debian:bookworm-slim"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94.txt",
+          "sha256": "30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94",
+          "source": "docker run --rm sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "Alpine 패키지 62개는 이미지에 라이선스 파일이 없어 apk 선언과 SPDX 표준 원문으로만 묶었습니다 — 패키지별 저작권 줄은 Alpine aports 소스에서 뽑아야 합니다."
       ],
       "name": "Distribution packages in nginx:1.27-alpine",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "proxy/Dockerfile",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a.txt",
+          "sha256": "305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a",
+          "source": "docker run --rm sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10"
+        },
+        {
+          "name": "aom 3.11.0 LICENSE / PATENTS",
+          "path": "texts/d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5.txt",
+          "sha256": "d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5",
+          "source": "supplier tag commit — aom-3.11.0.txt"
+        },
+        {
+          "name": "tzdata 2026f LICENSE",
+          "path": "texts/cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7.txt",
+          "sha256": "cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7",
+          "source": "supplier tag commit — tzdata-2026f.txt"
+        },
+        {
+          "name": "SPDX 0BSD",
+          "path": "texts/e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b.txt",
+          "sha256": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/0BSD.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX Beerware",
+          "path": "texts/991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0.txt",
+          "sha256": "991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Beerware.txt"
+        },
+        {
+          "name": "SPDX FTL",
+          "path": "texts/ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f.txt",
+          "sha256": "ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/FTL.txt"
+        },
+        {
+          "name": "SPDX GD",
+          "path": "texts/5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7.txt",
+          "sha256": "5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GD.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX GPL-3.0-or-later",
+          "path": "texts/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt",
+          "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX IJG",
+          "path": "texts/7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a.txt",
+          "sha256": "7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/IJG.txt"
+        },
+        {
+          "name": "SPDX ISC",
+          "path": "texts/521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53.txt",
+          "sha256": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/ISC.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-3.0-or-later",
+          "path": "texts/996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1.txt",
+          "sha256": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX Libpng",
+          "path": "texts/7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287.txt",
+          "sha256": "7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Libpng.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX MPL-2.0",
+          "path": "texts/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MPL-2.0.txt"
+        },
+        {
+          "name": "SPDX X11",
+          "path": "texts/e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423.txt",
+          "sha256": "e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/X11.txt"
+        },
+        {
+          "name": "SPDX Zlib",
+          "path": "texts/bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d.txt",
+          "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Zlib.txt"
+        },
+        {
+          "name": "SPDX bzip2-1.0.6",
+          "path": "texts/0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1.txt",
+          "sha256": "0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/bzip2-1.0.6.txt"
+        },
+        {
+          "name": "SPDX curl",
+          "path": "texts/272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3.txt",
+          "sha256": "272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/curl.txt"
+        },
+        {
+          "name": "SPDX libtiff",
+          "path": "texts/a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44.txt",
+          "sha256": "a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/libtiff.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Alpine Linux (per-package apk metadata); NGINX image",
       "version": "nginx:1.27-alpine"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014.txt",
+          "sha256": "c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 23.0.1)"
       ],
       "name": "Distribution packages in node:22-slim",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "api/Dockerfile",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6.txt",
+          "sha256": "35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        },
+        {
+          "name": "corepack and yarn shipped in node:22-slim",
+          "path": "texts/742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5.txt",
+          "sha256": "742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5",
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
+        },
+        {
+          "name": "pip 23.0.1 LICENSE.txt",
+          "path": "texts/846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d.txt",
+          "sha256": "846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d",
+          "source": "supplier tag commit — pip-23.0.1.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Debian (per-package debian/copyright); Node.js image",
       "version": "node:22-slim"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42.txt",
+          "sha256": "3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42",
+          "source": "docker run --rm sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문",
-        "Orthanc/plugin 바이너리에 포함된 제3자 라이브러리 목록·개별 원문"
+        "판 문자열이 없는 정적 구성요소(예: GDCM 플러그인 안의 OpenJPEG·CharLS)와 Orthanc Explorer 2·OHIF 웹 번들 안의 npm 의존성 전체 목록·원문",
+        "이미지에서 저작권 파일을 찾지 못한 Debian 패키지 4개: dirmngr, gpg-agent, libfakeroot, netbase"
       ],
       "name": "Distribution packages in orthancteam/orthanc:24.12.0",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "gateway/orthanc/Dockerfile",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5.txt",
+          "sha256": "b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5",
+          "source": "docker run --rm sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07"
+        },
+        {
+          "name": "envsubst 0.1.5 LICENSE",
+          "path": "texts/3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83.txt",
+          "sha256": "3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83",
+          "source": "supplier tag commit — envsubst-0.1.5.txt"
+        },
+        {
+          "name": "DCMTK 3.6.8 COPYRIGHT (static in Orthanc)",
+          "path": "texts/7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b.txt",
+          "sha256": "7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b",
+          "source": "supplier tag commit — orthanc-static-dcmtk-3.6.8.txt"
+        },
+        {
+          "name": "civetweb 1.14 LICENSE.md (static in Orthanc)",
+          "path": "texts/3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770.txt",
+          "sha256": "3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770",
+          "source": "supplier tag commit — orthanc-static-civetweb-1.14.txt"
+        },
+        {
+          "name": "OpenSSL 3.1.4 LICENSE.txt (static in Orthanc)",
+          "path": "texts/5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d.txt",
+          "sha256": "5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d",
+          "source": "supplier tag commit — orthanc-static-openssl-3.1.4.txt"
+        },
+        {
+          "name": "GDCM 3.0.24 Copyright.txt (static in the GDCM plugin)",
+          "path": "texts/7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf.txt",
+          "sha256": "7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf",
+          "source": "supplier tag commit — orthanc-gdcm-static-gdcm-3.0.24.txt"
+        },
+        {
+          "name": "zlib 1.3.1 LICENSE (static in the GDCM plugin)",
+          "path": "texts/0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2.txt",
+          "sha256": "0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2",
+          "source": "supplier tag commit — orthanc-gdcm-static-zlib-1.3.1.txt"
+        },
+        {
+          "name": "Boost 1.84.0 LICENSE_1_0.txt (static in the GDCM plugin)",
+          "path": "texts/c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72.txt",
+          "sha256": "c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72",
+          "source": "supplier tag commit — orthanc-gdcm-static-boost-1.84.0.txt"
+        },
+        {
+          "name": "Font Awesome 6.6.0 LICENSE.txt (Orthanc Explorer 2)",
+          "path": "texts/71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0.txt",
+          "sha256": "71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0",
+          "source": "supplier tag commit — orthanc-oe2-fontawesome-6.6.0.txt"
+        },
+        {
+          "name": "Orthanc 1.12.5 source — embedded third-party license files and headers",
+          "path": "texts/d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419.txt",
+          "sha256": "d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419",
+          "source": "supplier tag commit — orthanc-1.12.5-embedded-third-party.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Debian (per-package debian/copyright); Orthanc contributors",
       "version": "orthancteam/orthanc:24.12.0"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1.txt",
+          "sha256": "1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1",
+          "source": "docker run --rm sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "Alpine 패키지 43개는 이미지에 라이선스 파일이 없어 apk 선언과 SPDX 표준 원문으로만 묶었습니다 — 패키지별 저작권 줄은 Alpine aports 소스에서 뽑아야 합니다."
       ],
       "name": "Distribution packages in postgres:16-alpine",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d)에서 이미지를 그대로(설치 줄 없음) 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "docker-compose.yml:db, docker-compose.yml:emr-provision",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2.txt",
+          "sha256": "37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2",
+          "source": "docker run --rm sha256:f2f98726820d0342055351c6e9d36e705f5bfffb3dd53ff556325114b08afb6d"
+        },
+        {
+          "name": "go 1.24.6 LICENSE / PATENTS (gosu build)",
+          "path": "texts/fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12.txt",
+          "sha256": "fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12",
+          "source": "supplier tag commit — go-1.24.6.txt"
+        },
+        {
+          "name": "golang.org/x/sys 0.1.0 LICENSE / PATENTS",
+          "path": "texts/596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d.txt",
+          "sha256": "596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d",
+          "source": "supplier tag commit — golang-x-sys-0.1.0.txt"
+        },
+        {
+          "name": "gosu 1.20 LICENSE",
+          "path": "texts/107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1.txt",
+          "sha256": "107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1",
+          "source": "supplier tag commit — gosu-1.20.txt"
+        },
+        {
+          "name": "moby/sys user 0.4.1 LICENSE",
+          "path": "texts/fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca.txt",
+          "sha256": "fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca",
+          "source": "supplier tag commit — moby-sys-user-0.4.1.txt"
+        },
+        {
+          "name": "tzdata 2026f LICENSE",
+          "path": "texts/cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7.txt",
+          "sha256": "cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7",
+          "source": "supplier tag commit — tzdata-2026f.txt"
+        },
+        {
+          "name": "SPDX 0BSD",
+          "path": "texts/e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b.txt",
+          "sha256": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/0BSD.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause-Attribution",
+          "path": "texts/088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef.txt",
+          "sha256": "088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause-Attribution.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-4-Clause",
+          "path": "texts/c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f.txt",
+          "sha256": "c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-4-Clause.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX GPL-3.0-or-later",
+          "path": "texts/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt",
+          "sha256": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-3.0-or-later.txt"
+        },
+        {
+          "name": "SPDX ICU",
+          "path": "texts/c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50.txt",
+          "sha256": "c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/ICU.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.0-or-later",
+          "path": "texts/86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8.txt",
+          "sha256": "86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX MPL-2.0",
+          "path": "texts/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt",
+          "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MPL-2.0.txt"
+        },
+        {
+          "name": "SPDX OLDAP-2.8",
+          "path": "texts/bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded.txt",
+          "sha256": "bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/OLDAP-2.8.txt"
+        },
+        {
+          "name": "SPDX X11",
+          "path": "texts/e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423.txt",
+          "sha256": "e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/X11.txt"
+        },
+        {
+          "name": "SPDX Zlib",
+          "path": "texts/bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d.txt",
+          "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Zlib.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Alpine Linux (per-package apk metadata); PostgreSQL image",
       "version": "postgres:16-alpine"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "Package list (name, version, source, declared license)",
+          "path": "texts/ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d.txt",
+          "sha256": "ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d",
+          "source": "docker run --rm sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 25.0.1)"
       ],
       "name": "Distribution packages in python:3.12-slim",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "gateway/agent/Dockerfile",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b.txt",
+          "sha256": "56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b",
+          "source": "docker run --rm sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b"
+        },
+        {
+          "name": "pip 25.0.1 LICENSE.txt",
+          "path": "texts/2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076.txt",
+          "sha256": "2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076",
+          "source": "supplier tag commit — pip-25.0.1.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Debian (per-package debian/copyright); Python image",
       "version": "python:3.12-slim"
     },
     {
-      "license": "Unverified",
+      "inventory": [
+        {
+          "name": "RPM package list (name, version, source, declared license)",
+          "path": "texts/07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5.txt",
+          "sha256": "07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "jar list (jar, coordinates, pom licenses, license entries)",
+          "path": "texts/aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db.txt",
+          "sha256": "aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "jar licenses declared by Maven Central pom",
+          "path": "texts/6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4.txt",
+          "sha256": "6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        }
+      ],
+      "license": "Various (per package; see the package list)",
       "missing": [
-        "라이선스·저작권·해당 NOTICE 원문",
-        "이미지 OS 패키지 및 Dockerfile의 apt-get/apk 추가 패키지 전체 목록·개별 원문"
+        "jar 303개와 RPM 8개는 Maven Central pom·RPM 선언과 SPDX 표준 원문으로만 묶었습니다 — 구성요소별 저작권 줄은 해당 소스에서 뽑아야 합니다.",
+        "RPM 패키지 목록이 이름 25개뿐이고 판·소스·라이선스 칸이 비어 있습니다(11-23 감사 목록은 RPM 44행 — ca-certificates·libacl·java-21-openjdk-headless 등이 이 목록에 없음). 이미지에서 RPM 전체 목록과 판을 다시 뽑아야 합니다."
       ],
       "name": "Distribution packages in quay.io/keycloak/keycloak:26.7.3",
-      "notes": [],
+      "notes": [
+        "2026-11-26에 이 태그로 받은 이미지(sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4)에서 이미지를 그대로(설치 줄 없음) 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
+      ],
       "origin": "docker-compose.yml:keycloak",
-      "originals": [],
-      "scope": "Unresolved image package inventory",
+      "originals": [
+        {
+          "name": "License/copyright files of the installed packages",
+          "path": "texts/2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a.txt",
+          "sha256": "2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "LICENSE/NOTICE entries inside the jars",
+          "path": "texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt",
+          "sha256": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
+          "source": "extracted from the quay.io/keycloak/keycloak:26.7.3 image (the jars under its lib/; the image of the package list beside it)"
+        },
+        {
+          "name": "OpenJDK 21 legal notices",
+          "path": "texts/a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1.txt",
+          "sha256": "a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1",
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
+        },
+        {
+          "name": "MySQL Connector/J 9.6.0 LICENSE (Universal FOSS Exception)",
+          "path": "texts/f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57.txt",
+          "sha256": "f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57",
+          "source": "supplier tag commit — mysql-connector-j-9.6.0.txt"
+        },
+        {
+          "name": "SPDX Apache-2.0",
+          "path": "texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt",
+          "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Apache-2.0.txt"
+        },
+        {
+          "name": "SPDX BSD-2-Clause",
+          "path": "texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt",
+          "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-2-Clause.txt"
+        },
+        {
+          "name": "SPDX BSD-3-Clause",
+          "path": "texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt",
+          "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/BSD-3-Clause.txt"
+        },
+        {
+          "name": "SPDX CC0-1.0",
+          "path": "texts/a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499.txt",
+          "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/CC0-1.0.txt"
+        },
+        {
+          "name": "SPDX Classpath-exception-2.0",
+          "path": "texts/f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194.txt",
+          "sha256": "f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/Classpath-exception-2.0.txt"
+        },
+        {
+          "name": "SPDX EPL-1.0",
+          "path": "texts/f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25.txt",
+          "sha256": "f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/EPL-1.0.txt"
+        },
+        {
+          "name": "SPDX EPL-2.0",
+          "path": "texts/61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c.txt",
+          "sha256": "61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/EPL-2.0.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-only",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-only.txt"
+        },
+        {
+          "name": "SPDX GPL-2.0-or-later",
+          "path": "texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt",
+          "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/GPL-2.0-or-later.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-only",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-only.txt"
+        },
+        {
+          "name": "SPDX LGPL-2.1-or-later",
+          "path": "texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt",
+          "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/LGPL-2.1-or-later.txt"
+        },
+        {
+          "name": "SPDX MIT-0",
+          "path": "texts/59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135.txt",
+          "sha256": "59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT-0.txt"
+        },
+        {
+          "name": "SPDX MIT",
+          "path": "texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt",
+          "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/MIT.txt"
+        },
+        {
+          "name": "SPDX UPL-1.0",
+          "path": "texts/2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576.txt",
+          "sha256": "2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576",
+          "source": "https://github.com/spdx/license-list-data/blob/v3.29.0/text/UPL-1.0.txt"
+        }
+      ],
+      "scope": "Image package inventory",
       "section": "Containers",
       "source": "",
-      "supplier": "Unverified",
+      "supplier": "Red Hat (RPM); Maven artifact publishers; Keycloak image",
       "version": "quay.io/keycloak/keycloak:26.7.3"
     },
     {
@@ -9370,7 +10108,7 @@
     "ASR": 2,
     "Containers": 14,
     "Gateway": 5,
-    "OHIF": 1,
+    "OHIF": 2,
     "Orthanc": 21
   },
   "inputs": {
@@ -9391,9 +10129,10 @@
     "gateway/orthanc/Dockerfile": "348e72e889f87aa27b84f7846311a8bc464e77f5e2395feb276dc5056c3395d6",
     "proxy/Dockerfile": "b37b568506d8a32725995091b097fd041a3db2a80d6228abd133f8cb566a8d6f",
     "scripts/asr_engine_attest.py": "898682d3ec50f6f41c41db1b24aa15e3eb8455d34ac92a64761ba44db2fa816c",
+    "scripts/build-sof3-wasm.py": "811ea8584a61ecaccb99b4ef53f145153a619a413f6cce625d0b0f30d5afc032",
     "scripts/sof3/kin_sof3.c": "7645ce429e01514a4f152e1d0c0f3c2150bee32a0f135be88c39573647799ea2",
     "tests/fixtures/asr/Dockerfile": "96765ceaaa32a3e648b30600466e413a0056f54f8b243dbe0e0c2c33a4545df1",
-    "worklist-v0/legal/licenses/catalog.json": "1ed8083651c2e8e34a2cdfdcf37ed6d9f1567476a7be21cef7c3879330526630",
+    "worklist-v0/legal/licenses/catalog.json": "163a20bb576f95fd4a63bad035954f5551abec482ef4639b0c88cd39f5e5e183",
     "worklist-v0/legal/licenses/gateway-resolution.json": "207d59463b27bb752cff221107ba09db4547a74a859fb996661e327dc6da60d7",
     "worklist-v0/legal/licenses/orthanc-build-matrix-24.12.0.json": "44634b06fb56d94013c80b77df9c882a0029391ea17510ee41368ebfb76cd59f",
     "worklist-v0/legal/licenses/print-resolution.json": "cb8c52f4c63aeda100c647a966586ca861bfaa2392d650ecceeafdfb805f751c",
@@ -9401,16 +10140,21 @@
     "worklist-v0/legal/licenses/texts/04512a63dce4d2d506ad612dc0bd7681ccf6e3655f7b6eaef7dfac8323d1ec0b.txt": "04512a63dce4d2d506ad612dc0bd7681ccf6e3655f7b6eaef7dfac8323d1ec0b",
     "worklist-v0/legal/licenses/texts/06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6.txt": "06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6",
     "worklist-v0/legal/licenses/texts/06bd0f0ac7e6dc8f3ca8f14916af32b51070d01870227986c610c304c3043baa.txt": "06bd0f0ac7e6dc8f3ca8f14916af32b51070d01870227986c610c304c3043baa",
+    "worklist-v0/legal/licenses/texts/07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5.txt": "07003aca74b85bacd6496756fc2f5a2d3b655515a1092a10ea72da555f6dbdf5",
     "worklist-v0/legal/licenses/texts/074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff.txt": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
     "worklist-v0/legal/licenses/texts/07f6e40829de6fe8bf2c6670640e7256fae7926d4b702a246eb26f5472c2bbe0.txt": "07f6e40829de6fe8bf2c6670640e7256fae7926d4b702a246eb26f5472c2bbe0",
     "worklist-v0/legal/licenses/texts/081d548c845841541c2978b687c48d3bec8ebe38573bbd75c6e10c066b6088ac.txt": "081d548c845841541c2978b687c48d3bec8ebe38573bbd75c6e10c066b6088ac",
     "worklist-v0/legal/licenses/texts/087ab0b78650dde0c70f13ea793bb9a08427d187de9a2b5baecb0e06ddead922.txt": "087ab0b78650dde0c70f13ea793bb9a08427d187de9a2b5baecb0e06ddead922",
+    "worklist-v0/legal/licenses/texts/088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef.txt": "088b09c3bff4d190ca86eb8742ca494af321e3abd309c1c9ad9ccdd86dc5b3ef",
     "worklist-v0/legal/licenses/texts/09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b.txt": "09e8a9bcec8067104652c168685ab0931e7868f9c8284b66f5ae6edae5f1130b",
     "worklist-v0/legal/licenses/texts/0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551.txt": "0a1df3a083d0c010560aa342e87959c8c1070e6fd54545741f083f22d0c8b551",
+    "worklist-v0/legal/licenses/texts/0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1.txt": "0a56dbabe7d2ff65dea26e8b795fe42c6204a192b974d8e9304fe356ccda9fd1",
     "worklist-v0/legal/licenses/texts/0ae0485a5bd37a63e63603596417e4eb0e653334fa6c7f932ca3a0e85d4af227.txt": "0ae0485a5bd37a63e63603596417e4eb0e653334fa6c7f932ca3a0e85d4af227",
     "worklist-v0/legal/licenses/texts/0af366eff4c01ec147c9c61ea9e8ffad64a4294754c9d79355f3fd1b97cb2fb9.txt": "0af366eff4c01ec147c9c61ea9e8ffad64a4294754c9d79355f3fd1b97cb2fb9",
+    "worklist-v0/legal/licenses/texts/0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2.txt": "0d7fed47db4e5ea7f78884c67c26f01cad9c6810dcf034b958faf61b501b32b2",
     "worklist-v0/legal/licenses/texts/0e74697a68cebdcd61502c30fe80ab7f9e341d995dcd452023654d57133534b1.txt": "0e74697a68cebdcd61502c30fe80ab7f9e341d995dcd452023654d57133534b1",
     "worklist-v0/legal/licenses/texts/0f0ca96f50793990031ebc488a38f7292ff70bce8ab6a8e5eeda674abc32ccdf.txt": "0f0ca96f50793990031ebc488a38f7292ff70bce8ab6a8e5eeda674abc32ccdf",
+    "worklist-v0/legal/licenses/texts/107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1.txt": "107e0d1c241a5970f5c28c5923f2dad8a56ddfba1c5e4ce40a6d280cf187c1b1",
     "worklist-v0/legal/licenses/texts/11052d01e5d2ddc5b4e17f374032a971b696ef09c222a1e5be08dfba9c8a52d9.txt": "11052d01e5d2ddc5b4e17f374032a971b696ef09c222a1e5be08dfba9c8a52d9",
     "worklist-v0/legal/licenses/texts/117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76.txt": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76",
     "worklist-v0/legal/licenses/texts/11d017c3b9f1ee3f44caf7203035f0461d5b57e0db8ce1bc03a9af34fa7d3f6b.txt": "11d017c3b9f1ee3f44caf7203035f0461d5b57e0db8ce1bc03a9af34fa7d3f6b",
@@ -9431,7 +10175,9 @@
     "worklist-v0/legal/licenses/texts/1aa9a12863eefb583779b2ca0e5d73c610b6e6d07529ae0472721769a6ea0a32.txt": "1aa9a12863eefb583779b2ca0e5d73c610b6e6d07529ae0472721769a6ea0a32",
     "worklist-v0/legal/licenses/texts/1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484.txt": "1cbe51b907662f6cb1492b16c359384a595180bf0e4d101603ed525e75c4e484",
     "worklist-v0/legal/licenses/texts/1da7f0788d14d545b2b953f78a27b916d320dfa174c2fcfa124c5aaffa81056e.txt": "1da7f0788d14d545b2b953f78a27b916d320dfa174c2fcfa124c5aaffa81056e",
+    "worklist-v0/legal/licenses/texts/1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1.txt": "1e3e2cdecc89a958f79c690cdcf95a9a3a7f2c930a1c048eb6f49168b51d1fa1",
     "worklist-v0/legal/licenses/texts/1e76029602ae9b21cc4e612db2496d92febed882ba13ba745f8b3309e85f9d39.txt": "1e76029602ae9b21cc4e612db2496d92febed882ba13ba745f8b3309e85f9d39",
+    "worklist-v0/legal/licenses/texts/1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf.txt": "1ff2bf7d382015a57b1152549caaeae4a043bd81d8c61d5865f013e49e8733cf",
     "worklist-v0/legal/licenses/texts/206c1adcf206dc0031b11232f5b054ec5f1662407ab1ca415247921cab2068ab.txt": "206c1adcf206dc0031b11232f5b054ec5f1662407ab1ca415247921cab2068ab",
     "worklist-v0/legal/licenses/texts/210b19e543130388c68654b7497e967119ce17145f66ab7d85688fbd70f08751.txt": "0e8d2550baea17eb3072c4f919b36fbf9852bb49dba948549872e713863c0834",
     "worklist-v0/legal/licenses/texts/214d0ac13edb475ec426df1979d96fd46b443debc466c0fb592e32152ae5a940.txt": "214d0ac13edb475ec426df1979d96fd46b443debc466c0fb592e32152ae5a940",
@@ -9444,29 +10190,40 @@
     "worklist-v0/legal/licenses/texts/257aed98914108e91a337912727b6a802eef218248507f74b76faffaff517a38.txt": "257aed98914108e91a337912727b6a802eef218248507f74b76faffaff517a38",
     "worklist-v0/legal/licenses/texts/25a328069fe771f8ed5b6f983ed4b0e6c84b3312ac0f69b28c3d52dc277962c9.txt": "25a328069fe771f8ed5b6f983ed4b0e6c84b3312ac0f69b28c3d52dc277962c9",
     "worklist-v0/legal/licenses/texts/25ba5c59dad3e0dd8f9540beaa0f0a86a10e3aec35af5fdc8e88c5f6a5c0d8c6.txt": "25ba5c59dad3e0dd8f9540beaa0f0a86a10e3aec35af5fdc8e88c5f6a5c0d8c6",
+    "worklist-v0/legal/licenses/texts/272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3.txt": "272d1239bdcef73bb98bac206168ca1040bd4a31296755fadfb7515bcea18df3",
     "worklist-v0/legal/licenses/texts/2a8a5d6197bb97a018b8a190dd3ed853d750ca87c8e80c17aad41d6c6ff448e1.txt": "2a8a5d6197bb97a018b8a190dd3ed853d750ca87c8e80c17aad41d6c6ff448e1",
+    "worklist-v0/legal/licenses/texts/2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076.txt": "2b47721c8c152e0c16023ecb0a9274e3b833a417e7fa852b3e5c55a50031a076",
     "worklist-v0/legal/licenses/texts/2b770a704c15de238c3f622b01b0044ddd60b49ee30608ea6991ebf19db7a7a1.txt": "2b770a704c15de238c3f622b01b0044ddd60b49ee30608ea6991ebf19db7a7a1",
     "worklist-v0/legal/licenses/texts/2c46f1325bd3822a33c1e2c1e49c18d13127ac00f9c8b3b79196c7a126f73cd9.txt": "2c46f1325bd3822a33c1e2c1e49c18d13127ac00f9c8b3b79196c7a126f73cd9",
     "worklist-v0/legal/licenses/texts/2c7c5d22ed5a8ee968c64757710979afcd77438c48b4a265b94e615babd8a901.txt": "2c7c5d22ed5a8ee968c64757710979afcd77438c48b4a265b94e615babd8a901",
     "worklist-v0/legal/licenses/texts/2cee71bf4612fc2efe1c6261e3f2b21f3c7259ef8a4f3593b095ae7a7bd65ad9.txt": "2cee71bf4612fc2efe1c6261e3f2b21f3c7259ef8a4f3593b095ae7a7bd65ad9",
     "worklist-v0/legal/licenses/texts/2dc0465729366c3a7890dfa9e972a1ba7048a26c02116fb8b419a6a1ac110149.txt": "2dc0465729366c3a7890dfa9e972a1ba7048a26c02116fb8b419a6a1ac110149",
+    "worklist-v0/legal/licenses/texts/2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a.txt": "2e242d6ae332429c2769f1491357a150c1d02c9ac1958546b1e1f9dfaf99f62a",
+    "worklist-v0/legal/licenses/texts/2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576.txt": "2f81e75033a0c872ab9725b36081e363f0c9e6c45585c35930edb66043fdc576",
+    "worklist-v0/legal/licenses/texts/305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a.txt": "305b4212820f522579b188693030c5d89cd1604aff839d8b615adc0deb84ca7a",
+    "worklist-v0/legal/licenses/texts/30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94.txt": "30d996a19238352903b0cbd854316b9e7d121be57920ed02cad15ec65a0ffe94",
+    "worklist-v0/legal/licenses/texts/3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83.txt": "3124fb99de663dbadae108ae4edf01ce5d8ffbdee2d1a1bb3b69d88c5491ad83",
     "worklist-v0/legal/licenses/texts/31493c14dc0b4eb1e06fe5d4bab3ca4e3b40f8749433455c713863238600cf1a.txt": "31493c14dc0b4eb1e06fe5d4bab3ca4e3b40f8749433455c713863238600cf1a",
     "worklist-v0/legal/licenses/texts/33b734d60042d0fe0c92dd1fc1e874193a1c899ec3e276a2eb935d2d0bf5b710.txt": "33b734d60042d0fe0c92dd1fc1e874193a1c899ec3e276a2eb935d2d0bf5b710",
     "worklist-v0/legal/licenses/texts/33eba3cb810ee4b03426ec7fecf22e7529e2fe95f8163e7213016459bee7a276.txt": "33eba3cb810ee4b03426ec7fecf22e7529e2fe95f8163e7213016459bee7a276",
     "worklist-v0/legal/licenses/texts/33fa5470b2195e410b075a32516b6ad27784b8a8ff74ae90cfd60c14b76e6644.txt": "33fa5470b2195e410b075a32516b6ad27784b8a8ff74ae90cfd60c14b76e6644",
     "worklist-v0/legal/licenses/texts/35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2.txt": "35bdd8a44339719441900fb50fbefc5e2dca1ca662cbaed7a687de842c8b70f2",
+    "worklist-v0/legal/licenses/texts/35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6.txt": "35eebb85c3d51d3e27c5cee9eac7d91ca107078590913e6894947096bfd6bdc6",
     "worklist-v0/legal/licenses/texts/365496ca1f56da40b23c9815fc40fa9005847b2f8f8fd1c1a4929ef25ec8cd1d.txt": "365496ca1f56da40b23c9815fc40fa9005847b2f8f8fd1c1a4929ef25ec8cd1d",
     "worklist-v0/legal/licenses/texts/366c1313ae5f94361258978b8ea2d1133f726e55964ced3a02868dac560c9264.txt": "366c1313ae5f94361258978b8ea2d1133f726e55964ced3a02868dac560c9264",
     "worklist-v0/legal/licenses/texts/3672fb6ef1c214578dfee689643516c2685f61ab08d130517ca8ea24f383a840.txt": "3672fb6ef1c214578dfee689643516c2685f61ab08d130517ca8ea24f383a840",
     "worklist-v0/legal/licenses/texts/3706296ed611888111ceccc1dff4712844dea4bde0b185c82d718c3b69895abe.txt": "3706296ed611888111ceccc1dff4712844dea4bde0b185c82d718c3b69895abe",
+    "worklist-v0/legal/licenses/texts/37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2.txt": "37862634b838c1e35618fa1e983ffaf8b93392f756c6797f64243f0f461dead2",
     "worklist-v0/legal/licenses/texts/37876d7de8bdf5e5b9b58a697ebc34044624e493e6f49eff5c938e5226dcac6b.txt": "37876d7de8bdf5e5b9b58a697ebc34044624e493e6f49eff5c938e5226dcac6b",
     "worklist-v0/legal/licenses/texts/39c5ec504cf6bd5cd782a7c695828e09189df79f5d94840e4f08feb97b9fd416.txt": "39c5ec504cf6bd5cd782a7c695828e09189df79f5d94840e4f08feb97b9fd416",
     "worklist-v0/legal/licenses/texts/3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95.txt": "3a61c6c96caf5c1d9b623fb9b04c822b783dfcb78aa7e49c76a3f643e6ed7f95",
     "worklist-v0/legal/licenses/texts/3a7d3bb198e909ed642bd68bd29a7d7c09a636d27a51ec663d35f00c4760ec42.txt": "3a7d3bb198e909ed642bd68bd29a7d7c09a636d27a51ec663d35f00c4760ec42",
+    "worklist-v0/legal/licenses/texts/3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42.txt": "3a9ce04dc45183d940dd78a32f376f633df6fef5fa77a18186430354c1bd6f42",
     "worklist-v0/legal/licenses/texts/3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf.txt": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
     "worklist-v0/legal/licenses/texts/3ed030086e7f0b82f7c8d86b7c66342b6c820d76062458192cd4990a99f95dfa.txt": "3ed030086e7f0b82f7c8d86b7c66342b6c820d76062458192cd4990a99f95dfa",
     "worklist-v0/legal/licenses/texts/3fb0857ef0133928cf72c88dfc464e931486e88778961eedec25585e2321507f.txt": "3fb0857ef0133928cf72c88dfc464e931486e88778961eedec25585e2321507f",
     "worklist-v0/legal/licenses/texts/3fda5977c0904e226190b4e21d64340c1731e2142d6fe5f3dee0090a216b8b63.txt": "3fda5977c0904e226190b4e21d64340c1731e2142d6fe5f3dee0090a216b8b63",
+    "worklist-v0/legal/licenses/texts/3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770.txt": "3ff9fbda04344dd5694822f2c3d11d8df16ded0f9a9f26ed4b882c666acf0770",
     "worklist-v0/legal/licenses/texts/435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b.txt": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b",
     "worklist-v0/legal/licenses/texts/451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab.txt": "451ec07eeb9c4e1b86de9abdaa426462a8be48f887ec7421cf0bbb9c769555ab",
     "worklist-v0/legal/licenses/texts/456fe85ad3e71db9523313cf7437b0f90c392d8a48c869908e46716b26d2cf53.txt": "456fe85ad3e71db9523313cf7437b0f90c392d8a48c869908e46716b26d2cf53",
@@ -9483,15 +10240,24 @@
     "worklist-v0/legal/licenses/texts/4f5449ed0560cdba90876c788400b03201458bc29be807597174cad12522c434.txt": "4f5449ed0560cdba90876c788400b03201458bc29be807597174cad12522c434",
     "worklist-v0/legal/licenses/texts/50627796eb4236cd05674e71d090e594447995225b7d94cd59e57c25fa3a0217.txt": "50627796eb4236cd05674e71d090e594447995225b7d94cd59e57c25fa3a0217",
     "worklist-v0/legal/licenses/texts/512cfa4d5e7a7569c7ae4dd95241cb6ae2aaf648ef9ebd080c01bd24868d26e9.txt": "512cfa4d5e7a7569c7ae4dd95241cb6ae2aaf648ef9ebd080c01bd24868d26e9",
+    "worklist-v0/legal/licenses/texts/5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d.txt": "5178363b4803142ab65e14acece6a56ef2dcb919876314ecd6eeee7e82ffab4d",
     "worklist-v0/legal/licenses/texts/51db62f97656d02d4bc9670393cae42930dbd1ed89f5837056851807e602867a.txt": "51db62f97656d02d4bc9670393cae42930dbd1ed89f5837056851807e602867a",
+    "worklist-v0/legal/licenses/texts/521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53.txt": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53",
     "worklist-v0/legal/licenses/texts/52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85.txt": "52412d7bc7ce4157ea628bbaacb8829e0a9cb3c58f57f99176126bc8cf2bfc85",
+    "worklist-v0/legal/licenses/texts/5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7.txt": "5294cfc75f9d13209ae8c88ecda14e255d4ce8b27f282e924d33f7e7845ed8d7",
     "worklist-v0/legal/licenses/texts/53e59feb13058722d977c699eb0407c7bce2f93c949b681bbd2ff31698535927.txt": "53e59feb13058722d977c699eb0407c7bce2f93c949b681bbd2ff31698535927",
     "worklist-v0/legal/licenses/texts/553d4d20029a24e315b428a1a54a9e109eaa340f2e958a4f50a92362c2c4070b.txt": "553d4d20029a24e315b428a1a54a9e109eaa340f2e958a4f50a92362c2c4070b",
+    "worklist-v0/legal/licenses/texts/56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b.txt": "56d79af45a74148b6994ac37b4c394fdab3e7cccedd6ddd64058563306e4279b",
+    "worklist-v0/legal/licenses/texts/5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2.txt": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2",
+    "worklist-v0/legal/licenses/texts/578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99.txt": "578be8ff2cec57003e805dd35a0d2397934e330a1b80cc5a0c70e25c48550d99",
     "worklist-v0/legal/licenses/texts/57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6.txt": "57c8ff33c9c0cfc3ef00e650a1cc910d7ee479a8bc509f6c9209a7c2a11399d6",
     "worklist-v0/legal/licenses/texts/5822e0d816e53e3537b306a4132cb7a70881897cf51bf483282148a602979076.txt": "5822e0d816e53e3537b306a4132cb7a70881897cf51bf483282148a602979076",
     "worklist-v0/legal/licenses/texts/58597ded729a5e749cc323e2ae6e533a31be3622737b33e0239ba075ca14b515.txt": "58597ded729a5e749cc323e2ae6e533a31be3622737b33e0239ba075ca14b515",
+    "worklist-v0/legal/licenses/texts/596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d.txt": "596ba32e34164e1c6be21c147dbac4d2d0f8061eb2ed5d7b73e1fd225a4d3b1d",
+    "worklist-v0/legal/licenses/texts/59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135.txt": "59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135",
     "worklist-v0/legal/licenses/texts/599cccda4d0eaa26e1b7b576c5077cfbbb6a9895714df298d4e91460728e89ff.txt": "5bb0e8b566dee0e946cafd9bbed359eb0494580df86457876b4f41bba5c77b25",
     "worklist-v0/legal/licenses/texts/5a3b0007c4203f10fe11b3fe8747253eb994f135e10b73e1f88ada941af09c6e.txt": "5a3b0007c4203f10fe11b3fe8747253eb994f135e10b73e1f88ada941af09c6e",
+    "worklist-v0/legal/licenses/texts/5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d.txt": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
     "worklist-v0/legal/licenses/texts/5b37224c080cdcc97c871ada971c224e9926370fe74f11b539aa1cf9f3b1aca1.txt": "5b37224c080cdcc97c871ada971c224e9926370fe74f11b539aa1cf9f3b1aca1",
     "worklist-v0/legal/licenses/texts/5b3af80f317313a8b8c227b0c8bffae67728cfec1786137b0553e625f2affec9.txt": "d55209d49c97d162829baf379dfcf841e47c98528d2d50baeb922ac2983a1e47",
     "worklist-v0/legal/licenses/texts/5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3.txt": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3",
@@ -9499,18 +10265,22 @@
     "worklist-v0/legal/licenses/texts/5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292.txt": "5e325595b4ea8cfec3802f545b1def5d7b73e4a5b8e9ba63e32a320f67732292",
     "worklist-v0/legal/licenses/texts/5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b.txt": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b",
     "worklist-v0/legal/licenses/texts/615087f58ee138fd35c2b414c355b72e36e5919725b8aecc1c34f6a5585b9779.txt": "615087f58ee138fd35c2b414c355b72e36e5919725b8aecc1c34f6a5585b9779",
+    "worklist-v0/legal/licenses/texts/61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c.txt": "61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c",
     "worklist-v0/legal/licenses/texts/62568a2d1337b77171ecca9db10579163446de1ba6151678e81f06cdc199971b.txt": "62568a2d1337b77171ecca9db10579163446de1ba6151678e81f06cdc199971b",
     "worklist-v0/legal/licenses/texts/6294da0e0a201bbe1de254445c9d07133a9448af05e4e44d0a2364747d114368.txt": "6294da0e0a201bbe1de254445c9d07133a9448af05e4e44d0a2364747d114368",
+    "worklist-v0/legal/licenses/texts/62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc.txt": "62ac5678d717e6f5b8f7a5ada79359d79778c5d9a1e52b811b35d347a5fb2abc",
     "worklist-v0/legal/licenses/texts/62fb7d7c1822fe783895866057247bbd50164b00631fce9e4981d3897bdee4d9.txt": "62fb7d7c1822fe783895866057247bbd50164b00631fce9e4981d3897bdee4d9",
     "worklist-v0/legal/licenses/texts/631987b7616a325a5b97566c232418481ddf7dbb5ecadefb991e791876cc2599.txt": "631987b7616a325a5b97566c232418481ddf7dbb5ecadefb991e791876cc2599",
     "worklist-v0/legal/licenses/texts/63b9a188d7d43e64b0558b7115255045b9fe20a5fc3ff483421cb899e7f52bcb.txt": "63b9a188d7d43e64b0558b7115255045b9fe20a5fc3ff483421cb899e7f52bcb",
     "worklist-v0/legal/licenses/texts/64a93ffc0a06a2266dbb57ed7ebe3b56ba66ab337b6347fabdbf86c76819fbae.txt": "64a93ffc0a06a2266dbb57ed7ebe3b56ba66ab337b6347fabdbf86c76819fbae",
     "worklist-v0/legal/licenses/texts/6582629e2979466878f6014313dcc2f3756c9616148682227ce3063dde310750.txt": "6582629e2979466878f6014313dcc2f3756c9616148682227ce3063dde310750",
     "worklist-v0/legal/licenses/texts/6652830c2607c722b66f1b57de15877ab8fc5dca406cc5b335afeb365d0f32c1.txt": "6652830c2607c722b66f1b57de15877ab8fc5dca406cc5b335afeb365d0f32c1",
+    "worklist-v0/legal/licenses/texts/66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172.txt": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
     "worklist-v0/legal/licenses/texts/68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14.txt": "68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14",
     "worklist-v0/legal/licenses/texts/693866fc419c6f61c8570438ec00659d156ec2b4d4a4d04091711f5f11a365d4.txt": "693866fc419c6f61c8570438ec00659d156ec2b4d4a4d04091711f5f11a365d4",
     "worklist-v0/legal/licenses/texts/69dee148a2cc470554dfa7142e830662062394d0fe67cddd379aba90dc60d6b3.txt": "69dee148a2cc470554dfa7142e830662062394d0fe67cddd379aba90dc60d6b3",
     "worklist-v0/legal/licenses/texts/6b0382b16279f26ff69014300541967a356a666eb0b91b422f6862f6b7dad17e.txt": "6b0382b16279f26ff69014300541967a356a666eb0b91b422f6862f6b7dad17e",
+    "worklist-v0/legal/licenses/texts/6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4.txt": "6b2bba08e763f3f6cedbd228cc5c9e7431cd3f7b7ff8d9a016fe070f20385ac4",
     "worklist-v0/legal/licenses/texts/6b7a1792144374d84dc5ed3655b8bbe2754d06f4f1f64a9fb8b9de2d6f448b85.txt": "6b7a1792144374d84dc5ed3655b8bbe2754d06f4f1f64a9fb8b9de2d6f448b85",
     "worklist-v0/legal/licenses/texts/6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd.txt": "6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd",
     "worklist-v0/legal/licenses/texts/6cfc4687cb2f2d86f4a77e6b526290d3878e5e512f3fec2f4cb36a9cb36f798b.txt": "6cfc4687cb2f2d86f4a77e6b526290d3878e5e512f3fec2f4cb36a9cb36f798b",
@@ -9521,12 +10291,18 @@
     "worklist-v0/legal/licenses/texts/6e7d699cdd1e4fa837ba7718ea49841aa67201b449ea8b3f9cf274be15974a64.txt": "6e7d699cdd1e4fa837ba7718ea49841aa67201b449ea8b3f9cf274be15974a64",
     "worklist-v0/legal/licenses/texts/6ee0feb1f6ef996ff5a68600f8cf98909cf412d39ef3cdceaefd87d636fa1b7f.txt": "6ee0feb1f6ef996ff5a68600f8cf98909cf412d39ef3cdceaefd87d636fa1b7f",
     "worklist-v0/legal/licenses/texts/6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c.txt": "6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c",
+    "worklist-v0/legal/licenses/texts/71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0.txt": "71072004f443f2bf91b1e62f45a3124cbcca738624753d5abf9f2ae4b42811c0",
     "worklist-v0/legal/licenses/texts/71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6.txt": "71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6",
     "worklist-v0/legal/licenses/texts/73b5283588baa142c5baaef5f56d3e8fdea7a30b214e8c5737e87640f882453a.txt": "73b5283588baa142c5baaef5f56d3e8fdea7a30b214e8c5737e87640f882453a",
+    "worklist-v0/legal/licenses/texts/742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5.txt": "742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5",
     "worklist-v0/legal/licenses/texts/747a0e7c5a79afa5c946fb707658b46e9285e851979238b626a00b27435b6c69.txt": "747a0e7c5a79afa5c946fb707658b46e9285e851979238b626a00b27435b6c69",
     "worklist-v0/legal/licenses/texts/74d8054d56d522bdaa340d3d71130cb204997d523a5292c85ac1264dd77c8d06.txt": "74d8054d56d522bdaa340d3d71130cb204997d523a5292c85ac1264dd77c8d06",
     "worklist-v0/legal/licenses/texts/7566dce12beadd5c494cd00a34d2f73cd8e2162038ed26d81f025ff5d8c7c67a.txt": "7566dce12beadd5c494cd00a34d2f73cd8e2162038ed26d81f025ff5d8c7c67a",
+    "worklist-v0/legal/licenses/texts/75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6.txt": "75815e3bf6484201a3c3d17a1bbf10f2e8e3237f84df10a2357ea896db2a81d6",
     "worklist-v0/legal/licenses/texts/7585ea7bba616ccbbe43cb54ecb67956688c3c5641bb84f3099a652a73193afe.txt": "7585ea7bba616ccbbe43cb54ecb67956688c3c5641bb84f3099a652a73193afe",
+    "worklist-v0/legal/licenses/texts/7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b.txt": "7612f058c139fc383a85ca11d63f3f4b54e789de95603ad54904c84c4f1f152b",
+    "worklist-v0/legal/licenses/texts/7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a.txt": "7658542977bfdced9e1059a6c934ce4281de76d103b831007b825917dc62511a",
+    "worklist-v0/legal/licenses/texts/7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287.txt": "7667a8c88c7a63690244988d626bcddd27ed895526e2c3ab1a9adb463a5fa287",
     "worklist-v0/legal/licenses/texts/769d154fbde32a915af110b1123650bc79f4cbe675acc66e005265bf069c6c6c.txt": "769d154fbde32a915af110b1123650bc79f4cbe675acc66e005265bf069c6c6c",
     "worklist-v0/legal/licenses/texts/76a876cf886ff9be2a8b5e2e86514fed06223c8c9f0c1e9ee9606e93841e00b7.txt": "76a876cf886ff9be2a8b5e2e86514fed06223c8c9f0c1e9ee9606e93841e00b7",
     "worklist-v0/legal/licenses/texts/76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69.txt": "76d6d1ea0c268da37dd3c961b4fcfb23dee8417fff9e8786d4d44c585b781b69",
@@ -9537,22 +10313,28 @@
     "worklist-v0/legal/licenses/texts/7d97a49e00db3c40d163874284ce543a9ea7f0f4c2d98ddff3996a202b4a20a5.txt": "7d97a49e00db3c40d163874284ce543a9ea7f0f4c2d98ddff3996a202b4a20a5",
     "worklist-v0/legal/licenses/texts/7da39f88167714b017e1cf6c1f35d0dae3b2ab25d105520377ff782a325fad1e.txt": "7da39f88167714b017e1cf6c1f35d0dae3b2ab25d105520377ff782a325fad1e",
     "worklist-v0/legal/licenses/texts/7df1d6cf5b4112cbe277a84269e02ae631603a9a3a21b8328a34c30b8c3dd1ab.txt": "7df1d6cf5b4112cbe277a84269e02ae631603a9a3a21b8328a34c30b8c3dd1ab",
+    "worklist-v0/legal/licenses/texts/7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf.txt": "7e49370c862e04e73efc8a8dad34787f1ca8dbe3b5087adfe8fb888a5d95fabf",
     "worklist-v0/legal/licenses/texts/8078b0829d6c3e9ecde2f003e1966e4cad3efc6e7a640efbab0313cc166b1af1.txt": "8078b0829d6c3e9ecde2f003e1966e4cad3efc6e7a640efbab0313cc166b1af1",
     "worklist-v0/legal/licenses/texts/8089bcc08845ec143e5761f4a101a65b8c792a0dedbfeeb90a15560c0b77f768.txt": "8089bcc08845ec143e5761f4a101a65b8c792a0dedbfeeb90a15560c0b77f768",
     "worklist-v0/legal/licenses/texts/811238ba7d85f6fe6b820703a32f92705bcf77bc352ddc3476783491c64a129a.txt": "811238ba7d85f6fe6b820703a32f92705bcf77bc352ddc3476783491c64a129a",
     "worklist-v0/legal/licenses/texts/8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643.txt": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
     "worklist-v0/legal/licenses/texts/81c407ac717813b0e3795402960e04003c7bba8ba59b621624707028531c9ade.txt": "81c407ac717813b0e3795402960e04003c7bba8ba59b621624707028531c9ade",
+    "worklist-v0/legal/licenses/texts/8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b.txt": "8231775b38d87547b6172e62ec74ad11bdd60096f028abe23d3f6c73fbf0de2b",
     "worklist-v0/legal/licenses/texts/824ef6c33ae5ecbbab65d37f2b37da2bfc81d76cf7676ec0f59d00a0a38bdb75.txt": "824ef6c33ae5ecbbab65d37f2b37da2bfc81d76cf7676ec0f59d00a0a38bdb75",
     "worklist-v0/legal/licenses/texts/844148fa5d91a03c6ada823a207f43aabdcd4c79d73ceb2276571127787c9228.txt": "844148fa5d91a03c6ada823a207f43aabdcd4c79d73ceb2276571127787c9228",
+    "worklist-v0/legal/licenses/texts/846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d.txt": "846b7cefd58dd1d151b17d5a24036ca2186dea7f2bddb5d37b8d51780b8d0f5d",
     "worklist-v0/legal/licenses/texts/8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef.txt": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
     "worklist-v0/legal/licenses/texts/84eaa985e1ef71b8c630e8aba73404c219ff425c6fdb45c62e998b58d4fbdc8e.txt": "84eaa985e1ef71b8c630e8aba73404c219ff425c6fdb45c62e998b58d4fbdc8e",
     "worklist-v0/legal/licenses/texts/85fe65eefab89e2a683232b96e6f689279821a0bd3b351e9ab6a6ebd19dea567.txt": "85fe65eefab89e2a683232b96e6f689279821a0bd3b351e9ab6a6ebd19dea567",
+    "worklist-v0/legal/licenses/texts/86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8.txt": "86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8",
     "worklist-v0/legal/licenses/texts/8850a2d4828514113042db6ec97237b7ca6cb1599734874e5817d521f8f84e1c.txt": "8850a2d4828514113042db6ec97237b7ca6cb1599734874e5817d521f8f84e1c",
     "worklist-v0/legal/licenses/texts/8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004.txt": "8a1af140fdfbf5afd3df27f7e662f989c5b963a300020dfafce42033cae9e004",
     "worklist-v0/legal/licenses/texts/8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903.txt": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "worklist-v0/legal/licenses/texts/8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07.txt": "8e70fc77e8fd8eed7e755147314ec9e106bd488f1c80087e843aab7d9101cb07",
     "worklist-v0/legal/licenses/texts/8e714750725e75c8b31172ef84c0805f94873f86e3b5cfca8a948553f0778fa1.txt": "8e714750725e75c8b31172ef84c0805f94873f86e3b5cfca8a948553f0778fa1",
     "worklist-v0/legal/licenses/texts/8eba52066621ef20c89c488812ed5cae70f36a84c071fa5dc198c7f25e18b3ad.txt": "c994e1e493fc3aaa1fcaf1768778cd37f694c46400af358fe6b3ecf6834b63d5",
     "worklist-v0/legal/licenses/texts/8f2658c03422c408b2b2ce4d151decc3b1a6fd3d86e5ca9433777bccdcdf75a2.txt": "8f2658c03422c408b2b2ce4d151decc3b1a6fd3d86e5ca9433777bccdcdf75a2",
+    "worklist-v0/legal/licenses/texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
     "worklist-v0/legal/licenses/texts/901d0a7fcaccaae9917d165039c0473c354e5da2e0e94140dde67aad9ffb19da.txt": "901d0a7fcaccaae9917d165039c0473c354e5da2e0e94140dde67aad9ffb19da",
     "worklist-v0/legal/licenses/texts/9068a8782d2fb4c6e432cfa25334efa56f722822180570802bf86e71b6003b1e.txt": "9068a8782d2fb4c6e432cfa25334efa56f722822180570802bf86e71b6003b1e",
     "worklist-v0/legal/licenses/texts/90b473d4a24ebc360c8f1fead732af7c95cc041ef0c78474e8d42b24b3adece7.txt": "90b473d4a24ebc360c8f1fead732af7c95cc041ef0c78474e8d42b24b3adece7",
@@ -9568,6 +10350,7 @@
     "worklist-v0/legal/licenses/texts/96f0820026bd6dadc4af99c6dba7111d2e0190c092c376a746c13863e151d072.txt": "96f0820026bd6dadc4af99c6dba7111d2e0190c092c376a746c13863e151d072",
     "worklist-v0/legal/licenses/texts/9877e90da14aa8c931a1f9d07cc2a20ce119106e5dab1ebb41af865266d0cd2a.txt": "9877e90da14aa8c931a1f9d07cc2a20ce119106e5dab1ebb41af865266d0cd2a",
     "worklist-v0/legal/licenses/texts/98c970de440dcfc77471610aec2377c9d9b0db2b3be6d1add524a586e1d7f422.txt": "98c970de440dcfc77471610aec2377c9d9b0db2b3be6d1add524a586e1d7f422",
+    "worklist-v0/legal/licenses/texts/991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0.txt": "991d8a58e0b4be84a174a9bd333a8ca33807a0c1ce6d23a2e25a21f7ece482d0",
     "worklist-v0/legal/licenses/texts/996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1.txt": "996af0513df21f7496288951c41428a03c174e9e4a9d63665c57d670f845ccb1",
     "worklist-v0/legal/licenses/texts/9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97.txt": "9a9edad7baae52622bddf3c15b2ef8a33d2c89f2d25408ad13e8a7481c6b0c97",
     "worklist-v0/legal/licenses/texts/9dbd86998d3cdafc1d8c298aea636146568d05d429b81386e60cfce11e6cedb6.txt": "9dbd86998d3cdafc1d8c298aea636146568d05d429b81386e60cfce11e6cedb6",
@@ -9581,8 +10364,10 @@
     "worklist-v0/legal/licenses/texts/a49c9ba464796f65b59fca3f1e6ca40912df1e859f575383223f7ec6c5baae09.txt": "a49c9ba464796f65b59fca3f1e6ca40912df1e859f575383223f7ec6c5baae09",
     "worklist-v0/legal/licenses/texts/a4c8acbaf3b79d675ebd260276a91754da8f291b5253421ab9f6897c4e2ec8b2.txt": "a4c8acbaf3b79d675ebd260276a91754da8f291b5253421ab9f6897c4e2ec8b2",
     "worklist-v0/legal/licenses/texts/a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27.txt": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27",
+    "worklist-v0/legal/licenses/texts/a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44.txt": "a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44",
     "worklist-v0/legal/licenses/texts/a7007c78c9d9da690ef6cdb0e7a3427d05832edb00abd1f5a9882700d73be4ad.txt": "a7007c78c9d9da690ef6cdb0e7a3427d05832edb00abd1f5a9882700d73be4ad",
     "worklist-v0/legal/licenses/texts/a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813.txt": "a7996721249a136fbcfc1c201bcb5f414f38a701d4a24f28abe65e16cfcce813",
+    "worklist-v0/legal/licenses/texts/a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1.txt": "a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1",
     "worklist-v0/legal/licenses/texts/a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47.txt": "a5e9f9b1575301c7a7a03508fdaa2e05a918cc17fd21c6e898096a96d6a34f61",
     "worklist-v0/legal/licenses/texts/a832d679750e49ab433626ab196350b89964b60eb0d3edd3341887c7d5f4c128.txt": "a832d679750e49ab433626ab196350b89964b60eb0d3edd3341887c7d5f4c128",
     "worklist-v0/legal/licenses/texts/a833d366242c298cf1b10263516572fb8dcbe68eb5072cdcac2b4546e2b4eb36.txt": "a833d366242c298cf1b10263516572fb8dcbe68eb5072cdcac2b4546e2b4eb36",
@@ -9591,8 +10376,11 @@
     "worklist-v0/legal/licenses/texts/a9801fb52ba22ef808682a094da8a7a480584b7ed0dfd0d888ab543616335031.txt": "a9801fb52ba22ef808682a094da8a7a480584b7ed0dfd0d888ab543616335031",
     "worklist-v0/legal/licenses/texts/aa99847033c240a621fe987f0e06b754f388f22abd11a05bdf9cdd00794b7350.txt": "aa99847033c240a621fe987f0e06b754f388f22abd11a05bdf9cdd00794b7350",
     "worklist-v0/legal/licenses/texts/aaa78451b6fecd1b9c4594c796c133c0e90cad100372ff8bc6de615e9ef9adf1.txt": "aaa78451b6fecd1b9c4594c796c133c0e90cad100372ff8bc6de615e9ef9adf1",
+    "worklist-v0/legal/licenses/texts/aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3.txt": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3",
+    "worklist-v0/legal/licenses/texts/aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db.txt": "aaf2b33b59312fc3b84c5362da2566b7eda30890f84c0d2b6e14db5efea9f8db",
     "worklist-v0/legal/licenses/texts/ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d.txt": "ac779f7314c74f232ef847ea86e714abe25cf6eeb5cc97b69451b74e2af6492d",
     "worklist-v0/legal/licenses/texts/af1499d2617dee583014ac9553ab7c1e4251a7d88bd51e4b089b0a3ee3d3c339.txt": "af1499d2617dee583014ac9553ab7c1e4251a7d88bd51e4b089b0a3ee3d3c339",
+    "worklist-v0/legal/licenses/texts/b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5.txt": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
     "worklist-v0/legal/licenses/texts/b173e19b9a78df305577ace0e52ef45a4bcc915ea28b47b256dc3b68dcb1f7e7.txt": "b173e19b9a78df305577ace0e52ef45a4bcc915ea28b47b256dc3b68dcb1f7e7",
     "worklist-v0/legal/licenses/texts/b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1.txt": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
     "worklist-v0/legal/licenses/texts/b41d08bc3624d8c436fc80237d73ebb361985a67f4504bbcd703e5ca2b27254c.txt": "b41d08bc3624d8c436fc80237d73ebb361985a67f4504bbcd703e5ca2b27254c",
@@ -9600,7 +10388,9 @@
     "worklist-v0/legal/licenses/texts/b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d.txt": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d",
     "worklist-v0/legal/licenses/texts/b6a8bf63ae2c95b0aa256ee774680d7bd18f21f457da75466f7610b3b16acc4e.txt": "b6a8bf63ae2c95b0aa256ee774680d7bd18f21f457da75466f7610b3b16acc4e",
     "worklist-v0/legal/licenses/texts/b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0.txt": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0",
+    "worklist-v0/legal/licenses/texts/b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5.txt": "b86b6d3b241dcf6a5a5820f564f00e07a6396577f44c9648573cb46d2b8faac5",
     "worklist-v0/legal/licenses/texts/b8778b155bfde5a28b023a558753c0fa058a52bb9de35c343c250be1bbcdedab.txt": "b8778b155bfde5a28b023a558753c0fa058a52bb9de35c343c250be1bbcdedab",
+    "worklist-v0/legal/licenses/texts/ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579.txt": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
     "worklist-v0/legal/licenses/texts/bcb501dfecd1d87329e72ffd1fe30416a0828118c44015df222b86a5c0ae2524.txt": "bcb501dfecd1d87329e72ffd1fe30416a0828118c44015df222b86a5c0ae2524",
     "worklist-v0/legal/licenses/texts/bd134b41da59e452fb5a1d366b660886f741c87c2bf9428e93764c419fbc40f5.txt": "bd134b41da59e452fb5a1d366b660886f741c87c2bf9428e93764c419fbc40f5",
     "worklist-v0/legal/licenses/texts/bd40cc437e28a3ad7bef2ad34e6b72e757b182e67bda1acadbab4ef0476f8232.txt": "bd40cc437e28a3ad7bef2ad34e6b72e757b182e67bda1acadbab4ef0476f8232",
@@ -9608,7 +10398,9 @@
     "worklist-v0/legal/licenses/texts/bdd70f07d7646609b0b8f63a48eba2fbb11379cc288de55ff286b4679b5a9d4f.txt": "bdd70f07d7646609b0b8f63a48eba2fbb11379cc288de55ff286b4679b5a9d4f",
     "worklist-v0/legal/licenses/texts/be46ce1e3b0479af9ce82d22b465a6d7d2ff084fca0aaf3d54172da2b5eb5781.txt": "be46ce1e3b0479af9ce82d22b465a6d7d2ff084fca0aaf3d54172da2b5eb5781",
     "worklist-v0/legal/licenses/texts/beb6b55bc79e0660b9fd8424c2f65c966991e1a866c23356c1427e146c6cddea.txt": "beb6b55bc79e0660b9fd8424c2f65c966991e1a866c23356c1427e146c6cddea",
+    "worklist-v0/legal/licenses/texts/bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded.txt": "bf30f8254b6698a79e867d0a7d641bbbd3460f7c2f16cab9c6816718815c2ded",
     "worklist-v0/legal/licenses/texts/bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a.txt": "bf9b0d665be2a689851eea667ca9f42066ea1d903b38349c51e6a44b2577680a",
+    "worklist-v0/legal/licenses/texts/bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d.txt": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
     "worklist-v0/legal/licenses/texts/c02110eedc16c7114f1a9bdc026c65626ce1d9c7e27fd51a8e0feee8a48a6858.txt": "c02110eedc16c7114f1a9bdc026c65626ce1d9c7e27fd51a8e0feee8a48a6858",
     "worklist-v0/legal/licenses/texts/c064f7a3e353bc1bc977f3c897941c75ef763f44f41677e0a15370ca0853d6e2.txt": "7357445bac398c76c0aef75a587009fe406d40de6a79789eb5b7ecbbad317ef2",
     "worklist-v0/legal/licenses/texts/c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383.txt": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
@@ -9618,20 +10410,28 @@
     "worklist-v0/legal/licenses/texts/c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4.txt": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
     "worklist-v0/legal/licenses/texts/c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4.txt": "c738ae413cf561f174e34f6961f8ca458aae2369a73640dda6234c629b98bcc4",
     "worklist-v0/legal/licenses/texts/c77d564d48f13e7ece47d5dcc57102810744828d5f5af5826808a0320de3bb76.txt": "c33959fabde25a1b6161d8e0fdc6fdcea1fc48095fe0bd51043247bfd214287f",
+    "worklist-v0/legal/licenses/texts/c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50.txt": "c7922dccc709c9e19ab6ba970fe00af174229484b05160fb07a3913f4d04cf50",
     "worklist-v0/legal/licenses/texts/c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac.txt": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac",
+    "worklist-v0/legal/licenses/texts/c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f.txt": "c80d927f03db7212ba43a869a383e249c19b40859ff0d9e2e2f968e4fdcf005f",
+    "worklist-v0/legal/licenses/texts/c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72.txt": "c81335fc9b652274df4c3d085ebccbf93bea15ddf627ab491e541f74e1391d72",
+    "worklist-v0/legal/licenses/texts/c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014.txt": "c893d4b3bae4d907a8f95998e9d8c28c4e2eed84d2dc81bd587b431b583c8014",
     "worklist-v0/legal/licenses/texts/cb0eb140cdf42808d7c948e5de07bcf435ee7eb314d9e757ca01bdca97109eb7.txt": "cb0eb140cdf42808d7c948e5de07bcf435ee7eb314d9e757ca01bdca97109eb7",
+    "worklist-v0/legal/licenses/texts/cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7.txt": "cb984f2a057a7447bb1b2c0c0f63dfb3e3bbb5f4dbeb5c4034811f0422c7aef7",
     "worklist-v0/legal/licenses/texts/cbd00cb9ee01aeb107a1f3f5be42371bae780c0c61b49594edf803a6befcc95d.txt": "cbd00cb9ee01aeb107a1f3f5be42371bae780c0c61b49594edf803a6befcc95d",
     "worklist-v0/legal/licenses/texts/cc1dfd4dafa27271e8212cd3b274eeb3f262e40a6fdab36ddc3f9696f706f58b.txt": "cc1dfd4dafa27271e8212cd3b274eeb3f262e40a6fdab36ddc3f9696f706f58b",
     "worklist-v0/legal/licenses/texts/cc8f87aafbf72a74bafed2a8f6925d8895e1c716b36bd3df7ee0c46be54e87bb.txt": "cc8f87aafbf72a74bafed2a8f6925d8895e1c716b36bd3df7ee0c46be54e87bb",
     "worklist-v0/legal/licenses/texts/cdbc258d13806538e727964c2436a8806e6e2496ccd616224aace6f7bf98dbc1.txt": "cdbc258d13806538e727964c2436a8806e6e2496ccd616224aace6f7bf98dbc1",
     "worklist-v0/legal/licenses/texts/ced58b8497c11bd110c135c64a72aa9cc99f5da462cf3b99a8ad50a5bcee25d7.txt": "2ed957f789f6ddc3447dae4f646207c5d921dd45d7ffbb3010916347324f6510",
+    "worklist-v0/legal/licenses/texts/ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f.txt": "ced6622122ce451cb1ea0c3c3f507a640e2a44c075c04900ddd9fae8acb5369f",
     "worklist-v0/legal/licenses/texts/cfc3f455254c0af0655cc3ff46a41ed644b67599f6043346169d285bf2b3cf3b.txt": "cfc3f455254c0af0655cc3ff46a41ed644b67599f6043346169d285bf2b3cf3b",
     "worklist-v0/legal/licenses/texts/cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
     "worklist-v0/legal/licenses/texts/d06b5d27bbbbe22c36b1fd88406b1208876e2d37d795f5b8eaed951a459a3111.txt": "d06b5d27bbbbe22c36b1fd88406b1208876e2d37d795f5b8eaed951a459a3111",
     "worklist-v0/legal/licenses/texts/d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9.txt": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+    "worklist-v0/legal/licenses/texts/d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5.txt": "d0dbf3845e3bc3ce677a16d8836374da55327d21a6c33f2d715ba538ad9a2bc5",
     "worklist-v0/legal/licenses/texts/d11323827fa4edeaafc437cc5b91b6971b335f0127efeeb42bf5122fe8657e8f.txt": "d11323827fa4edeaafc437cc5b91b6971b335f0127efeeb42bf5122fe8657e8f",
     "worklist-v0/legal/licenses/texts/d1933b0432a1e0f27baf23df3b655330b0a6571bd846d4bfc6f1902cbe0ffb16.txt": "d1933b0432a1e0f27baf23df3b655330b0a6571bd846d4bfc6f1902cbe0ffb16",
     "worklist-v0/legal/licenses/texts/d3a724e2ed749f172ff70b62a1d0631b7d4b0ea273782365a3464d4e2d6b6dbd.txt": "d3a724e2ed749f172ff70b62a1d0631b7d4b0ea273782365a3464d4e2d6b6dbd",
+    "worklist-v0/legal/licenses/texts/d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419.txt": "d422a10298f0c7d48f11e647c4093d7bbaf6d9f5d40e6972fc46f96b98e84419",
     "worklist-v0/legal/licenses/texts/d72dea1a8cdf3f4dfa2f594253d0c5b37baefc76e806f5ecb0e426393edcd505.txt": "d72dea1a8cdf3f4dfa2f594253d0c5b37baefc76e806f5ecb0e426393edcd505",
     "worklist-v0/legal/licenses/texts/d90bf0a089da4cf43d644ed240a0b3825dcdb705e64e38371d56995a4cc9e4c5.txt": "d90bf0a089da4cf43d644ed240a0b3825dcdb705e64e38371d56995a4cc9e4c5",
     "worklist-v0/legal/licenses/texts/db9ba183d4cbfbaf6c27db2effddbb84b46340c33ed32a066bc0b144a3ea1298.txt": "db9ba183d4cbfbaf6c27db2effddbb84b46340c33ed32a066bc0b144a3ea1298",
@@ -9640,8 +10440,10 @@
     "worklist-v0/legal/licenses/texts/de4d1f2d2ad5ad0cfd1657a106476b31cb5db5ef9d1ff842b237c0c81f0c8a23.txt": "de4d1f2d2ad5ad0cfd1657a106476b31cb5db5ef9d1ff842b237c0c81f0c8a23",
     "worklist-v0/legal/licenses/texts/dffec71d93f273d2af7b54c6c7e7e70b3289c632ec0d7253210ec21ac336d5ac.txt": "dffec71d93f273d2af7b54c6c7e7e70b3289c632ec0d7253210ec21ac336d5ac",
     "worklist-v0/legal/licenses/texts/e05b1eaf5b5f99b7ad75cd1f38858ff9a311780b97715ead67936d60bf96aa7e.txt": "e05b1eaf5b5f99b7ad75cd1f38858ff9a311780b97715ead67936d60bf96aa7e",
+    "worklist-v0/legal/licenses/texts/e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423.txt": "e1963c9958b93bc2578b34f8ae22cfe205e8c0e7d5be7235cfdbdefbf92a5423",
     "worklist-v0/legal/licenses/texts/e33b7bc13a0e5ea9ed6718e12e99a5b0b60276162f0195aa7f342397f4b0155d.txt": "e33b7bc13a0e5ea9ed6718e12e99a5b0b60276162f0195aa7f342397f4b0155d",
     "worklist-v0/legal/licenses/texts/e3b44af066615de2ea48d18d852d0762f18c0b2efcea714fa48a6f729d405b85.txt": "e3b44af066615de2ea48d18d852d0762f18c0b2efcea714fa48a6f729d405b85",
+    "worklist-v0/legal/licenses/texts/e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b.txt": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
     "worklist-v0/legal/licenses/texts/e5c1364118b39fa98b959138ce4aa4d0e68cfbee12d115e69730579fecb1dc1b.txt": "e5c1364118b39fa98b959138ce4aa4d0e68cfbee12d115e69730579fecb1dc1b",
     "worklist-v0/legal/licenses/texts/e70ff771504ba41f2be55de812a017ff46433d7a250c862e38fc419159e44500.txt": "e70ff771504ba41f2be55de812a017ff46433d7a250c862e38fc419159e44500",
     "worklist-v0/legal/licenses/texts/e7d1fee7347ffddccc5fd03327ffdb50f8c112be0d5016d62388a92c4ae6e7a9.txt": "e7d1fee7347ffddccc5fd03327ffdb50f8c112be0d5016d62388a92c4ae6e7a9",
@@ -9649,18 +10451,26 @@
     "worklist-v0/legal/licenses/texts/e85e131fa4ed25538ff1f4962ced1fb6f68b079bd9164a790597a0f30b8fd030.txt": "e85e131fa4ed25538ff1f4962ced1fb6f68b079bd9164a790597a0f30b8fd030",
     "worklist-v0/legal/licenses/texts/e8734448285a2dd773d40136ed5d5e8163a70701dd540cdc796cfca232f67d55.txt": "e8734448285a2dd773d40136ed5d5e8163a70701dd540cdc796cfca232f67d55",
     "worklist-v0/legal/licenses/texts/e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7.txt": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+    "worklist-v0/legal/licenses/texts/ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d.txt": "ea07fe80944195c7c6370303afd57999fb5df54795d3a364a4f2420d4a8f584d",
     "worklist-v0/legal/licenses/texts/ea5f44ca6a3332301d59e13740e6a1bf3f9b69ac358b26fd473716cd1694a199.txt": "ea5f44ca6a3332301d59e13740e6a1bf3f9b69ac358b26fd473716cd1694a199",
     "worklist-v0/legal/licenses/texts/eb0bff8faaba4581e0f09c962e0f795f1f8810191c9d616f3f66f36be4b3a5dc.txt": "ab27d7574bc6d292302b0b49c2e1ad6f0d88031822dce486257c085c7d83133c",
     "worklist-v0/legal/licenses/texts/ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54.txt": "ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54",
     "worklist-v0/legal/licenses/texts/f0ffe1359ba08038bb99f194c80fbb4f2aae216e749e97b2cd6b006d1861e27b.txt": "f0ffe1359ba08038bb99f194c80fbb4f2aae216e749e97b2cd6b006d1861e27b",
+    "worklist-v0/legal/licenses/texts/f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df.txt": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+    "worklist-v0/legal/licenses/texts/f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194.txt": "f36ecd7d28dc3c49854d3908a3824696972aed34f5ffe426174f35fb03c5f194",
+    "worklist-v0/legal/licenses/texts/f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25.txt": "f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25",
     "worklist-v0/legal/licenses/texts/f4f7c12d230ac07c36bfc536f032a2a7d50f3c6a9f401ab0142d89e79a967b7e.txt": "f4f7c12d230ac07c36bfc536f032a2a7d50f3c6a9f401ab0142d89e79a967b7e",
     "worklist-v0/legal/licenses/texts/f655e6291356ec0de7a8f0e69f294961a2cea86678ec94588be1e6a492e278ab.txt": "f655e6291356ec0de7a8f0e69f294961a2cea86678ec94588be1e6a492e278ab",
     "worklist-v0/legal/licenses/texts/f65c5d9f22a317b2a10803bd1868461ce6499c2ed7217bc80c0cc772a748789c.txt": "f65c5d9f22a317b2a10803bd1868461ce6499c2ed7217bc80c0cc772a748789c",
+    "worklist-v0/legal/licenses/texts/f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57.txt": "f68836c7d87856a6e044002411b0071a05f9636457e63f6e77a6efe9beb5dd57",
     "worklist-v0/legal/licenses/texts/f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc.txt": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc",
+    "worklist-v0/legal/licenses/texts/fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca.txt": "fa6b3c8322d8c07b2bc9cbd59660a97223cfd32fdc10297f4f9e390398ac4dca",
     "worklist-v0/legal/licenses/texts/fa8f92d7a321046b6a9cd89d4d069f1fafb00728de04459536eafeb8daf78193.txt": "fa8f92d7a321046b6a9cd89d4d069f1fafb00728de04459536eafeb8daf78193",
     "worklist-v0/legal/licenses/texts/fb47567884ee5dddc084a93db85d940f0874dbb4a1863820c6c317a3a83e62b1.txt": "fb47567884ee5dddc084a93db85d940f0874dbb4a1863820c6c317a3a83e62b1",
+    "worklist-v0/legal/licenses/texts/fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0.txt": "fb981668c18a279e285fc4d83fba1e836cc84dd4daa73c9697d3cfd2d8aca6e0",
     "worklist-v0/legal/licenses/texts/fd3a263fe19ed8faa9068b43abaebafc02c77897b0c6fc09abc04bb592e5f16e.txt": "fd3a263fe19ed8faa9068b43abaebafc02c77897b0c6fc09abc04bb592e5f16e",
     "worklist-v0/legal/licenses/texts/fd7e4aae7e7b05f217bcf2d02322825c360e66c52c4c2f1b28d784d6297a1c23.txt": "fd7e4aae7e7b05f217bcf2d02322825c360e66c52c4c2f1b28d784d6297a1c23",
+    "worklist-v0/legal/licenses/texts/fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12.txt": "fe6763cc0be44af0bc3105beb4b52c292b3ade5c43a17251e64890e4ffdf2d12",
     "worklist-v0/legal/licenses/texts/fe99d9a94ec7edc64a9767701f830f66e08239b000d653a359d66e640289ed0c.txt": "fe99d9a94ec7edc64a9767701f830f66e08239b000d653a359d66e640289ed0c",
     "worklist-v0/legal/licenses/texts/fe9a7f8b8afc8cea446e8d65a3bbf9bbe278d96c35320b43e57c47f26e447619.txt": "fe9a7f8b8afc8cea446e8d65a3bbf9bbe278d96c35320b43e57c47f26e447619",
     "worklist-v0/legal/licenses/texts/fecc38b5e10d889686b3862e7ade17e8b3e5c94b24b7256b05a354d8524b3274.txt": "8a4b6c44eebfb026d23719a348145a661a555568dbfdc11618ff2d0dd9306b00",
