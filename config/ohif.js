@@ -5976,6 +5976,8 @@ window.KinLanguageTerms = {
     ["Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.", "A Key Image cannot be made in Tile view. Press it in Stack view.", "m"],
     ["Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.", "A Key Image cannot be made in Unfolded view. Press it in Folded (Cine) view.", "m"],
     ["Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a slab is shown. Set Slab Thickness to 1 slice, then press it.", "m"],
+    ["MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a MIP, MinIP, Average or thick slab is shown. Switch to MPR (default thickness), then press it.", "m"],
+    ["Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요.", "Does not move to the original image while a slab is shown. Set Slab Thickness to 1 slice, then press again.", "m"],
     ["이 {0}를 표시하지 못했습니다.", "Could not display this {0}.", "m"],
     ["{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", "{0}This viewer does not support displaying {1} yet. The original image series can still be opened.", "m"],
     ["{0}{1} 파일을 읽지 못했습니다{2}. 시리즈를 다시 열어 보고, 계속되면 관리자에게 문의하세요.", "{0}Could not read the {1} file{2}. Reopen the series, and if this continues, contact your administrator.", "m"],
@@ -10752,7 +10754,7 @@ function kinViewerNumberOnArrival(v, index, from, arrived) {
 // after an await is re-taken against the current session and never against a copy. The result is
 // { ok: true, highlighted, annotation } or { ok: false, reason }; it never throws, never changes the
 // URL study set and never reslices a volume viewport (3D cursor stays off).
-const KIN_NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'frame-missing', 'superseded', 'tool-missing'];
+const KIN_NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'slab', 'frame-missing', 'superseded', 'tool-missing'];
 async function kinViewerNavigateTo(env, target) {
   const refusal = reason => ({ ok: false, reason });
   const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)+$/.test(s);
@@ -10773,6 +10775,8 @@ async function kinViewerNavigateTo(env, target) {
   } catch (_) { return refusal('tool-missing'); }
   if (sets.length !== 1) return refusal('series-missing');
   const viewportId = env.services.viewportGridService.getActiveViewportId();
+  // A cell drawing a slab (the mean of several slices) would not show the frame even on arrival: refuse before moving.
+  if (env.slab?.(viewportId)) return refusal('slab');
   const stack = v => v && v.type === 'stack' && typeof v.getImageIds === 'function' && typeof v.setImageIdIndex === 'function';
   const first = env.viewport();
   // A volume/MPR viewport has no stack image list to index: refuse instead of reslicing or retargeting.
@@ -11888,15 +11892,31 @@ function kinCreateViewerHistory() {
     //   while the image before stays on the screen; the loaded image is drawn a moment later still. So the image the cell
     //   holds must be the one named and the cell must have finished drawing it. Laid out as tiles (Navigate: Tile, Unfolded)
     //   the named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
-    //   A video cell names the frame of its playing position: not yet shown while it seeks or before it has a frame.
-    //   A volume cell (MPR) has no loaded-image read and names the original slice it shows, as before.
+    //   A paused video cell names the frame nearest its position (round(time × fps)) while the screen shows the frame the
+    //   position is in (floor): in the second half of a frame the two differ, so the cell is first put at the start of the
+    //   frame on the screen (the picture stays) and the reader presses again. Nothing is shown yet while it seeks or before
+    //   it has a frame. (A playing video names a frame range, which is no Key Image.)
+    //   A volume cell (MPR) has no loaded-image read and names the original slice it shows, as before; but a projection
+    //   (MIP, MinIP, Average or a thick slab) draws several slices, not that one.
     function keyImageNotShown(v, r) {
+      const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
       if (!v) return '';
       if (v.type === 'video') {
         const video = v.videoElement;
-        return video && (video.seeking || !(video.readyState >= 2)) ? kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.") : '';
+        if (!video) return '';
+        if (video.seeking || !(video.readyState >= 2)) return NOT_SHOWN;
+        const at = video.currentTime * v.fps;
+        if (Number.isFinite(at) && at - Math.floor(at) >= 0.5 && Math.ceil(at) - at > 1e-6) {
+          try { Promise.resolve(v.setFrameNumber(Math.floor(at) + 1)).catch(() => {}); } catch (_) {}
+          return NOT_SHOWN;
+        }
+        return '';
       }
-      if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') return '';
+      if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') {
+        let blend = 0, thickness = 0;
+        try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.() ?? 0; thickness = 2 * (v.getSlabThickness?.() ?? 0); } catch (_) {}
+        return blend !== 0 || thickness > 0.2 + 1e-6 ? kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.") : '';
+      }
       let laid = null, slab = false;
       try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) {}
       try { slab = window.kinMgSlab?.on?.(v.id) === true; } catch (_) {}
@@ -11904,8 +11924,7 @@ function kinCreateViewerHistory() {
       if (laid) return kinText("Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.");
       if (slab) return kinText("Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.");
       const drawn = v.viewportStatus === undefined || v.viewportStatus === (cs.Enums?.ViewportStatus?.RENDERED || 'rendered');
-      return drawn && matches(reference(kinViewerShownImageId(v)), r) ? '' :
-        kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
+      return drawn && matches(reference(kinViewerShownImageId(v)), r) ? '' : NOT_SHOWN;
     }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
@@ -12201,7 +12220,7 @@ function kinCreateViewerHistory() {
     // stops it. Whatever the end, the opening hold is let go (Auto Save View may then save the view as the user leaves it).
     let entryTried = false;
     const ENTRY_REASON = { 'series-missing': kinText("이 창에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
-      'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다."), 'viewport-missing': kinText("그 검사를 보이는 영상 칸이 없습니다."),
+      'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다."), slab: kinText("Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요."), 'viewport-missing': kinText("그 검사를 보이는 영상 칸이 없습니다."),
       'viewport-ambiguous': kinText("그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다."), timeout: kinText("15초 안에 영상이 준비되지 않았습니다."),
       superseded: kinText("다른 영상 칸을 골라 이동을 멈췄습니다."), ended: kinText("로그인이 종료되었습니다.") };
     const ENTRY_MARK = { shown: kinText("표식을 강조했습니다."), key: kinText("키 이미지입니다."), missing: kinText("그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제)."),
@@ -12922,7 +12941,9 @@ function kinCreateViewerHistory() {
     const navigationEnv = { services, viewport, reference, matches, hydrate, highlight,
       ended: () => ended, scope: () => scope, busy: () => suspended || held(),
       generation: () => generation, valid, navigation: () => navigation, beginNavigation: () => ++navigation,
-      delay: () => new Promise(resolve => setTimeout(resolve, 100)) };
+      delay: () => new Promise(resolve => setTimeout(resolve, 100)),
+      // A breast tomosynthesis cell drawing a slab shows the mean of several slices, never the one saved image.
+      slab: id => { try { return window.kinMgSlab?.on?.(id) === true; } catch (_) { return false; } } };
     const navigateTo = target => kinViewerNavigateTo(navigationEnv, target);
     const activateStudy = study => kinViewerActivateStudy(navigationEnv, study);
     // The active viewport and the frame it shows: the Findings section's arrival proof after an activation.
@@ -12937,7 +12958,7 @@ function kinCreateViewerHistory() {
       const outcome = await navigateTo({ studyUid: scope, seriesUid: e.draft.seriesUid, sopUid: e.draft.sopUid, frame: e.draft.frame });
       if (outcome.ok || !valid(generation) || entries.get(e.id) !== e) return;
       const message = { 'series-missing': kinText("현재 검사에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
-        'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요.") }[outcome.reason];
+        'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요."), slab: kinText("Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요.") }[outcome.reason];
       if (message) { e.message = message; row(e); }
     }
     // Read-only view of the saved heads for the Findings section: only saved rows are linkable and

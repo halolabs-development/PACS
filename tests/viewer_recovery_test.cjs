@@ -270,14 +270,39 @@ test('Add Key Image makes nothing in Tile, Unfolded or Slab views, which do not 
   assert.equal((await saveKey(h, 'stack view', 's')).frame, 1);
 });
 
-test('Add Key Image in a paused video cell keeps its frame, and makes nothing while the video seeks', async () => {
+test('Add Key Image in a paused video cell keeps the frame on the screen, and makes nothing while the video seeks', async () => {
   const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
   const before = sections(h);
-  h.volumeCell(); h.viewport.type = 'video'; h.viewport.videoElement = { seeking: true, readyState: 4 }; h.frames(3, 0);
+  // The pinned video cell: 30 frames a second; it names the frame nearest its position (round) and shows the frame the
+  // position is in (floor); setFrameNumber(n) puts the position at the start of frame n.
+  const video = { seeking: true, readyState: 4, currentTime: 2 / 30 };
+  const moves = [];
+  h.volumeCell(); Object.assign(h.viewport, { type: 'video', videoElement: video, fps: 30,
+    getCurrentImageId: () => `/studies/1/series/1.2/instances/1.3/frames/${Math.round(video.currentTime * 30) + 1}`,
+    setFrameNumber: async n => { moves.push(n); video.currentTime = (n - 1) / 30; } });
   await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
-  h.viewport.videoElement.seeking = false;
+  // Paused in the second half of frame 3 (it names frame 4): the cell goes to the start of frame 3 and nothing is made.
+  video.seeking = false; video.currentTime = 2.6 / 30;
+  await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.deepEqual(moves, [3]);
   assert.equal((await saveKey(h, 'video frame', 'v')).frame, 3);
+  // In the first half of a frame the frame named is the frame shown.
+  assert.equal(moves.length, 1);
+});
+
+test('Add Key Image makes nothing in a volume cell drawing a projection (MIP, MinIP, Average or a thick slab)', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  let blend = 1, half = 5;
+  h.frames(4, 4); h.volumeCell();
+  Object.assign(h.viewport, { getActors: () => [{ actor: { getMapper: () => ({ getBlendMode: () => blend }) } }], getSlabThickness: () => half });
+  for (const [b, t] of [[1, 5], [3, 5], [0, 5]]) {
+    blend = b; half = t; await h.click('Add Key Image');
+    assert.equal(sections(h), before); assert.match(h.text(), /MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다/);
+  }
+  blend = 0; half = 0.05;
+  assert.equal((await saveKey(h, 'thin mpr', 'p')).frame, 4);
 });
 
 test('Add Key Image in a volume cell (MPR, no loaded-image read) names its current original slice', async () => {

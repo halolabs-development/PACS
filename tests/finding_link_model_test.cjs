@@ -94,6 +94,14 @@ test('navigation arrives at the exact frame, hydrates, highlights the source and
   assert.deepEqual(plain, { ok: true, highlighted: false, annotation: 'none' });
 });
 
+test('a cell drawing a breast tomosynthesis slab is refused before it is moved (the slab would hide the saved frame)', async () => {
+  const kit = harness(); kit.env.slab = id => id === 'vp-1';
+  assert.deepEqual(await kit.navigate(target()), { ok: false, reason: 'slab' });
+  assert.deepEqual(kit.calls, []);
+  kit.env.slab = () => false;
+  assert.deepEqual(await kit.navigate(target()), { ok: true, highlighted: true, annotation: 'shown' });
+});
+
 test('refusals before any side effect: invalid target, ended session, other study, busy panel', async () => {
   for (const [bad, reason] of [[null, 'invalid'], [target({ frame: 0 }), 'invalid'], [target({ sopUid: 'x' }), 'invalid'], [target({ studyUid: undefined }), 'invalid'], [target({ studyUid: B }), 'scope']]) {
     const kit = harness();
