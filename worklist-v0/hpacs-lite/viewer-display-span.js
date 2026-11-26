@@ -141,8 +141,8 @@ window.KinViewerDisplaySpan = (() => {
         near(cell.x, (index % cols) / cols) && near(cell.width, 1 / cols) && near(cell.y, Math.floor(index / cols) / rows) && near(cell.height, 1 / rows));
     }
     // An applied Hanging Protocol with monitors stands: its rows are on each monitor's part of the window (placed) and they
-    // cover the grid's edges there. A plain grid that arrives afterwards - a protocol of another patient, a prior opened in
-    // a new grid, a layout the stock command built (monitorPick did not take it) - is laid on the monitors' image areas
+    // cover the grid's edges there. A plain grid that arrives afterwards - a prior opened in a new grid, a saved plain
+    // layout put back, a layout the stock command built (monitorPick did not take it) - is laid on the monitors' image areas
     // the rule measured (placed.areas; KinViewerMonitorPlan.fit, the rule's own way of laying cells): each monitor takes
     // half of its columns, none under a row or across the display edge. One column is first made one cell per monitor
     // (divide, with all its conditions), and that grid is then laid the same way. Laid only
@@ -533,8 +533,8 @@ window.KinViewerDisplaySpan = (() => {
       if (ended) return;
       // An applied Hanging Protocol with monitors has split the grid at the display edge and placed the toolbar and the
       // strip on each monitor itself (viewer-features-monitors.js): its split is left as it made it, a layout picked from
-      // the Layout menu afterwards is laid on its monitors by monitorPick, a plain grid that arrives otherwise (another
-      // patient's protocol, a prior opened in a new grid) by fitMonitors, and those two rows are copied where it says. The
+      // the Layout menu afterwards is laid on its monitors by monitorPick, a plain grid that arrives otherwise (a prior
+      // opened in a new grid, a saved plain layout) by fitMonitors, and those two rows are copied where it says. The
       // patient tabs, which it does not place, keep following Second Display.
       const placed = window.KinViewerMonitorRows || null;
       const list = seams();

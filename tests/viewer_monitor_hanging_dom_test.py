@@ -1055,50 +1055,58 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
         """Cells as a set of (x, y, width, height, series, frame), rounded: where each series stands, whatever the order."""
         return sorted(tuple(round(v, 4) if isinstance(v, float) else v for v in cell) for cell in cells)
 
+    # A patient switch takes the rule's rows away in the shipped viewer (its modules are made anew): `gone` does so
+    # while the other patient is shown.
+    GONE = '() => synRows(false)'
+
+    @staticmethod
+    def where(cells, edge=0.5):
+        """Each cell as (monitor, its row there, its column there, series, frame), read from the rectangles: which series
+        stands where, whatever the rectangles' exact sizes."""
+        side = lambda cell: int(cell[0] + cell[2] / 2 > edge)
+        rank = lambda cell, axis: sorted({round(other[axis], 4) for other in cells if side(other) == side(cell)}).index(round(cell[axis], 4))
+        return sorted((side(cell), rank(cell, 1), rank(cell, 0), cell[4], cell[5]) for cell in cells)
+
     def test_01_a_rule_whose_monitors_hold_different_rows_comes_back_cell_for_cell(self):
         # Two rows on monitor 1, one cell on monitor 2: three cells on a 2 x 2 base. Before, a screen that was no full
-        # grid was not kept at all: the patient came back as first opened, every cell's series and frame lost.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')])
+        # grid was not kept at all: the patient came back as first opened, every cell's series and frame lost. It comes
+        # back laid on the two sides of the display edge: every cell on its monitor, in its row, on its series and frame.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], between=self.GONE)
         self.assertEqual(3, len(before))
         self.assertIsNotNone(asked, 'the tab asked for no layout: its screen was not kept')
         self.assertEqual([2, 2], [asked['rows'], asked['cols']])
-        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        self.assertEqual(self.where(before), self.where(asked['cells']))
+        self.assertEqual(sorted([(0, 0, 0.5, 0.5), (0, 0.5, 0.5, 0.5), (0.5, 0, 0.5, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
         self.assertEqual(3, len(set(asked['keys'])))
+        # Were the rule's rows standing, the cells would come back on its image areas: the very rectangles they had.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')])
+        self.assertEqual(self.placed(before), self.placed(asked['cells']))
 
     def test_02_different_columns_and_a_monitor_whose_images_start_higher(self):
         # One column on monitor 1, two on monitor 2 (2 x 3 base); monitor 2 with no strip and its toolbar at the bottom,
         # so its cells stand higher and are listed first.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x2', thumbs='none', toolbar='bottom')])
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x2', thumbs='none', toolbar='bottom')], between=self.GONE)
         self.assertEqual(6, len(before))
         self.assertLess(before[0][1], min(cell[1] for cell in before if cell[0] < 0.5))
         self.assertEqual([2, 3], [asked['rows'], asked['cols']])
-        self.assertEqual(self.placed(before), self.placed(asked['cells']))
-        # One cell on each monitor: the left monitor's series comes back on the left.
-        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')])
-        self.assertEqual(self.placed(before), self.placed(asked['cells']))
+        self.assertEqual(self.where(before), self.where(asked['cells']))
+        # One cell on each monitor: the plain 1 x 2, the left monitor's series on the left.
+        before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], between=self.GONE)
+        self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.where(before), self.where(asked['cells']))
+        # Two rows of two on each monitor: the plain 2 x 4, row by row and monitor by monitor.
+        before, asked, _ = self.round_trip([monitor('2x2'), monitor('2x2', thumbs='none', toolbar='bottom')], between=self.GONE)
+        self.assertEqual({'rows': 2, 'cols': 4, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.where(before), self.where(asked['cells']))
 
-    def test_03_the_rows_taken_back_meanwhile_each_cell_still_comes_back_on_its_monitor(self):
+    def test_03_the_rows_taken_back_before_the_tab_is_left_each_cell_still_comes_back_on_its_monitor(self):
         # The rows were taken back before the tab was left (the window resized): the cells still stand where the rule put
-        # them, told apart by the display edge. Monitors holding the same grid come back as the plain grid of their
-        # columns, row by row and monitor by monitor - which the window then puts on the display edge as any plain grid.
-        monitors = [monitor('2x1'), monitor('2x1', thumbs='none', toolbar='bottom')]
-        before, asked, _ = self.round_trip(monitors, rows=False)
-        self.assertIsNone(asked['keys'])
-        self.assertEqual([2, 2], [asked['rows'], asked['cols']])
-        side = lambda cells: sorted((cell[0] >= 0.5, round(cell[1] * 2) if cell[1] in (0, 0.5) else None, cell[4], cell[5]) for cell in cells)
-        rows = {True: sorted({cell[1] for cell in before if cell[0] >= 0.5}), False: sorted({cell[1] for cell in before if cell[0] < 0.5})}
-        was = sorted((cell[0] >= 0.5, rows[cell[0] >= 0.5].index(cell[1]), cell[4], cell[5]) for cell in before)
-        self.assertEqual(was, side(asked['cells']))
-        # Taken back while the other patient was shown, monitors holding different grids: laid on the two sides of the
-        # display edge, every cell on its monitor and row.
-        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], between='() => synRows(false)')
-        self.assertEqual(3, len(asked['cells']))
-        self.assertEqual(sorted([(0, 0, 0.5, 0.5), (0, 0.5, 0.5, 0.5), (0.5, 0, 0.5, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
-        left = lambda cells: sorted((cell[4], cell[5]) for cell in cells if cell[0] < 0.5)
-        self.assertEqual(left(before), left(asked['cells']))
-        top = lambda cells: min((cell for cell in cells if cell[0] < 0.5), key=lambda cell: cell[1])[4]
-        self.assertEqual(top(before), top(asked['cells']))
-
+        # them and are read against the areas it had measured.
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('2x1', thumbs='none', toolbar='bottom')], rows=False)
+        self.assertEqual({'rows': 2, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
+        self.assertEqual(self.where(before), self.where(asked['cells']))
+        before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False)
+        self.assertEqual(self.where(before), self.where(asked['cells']))
     def test_04_a_plain_grid_and_a_screen_no_rule_left_are_kept_as_before(self):
         # No rule: a plain 2 x 2 comes back as its rows and columns, cell by cell, with no rectangles of the tab's own.
         before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1')], rows=False, registered=False, plain=True, left=False)
@@ -1115,12 +1123,11 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
         before, asked, _ = self.round_trip([monitor('2x1'), monitor('1x1')], rows=False, between='() => { window.synEdges = [0.3]; }')
         self.assertIsNotNone(asked)
         self.assertEqual(sorted([(0, 0, 0.3, 0.5), (0, 0.5, 0.3, 0.5), (0.3, 0, 0.7, 1)]), sorted(tuple(round(v, 4) for v in cell[:4]) for cell in asked['cells']))
-        left = lambda cells, edge: sorted((cell[4], cell[5]) for cell in cells if cell[0] < edge)
-        self.assertEqual(left(before, 0.5), left(asked['cells'], 0.3))
+        self.assertEqual(self.where(before), self.where(asked['cells'], 0.3))
         # Monitors holding the same grid: the plain grid of their columns, each monitor's series on its side.
         before, asked, _ = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], rows=False, between='() => { window.synEdges = [0.3]; }')
         self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: asked[key] for key in ('rows', 'cols', 'keys')})
-        self.assertEqual([cell[4:] for cell in sorted(before)], [cell[4:] for cell in sorted(asked['cells'])])
+        self.assertEqual(self.where(before), self.where(asked['cells']))
 
 if __name__ == '__main__':
     unittest.main()

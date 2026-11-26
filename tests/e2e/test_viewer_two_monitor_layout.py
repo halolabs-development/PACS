@@ -719,8 +719,14 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         x, y = self.cell_centre(viewer, high)
         viewer.mouse.dblclick(x, y)
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
-        # While enlarged: monitor 2 shows the cell that was clicked, on its image; monitor 1's two cells are as they were.
-        self.comes_back(viewer, [before[0], before[1], [2, 0, before[2][2]]])
+        # While enlarged: monitor 2 shows one cell, of its own series; monitor 1's two cells stand in their rows with
+        # monitor 1's series. (Which image of its series a cell shows while one is enlarged is the enlarge's own matter:
+        # it is put back by the second double click, checked below.)
+        self.until(viewer, DRAWN)
+        viewer.wait_for_timeout(1500)
+        series = lambda image: image.split('/series/')[1].split('/')[0] if image else None
+        self.assertNotEqual(series(before[0][2]), series(before[2][2]))
+        self.assertEqual([[c[0], c[1], series(c[2])] for c in before[:3]], [[c[0], c[1], series(c[2])] for c in viewer.evaluate(SIDES)])
         viewer.mouse.dblclick(x, y)
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
         self.comes_back(viewer, before)
