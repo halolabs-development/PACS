@@ -224,6 +224,11 @@ class S9RoleSweepE2E(StudyAccessE2E):
         self.assertEqual(approved.value.status, 200)
         self.assertEqual(approved.value.json()['institution'], 'kin-center')
         self.assertEqual(set(approved.value.json()['roles']), {'clinician', 'radiologist'})
+        # Save answers the PATCH and then reads the list again (admin.html mutate -> loadUsers); until that read is drawn
+        # the row still carries the version the dialog opened on, and its Activate is rightly refused as stale (409).
+        # A reader acts on the redrawn row: the approved member's row offers Revoke Approval.
+        expect(self.member_row(receiving, actor).get_by_role(
+            'button', name='Revoke Approval', exact=True)).to_be_visible()
         with receiving.expect_response(lambda response:
                 urlsplit(response.url).path == path and response.request.method == 'PATCH') as activated:
             self.member_row(receiving, actor).get_by_role('button', name='Activate', exact=True).click()

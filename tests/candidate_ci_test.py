@@ -102,6 +102,9 @@ class CandidateCiTests(unittest.TestCase):
             out, selected = candidate.configure(candidate.TOOLS_ROOT, FakeCi, FakeRunner(), plans)
             profile = FakeCi.PROFILES["measurements"]
             self.assertEqual(profile["suite_timeout"], 540)
+            # Only the invariants suite has its own measured allowance; every other suite keeps 540.
+            self.assertEqual(profile["suite_budgets"], {"candidate-invariants": 1080})
+            self.assertEqual(candidate.CANDIDATE_DEADLINE_SECONDS, 1500 + 2100 + 180 + 2 * 540 + 36 + 22 + 540)
             self.assertEqual(len(profile["suites"]), len(candidate.BASE) + len(candidate.FLOWS))
             command, timeout = FakeCi.guarded_profile_run(profile, *profile["suites"][len(candidate.BASE)], 1000)
             self.assertEqual(Path(command[1]), candidate.TOOLS_ROOT / "scripts/run-tests.py")
