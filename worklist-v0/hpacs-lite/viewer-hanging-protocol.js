@@ -296,7 +296,10 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
       const ruleCells=result.rule.layout.cells;
       if(!split)return {rows:result.rule.layout.rows,cols:result.rule.layout.cols,rects:null,ruleCells:ruleCells.map((_,index)=>index),
         cells:[...result.cells],planes:ruleCells.map(plane)};
-      return {rows:split.numRows,cols:split.numCols,rects:split.rects.map(r=>({...r})),ruleCells:[...split.cells],
+      // positions: each rectangle's place key (KinViewerMonitorPlan.split), so that the native grid does not key it by its
+      // rectangle rounded to the base grid (two cells could share one key: a later Layout pick by the stock command, which
+      // keeps the cell of each key, would drop one).
+      return {rows:split.numRows,cols:split.numCols,rects:split.rects.map(r=>({...r})),positions:Array.isArray(split.positions)&&split.positions.length===split.rects.length?[...split.positions]:null,ruleCells:[...split.cells],
         cells:split.cells.map(index=>index===null?null:result.cells[index]),planes:split.cells.map(index=>index===null?null:plane(ruleCells[index]))};
     }
     const PLANE_AXIS={axial:2,sagittal:0,coronal:1};
@@ -489,7 +492,7 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
         const budget=planeBudget(shown);if(budget.timeout!==10000){clearTimeout(timer);timer=setTimeout(()=>request.abort(),budget.timeout);}
         let targetFingerprint=null,nativeSettled=false;
         try{const pending=Promise.resolve(grid.setLayout({numRows:shown.rows,numCols:shown.cols,activeViewportId:ids[Math.max(0,active)],isHangingProtocolLayout:false,
-          ...(shown.rects?{layoutOptions:shown.rects.map(r=>({...r}))}:{}),
+          ...(shown.rects?{layoutOptions:shown.rects.map((r,i)=>shown.positions?{...r,positionId:shown.positions[i]}:{...r})}:{}),
           findOrCreateViewport:index=>viewportRequest(ids[index],shown.cells[index]?[shown.cells[index].displaySetInstanceUID]:[],planes[index])}));
           pending.then(()=>nativeSettled=true,()=>nativeSettled=true);
           if(targetIsCurrent(ids,shown))targetFingerprint=interactionFingerprint();await boundedNative(pending,{signal:request.signal});if(!targetIsCurrent(ids,shown))await waitForTarget(ids,shown,request.signal,beforeGeneration);if(targetFingerprint===null)targetFingerprint=interactionFingerprint();
@@ -508,6 +511,9 @@ function kinError(t, ...p) { return Object.assign(new Error(kinText(t, ...p)), {
         // The split geometry on screen, apart from which rule is applied: a Job saves it (version 16) and a later apply
         // rolls back to it even after the series in its cells were changed (viewer-volume-job.js).
         if(shown.rects)root.kinViewerSplitRects=shown.rects.map(r=>({...r}));
+        // With them, the monitors' image areas they were laid on (viewer-features-monitors.js lay): a patient tab reads the
+        // cells against these for as long as they stand in those rectangles.
+        if(shown.rects)root.kinViewerSplitAreas=Array.isArray(prepared?.split?.areas)?{rects:root.kinViewerSplitRects,areas:prepared.split.areas.map(area=>({...area}))}:null;
         // The planes on screen are now this panel's own (ownedPlanes), not the ones a Job restored.
         root.kinViewerSplitPlanes=null;
         appliedCursor={scope:result.scope,ruleId:result.rule.id};appliedFingerprint=navigationFingerprint();appliedName=result.rule.name;appliedScope=result.scope;

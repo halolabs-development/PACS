@@ -310,8 +310,11 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       const rows = layout.numRows, cols = layout.numCols;
       if (layout.layoutType !== 'grid' || !Number.isInteger(rows) || !Number.isInteger(cols)) return null;
       // A split a Hanging Protocol or a saved Job registered (window.kinViewerSplitRects) has its own rectangles, which
-      // the restore asks for again; any other grid is the uniform one of its rows and columns.
-      const split = !uniformGrid(rows, cols, views) && registeredSplit(rows, cols, views, splitRects()) ? views.map(view => rect(view.x, view.y, view.width, view.height)) : null;
+      // the restore asks for again, each with the place key (positionId) its cell had - the place in the plain grid it
+      // stands for, which a later Layout pick and a patient tab go by; any other grid is the uniform one of its rows and
+      // columns.
+      const split = !uniformGrid(rows, cols, views) && registeredSplit(rows, cols, views, splitRects())
+        ? views.map(view => ({ ...rect(view.x, view.y, view.width, view.height), ...(typeof view.positionId === 'string' && view.positionId ? { positionId: view.positionId } : {}) })) : null;
       if (!split && views.length !== rows * cols) return null;
       return { rows, cols, active: state.activeViewportId, cells: views.map(cellOf), signature: layoutSignature(), options: split };
     }
