@@ -30,11 +30,11 @@ window.KinProductInfoData = {
    "href": null,
    "id": "manufacturer.name",
    "label": "Manufacturer Name",
-   "note": "상호 확정 전: 디지털의료기기 제조업허가 신청서에 적을 법인 상호 원문을 아직 받지 않았습니다.",
+   "note": "법인 등기의 상호입니다(2026-11-11 열람). 디지털의료기기 제조업허가 신청서(2026-11-25 접수)에 적은 상호와 같습니다.",
    "section": "Manufacturer",
-   "status": "pending",
-   "statusLabel": "Pending",
-   "value": null
+   "status": "confirmed",
+   "statusLabel": "Confirmed",
+   "value": "주식회사 헤일로랩스"
   },
   {
    "basis": "디지털의료제품법 제22조제1호",
@@ -42,7 +42,7 @@ window.KinProductInfoData = {
    "href": null,
    "id": "manufacturer.address",
    "label": "Manufacturer Address",
-   "note": "법인 등기의 본점 주소입니다(2026-11-02 열람). 제조소는 본점으로 정했습니다(D-2). 제조업허가는 신청 전입니다.",
+   "note": "법인 등기의 본점 주소입니다(2026-11-02 열람). 제조소는 본점으로 정했습니다(D-2). 제조업허가는 2026-11-25에 신청했습니다(접수, 허가 전).",
    "section": "Manufacturer",
    "status": "confirmed",
    "statusLabel": "Confirmed",
