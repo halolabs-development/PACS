@@ -441,7 +441,8 @@ window.synImage = () => `wadors:${location.origin}/dicom-web/studies/${window.sy
 const element = document.createElement('div'); document.body.append(element);
 const viewport = { id: 'syn-vp', renderingEngineId: 'syn-engine', type: 'stack', viewportStatus: 'rendered', element,
   getCurrentImageId: () => window.synFrameless ? undefined : window.synImage(), getImageIds: () => [window.synImage()], setImageIdIndex: async () => {},
-  getCornerstoneImage: () => window.synFrameless ? undefined : { imageId: window.synImage() },
+  getCornerstoneImage: () => window.synFrameless ? undefined : { imageId: window.synImage(), imageQualityStatus: 8 },
+  getRenderingEngine: () => ({ _needsRender: new Set() }),
   getCamera: () => ({ viewPlaneNormal: [0, 0, -1], viewUp: [0, -1, 0] }), render() {} };
 const annotations = new Map(), locks = new Map();
 window.synEdits = [];

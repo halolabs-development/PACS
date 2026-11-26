@@ -787,60 +787,28 @@ function kinCreateViewerHistory() {
     const current = () => reference(viewport()?.getCurrentImageId?.());
     const valid = ticket => !ended && ticket === generation && (!current() || current().study === scope);
     // Why a Key Image naming `r` would not be the image the reader sees in cell `v`, if so ('' when it is). The one rule of
-    // Add Key Image (it fixes series, SOP and frame when pressed; Save sends only those):
-    //   a stack cell names the image it was asked for as soon as that load starts and keeps naming it after the load fails,
-    //   while the image before stays on the screen; the loaded image is drawn a moment later still. So the image the cell
-    //   holds must be the one named and the cell must have finished drawing it. Laid out as tiles (Navigate: Tile, Unfolded)
-    //   the named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
-    //   A video cell turns its playback time into a frame number with a rate it works out itself (frames ÷ duration,
-    //   rounded), which need not be the rate the video was recorded at, so the frame on the screen cannot be confirmed
-    //   there: a video cell never makes a Key Image.
-    //   A volume cell (MPR) has no loaded-image read and names the original slice nearest its plane from the camera and the
-    //   series' metadata: a projection (MIP, MinIP, Average or a thick slab) draws several slices, not that one; a plane
-    //   between two originals (where the crosshairs left it) draws a blend of both; and the slice may not have arrived yet.
-    //   So a thin plane must lie on the slice it names (a plane near it still draws a small blend), and the volume must
-    //   hold every slice.
-    // The rule passes only what it can confirm: a stack cell that has drawn the named image, or a thin volume (MPR) cell
-    // whose whole plane lies on the named original of a fully loaded volume. Any other cell kind, and any state it cannot
-    // read, makes nothing.
+    // Add Key Image (it fixes series, SOP and frame when pressed; Save sends only those). A Key Image names one original
+    // image, and the report's readers open exactly that image, so it is made only where the pixels on the screen are
+    // confirmed to be that image's own. One cell can confirm that, a stack cell:
+    //   it draws the pixels of one original image and holds that image (its loaded-image read). It names the image it was
+    //   asked for as soon as that load starts and keeps naming it after the load fails, while the image before stays on
+    //   the screen: the image it holds must be the one named. A loader that shows an image in steps hands the cell a
+    //   coarser version first, under the same image id: the image held must have arrived in full. The image held is drawn
+    //   a moment after it arrives, and the cell's drawing state can still be the one left by a draw of the image before:
+    //   the cell must have drawn, with no draw of it still to come. Laid out as tiles (Navigate: Tile, Unfolded) the
+    //   named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
+    // No other cell can:
+    //   a volume cell (MPR, a projection, 3D) draws a plane sampled again from the volume. It names the original slice
+    //   nearest that plane, but nothing it reads says the pixels drawn are that slice's own (a plane beside or tilted
+    //   through the slice is a blend, and how exactly the renderer samples is not its to read), and a plane across the
+    //   slices is no original image at all. A video cell turns its playback time into a frame number with a rate it works
+    //   out itself (frames ÷ duration, rounded), which need not be the rate the video was recorded at.
+    // Any other cell kind, and any state it cannot read, makes nothing.
     function keyImageNotShown(v, r) {
       const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
       if (v?.type === 'video') return kinText("동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.");
-      if (!v || !r) return NOT_SHOWN;
-      if (v.type === 'orthographic') {
-        let blend = null, thickness = null;
-        try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.(); thickness = 2 * v.getSlabThickness?.(); } catch (_) {}
-        if (typeof blend !== 'number' || typeof thickness !== 'number' || !Number.isFinite(thickness)) return NOT_SHOWN;
-        if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered')) return NOT_SHOWN;
-        if (blend !== 0 || thickness > 0.2 + 1e-6) return kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.");
-        let volume = null;
-        try { volume = cs.cache?.getVolume?.(v.getVolumeId?.()) || null; } catch (_) {}
-        if (!volume?.loadStatus?.loaded || !Array.isArray(volume.imageIds) || volume.framesLoaded !== volume.imageIds.length) return NOT_SHOWN;
-        let onSlice = false;
-        try {
-          const id = v.getCurrentImageId(), ids = volume.imageIds, i = ids.indexOf(id);
-          const a = cs.metaData.get('imagePlaneModule', id), b = i < 0 || ids.length < 2 ? null : cs.metaData.get('imagePlaneModule', ids[i > 0 ? i - 1 : i + 1]);
-          const x = (a.rowCosines || []).map(Number), y = (a.columnCosines || []).map(Number), o = (a.imagePositionPatient || []).map(Number);
-          const n = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
-          const length = p => Math.hypot(...p), dot = (p, q) => p.reduce((s, value, k) => s + value * q[k], 0);
-          const along = p => p.map(Number).reduce((s, value, k) => s + (value - o[k]) * n[k], 0);
-          const camera = v.getCamera(), focal = camera.focalPoint.map(Number), normal = camera.viewPlaneNormal.map(Number);
-          const spacing = Math.abs(along(b.imagePositionPatient)), off = Math.abs(along(focal));
-          // A tilted plane through the slice still leaves it away from the focal point: bound how far it strays over the
-          // image (its diagonal plus the focal point's distance from the image's corner).
-          const tilt = Math.sqrt(Math.max(0, 1 - (dot(normal, n) / (length(normal) * length(n))) ** 2));
-          const size = [a.columns, a.columnPixelSpacing, a.rows, a.rowPixelSpacing].map(value => value === null || value === '' ? NaN : Number(value));
-          if (!size.every(value => Number.isFinite(value) && value > 0)) throw new Error('image size unknown');
-          const reach = Math.hypot(size[0] * size[1], size[2] * size[3]) + length(focal.map((p, k) => p - o[k]));
-          // Off by under 1/1024 of the spacing, the blend moves no displayed 8-bit value by half a step even between a black
-          // and a white slice, so the screen is that original; scrolling lands within float error of it.
-          const stray = off + tilt * reach;
-          onSlice = matches(reference(id), r) && x.length === 3 && y.length === 3 && o.length === 3 && Math.abs(length(n) - 1) < 1e-3 &&
-            spacing > 0 && Number.isFinite(stray) && stray <= spacing / 1024;
-        } catch (_) { onSlice = false; }
-        return onSlice ? '' : kinText("MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다. 스크롤로 원본 단면에 맞춘 뒤 누르세요.");
-      }
-      if (v.type !== 'stack') return NOT_SHOWN;
+      if (v && ['orthographic', 'perspective', 'volume3d'].includes(v.type)) return kinText("MPR·3D 칸에서는 Key Image를 만들 수 없습니다. 일반 영상 칸에서 누르세요.");
+      if (!v || !r || v.type !== 'stack') return NOT_SHOWN;
       // Tile, Unfolded and Slab are this viewer's own views; where one is loaded but cannot say how the cell is laid out,
       // nothing is made.
       let laid = null, slab = false;
@@ -849,8 +817,13 @@ function kinCreateViewerHistory() {
       if (laid === 'unfolded') return kinText("Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.");
       if (laid) return kinText("Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.");
       if (slab) return kinText("Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.");
-      const drawn = v.viewportStatus === (cs.Enums?.ViewportStatus?.RENDERED || 'rendered');
-      return drawn && matches(reference(kinViewerShownImageId(v)), r) ? '' : NOT_SHOWN;
+      // Drawn: the cell says so, and its renderer holds no draw of it for the next frame (it lists the cells still to draw).
+      let waiting = null, image = null;
+      try { waiting = v.getRenderingEngine?.()?._needsRender; image = v.getCornerstoneImage?.() || null; } catch (_) { return NOT_SHOWN; }
+      if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered') || typeof waiting?.has !== 'function' || waiting.has(v.id)) return NOT_SHOWN;
+      // In full: the loader states it for every image it hands over; an image that does not say is not taken as whole.
+      if (!image || typeof image.imageQualityStatus !== 'number' || image.imageQualityStatus < (cs.Enums?.ImageQualityStatus?.FULL_RESOLUTION ?? 8)) return NOT_SHOWN;
+      return matches(reference(image.imageId), r) ? '' : NOT_SHOWN;
     }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
@@ -1265,7 +1238,9 @@ function kinCreateViewerHistory() {
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
         const v = viewport(), r = current();
-        if (v?.type !== 'video' && (!r || r.study !== scope)) return;
+        // A stack cell with no image of this study (none yet, or another study's) makes nothing and says nothing, as
+        // before; any other cell kind makes none and says so.
+        if ((!v || v.type === 'stack') && (!r || r.study !== scope)) return;
         const why = keyImageNotShown(v, r);
         if (why) { status.textContent = why; return; }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };

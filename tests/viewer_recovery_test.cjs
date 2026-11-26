@@ -50,11 +50,15 @@ async function harness() {
   };
   // The renderer's index (getCurrentImageId) moves to a requested frame when its load starts and stays there when the load
   // fails; the image on the screen (getCornerstoneImage) stays the one before until the new one arrives. `frames` sets the
-  // two apart; `volumeCell` makes the cell a volume (MPR) cell, which has no loaded-image read.
+  // two apart; `volumeCell` makes the cell a volume (MPR) cell, which has no loaded-image read. As in the pinned viewer,
+  // the image held states how much of it arrived (`held.quality`: 8 in full, 6 a coarser version shown first), and the
+  // cell's renderer lists the cells it has still to draw (`engine._needsRender`).
   let requested = 1, shown = 1;
+  const held = { quality: 8 }, engine = { _needsRender: new Set() };
   const imageId = frame => `/studies/${study}/series/1.2/instances/1.3/frames/${frame}`;
-  const viewport = { type: 'stack', viewportStatus: 'rendered', getCurrentImageId: () => imageId(requested),
-    getCornerstoneImage: () => shown ? { imageId: imageId(shown) } : undefined, render() {} };
+  const viewport = { id: 'viewport', type: 'stack', viewportStatus: 'rendered', getCurrentImageId: () => imageId(requested),
+    getCornerstoneImage: () => shown ? { imageId: imageId(shown), ...(held.quality === undefined ? {} : { imageQualityStatus: held.quality }) } : undefined,
+    getRenderingEngine: () => engine, render() {} };
   window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'image' } }, metaData: { get() {} } };
   window.cornerstoneTools = { annotation: { locking: { setAnnotationLocked() {}, isAnnotationLocked: () => true },
     state: { getAnnotation: uid => annotations.get(uid), getAllAnnotations: () => [...annotations.values()], removeAnnotation: uid => annotations.delete(uid) } },
@@ -86,7 +90,7 @@ async function harness() {
   extension.onModeEnter(); await flush();
   const all = () => document.body.all();
   const button = name => { const found = all().filter(e => e.tagName === 'button' && e.textContent === name); assert.equal(found.length, 1, `button ${name}: ${found.length}`); return found[0]; };
-  return { window, document, viewport, pages, calls, commands, measurements, annotations, notices, dialogs, extension, services,
+  return { window, document, viewport, held, engine, pages, calls, commands, measurements, annotations, notices, dialogs, extension, services,
     setReply: f => { reply = f; }, defaultReply: reply, setMe: value => { me = value; },
     button, click: async name => { button(name).click(); await flush(); },
     input: (label, value) => { const e = all().find(e => e.attributes['aria-label'] === label && !e.disabled); assert.ok(e, label); e.value = value; e.dispatchEvent(new Event('input')); },
@@ -273,6 +277,39 @@ test('Add Key Image makes nothing while the cell has not finished drawing the im
   assert.equal(item.frame, 2);
 });
 
+test('Add Key Image makes nothing while a draw of the cell is still to come, though its state is left as drawn', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  // Frame 2 arrived while the cell's state was "drawn" from a draw of frame 1 made during the load (the pinned renderer
+  // does not take the state back when an image arrives); frame 2 is drawn on the next animation frame, and until then
+  // the renderer lists the cell among those still to draw.
+  h.frames(2, 2); h.engine._needsRender.add('viewport'); await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  // A renderer whose list of cells to draw cannot be read confirms nothing either.
+  h.engine._needsRender.clear(); const list = h.engine._needsRender; delete h.engine._needsRender; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  const engine = h.viewport.getRenderingEngine; h.viewport.getRenderingEngine = () => { throw new Error('destroyed'); }; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  h.viewport.getRenderingEngine = engine; h.engine._needsRender = list;
+  assert.equal((await saveKey(h, 'drawn at last', 'w')).frame, 2);
+});
+
+test('Add Key Image makes nothing while the cell holds a coarser version of the image, shown first as it loads in steps', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  // The pinned viewer loads a stack image in steps where the stored encoding allows it: the cell first holds, draws and
+  // names a lower-resolution version (6) under the same image id, then the image in full (8). An image that does not say
+  // how much of it arrived is not taken as whole.
+  for (const quality of [6, 7, 3, undefined, '8']) {
+    h.held.quality = quality; await h.click('Add Key Image');
+    assert.equal(sections(h), before, String(quality)); assert.match(h.text(), NOT_SHOWN);
+  }
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  h.held.quality = 8;
+  assert.equal((await saveKey(h, 'in full', 'f')).frame, 1);
+});
+
 test('Add Key Image makes nothing in Tile, Unfolded or Slab views, which do not show one image of the stack', async () => {
   const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
   const before = sections(h);
@@ -309,83 +346,42 @@ test('Add Key Image makes nothing in a video cell, whose frame on the screen can
   assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
 });
 
-test('Add Key Image makes nothing in a volume cell drawing a projection (MIP, MinIP, Average or a thick slab)', async () => {
+test('Add Key Image makes nothing in a volume cell (MPR, a projection, 3D), whose plane is drawn again from the volume, and says where to press it', async () => {
   const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
   const before = sections(h);
-  let blend = 1, half = 5;
-  h.frames(4, 4); h.volumeCell();
+  const VOLUME = /MPR·3D 칸에서는 Key Image를 만들 수 없습니다\. 일반 영상 칸에서 누르세요\./;
+  // A thin axial MPR cell on original slice 4 of a volume that holds every slice, drawn: the cell names slice 4, and
+  // nothing it reads says the pixels it drew are slice 4's own.
+  h.frames(4, 4); const mpr = h.volumeCell();
+  let blend = 0, half = 0.05;
   Object.assign(h.viewport, { getActors: () => [{ actor: { getMapper: () => ({ getBlendMode: () => blend }) } }], getSlabThickness: () => half });
-  for (const [b, t] of [[1, 5], [3, 5], [0, 5]]) {
-    blend = b; half = t; await h.click('Add Key Image');
-    assert.equal(sections(h), before); assert.match(h.text(), /MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다/);
-  }
-  blend = 0; half = 0.05;
-  assert.equal((await saveKey(h, 'thin mpr', 'p')).frame, 4);
-});
-
-test('Add Key Image in a volume cell (MPR, no loaded-image read) names its current original slice', async () => {
-  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
-  h.frames(4, 4); h.volumeCell();
-  const item = await saveKey(h, 'mpr slice', 'm');
-  assert.deepEqual([item.kind, item.frame], ['key', 4]);
-});
-
-test('Add Key Image makes nothing in a thin MPR cell between two original slices or before the volume holds every slice', async () => {
-  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
-  const before = sections(h);
-  h.frames(4, 4); const mpr = h.volumeCell();
-  // The crosshairs left the plane 0.9 mm past slice 4 (slices 2 mm apart): the cell draws a blend and names slice 4.
-  mpr.offset = 0.9; await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
-  // Only 0.08 mm past slice 4 (4% of the spacing): still a blend (96% of slice 4, 4% of slice 5), so still nothing.
-  mpr.offset = 0.08; await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
-  // On the slice, but the volume is still arriving (slow network): slice 4 may not be on the screen yet.
-  mpr.offset = 0; mpr.framesLoaded = 5; mpr.loaded = false; await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
-  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
-  // Every slice held and the plane on slice 4 (as scrolling leaves it, to within float error): slice 4 is kept.
-  mpr.framesLoaded = 6; mpr.loaded = true; mpr.offset = 1e-4;
-  assert.equal((await saveKey(h, 'on slice', 'o')).frame, 4);
-});
-
-test('Add Key Image makes nothing in a thin MPR cell whose plane is tilted off the slice, though its centre lies on it', async () => {
-  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
-  const before = sections(h);
-  h.frames(4, 4); const mpr = h.volumeCell();
-  // Rotated by half a degree through the centre of slice 4: the centre is slice 4, the edges are blends of other slices.
-  const a = 0.5 * Math.PI / 180; mpr.normal = [0, Math.sin(a), Math.cos(a)];
-  await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
-  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
-  mpr.normal = [0, 0, -1];
-  assert.equal((await saveKey(h, 'axial again', 'x')).frame, 4);
-});
-
-test('Add Key Image makes nothing in a thin MPR cell whose projection, drawing state or pixel size it cannot read', async () => {
-  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
-  const before = sections(h);
-  h.frames(4, 4); h.volumeCell();
-  const plane = h.window.cornerstone.metaData.get, actors = h.viewport.getActors, slab = h.viewport.getSlabThickness;
-  for (const [set, undo] of [
-    [() => { h.viewport.getActors = () => [{ actor: { getMapper: () => ({}) } }]; }, () => { h.viewport.getActors = actors; }],
-    [() => { h.viewport.getSlabThickness = () => undefined; }, () => { h.viewport.getSlabThickness = slab; }],
-    [() => { h.viewport.viewportStatus = 'preRender'; }, () => { h.viewport.viewportStatus = 'rendered'; }],
-    [() => { h.window.cornerstone.metaData.get = (kind, id) => { const p = plane(kind, id); return p && { ...p, rowPixelSpacing: null, columnPixelSpacing: null }; }; },
-      () => { h.window.cornerstone.metaData.get = plane; }]]) {
+  const plain = h.viewport.getCurrentImageId, tilt = 0.5 * Math.PI / 180;
+  for (const set of [() => {},
+    // Between two originals (where the crosshairs leave the plane), tilted through one, a volume still arriving.
+    () => { mpr.offset = 0.9; }, () => { mpr.offset = 0; mpr.normal = [0, Math.sin(tilt), Math.cos(tilt)]; },
+    () => { mpr.normal = [0, 0, -1]; mpr.framesLoaded = 5; mpr.loaded = false; }, () => { mpr.framesLoaded = 6; mpr.loaded = true; },
+    // A projection: MIP, MinIP, Average, a thick slab.
+    () => { blend = 1; half = 5; }, () => { blend = 3; }, () => { blend = 0; }, () => { half = 0.05; },
+    // A plane that names no original at all (across the slices), and the other volume cell kinds.
+    () => { h.viewport.getCurrentImageId = () => undefined; }, () => { h.viewport.getCurrentImageId = plain; h.viewport.type = 'volume3d'; },
+    () => { h.viewport.type = 'perspective'; },
+    // Even a volume cell that offers a loaded-image read of the named slice, in full and drawn.
+    () => { h.viewport.type = 'orthographic'; h.viewport.getCornerstoneImage = () => ({ imageId: plain(), imageQualityStatus: 8 }); }]) {
     set(); await h.click('Add Key Image');
-    assert.equal(sections(h), before, String(set));
-    undo();
+    assert.equal(sections(h), before, String(set)); assert.match(h.text(), VOLUME, String(set));
   }
   assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
-  assert.equal((await saveKey(h, 'readable', 'r')).frame, 4);
+  // The same slice in a stack cell of the series is kept.
+  h.viewport.type = 'stack';
+  const item = await saveKey(h, 'stack slice', 'm');
+  assert.deepEqual([item.kind, item.frame], ['key', 4]);
 });
 
 test('Add Key Image makes nothing in a cell it cannot confirm: another cell kind, or a stack cell whose drawing state is unknown', async () => {
   const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
   const before = sections(h);
   // Each of these shows the named frame by its loaded-image read; none is a cell the rule knows how to confirm.
-  for (const type of ['volume3d', 'wholeSlide', 'perspective', undefined]) {
+  for (const type of ['wholeSlide', 'ecg', undefined]) {
     h.viewport.type = type; await h.click('Add Key Image');
     assert.equal(sections(h), before, String(type)); assert.match(h.text(), NOT_SHOWN);
   }
@@ -399,7 +395,6 @@ test('Add Key Image makes nothing in a cell it cannot confirm: another cell kind
   delete h.window.kinNavigate;
   assert.equal((await saveKey(h, 'stack', 'q')).frame, 1);
 });
-
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {
   const h = await harness(); await h.click('Edit'); h.input('Key Title', 'private'); await h.switch('2');
   h.setMe({ sub: 'another', kind: 'member', roles: ['radiologist'] }); await h.switch('1');
