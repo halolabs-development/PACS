@@ -11912,8 +11912,9 @@ function kinCreateViewerHistory() {
       if (!v || !r) return NOT_SHOWN;
       if (v.type === 'orthographic') {
         let blend = null, thickness = null;
-        try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.() ?? 0; thickness = 2 * (v.getSlabThickness?.() ?? 0); } catch (_) {}
-        if (blend === null || !Number.isFinite(thickness)) return NOT_SHOWN;
+        try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.(); thickness = 2 * v.getSlabThickness?.(); } catch (_) {}
+        if (typeof blend !== 'number' || typeof thickness !== 'number' || !Number.isFinite(thickness)) return NOT_SHOWN;
+        if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered')) return NOT_SHOWN;
         if (blend !== 0 || thickness > 0.2 + 1e-6) return kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.");
         let volume = null;
         try { volume = cs.cache?.getVolume?.(v.getVolumeId?.()) || null; } catch (_) {}
@@ -11931,7 +11932,9 @@ function kinCreateViewerHistory() {
           // A tilted plane through the slice still leaves it away from the focal point: bound how far it strays over the
           // image (its diagonal plus the focal point's distance from the image's corner).
           const tilt = Math.sqrt(Math.max(0, 1 - (dot(normal, n) / (length(normal) * length(n))) ** 2));
-          const reach = Math.hypot(Number(a.columns) * Number(a.columnPixelSpacing), Number(a.rows) * Number(a.rowPixelSpacing)) + length(focal.map((p, k) => p - o[k]));
+          const size = [a.columns, a.columnPixelSpacing, a.rows, a.rowPixelSpacing].map(value => value === null || value === '' ? NaN : Number(value));
+          if (!size.every(value => Number.isFinite(value) && value > 0)) throw new Error('image size unknown');
+          const reach = Math.hypot(size[0] * size[1], size[2] * size[3]) + length(focal.map((p, k) => p - o[k]));
           // Off by under 1/1024 of the spacing, the blend moves no displayed 8-bit value by half a step even between a black
           // and a white slice, so the screen is that original; scrolling lands within float error of it.
           const stray = off + tilt * reach;

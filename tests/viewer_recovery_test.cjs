@@ -101,7 +101,8 @@ async function harness() {
       delete viewport.getCornerstoneImage;
       const mpr = { offset: 0, normal: [0, 0, 1], loaded: true, framesLoaded: 6 }, ids = [1, 2, 3, 4, 5, 6].map(imageId);
       const z = id => 2 * (Number(/frames\/(\d+)$/.exec(id)?.[1]) - 1);
-      viewport.type = 'orthographic'; delete viewport.viewportStatus;
+      viewport.type = 'orthographic'; viewport.viewportStatus = 'rendered';
+      viewport.getActors = () => [{ actor: { getMapper: () => ({ getBlendMode: () => 0 }) } }]; viewport.getSlabThickness = () => 0.05;
       viewport.getVolumeId = () => 'volume';
       viewport.getCamera = () => ({ focalPoint: [128, 128, z(viewport.getCurrentImageId()) + mpr.offset], viewPlaneNormal: mpr.normal });
       window.cornerstone.cache = { getVolume: id => id === 'volume' ? { imageIds: ids, framesLoaded: mpr.framesLoaded, loadStatus: { loaded: mpr.loaded } } : undefined };
@@ -359,6 +360,25 @@ test('Add Key Image makes nothing in a thin MPR cell whose plane is tilted off t
   assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
   mpr.normal = [0, 0, -1];
   assert.equal((await saveKey(h, 'axial again', 'x')).frame, 4);
+});
+
+test('Add Key Image makes nothing in a thin MPR cell whose projection, drawing state or pixel size it cannot read', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.frames(4, 4); h.volumeCell();
+  const plane = h.window.cornerstone.metaData.get, actors = h.viewport.getActors, slab = h.viewport.getSlabThickness;
+  for (const [set, undo] of [
+    [() => { h.viewport.getActors = () => [{ actor: { getMapper: () => ({}) } }]; }, () => { h.viewport.getActors = actors; }],
+    [() => { h.viewport.getSlabThickness = () => undefined; }, () => { h.viewport.getSlabThickness = slab; }],
+    [() => { h.viewport.viewportStatus = 'preRender'; }, () => { h.viewport.viewportStatus = 'rendered'; }],
+    [() => { h.window.cornerstone.metaData.get = (kind, id) => { const p = plane(kind, id); return p && { ...p, rowPixelSpacing: null, columnPixelSpacing: null }; }; },
+      () => { h.window.cornerstone.metaData.get = plane; }]]) {
+    set(); await h.click('Add Key Image');
+    assert.equal(sections(h), before, String(set));
+    undo();
+  }
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  assert.equal((await saveKey(h, 'readable', 'r')).frame, 4);
 });
 
 test('Add Key Image makes nothing in a cell it cannot confirm: another cell kind, or a stack cell whose drawing state is unknown', async () => {
