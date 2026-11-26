@@ -652,6 +652,7 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         except Exception:
             pass
         viewer.wait_for_timeout(2500)
+        self.maxDiff = None
         self.assertEqual(before, viewer.evaluate(read), json.dumps(viewer.evaluate(SEAM_STATE)))
 
     def test_two_16_where_monitor_2s_images_start_higher_a_tab_round_trip_keeps_each_cell_on_its_monitor(self):
@@ -693,19 +694,20 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
         self.until(viewer, LAID, 2)
         viewer.wait_for_timeout(2500)
-        # Cell k (monitor by monitor, top to bottom) shows series k % 2 of the study on its image k // 2.
+        # Cell k (monitor by monitor, top to bottom): each monitor shows a series of its own (series k // 2 of the study),
+        # its upper cell on the first image and its lower cell on the next - so an image names its monitor and its row.
         cells = viewer.evaluate(SIDE_IDS)
         self.assertEqual([[1, 0], [1, 1], [2, 0], [2, 1]], [c[:2] for c in cells], cells)
         sets = viewer.evaluate('''uid => services.displaySetService.getActiveDisplaySets().filter(s => s.StudyInstanceUID === uid && s.images?.length > 1)
           .sort((x, y) => (x.SeriesNumber ?? 0) - (y.SeriesNumber ?? 0)).map(s => s.displaySetInstanceUID)''', a.uid)
         self.assertGreaterEqual(len(sets), 2, sets)
         for k, cell in enumerate(cells):
-            self.assertTrue(viewer.evaluate(PUT, [cell[2], sets[k % 2], 0]), cell)
+            self.assertTrue(viewer.evaluate(PUT, [cell[2], sets[k // 2], 0]), cell)
         # Once each cell's new series has settled (its own first image shown), the lower cells go to their next image.
         viewer.wait_for_timeout(2500)
         for k, cell in enumerate(cells):
-            if k // 2:
-                self.assertTrue(viewer.evaluate(SCROLL, [cell[2], k // 2]), cell)
+            if k % 2:
+                self.assertTrue(viewer.evaluate(SCROLL, [cell[2], 1]), cell)
         self.until(viewer, 'async () => new Set((await (' + SIDES + ')()).map(c => c[2]).filter(Boolean)).size === 4')
         viewer.wait_for_timeout(2500)
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
@@ -757,7 +759,8 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
     def test_two_19_more_columns_and_fewer_keep_each_monitors_cell_on_that_monitor(self):
         # The same rule, one cell on each monitor, a different image in each. 1 x 4 from the Layout menu gives each monitor
         # two columns: the cell it had stays in its first column (the stock command would put monitor 2's cell into monitor
-        # 1's second column). A tab round trip brings the four back; 1 x 2 then leaves each monitor its first cell.
+        # 1's second column). 1 x 2 leaves each monitor its first cell (the stock command would put monitor 1's second cell
+        # on monitor 2), 1 x 4 again brings the second columns back, and a tab round trip brings the four back.
         p, viewer, a, b = self.setup_viewer('TWO19')
         self.stretch(viewer)
         self.shows(viewer, a.uid)
@@ -788,17 +791,25 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         seam = viewer.evaluate(SEAM_STATE)['seams'][0] / viewer.evaluate('innerWidth')
         firsts = [min((c for c in cells if c[1] + c[3] <= seam + 0.001), key=lambda c: c[1])[0], min((c for c in cells if c[1] >= seam - 0.001), key=lambda c: c[1])[0]]
         self.assertEqual(ids, firsts)
-        # The next patient and back by the tab: the four cells again, each on its monitor and in its column.
-        self.tab_round_trip(p, viewer, a, b)
-        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
-        self.comes_back(viewer, wide, PLACES)
-        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
-        # 1 x 2: each monitor keeps its first cell.
+        # 1 x 2: each monitor keeps its first cell, under the rule's rows.
         self.layout(viewer, 'Layout-1-0')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
         self.until(viewer, LAID, 1)
         self.comes_back(viewer, before, PLACES)
         self.assertTrue(viewer.evaluate(LAID, 1), json.dumps(viewer.evaluate(SEAM_STATE)))
+        self.assertTrue(viewer.evaluate("() => document.body.hasAttribute('data-kin-monitor-rows')"))
+        # 1 x 4 again: the second column of each monitor is back as it was.
+        self.layout(viewer, 'Layout-3-0')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.until(viewer, LAID, 2)
+        self.until(viewer, DRAWN)
+        self.comes_back(viewer, wide, PLACES)
+        # The next patient and back by the tab: the four cells again, each on its monitor and in its column (a patient
+        # switch takes the rule's rows away, as it always did; the cells come back on the display edge).
+        self.tab_round_trip(p, viewer, a, b)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.comes_back(viewer, wide, PLACES)
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
 
     def test_two_20_monitors_holding_different_rows_come_back_after_a_tab_round_trip(self):
         # Two rows on monitor 1 and one cell on monitor 2 (three cells), each on an image of its own; the next patient and
