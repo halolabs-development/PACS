@@ -11922,9 +11922,9 @@ function kinCreateViewerHistory() {
       // Drawn: the cell says so, and its renderer holds no draw of it for the next frame (it lists the cells still to draw).
       let waiting = null, image = null;
       try { waiting = v.getRenderingEngine?.()?._needsRender; image = v.getCornerstoneImage?.() || null; } catch (_) { return NOT_SHOWN; }
-      if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered') || typeof waiting?.has !== 'function' || waiting.has(v.id)) return NOT_SHOWN;
+      if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered') || typeof v.id !== 'string' || typeof waiting?.has !== 'function' || waiting.has(v.id)) return NOT_SHOWN;
       // In full: the loader states it for every image it hands over; an image that does not say is not taken as whole.
-      if (!image || typeof image.imageQualityStatus !== 'number' || image.imageQualityStatus < (cs.Enums?.ImageQualityStatus?.FULL_RESOLUTION ?? 8)) return NOT_SHOWN;
+      if (!image || typeof image.imageQualityStatus !== 'number' || !(image.imageQualityStatus >= (cs.Enums?.ImageQualityStatus?.FULL_RESOLUTION ?? 8))) return NOT_SHOWN;
       return matches(reference(image.imageId), r) ? '' : NOT_SHOWN;
     }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.

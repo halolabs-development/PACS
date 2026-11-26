@@ -285,9 +285,12 @@ test('Add Key Image makes nothing while a draw of the cell is still to come, tho
   // the renderer lists the cell among those still to draw.
   h.frames(2, 2); h.engine._needsRender.add('viewport'); await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
-  // A renderer whose list of cells to draw cannot be read confirms nothing either.
+  // A renderer whose list of cells to draw cannot be read confirms nothing either, nor does a cell that has no id to look up in it.
   h.engine._needsRender.clear(); const list = h.engine._needsRender; delete h.engine._needsRender; await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  h.engine._needsRender = list; delete h.viewport.id; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  h.viewport.id = 'viewport'; delete h.engine._needsRender;
   const engine = h.viewport.getRenderingEngine; h.viewport.getRenderingEngine = () => { throw new Error('destroyed'); }; await h.click('Add Key Image');
   assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
   assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
@@ -301,7 +304,7 @@ test('Add Key Image makes nothing while the cell holds a coarser version of the 
   // The pinned viewer loads a stack image in steps where the stored encoding allows it: the cell first holds, draws and
   // names a lower-resolution version (6) under the same image id, then the image in full (8). An image that does not say
   // how much of it arrived is not taken as whole.
-  for (const quality of [6, 7, 3, undefined, '8']) {
+  for (const quality of [6, 7, 3, undefined, '8', NaN]) {
     h.held.quality = quality; await h.click('Add Key Image');
     assert.equal(sections(h), before, String(quality)); assert.match(h.text(), NOT_SHOWN);
   }
