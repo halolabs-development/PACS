@@ -795,8 +795,10 @@ function kinCreateViewerHistory() {
     //   A video cell turns its playback time into a frame number with a rate it works out itself (frames ÷ duration,
     //   rounded), which need not be the rate the video was recorded at, so the frame on the screen cannot be confirmed
     //   there: a video cell never makes a Key Image.
-    //   A volume cell (MPR) has no loaded-image read and names the original slice it shows, as before; but a projection
-    //   (MIP, MinIP, Average or a thick slab) draws several slices, not that one.
+    //   A volume cell (MPR) has no loaded-image read and names the original slice nearest its plane from the camera and the
+    //   series' metadata: a projection (MIP, MinIP, Average or a thick slab) draws several slices, not that one; a plane
+    //   between two originals (where the crosshairs left it) draws a blend of both; and the slice may not have arrived yet.
+    //   So a thin plane must lie on the slice it names, and the volume must hold every slice.
     function keyImageNotShown(v, r) {
       const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
       if (!v) return '';
@@ -804,7 +806,21 @@ function kinCreateViewerHistory() {
       if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') {
         let blend = 0, thickness = 0;
         try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.() ?? 0; thickness = 2 * (v.getSlabThickness?.() ?? 0); } catch (_) {}
-        return blend !== 0 || thickness > 0.2 + 1e-6 ? kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.") : '';
+        if (blend !== 0 || thickness > 0.2 + 1e-6) return kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.");
+        let volume = null;
+        try { volume = cs.cache?.getVolume?.(v.getVolumeId?.()) || null; } catch (_) {}
+        if (!volume?.loadStatus?.loaded || !Array.isArray(volume.imageIds) || volume.framesLoaded !== volume.imageIds.length) return NOT_SHOWN;
+        let onSlice = false;
+        try {
+          const id = v.getCurrentImageId(), ids = volume.imageIds, i = ids.indexOf(id);
+          const a = cs.metaData.get('imagePlaneModule', id), b = i < 0 ? null : cs.metaData.get('imagePlaneModule', ids[i > 0 ? i - 1 : i + 1]);
+          const x = (a.rowCosines || []).map(Number), y = (a.columnCosines || []).map(Number), o = (a.imagePositionPatient || []).map(Number);
+          const n = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+          const along = p => p.map(Number).reduce((s, value, k) => s + (value - o[k]) * n[k], 0);
+          const spacing = Math.abs(along(b.imagePositionPatient)), off = Math.abs(along(v.getCamera().focalPoint));
+          onSlice = spacing > 0 && Number.isFinite(off) && off <= spacing * 0.05;
+        } catch (_) { onSlice = false; }
+        return onSlice ? '' : kinText("MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다. 스크롤로 원본 단면에 맞춘 뒤 누르세요.");
       }
       let laid = null, slab = false;
       try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) {}

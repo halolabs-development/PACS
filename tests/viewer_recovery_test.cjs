@@ -93,7 +93,19 @@ async function harness() {
     text: () => all().map(e => e.textContent).join('\n'),
     switch: async uid => { study = uid; tick(); await flush(); },
     frames: (now, onScreen) => { requested = now; shown = onScreen; },
-    volumeCell: () => { delete viewport.getCornerstoneImage; },
+    // The volume holds frames 1-6 as axial slices 2 mm apart (frame N at z = 2(N - 1)); `mpr.offset` puts the plane that far
+    // past the named slice, `mpr.loaded` and `mpr.framesLoaded` are the volume's load state.
+    volumeCell: () => {
+      delete viewport.getCornerstoneImage;
+      const mpr = { offset: 0, loaded: true, framesLoaded: 6 }, ids = [1, 2, 3, 4, 5, 6].map(imageId);
+      const z = id => 2 * (Number(/frames\/(\d+)$/.exec(id)?.[1]) - 1);
+      viewport.getVolumeId = () => 'volume';
+      viewport.getCamera = () => ({ focalPoint: [0, 0, z(viewport.getCurrentImageId()) + mpr.offset], viewPlaneNormal: [0, 0, 1] });
+      window.cornerstone.cache = { getVolume: id => id === 'volume' ? { imageIds: ids, framesLoaded: mpr.framesLoaded, loadStatus: { loaded: mpr.loaded } } : undefined };
+      window.cornerstone.metaData.get = (kind, id) => kind === 'imagePlaneModule' && ids.includes(id)
+        ? { rowCosines: [1, 0, 0], columnCosines: [0, 1, 0], imagePositionPatient: [0, 0, z(id)] } : undefined;
+      return mpr;
+    },
     tick: async () => { tick(); await flush(); },
     logout: () => announce({ state: 'ending', session: 'S1' }),
   };
@@ -312,6 +324,22 @@ test('Add Key Image in a volume cell (MPR, no loaded-image read) names its curre
   h.frames(4, 4); h.volumeCell();
   const item = await saveKey(h, 'mpr slice', 'm');
   assert.deepEqual([item.kind, item.frame], ['key', 4]);
+});
+
+test('Add Key Image makes nothing in a thin MPR cell between two original slices or before the volume holds every slice', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.frames(4, 4); const mpr = h.volumeCell();
+  // The crosshairs left the plane 0.9 mm past slice 4 (slices 2 mm apart): the cell draws a blend and names slice 4.
+  mpr.offset = 0.9; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
+  // On the slice, but the volume is still arriving (slow network): slice 4 may not be on the screen yet.
+  mpr.offset = 0; mpr.framesLoaded = 5; mpr.loaded = false; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  // Every slice held and the plane on slice 4 (as scrolling leaves it, to within float error): slice 4 is kept.
+  mpr.framesLoaded = 6; mpr.loaded = true; mpr.offset = 1e-4;
+  assert.equal((await saveKey(h, 'on slice', 'o')).frame, 4);
 });
 
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {
