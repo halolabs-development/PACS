@@ -439,7 +439,7 @@ window.synTick = (n = 1) => { for (let i = 0; i < n; i++) for (const tick of [..
 const SERIES = '%SERIES%', SOP = '%SOP%';
 window.synImage = () => `wadors:${location.origin}/dicom-web/studies/${window.synStudy}/series/${SERIES}/instances/${SOP}/frames/1`;
 const element = document.createElement('div'); document.body.append(element);
-const viewport = { id: 'syn-vp', renderingEngineId: 'syn-engine', type: 'stack', element,
+const viewport = { id: 'syn-vp', renderingEngineId: 'syn-engine', type: 'stack', viewportStatus: 'rendered', element,
   getCurrentImageId: () => window.synFrameless ? undefined : window.synImage(), getImageIds: () => [window.synImage()], setImageIdIndex: async () => {},
   getCornerstoneImage: () => window.synFrameless ? undefined : { imageId: window.synImage() },
   getCamera: () => ({ viewPlaneNormal: [0, 0, -1], viewUp: [0, -1, 0] }), render() {} };

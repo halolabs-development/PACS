@@ -53,7 +53,8 @@ async function harness() {
   // two apart; `volumeCell` makes the cell a volume (MPR) cell, which has no loaded-image read.
   let requested = 1, shown = 1;
   const imageId = frame => `/studies/${study}/series/1.2/instances/1.3/frames/${frame}`;
-  const viewport = { getCurrentImageId: () => imageId(requested), getCornerstoneImage: () => shown ? { imageId: imageId(shown) } : undefined, render() {} };
+  const viewport = { type: 'stack', viewportStatus: 'rendered', getCurrentImageId: () => imageId(requested),
+    getCornerstoneImage: () => shown ? { imageId: imageId(shown) } : undefined, render() {} };
   window.cornerstone = { Enums: { Events: { STACK_NEW_IMAGE: 'image' } }, metaData: { get() {} } };
   window.cornerstoneTools = { annotation: { locking: { setAnnotationLocked() {}, isAnnotationLocked: () => true },
     state: { getAnnotation: uid => annotations.get(uid), getAllAnnotations: () => [...annotations.values()], removeAnnotation: uid => annotations.delete(uid) } },
@@ -94,16 +95,18 @@ async function harness() {
     switch: async uid => { study = uid; tick(); await flush(); },
     frames: (now, onScreen) => { requested = now; shown = onScreen; },
     // The volume holds frames 1-6 as axial slices 2 mm apart (frame N at z = 2(N - 1)); `mpr.offset` puts the plane that far
-    // past the named slice, `mpr.loaded` and `mpr.framesLoaded` are the volume's load state.
+    // past the named slice, `mpr.normal` is the plane's normal, `mpr.loaded` and `mpr.framesLoaded` are the volume's load
+    // state. Each slice is 512 x 512 pixels of 0.5 mm.
     volumeCell: () => {
       delete viewport.getCornerstoneImage;
-      const mpr = { offset: 0, loaded: true, framesLoaded: 6 }, ids = [1, 2, 3, 4, 5, 6].map(imageId);
+      const mpr = { offset: 0, normal: [0, 0, 1], loaded: true, framesLoaded: 6 }, ids = [1, 2, 3, 4, 5, 6].map(imageId);
       const z = id => 2 * (Number(/frames\/(\d+)$/.exec(id)?.[1]) - 1);
+      viewport.type = 'orthographic'; delete viewport.viewportStatus;
       viewport.getVolumeId = () => 'volume';
-      viewport.getCamera = () => ({ focalPoint: [0, 0, z(viewport.getCurrentImageId()) + mpr.offset], viewPlaneNormal: [0, 0, 1] });
+      viewport.getCamera = () => ({ focalPoint: [128, 128, z(viewport.getCurrentImageId()) + mpr.offset], viewPlaneNormal: mpr.normal });
       window.cornerstone.cache = { getVolume: id => id === 'volume' ? { imageIds: ids, framesLoaded: mpr.framesLoaded, loadStatus: { loaded: mpr.loaded } } : undefined };
       window.cornerstone.metaData.get = (kind, id) => kind === 'imagePlaneModule' && ids.includes(id)
-        ? { rowCosines: [1, 0, 0], columnCosines: [0, 1, 0], imagePositionPatient: [0, 0, z(id)] } : undefined;
+        ? { rowCosines: [1, 0, 0], columnCosines: [0, 1, 0], imagePositionPatient: [0, 0, z(id)], rows: 512, columns: 512, rowPixelSpacing: 0.5, columnPixelSpacing: 0.5 } : undefined;
       return mpr;
     },
     tick: async () => { tick(); await flush(); },
@@ -343,6 +346,38 @@ test('Add Key Image makes nothing in a thin MPR cell between two original slices
   // Every slice held and the plane on slice 4 (as scrolling leaves it, to within float error): slice 4 is kept.
   mpr.framesLoaded = 6; mpr.loaded = true; mpr.offset = 1e-4;
   assert.equal((await saveKey(h, 'on slice', 'o')).frame, 4);
+});
+
+test('Add Key Image makes nothing in a thin MPR cell whose plane is tilted off the slice, though its centre lies on it', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  h.frames(4, 4); const mpr = h.volumeCell();
+  // Rotated by half a degree through the centre of slice 4: the centre is slice 4, the edges are blends of other slices.
+  const a = 0.5 * Math.PI / 180; mpr.normal = [0, Math.sin(a), Math.cos(a)];
+  await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), /MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다/);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  mpr.normal = [0, 0, -1];
+  assert.equal((await saveKey(h, 'axial again', 'x')).frame, 4);
+});
+
+test('Add Key Image makes nothing in a cell it cannot confirm: another cell kind, or a stack cell whose drawing state is unknown', async () => {
+  const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
+  const before = sections(h);
+  // Each of these shows the named frame by its loaded-image read; none is a cell the rule knows how to confirm.
+  for (const type of ['volume3d', 'wholeSlide', 'perspective', undefined]) {
+    h.viewport.type = type; await h.click('Add Key Image');
+    assert.equal(sections(h), before, String(type)); assert.match(h.text(), NOT_SHOWN);
+  }
+  h.viewport.type = 'stack'; delete h.viewport.viewportStatus; await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  // This viewer's Tile/Unfolded read is loaded but fails: how the cell is laid out is unknown, so nothing is made.
+  h.viewport.viewportStatus = 'rendered'; h.window.kinNavigate = { laid: () => { throw new Error('layout unknown'); } };
+  await h.click('Add Key Image');
+  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
+  delete h.window.kinNavigate;
+  assert.equal((await saveKey(h, 'stack', 'q')).frame, 1);
 });
 
 test('A1 delta: a changed login subject purges parked work before any resume', async () => {

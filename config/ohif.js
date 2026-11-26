@@ -11903,13 +11903,17 @@ function kinCreateViewerHistory() {
     //   between two originals (where the crosshairs left it) draws a blend of both; and the slice may not have arrived yet.
     //   So a thin plane must lie on the slice it names (a plane near it still draws a small blend), and the volume must
     //   hold every slice.
+    // The rule passes only what it can confirm: a stack cell that has drawn the named image, or a thin volume (MPR) cell
+    // whose whole plane lies on the named original of a fully loaded volume. Any other cell kind, and any state it cannot
+    // read, makes nothing.
     function keyImageNotShown(v, r) {
       const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
-      if (!v) return '';
-      if (v.type === 'video') return kinText("동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.");
-      if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') {
-        let blend = 0, thickness = 0;
+      if (v?.type === 'video') return kinText("동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.");
+      if (!v || !r) return NOT_SHOWN;
+      if (v.type === 'orthographic') {
+        let blend = null, thickness = null;
         try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.() ?? 0; thickness = 2 * (v.getSlabThickness?.() ?? 0); } catch (_) {}
+        if (blend === null || !Number.isFinite(thickness)) return NOT_SHOWN;
         if (blend !== 0 || thickness > 0.2 + 1e-6) return kinText("MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.");
         let volume = null;
         try { volume = cs.cache?.getVolume?.(v.getVolumeId?.()) || null; } catch (_) {}
@@ -11917,24 +11921,35 @@ function kinCreateViewerHistory() {
         let onSlice = false;
         try {
           const id = v.getCurrentImageId(), ids = volume.imageIds, i = ids.indexOf(id);
-          const a = cs.metaData.get('imagePlaneModule', id), b = i < 0 ? null : cs.metaData.get('imagePlaneModule', ids[i > 0 ? i - 1 : i + 1]);
+          const a = cs.metaData.get('imagePlaneModule', id), b = i < 0 || ids.length < 2 ? null : cs.metaData.get('imagePlaneModule', ids[i > 0 ? i - 1 : i + 1]);
           const x = (a.rowCosines || []).map(Number), y = (a.columnCosines || []).map(Number), o = (a.imagePositionPatient || []).map(Number);
           const n = [x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]];
+          const length = p => Math.hypot(...p), dot = (p, q) => p.reduce((s, value, k) => s + value * q[k], 0);
           const along = p => p.map(Number).reduce((s, value, k) => s + (value - o[k]) * n[k], 0);
-          const spacing = Math.abs(along(b.imagePositionPatient)), off = Math.abs(along(v.getCamera().focalPoint));
+          const camera = v.getCamera(), focal = camera.focalPoint.map(Number), normal = camera.viewPlaneNormal.map(Number);
+          const spacing = Math.abs(along(b.imagePositionPatient)), off = Math.abs(along(focal));
+          // A tilted plane through the slice still leaves it away from the focal point: bound how far it strays over the
+          // image (its diagonal plus the focal point's distance from the image's corner).
+          const tilt = Math.sqrt(Math.max(0, 1 - (dot(normal, n) / (length(normal) * length(n))) ** 2));
+          const reach = Math.hypot(Number(a.columns) * Number(a.columnPixelSpacing), Number(a.rows) * Number(a.rowPixelSpacing)) + length(focal.map((p, k) => p - o[k]));
           // Off by under 1/1024 of the spacing, the blend moves no displayed 8-bit value by half a step even between a black
           // and a white slice, so the screen is that original; scrolling lands within float error of it.
-          onSlice = spacing > 0 && Number.isFinite(off) && off <= spacing / 1024;
+          const stray = off + tilt * reach;
+          onSlice = matches(reference(id), r) && x.length === 3 && y.length === 3 && o.length === 3 && Math.abs(length(n) - 1) < 1e-3 &&
+            spacing > 0 && Number.isFinite(stray) && stray <= spacing / 1024;
         } catch (_) { onSlice = false; }
         return onSlice ? '' : kinText("MPR 단면이 원본 영상 사이에 있어 Key Image를 만들 수 없습니다. 스크롤로 원본 단면에 맞춘 뒤 누르세요.");
       }
+      if (v.type !== 'stack') return NOT_SHOWN;
+      // Tile, Unfolded and Slab are this viewer's own views; where one is loaded but cannot say how the cell is laid out,
+      // nothing is made.
       let laid = null, slab = false;
-      try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) {}
-      try { slab = window.kinMgSlab?.on?.(v.id) === true; } catch (_) {}
+      try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) { return NOT_SHOWN; }
+      try { slab = window.kinMgSlab?.on?.(v.id) === true; } catch (_) { return NOT_SHOWN; }
       if (laid === 'unfolded') return kinText("Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.");
       if (laid) return kinText("Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.");
       if (slab) return kinText("Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.");
-      const drawn = v.viewportStatus === undefined || v.viewportStatus === (cs.Enums?.ViewportStatus?.RENDERED || 'rendered');
+      const drawn = v.viewportStatus === (cs.Enums?.ViewportStatus?.RENDERED || 'rendered');
       return drawn && matches(reference(kinViewerShownImageId(v)), r) ? '' : NOT_SHOWN;
     }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
