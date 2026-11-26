@@ -72,7 +72,7 @@ builds the incident scope and the export from rows read back from
 `emr_access.access_entry`. Pure failures use no fake durable receipt. UNKNOWN is
 queried only under the original operation ID and is never retried as a new event.
 
-The real Nest routes below prove them: REQ-A-DURABLE, REQ-A-TARGET and REQ-A-OUTCOME → A-PG-COMMIT, A-HTTP-BODY, A-HTTP-OUTCOME → `tests/emr/a/report_reads_test.py` (A2); REQ-A-DURABLE and REQ-A-OUTCOME → A-PG-COMMIT, A-HTTP-OUTCOME → `tests/emr/a/viewing_set_test.py` (A3).
+The real Nest routes below prove them (Module A numbers no RISK): REQ-A-DURABLE, REQ-A-TARGET and REQ-A-OUTCOME → no numbered RISK → `tests/emr/a/report_reads_test.py` (A2, cases A-PG-COMMIT, A-HTTP-BODY, A-HTTP-OUTCOME); REQ-A-DURABLE and REQ-A-OUTCOME → no numbered RISK → `tests/emr/a/viewing_set_test.py` (A3, cases A-PG-COMMIT, A-HTTP-OUTCOME).
 Both commit every target before the first clinical byte; A2 also resolves a
 lost COMMIT reply. Renderer acceptance belongs to A5. Empty fixture endpoints
 do not close them.

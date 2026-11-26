@@ -248,6 +248,14 @@ class OpenSourceNoticesTest(unittest.TestCase):
         self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: record}}))
         self.assertEqual(row()['scope'], 'Unresolved image package inventory')
         self.assertEqual(len(row()['missing']), 2)
+        # A list taken by replaying a Dockerfile counts only while that Dockerfile is the one it was taken by.
+        self.write('worklist-v0/legal/licenses/texts/list.txt', listing)
+        bound = dict(record, inventory_inputs={'api/Dockerfile': digest('FROM node:22-slim AS base\nFROM base AS production\n')})
+        self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: bound}}))
+        self.assertEqual(row()['missing'], [])
+        self.write('api/Dockerfile', 'FROM node:22-slim AS base\nRUN apt-get install -y curl\nFROM base AS production\n')
+        self.assertEqual(row()['scope'], 'Unresolved image package inventory')
+        self.assertIn('패키지 목록을 만든 뒤 바뀐 입력: api/Dockerfile', row()['missing'])
 
     def test_viewer_decoder_is_inventoried_from_its_build_pin(self):
         self.write('scripts/build-sof3-wasm.py', 'LIBJPEG_TURBO = {"version": "3.2.1", "url": "https://example/libjpeg-turbo-3.2.1.tar.gz", "sha256": "abc"}\n')

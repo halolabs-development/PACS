@@ -96,8 +96,14 @@ def collect(root, files=None, source_offer='link'):
         if not originals:
             missing.append('라이선스·저작권·해당 NOTICE 원문')
         if 'inventory' in record:
-            # A package list taken from the image itself; only a list whose bytes match counts as inventoried.
-            extra['inventory'] = verified(record['inventory'], missing)
+            # A package list taken from the image itself; only a list whose bytes match counts as inventoried, and only
+            # while every file it was taken by (the Dockerfile whose package lines were replayed) is unchanged.
+            inventory = verified(record['inventory'], missing)
+            for path, digest in sorted(record.get('inventory_inputs', {}).items()):
+                if not (root / path).is_file() or hashlib.sha256(input_bytes(path)).hexdigest() != digest:
+                    missing.append('패키지 목록을 만든 뒤 바뀐 입력: ' + path)
+                    inventory = []
+            extra['inventory'] = inventory
         missing.extend(record.get('missing', []))
         rows.append(dict(section=section, name=name, version=version, origin=origin,
                          license=license_name or record.get('license') or 'Unverified',

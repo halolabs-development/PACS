@@ -1,7 +1,7 @@
 /*
  * S7-U2a 중요 결과(CVR) 수신 화면 — 계약 S7-U1p §16.2·§16.3(이름·문구·범위), §3.3(수신자 투영), §6.1 route #3·#4·#6,
  * §6.2(목록·cursor·pending), §5.3(ACK의 뜻), §8·§8.1(쓰기 답의 판별), §17(한계 문장).
- * REQ-S7-U2a-RECIPIENT-LIST / REQ-S7-U2a-EXPLICIT-ACK / REQ-S7-U2a-WORDING → RISK-S7-U2a-FALSE-ACK-UI / -STALE / -BADGE-LEAK / -BODY-SUBSTITUTE / RISK-S7-U1p-FALSE-ACK / RISK-S7-U1p-FALSE-UNDELIVERED → TEST-S7-U2a-DOM (tests/critical_result_recipient_dom_test.py).
+ * REQ-S7-U2a-RECIPIENT-LIST / REQ-S7-U2a-EXPLICIT-ACK / REQ-S7-U2a-WORDING → RISK-S7-U2a-FALSE-ACK-UI / RISK-S7-U2a-STALE / RISK-S7-U2a-BADGE-LEAK / RISK-S7-U2a-BODY-SUBSTITUTE / RISK-S7-U1p-FALSE-ACK / RISK-S7-U1p-FALSE-UNDELIVERED → TEST-S7-U2a-DOM (tests/critical_result_recipient_dom_test.py).
  *
  * 임상의 홈의 Critical Results 영역(clinician.html)과 판독 화면의 수신 패널(main.html)이 같은 규칙으로 쓴다.
  * - 목록은 서버 GET critical-results?view=received의 답만 그린다. 배지는 응답의 pending이고 행 수로 세지 않는다. stub 행에는

@@ -425,7 +425,7 @@
       "missing": [],
       "name": "@nestjs/schematics",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@nestjs/schematics",
       "originals": [
@@ -440,7 +440,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/nestjs/schematics.git",
-      "supplier": "nestjs",
+      "supplier": "Copyright holder (LICENSE): nestjs",
       "version": "10.2.3"
     },
     {
@@ -449,7 +449,7 @@
       "missing": [],
       "name": "@nuxtjs/opencollective",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@nuxtjs/opencollective",
       "originals": [
@@ -464,7 +464,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "nuxt-contrib/opencollective",
-      "supplier": "Nuxt Community",
+      "supplier": "Copyright holder (LICENSE): Nuxt Community",
       "version": "0.3.2"
     },
     {
@@ -671,7 +671,7 @@
       "missing": [],
       "name": "@types/eslint",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@types/eslint",
       "originals": [
@@ -686,7 +686,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Microsoft Corporation",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "9.6.1"
     },
     {
@@ -695,7 +695,7 @@
       "missing": [],
       "name": "@types/eslint-scope",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@types/eslint-scope",
       "originals": [
@@ -710,7 +710,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Microsoft Corporation",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "3.7.7"
     },
     {
@@ -719,7 +719,7 @@
       "missing": [],
       "name": "@types/estree",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@types/estree",
       "originals": [
@@ -734,7 +734,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Microsoft Corporation",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "1.0.9"
     },
     {
@@ -743,7 +743,7 @@
       "missing": [],
       "name": "@types/json-schema",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@types/json-schema",
       "originals": [
@@ -758,7 +758,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Microsoft Corporation",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "7.0.15"
     },
     {
@@ -767,7 +767,7 @@
       "missing": [],
       "name": "@types/node",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@types/node",
       "originals": [
@@ -782,7 +782,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
-      "supplier": "Microsoft Corporation",
+      "supplier": "Copyright holder (LICENSE): Microsoft Corporation",
       "version": "22.20.1"
     },
     {
@@ -945,7 +945,7 @@
       "missing": [],
       "name": "@webassemblyjs/ieee754",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@webassemblyjs/ieee754",
       "originals": [
@@ -960,7 +960,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "Sven Sauleau <sven@sauleau.com>",
+      "supplier": "Copyright holder (LICENSE): Sven Sauleau <sven@sauleau.com>",
       "version": "1.13.2"
     },
     {
@@ -969,7 +969,7 @@
       "missing": [],
       "name": "@webassemblyjs/leb128",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@webassemblyjs/leb128",
       "originals": [
@@ -984,7 +984,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/xtuc/webassemblyjs.git",
-      "supplier": "The Obvious Corporation",
+      "supplier": "Copyright holder (LICENSE): The Obvious Corporation",
       "version": "1.13.2"
     },
     {
@@ -1169,7 +1169,7 @@
       "missing": [],
       "name": "accepts",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/accepts",
       "originals": [
@@ -1184,7 +1184,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/accepts",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.3.8"
     },
     {
@@ -1193,7 +1193,7 @@
       "missing": [],
       "name": "acorn",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/acorn",
       "originals": [
@@ -1208,7 +1208,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/acornjs/acorn.git",
-      "supplier": "various contributors (see AUTHORS)",
+      "supplier": "Copyright holder (LICENSE): various contributors (see AUTHORS)",
       "version": "8.18.0"
     },
     {
@@ -1547,7 +1547,7 @@
       "missing": [],
       "name": "array-timsort",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/array-timsort",
       "originals": [
@@ -1562,7 +1562,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/kaelzhang/node-array-timsort.git",
-      "supplier": "Marco Ziccardi",
+      "supplier": "Copyright holder (LICENSE): Marco Ziccardi",
       "version": "1.0.3"
     },
     {
@@ -1659,7 +1659,7 @@
       "missing": [],
       "name": "bl",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/bl",
       "originals": [
@@ -1674,7 +1674,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/rvagg/bl.git",
-      "supplier": "bl contributors",
+      "supplier": "Copyright holder (LICENSE): bl contributors",
       "version": "4.1.0"
     },
     {
@@ -1683,7 +1683,7 @@
       "missing": [],
       "name": "body-parser",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/body-parser",
       "originals": [
@@ -1698,7 +1698,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "expressjs/body-parser",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.20.9"
     },
     {
@@ -1817,7 +1817,7 @@
       "missing": [],
       "name": "buffer-from",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/buffer-from",
       "originals": [
@@ -1832,7 +1832,7 @@
       "scope": "Development",
       "section": "API",
       "source": "LinusU/buffer-from",
-      "supplier": "Linus Unnebäck",
+      "supplier": "Copyright holder (LICENSE): Linus Unnebäck",
       "version": "1.1.2"
     },
     {
@@ -1995,7 +1995,7 @@
       "missing": [],
       "name": "chalk",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/chalk",
       "originals": [
@@ -2010,7 +2010,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "chalk/chalk",
-      "supplier": "Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)",
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (sindresorhus.com)",
       "version": "4.1.2"
     },
     {
@@ -2019,7 +2019,7 @@
       "missing": [],
       "name": "chalk",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@angular-devkit/schematics-cli/node_modules/chalk",
       "originals": [
@@ -2034,7 +2034,7 @@
       "scope": "Development",
       "section": "API",
       "source": "chalk/chalk",
-      "supplier": "Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
+      "supplier": "Copyright holder (LICENSE): Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)",
       "version": "5.6.2"
     },
     {
@@ -2370,7 +2370,9 @@
     {
       "integrity": "sha512-9vAdYbHj6x2fLKC4+oPH0kFzY/orMZyG2Aj+kNylHxKGJ/Ed4dpNyAQYwJOdqO4zdM7XpVHmyejQDcQHrnuXbw==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "consola",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -2627,7 +2629,7 @@
       "missing": [],
       "name": "deepmerge",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/deepmerge",
       "originals": [
@@ -2642,7 +2644,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/TehShrike/deepmerge.git",
-      "supplier": "James Halliday, Josh Duff, and other contributors",
+      "supplier": "Copyright holder (LICENSE): James Halliday, Josh Duff, and other contributors",
       "version": "4.3.1"
     },
     {
@@ -2758,7 +2760,9 @@
     {
       "integrity": "sha512-I88TYZWc9XiYHRQ4/3c5rjjfgkjhLyW2luGIheGERbNQ6OY7yTybanSpDXZa8y7VUP9YmDcYa+eyq4ca7iLqWA==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "eastasianwidth",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -2883,7 +2887,7 @@
       "missing": [],
       "name": "encodeurl",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/encodeurl",
       "originals": [
@@ -2898,7 +2902,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "pillarjs/encodeurl",
-      "supplier": "Douglas Christopher Wilson",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "2.0.0"
     },
     {
@@ -2929,7 +2933,7 @@
       "missing": [],
       "name": "error-ex",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/error-ex",
       "originals": [
@@ -2944,7 +2948,7 @@
       "scope": "Development",
       "section": "API",
       "source": "qix-/node-error-ex",
-      "supplier": "JD Ballard",
+      "supplier": "Copyright holder (LICENSE): JD Ballard",
       "version": "1.3.4"
     },
     {
@@ -3063,7 +3067,7 @@
       "missing": [],
       "name": "escape-html",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/escape-html",
       "originals": [
@@ -3078,7 +3082,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "component/escape-html",
-      "supplier": "TJ Holowaychuk; Andreas Lubbe; Tiancheng \"Timothy\" Gu",
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk; Andreas Lubbe; Tiancheng \"Timothy\" Gu",
       "version": "1.0.3"
     },
     {
@@ -3109,7 +3113,7 @@
       "missing": [],
       "name": "eslint-scope",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/eslint-scope",
       "originals": [
@@ -3124,7 +3128,7 @@
       "scope": "Development",
       "section": "API",
       "source": "eslint/eslint-scope",
-      "supplier": "JS Foundation and other contributors, https://js.foundation; Yusuke Suzuki (twitter: @Constellation) and other contributors",
+      "supplier": "Copyright holder (LICENSE): JS Foundation and other contributors, https://js.foundation; Yusuke Suzuki (twitter: @Constellation) and other contributors",
       "version": "5.1.1"
     },
     {
@@ -3155,7 +3159,7 @@
       "missing": [],
       "name": "esrecurse",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/esrecurse",
       "originals": [
@@ -3188,13 +3192,15 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/estools/esrecurse.git",
-      "supplier": "Yusuke Suzuki; Yusuke Suzuki <utatane.tea@gmail.com>",
+      "supplier": "Copyright holder (LICENSE): Yusuke Suzuki; Yusuke Suzuki <utatane.tea@gmail.com>",
       "version": "4.3.0"
     },
     {
       "integrity": "sha512-39nnKffWz8xN1BU/2c79n9nB9HDzo0niYUqx6xyqUnyoAnQyyWpOTdZEeiCch8BBu515t4wp9ZmgVfVhn9EBpw==",
       "license": "BSD-2-Clause",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "estraverse",
       "notes": [],
       "origin": "api/package-lock.json:node_modules/estraverse",
@@ -3216,7 +3222,9 @@
     {
       "integrity": "sha512-MMdARuVEQziNTeJD8DgMqmhwR11BRQ/cBP+pLtYdSTnf3MIO8fFeiINEbX36ZdNlfU/7A9f3gUw49B3oQsvwBA==",
       "license": "BSD-2-Clause",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "estraverse",
       "notes": [],
       "origin": "api/package-lock.json:node_modules/esrecurse/node_modules/estraverse",
@@ -3241,7 +3249,7 @@
       "missing": [],
       "name": "etag",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/etag",
       "originals": [
@@ -3256,7 +3264,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/etag",
-      "supplier": "Douglas Christopher Wilson",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "1.8.1"
     },
     {
@@ -3551,7 +3559,7 @@
       "missing": [],
       "name": "forwarded",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/forwarded",
       "originals": [
@@ -3566,7 +3574,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/forwarded",
-      "supplier": "Douglas Christopher Wilson",
+      "supplier": "Copyright holder (LICENSE): Douglas Christopher Wilson",
       "version": "0.2.0"
     },
     {
@@ -3641,7 +3649,7 @@
       "missing": [],
       "name": "fsevents",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/fsevents",
       "originals": [
@@ -3656,7 +3664,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/fsevents/fsevents.git",
-      "supplier": "Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller",
+      "supplier": "Copyright holder (LICENSE): Philipp Dunkel, Ben Noordhuis, Elan Shankar, Paul Miller",
       "version": "2.3.3"
     },
     {
@@ -3819,7 +3827,7 @@
       "missing": [],
       "name": "graceful-fs",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/graceful-fs",
       "originals": [
@@ -3834,7 +3842,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/isaacs/node-graceful-fs",
-      "supplier": "Isaac Z. Schlueter, Ben Noordhuis, and Contributors",
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter, Ben Noordhuis, and Contributors",
       "version": "4.2.11"
     },
     {
@@ -4041,7 +4049,7 @@
       "missing": [],
       "name": "inherits",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/inherits",
       "originals": [
@@ -4056,7 +4064,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "git://github.com/isaacs/inherits",
-      "supplier": "Isaac Z. Schlueter",
+      "supplier": "Copyright holder (LICENSE): Isaac Z. Schlueter",
       "version": "2.0.4"
     },
     {
@@ -4373,7 +4381,7 @@
       "missing": [],
       "name": "jest-worker",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/jest-worker",
       "originals": [
@@ -4388,7 +4396,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/facebook/jest.git",
-      "supplier": "Facebook, Inc. and its affiliates",
+      "supplier": "Copyright holder (LICENSE): Facebook, Inc. and its affiliates",
       "version": "27.5.1"
     },
     {
@@ -4859,7 +4867,7 @@
       "missing": [],
       "name": "methods",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/methods",
       "originals": [
@@ -4874,7 +4882,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/methods",
-      "supplier": "TJ Holowaychuk <tj@vision-media.ca>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): TJ Holowaychuk <tj@vision-media.ca>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.1.2"
     },
     {
@@ -4905,7 +4913,7 @@
       "missing": [],
       "name": "mime-db",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/mime-db",
       "originals": [
@@ -4920,7 +4928,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/mime-db",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.52.0"
     },
     {
@@ -4929,7 +4937,7 @@
       "missing": [],
       "name": "mime-types",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/mime-types",
       "originals": [
@@ -4944,7 +4952,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/mime-types",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.1.35"
     },
     {
@@ -5063,7 +5071,7 @@
       "missing": [],
       "name": "ms",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/ms",
       "originals": [
@@ -5078,7 +5086,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "zeit/ms",
-      "supplier": "Zeit, Inc",
+      "supplier": "Copyright holder (LICENSE): Zeit, Inc",
       "version": "2.0.0"
     },
     {
@@ -5087,7 +5095,7 @@
       "missing": [],
       "name": "ms",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/@tokenizer/inflate/node_modules/ms",
       "originals": [
@@ -5102,7 +5110,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "vercel/ms",
-      "supplier": "Vercel, Inc",
+      "supplier": "Copyright holder (LICENSE): Vercel, Inc",
       "version": "2.1.3"
     },
     {
@@ -5111,7 +5119,7 @@
       "missing": [],
       "name": "ms",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/send/node_modules/ms",
       "originals": [
@@ -5126,7 +5134,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "vercel/ms",
-      "supplier": "Vercel, Inc",
+      "supplier": "Copyright holder (LICENSE): Vercel, Inc",
       "version": "2.1.3"
     },
     {
@@ -5135,7 +5143,7 @@
       "missing": [],
       "name": "multer",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/multer",
       "originals": [
@@ -5150,7 +5158,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "expressjs/multer",
-      "supplier": "Hage Yaapa <http://www.hacksparrow.com>",
+      "supplier": "Copyright holder (LICENSE): Hage Yaapa <http://www.hacksparrow.com>",
       "version": "2.5.0"
     },
     {
@@ -5203,7 +5211,7 @@
       "missing": [],
       "name": "negotiator",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/negotiator",
       "originals": [
@@ -5218,7 +5226,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/negotiator",
-      "supplier": "Federico Romero; Isaac Z. Schlueter; Douglas Christopher Wilson",
+      "supplier": "Copyright holder (LICENSE): Federico Romero; Isaac Z. Schlueter; Douglas Christopher Wilson",
       "version": "0.6.3"
     },
     {
@@ -5227,7 +5235,7 @@
       "missing": [],
       "name": "neo-async",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/neo-async",
       "originals": [
@@ -5242,7 +5250,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git@github.com:suguru03/neo-async.git",
-      "supplier": "Suguru Motegi",
+      "supplier": "Copyright holder (LICENSE): Suguru Motegi",
       "version": "2.6.2"
     },
     {
@@ -5405,7 +5413,7 @@
       "missing": [],
       "name": "on-finished",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/on-finished",
       "originals": [
@@ -5420,7 +5428,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/on-finished",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.4.1"
     },
     {
@@ -5561,7 +5569,7 @@
       "missing": [],
       "name": "parseurl",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/parseurl",
       "originals": [
@@ -5576,7 +5584,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "pillarjs/parseurl",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.3.3"
     },
     {
@@ -5629,7 +5637,7 @@
       "missing": [],
       "name": "path-to-regexp",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/express/node_modules/path-to-regexp",
       "originals": [
@@ -5644,7 +5652,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Blake Embrey (hello@blakeembrey.com)",
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
       "version": "0.1.13"
     },
     {
@@ -5653,7 +5661,7 @@
       "missing": [],
       "name": "path-to-regexp",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/path-to-regexp",
       "originals": [
@@ -5668,7 +5676,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/pillarjs/path-to-regexp.git",
-      "supplier": "Blake Embrey (hello@blakeembrey.com)",
+      "supplier": "Copyright holder (LICENSE): Blake Embrey (hello@blakeembrey.com)",
       "version": "3.3.0"
     },
     {
@@ -5919,7 +5927,7 @@
       "missing": [],
       "name": "qs",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/qs",
       "originals": [
@@ -5934,7 +5942,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "https://github.com/ljharb/qs.git",
-      "supplier": "Nathan LaFreniere and other contributors",
+      "supplier": "Copyright holder (LICENSE): Nathan LaFreniere and other contributors",
       "version": "6.16.2"
     },
     {
@@ -5987,7 +5995,7 @@
       "missing": [],
       "name": "readable-stream",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/readable-stream",
       "originals": [
@@ -6002,7 +6010,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/nodejs/readable-stream",
-      "supplier": "Node.js contributors; Joyent, Inc. and other Node contributors",
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
       "version": "3.6.2"
     },
     {
@@ -6671,7 +6679,7 @@
       "missing": [],
       "name": "source-map-support",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/source-map-support",
       "originals": [
@@ -6686,7 +6694,7 @@
       "scope": "Development",
       "section": "API",
       "source": "https://github.com/evanw/node-source-map-support",
-      "supplier": "Evan Wallace",
+      "supplier": "Copyright holder (LICENSE): Evan Wallace",
       "version": "0.5.21"
     },
     {
@@ -6695,7 +6703,7 @@
       "missing": [],
       "name": "statuses",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/statuses",
       "originals": [
@@ -6710,7 +6718,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/statuses",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "2.0.2"
     },
     {
@@ -6807,7 +6815,7 @@
       "missing": [],
       "name": "string_decoder",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/string_decoder",
       "originals": [
@@ -6822,7 +6830,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git://github.com/nodejs/string_decoder.git",
-      "supplier": "Node.js contributors; Joyent, Inc. and other Node contributors",
+      "supplier": "Copyright holder (LICENSE): Node.js contributors; Joyent, Inc. and other Node contributors",
       "version": "1.3.0"
     },
     {
@@ -7186,7 +7194,9 @@
     {
       "integrity": "sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "연결된 원문이 저작권자 자리가 비어 있는 서식입니다 — 이 패키지의 실제 저작권 줄 미확보"
+      ],
       "name": "tr46",
       "notes": [
         "SPDX license text, package ships no file — 해당 버전 npm 배포물의 MIT 필드에 따라 SPDX 원문을 동봉했습니다."
@@ -7333,7 +7343,7 @@
       "missing": [],
       "name": "type-is",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/type-is",
       "originals": [
@@ -7348,7 +7358,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "jshttp/type-is",
-      "supplier": "Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
+      "supplier": "Copyright holder (LICENSE): Jonathan Ong <me@jongleberry.com>; Douglas Christopher Wilson <doug@somethingdoug.com>",
       "version": "1.6.18"
     },
     {
@@ -7442,10 +7452,12 @@
     {
       "integrity": "sha512-EvRlUt/QqAEvXdQeRMYUfwOQsfzpDztykrG2owGEE/rBOBoYv9uF39ZzsNDh4lTFHhTr2XOZjKkYgueD12ZmGA==",
       "license": "MIT",
-      "missing": [],
+      "missing": [
+        "같은 배포물의 lib/web/fetch/LICENSE(별도 저작권 고지) 원문"
+      ],
       "name": "undici",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/undici",
       "originals": [
@@ -7460,7 +7472,7 @@
       "scope": "Runtime",
       "section": "API",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Matteo Collina and Undici contributors",
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
       "version": "6.29.1"
     },
     {
@@ -7469,7 +7481,7 @@
       "missing": [],
       "name": "undici-types",
       "notes": [
-        "공급자는 원문의 저작권 줄에서 옮겼습니다(패키지 메타데이터에 author가 없음)."
+        "공급자 칸은 원문의 저작권자입니다 — 패키지 메타데이터에 author가 없어 배포자(게시자)는 확인하지 않았습니다."
       ],
       "origin": "api/package-lock.json:node_modules/undici-types",
       "originals": [
@@ -7484,7 +7496,7 @@
       "scope": "Development",
       "section": "API",
       "source": "git+https://github.com/nodejs/undici.git",
-      "supplier": "Matteo Collina and Undici contributors",
+      "supplier": "Copyright holder (LICENSE): Matteo Collina and Undici contributors",
       "version": "6.21.0"
     },
     {
@@ -8238,11 +8250,14 @@
       "version": "orthancteam/orthanc:24.12.0"
     },
     {
-      "license": "IJG AND BSD-3-Clause",
-      "missing": [],
+      "license": "IJG (libjpeg API library; TurboJPEG API off in this build)",
+      "missing": [
+        "kin-sof3.wasm에 함께 링크되는 WASI C 런타임(zig cc의 wasi-libc)의 판·원문"
+      ],
       "name": "libjpeg-turbo",
       "notes": [
-        "태그 3.2.1(커밋 7b4993786d856cbccabfc0ed2f923ba000e326cc)의 LICENSE.md와 그것이 가리키는 README.ijg입니다. kin-sof3.wasm은 TurboJPEG API를 끄고(WITH_TURBOJPEG=0) SIMD 없이 지은 libjpeg API 라이브러리를 씁니다."
+        "태그 3.2.1(커밋 7b4993786d856cbccabfc0ed2f923ba000e326cc)의 LICENSE.md와 그것이 가리키는 README.ijg입니다. kin-sof3.wasm은 TurboJPEG API를 끄고(WITH_TURBOJPEG=0) SIMD 없이 지은 libjpeg API 라이브러리를 씁니다.",
+        "This software is based in part on the work of the Independent JPEG Group. (README.ijg가 바이너리 배포의 문서에 두라고 한 문장 — kin-sof3.wasm은 libjpeg API 라이브러리를 정적으로 링크합니다.)"
       ],
       "origin": "scripts/build-sof3-wasm.py",
       "originals": [
@@ -8483,7 +8498,9 @@
         }
       ],
       "license": "Various (per package; see the package list)",
-      "missing": [],
+      "missing": [
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 23.0.1)"
+      ],
       "name": "Distribution packages in node:22-slim",
       "notes": [
         "2026-11-26에 이 태그로 받은 이미지(sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
@@ -8500,7 +8517,7 @@
           "name": "corepack and yarn shipped in node:22-slim",
           "path": "texts/742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5.txt",
           "sha256": "742e9eb469a1b3e11d7fcedd1e291d4c354fba7372a215d7d306000e7cddd2a5",
-          "source": "supplier tag commit — images/image-api-node-22-slim-corepack-yarn.txt"
+          "source": "docker run --rm sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb"
         },
         {
           "name": "pip 23.0.1 LICENSE.txt",
@@ -8776,7 +8793,9 @@
         }
       ],
       "license": "Various (per package; see the package list)",
-      "missing": [],
+      "missing": [
+        "pip가 번들한 구성요소(pip/_vendor — distlib 등)의 개별 원문(pip 25.0.1)"
+      ],
       "name": "Distribution packages in python:3.12-slim",
       "notes": [
         "2026-11-26에 이 태그로 받은 이미지(sha256:191083cdf6c7bda8c76158983163ead5d5cf7b77cf3033e805bb0f5296f51b4b)에서 Dockerfile의 패키지 설치 줄을 다시 돌려 꺼냈습니다. 저장소는 태그만 적어 두므로, 출고 빌드의 이미지가 다르면 그 이미지에서 다시 꺼내야 합니다."
@@ -8825,7 +8844,8 @@
       ],
       "license": "Various (per package; see the package list)",
       "missing": [
-        "jar 303개와 RPM 8개는 Maven Central pom·RPM 선언과 SPDX 표준 원문으로만 묶었습니다 — 구성요소별 저작권 줄은 해당 소스에서 뽑아야 합니다."
+        "jar 303개와 RPM 8개는 Maven Central pom·RPM 선언과 SPDX 표준 원문으로만 묶었습니다 — 구성요소별 저작권 줄은 해당 소스에서 뽑아야 합니다.",
+        "RPM 패키지 목록이 이름 25개뿐이고 판·소스·라이선스 칸이 비어 있습니다(11-23 감사 목록은 RPM 44행 — ca-certificates·libacl·java-21-openjdk-headless 등이 이 목록에 없음). 이미지에서 RPM 전체 목록과 판을 다시 뽑아야 합니다."
       ],
       "name": "Distribution packages in quay.io/keycloak/keycloak:26.7.3",
       "notes": [
@@ -8843,13 +8863,13 @@
           "name": "LICENSE/NOTICE entries inside the jars",
           "path": "texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt",
           "sha256": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
-          "source": "supplier tag commit — images/image-keycloak-26.7.3-jars.txt"
+          "source": "extracted from the image (see the file header)"
         },
         {
           "name": "OpenJDK 21 legal notices",
           "path": "texts/a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1.txt",
           "sha256": "a7cdc66c581232590d5d81d4a253276588bc4d09eafb70b5f99ea9f80ec45fd1",
-          "source": "supplier tag commit — images/image-keycloak-26.7.3-openjdk-legal.txt"
+          "source": "docker run --rm sha256:29be7252db0a106f1cd2ac17b9a56ff2668073da645638a38b9fc67deeb2d6c4"
         },
         {
           "name": "MySQL Connector/J 9.6.0 LICENSE (Universal FOSS Exception)",
@@ -10112,7 +10132,7 @@
     "scripts/build-sof3-wasm.py": "811ea8584a61ecaccb99b4ef53f145153a619a413f6cce625d0b0f30d5afc032",
     "scripts/sof3/kin_sof3.c": "7645ce429e01514a4f152e1d0c0f3c2150bee32a0f135be88c39573647799ea2",
     "tests/fixtures/asr/Dockerfile": "96765ceaaa32a3e648b30600466e413a0056f54f8b243dbe0e0c2c33a4545df1",
-    "worklist-v0/legal/licenses/catalog.json": "dff93e4ab7b67adb00ead6bd37f9862e1d326bde24ae4dac0303782e9f465adb",
+    "worklist-v0/legal/licenses/catalog.json": "4b3ed7bbdabc052ceb7a45dd5404804c1fd2794f23c11ca976dbb80170a26a9b",
     "worklist-v0/legal/licenses/gateway-resolution.json": "207d59463b27bb752cff221107ba09db4547a74a859fb996661e327dc6da60d7",
     "worklist-v0/legal/licenses/orthanc-build-matrix-24.12.0.json": "44634b06fb56d94013c80b77df9c882a0029391ea17510ee41368ebfb76cd59f",
     "worklist-v0/legal/licenses/print-resolution.json": "cb8c52f4c63aeda100c647a966586ca861bfaa2392d650ecceeafdfb805f751c",
