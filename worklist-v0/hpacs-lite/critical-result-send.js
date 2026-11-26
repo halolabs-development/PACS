@@ -1,7 +1,6 @@
 /*
  * S7-U1b 중요 결과(CVR) 발신 화면 — 계약 S7-U1p §16.1(이름·문구), §6.1 route #1·#2·#3·#4·#7·#8, §8·§8.1(쓰기 답의 판별).
- * REQ-S7-U1b-SENDER-UI / REQ-S7-U1b-FAILURE / REQ-S7-U1b-ABA → RISK-S7-U1b-SUCCESS-WITHOUT-RECORD / -STALE-A-B-A /
- * -HIDE-AS-PERMISSION / RISK-S7-U1p-FALSE-UNDELIVERED → TEST-S7-U1b-DOM (tests/critical_result_sender_dom_test.py).
+ * REQ-S7-U1b-SENDER-UI / REQ-S7-U1b-FAILURE / REQ-S7-U1b-ABA → RISK-S7-U1b-SUCCESS-WITHOUT-RECORD / -STALE-A-B-A / -HIDE-AS-PERMISSION / RISK-S7-U1p-FALSE-UNDELIVERED → TEST-S7-U1b-DOM (tests/critical_result_sender_dom_test.py).
  *
  * 판독 화면의 Mark CVR 단추, 발신 창(Send Critical Result), 보낸 목록(Sent Critical Results)을 서버 S7-U1a route에만 잇는다.
  * - 단추는 서버 #1이 sendable:true라고 답한 판독 대상에서만 켠다. 끄는 것은 안내일 뿐 권한 확인이 아니다 — 보내기는 서버가
