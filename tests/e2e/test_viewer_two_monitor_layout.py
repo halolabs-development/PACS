@@ -872,15 +872,20 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertTrue(viewer.evaluate(LAID, [2, 1]), json.dumps(viewer.evaluate(SEAM_STATE)))
 
     def test_two_21_a_layout_picked_under_the_rule_follows_the_display_edge_once_its_rows_are_taken_back(self):
-        # The same rule, one cell on each monitor, a different image in each; 1 x 4 from the Layout menu: two columns on
-        # each monitor's image area. Then the reader makes the window narrower from its left, still over both displays: the
-        # rule's rows go back to the account's, and the display edge is no longer where the rule's areas met. The four
-        # cells stay the cells they were - each on its monitor, in its column, on its image - as the plain 1 x 4, whose
-        # middle the window keeps on the display edge: none lies across it.
+        # The window stands over both displays with the display edge left of its middle (made narrower from its left, as
+        # beside a side panel). The same rule, one cell on each monitor, a different image in each; 1 x 4 from the Layout
+        # menu: two columns on each monitor's image area - areas that do not meet in the middle of the grid. Then the
+        # reader lays the window over the whole of both displays: the rule's rows go back to the account's, and the
+        # display edge is no longer where the rule's areas met. The four cells stay the cells they were - each on its
+        # monitor, in its column, on its image - as the plain 1 x 4, whose middle the window keeps on the display edge:
+        # none lies across it, whatever the window does next.
         p, viewer, a, b = self.setup_viewer('TWO21')
         left, _ = self.displays
         self.stretch(viewer)
         self.shows(viewer, a.uid)
+        narrow, whole = dict(left=left['left'] + 400, top=0, width=3440, height=1080), dict(left=left['left'], top=0, width=3840, height=1080)
+        self.bounds(viewer, narrow)
+        viewer.wait_for_timeout(2500)
         self.apply_rule(viewer, HIGH_RULES, 'high.json')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
         self.until(viewer, LAID, 1)
@@ -894,13 +899,17 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, LAID, 2)
         self.until(viewer, DRAWN)
         viewer.wait_for_timeout(2500)
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
         wide, ids = viewer.evaluate(PLACES), viewer.evaluate(PLACE_IDS)
         self.assertEqual([[1, 0, 0], [1, 0, 1], [2, 0, 0], [2, 0, 1]], [c[:3] for c in wide], wide)
         self.assertTrue(wide[0][3] and wide[2][3] and wide[0][3] != wide[2][3], wide)
         self.assertEqual(4, len({c[3] for c in ids}), ids)
         self.assertTrue(viewer.evaluate("() => document.body.hasAttribute('data-kin-monitor-rows')"))
-        # The window made narrower from its left: the display edge is no longer in its middle, and the rows are taken back.
-        self.bounds(viewer, dict(left=left['left'] + 400, top=0, width=3440, height=1080))
+        # Monitor 2's first column begins left of the grid's middle: where the rule's areas met for this window.
+        starts = sorted(c[1] for c in viewer.evaluate(GRID)['cells'])
+        self.assertLess(starts[2], 0.49, starts)
+        # The window over the whole of both displays: the rows are taken back, and the display edge is in its middle now.
+        self.bounds(viewer, whole)
         self.until(viewer, "() => !document.body.hasAttribute('data-kin-monitor-rows')")
         self.until(viewer, ON_SEAM)
         self.comes_back(viewer, wide, PLACES)
@@ -909,8 +918,8 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
         grid = viewer.evaluate(GRID)
         self.assertEqual([1, 4], [grid['rows'], grid['cols']])
-        # And it follows the edge from then on: the window over the whole of both displays again.
-        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        # And it follows the edge from then on: the window made narrower from its left again.
+        self.bounds(viewer, narrow)
         self.until(viewer, ON_SEAM)
         self.comes_back(viewer, wide, PLACES)
         self.assertEqual(ids, viewer.evaluate(PLACE_IDS))
