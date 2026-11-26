@@ -201,6 +201,15 @@ class Incidents(AuditPage):
         cloud = self.section.get_by_role('row').filter(has_text='cloud-incident (클라우드컴퓨팅법 제25조)')
         expect(cloud).to_contain_text('조건부 (#69, 공급 구조 결정 전)')
         expect(cloud).to_contain_text('Not Tracked')
+        # On an English screen the cloud row and the server's cloud line read in English: the sentence each place holds.
+        english = self.page.evaluate('''() => {
+            const en = el => { const s = KinLanguage.said(el); return s ? String(KinLanguage.tr(s, 'en')) : el.textContent; };
+            const row = [...document.querySelectorAll('#audit-incident-obligations tr')].find(tr => tr.textContent.includes('cloud-incident'));
+            return { state: en(document.querySelector('#audit-incident-state')), cloud: [...row.cells].map(en) }; }''')
+        self.assertEqual(english['cloud'][:2], ['cloud-incident (Cloud Computing Act, Article 25)', 'Conditional (#69, before supply structure is decided)'])
+        self.assertTrue(english['state'].startswith('SYN-A\nStatus: Open\n'), english['state'])
+        self.assertTrue(english['state'].endswith('\nConditional (#69)'), english['state'])
+        expect(self.section.locator('#audit-incident-state')).to_contain_text('조건부 (#69)')
         self.assertEqual(self.section.locator('img').count(), 0)
         before = len(self.backend_call(inspect=True)['body']['requests'])
         for form in ['possibility', 'confirmed', 'not-a-leak', 'report', 'medical', 'network']:

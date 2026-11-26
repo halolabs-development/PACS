@@ -4,6 +4,8 @@
   const kinSayEn = (t, ...p) => globalThis.KinLanguage?.sayEnglish ? globalThis.KinLanguage.sayEnglish(t, ...p)
     : t.replace(/\{(?:[ten]?(\d+)|([A-Za-z]\w*))\}/g, (m, i, n) => { const v = n !== undefined ? (p[0] || {})[n] : p[i]; return v === undefined ? m : String(v && typeof v === 'object' ? (v.t ?? v.e ?? '') : v); });
   const kinWrite = (el, value, name) => { if (globalThis.KinLanguage?.write) return globalThis.KinLanguage.write(el, value, name); if (!el) return el; const text = String(value ?? ''); if (name === 'title' || name === 'placeholder') el[name] = text; else if (name) el.setAttribute(name, text); else el.textContent = text; return el; };
+  // A fixed sentence of the product's server: English on an English screen only when the glossary knows it whole, else as received.
+  const kinServer = message => window.KinLanguage?.server ? window.KinLanguage.server(message) : message;
   // Product words in the language this page took as it opened (worklist-language.js), or as written.
   const kinText = (t, ...p) => window.KinLanguage && window.KinLanguage.text ? window.KinLanguage.text(t, ...p) : t.replace(/\{[ten]?(\d+)\}/g, (m, i) => String(p[i]));
   const el = name => document.getElementById(`audit-${name}`);
@@ -931,7 +933,9 @@
     `Closed (Superseded by ${data.closed?.supersededBy || data.supersededBy})` : data.status;
   function showIncident(data) {
     incidentSnapshot = data; incidentEl('detail').hidden = false;
-    incidentEl('state').textContent = `${data.incidentId}\nStatus: ${incidentStatus(data)}\nVerdict: ${data.plan.verdict}\nAs of: ${data.plan.asOf}\n${data.cloud}`;
+    // The server's cloud line is a fixed sentence: English on an English screen only when the glossary knows it whole.
+    kinWrite(incidentEl('state'), kinSayEn('{0}\nStatus: {1}\nVerdict: {2}\nAs of: {3}\n{4}', data.incidentId, incidentStatus(data), data.plan.verdict,
+      data.plan.asOf, kinServer(data.cloud ?? '')));
     kinWrite(incidentEl('scope'), incidentScopeText(data.scope));
     // A paged incident's rows are opened a page at a time, and its subjects too unless they are all in the answer above.
     const paged = data.scope.subjects, readable = !data.scope.reasons.some(r => r.kind === 'ledger-unreadable');
@@ -942,20 +946,20 @@
     for (const name of ['Duty', 'Recipient', 'Due / Timing', 'Remaining', 'Status / Performance']) { const th = document.createElement('th'); th.textContent = name; header.append(th); }
     table.append(header); const select = incidentEl('notice').elements.obligation; select.replaceChildren();
     for (const duty of data.plan.obligations) {
-      const tr = document.createElement('tr'), remaining = duty.dueAt === null ? '별도 숫자 기한 없음' : `${Math.trunc((Date.parse(duty.dueAt) - Date.parse(data.plan.asOf)) / 60000)} min`;
+      const tr = document.createElement('tr'), remaining = duty.dueAt === null ? kinSayEn('별도 숫자 기한 없음') : `${Math.trunc((Date.parse(duty.dueAt) - Date.parse(data.plan.asOf)) / 60000)} min`;
       const delays = data.plan.ledger.delays.filter(d => duty.delayRefs.includes(d.delayId));
       const delayText = delays.map(d => `\nDelay: ${d.delayId} / ${d.accepted ? 'Accepted' : 'Pending Review'} / ${d.clause} / ${d.version}\n${d.reason} / Evidence: ${d.evidenceId}` +
         (d.causalReview ? `\n${d.causalReview.reason} / Evidence: ${d.causalReview.evidenceId}` : '')).join('');
       for (const text of [duty.kind, duty.recipient, `${duty.dueAt || '—'} / ${duty.timing}${delays.length ? `\nOriginal Due: ${duty.originalDueAt || '—'}` : ''}${delayText}`, remaining,
         `${duty.status} / ${duty.stillOwed ? 'Pending' : 'Resolved'} / ${duty.noticeRefs.join(', ')}`]) {
-        const td = document.createElement('td'); td.textContent = text; tr.append(td);
+        const td = document.createElement('td'); kinWrite(td, text); tr.append(td);
       }
       table.append(tr);
       if (duty.stillOwed) { const option = document.createElement('option'); option.value = duty.obligationKey; option.textContent = `${duty.kind} / ${duty.recipient}`; select.append(option); }
     }
     const cloud = document.createElement('tr');
-    for (const text of ['cloud-incident (클라우드컴퓨팅법 제25조)', '조건부 (#69, 공급 구조 결정 전)', '—', '—', 'Not Tracked']) {
-      const td = document.createElement('td'); td.textContent = text; cloud.append(td);
+    for (const text of [kinSayEn('cloud-incident (클라우드컴퓨팅법 제25조)'), kinSayEn('조건부 (#69, 공급 구조 결정 전)'), '—', '—', 'Not Tracked']) {
+      const td = document.createElement('td'); kinWrite(td, text); cloud.append(td);
     }
     table.append(cloud);
     incidentEl('obligations').replaceChildren(table); incidentFields();
