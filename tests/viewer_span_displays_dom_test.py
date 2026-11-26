@@ -400,10 +400,11 @@ class SpanDisplaysDOMTest(unittest.TestCase):
             Object.assign(popup, { screenX: on.left, screenY: on.top, outerWidth: Math.min(r.width, on.width), outerHeight: Math.min(r.height, on.height) }); };
           popup.moveTo = (x, y) => { move(x, y); keep(); }; popup.resizeTo = (w, h) => { size(w, h); keep(); }; }""")
 
-    def open_kept_on_one_display(self, stored):
-        self.page.evaluate("""stored => { localStorage.setItem('kin.ohif.current.rect', JSON.stringify(stored));
+    def open_kept_on_one_display(self, stored, pair=None):
+        self.page.evaluate("""([stored, pair]) => { localStorage.setItem('kin.ohif.current.rect', JSON.stringify(stored));
+          if (pair) localStorage.setItem('kin.ohif.span.screens', JSON.stringify(pair));
           const b = document.createElement('button'); b.id = 'syn-open'; b.textContent = 'Open';
-          b.onclick = () => { window.__result = openOhifWindow('1.2.1'); }; document.body.append(b); }""", stored)
+          b.onclick = () => { window.__result = openOhifWindow('1.2.1'); }; document.body.append(b); }""", [stored, pair])
         self.page.evaluate("at => __opening(at, false)", dict(left=100, top=50, width=1600, height=900))
         self.keep_on_one_display()
         self.page.locator('#syn-open').click()
@@ -435,6 +436,41 @@ class SpanDisplaysDOMTest(unittest.TestCase):
         self.page.evaluate("rect => __at(rect)", spanned)
         self.said(REACHED)
         self.assertEqual(dict(rect=spanned, pair=[box(LEFT), box(RIGHT)]), self.stored())
+
+    # ── The same with the two monitors chosen in Viewer Displays (Span Displays used once in this browser) ──
+    def test_22_with_the_monitors_chosen_a_window_that_filled_one_monitor_by_its_edges_opens_on_that_monitor(self):
+        # The pair stays stored when the reader later fills one monitor by hand; the window's border is 2 px over the left
+        # monitor and 7 px past the bottom of both.
+        self.page.evaluate("pair => localStorage.setItem('kin.ohif.span.screens', JSON.stringify(pair))", [LEFT, RIGHT])
+        border = dict(left=RIGHT['left'] - 2, top=0, width=1929, height=1047)
+        self.assertEqual([box(RIGHT), []], self.page.evaluate(
+            "rect => { const p = ohifPlacement(rect); return [[p.left, p.top, p.width, p.height], spanTargets(rect)]; }", border))
+        self.open_kept_on_one_display(border, pair=[LEFT, RIGHT])
+        self.page.wait_for_function("rect => JSON.stringify(__stored().rect) === JSON.stringify(rect)", arg=RIGHT, timeout=6000)
+        self.assertEqual([RIGHT['left'], RIGHT['top'], RIGHT['width'], RIGHT['height']],
+                         self.page.evaluate("[__opener.screenX, __opener.screenY, __opener.outerWidth, __opener.outerHeight]"))
+        self.page.wait_for_timeout(500)
+        # The choice is the reader's and stays; no notice about two displays or a placement not confirmed.
+        self.assertEqual(dict(rect=RIGHT, pair=[box(LEFT), box(RIGHT)]), self.stored())
+        self.assertEqual([], [text for text in self.toasts() if '걸쳐' in text or '자동 창 배치' in text])
+        # The left monitor alike (its border 7 px over the right one).
+        left = dict(left=-7, top=0, width=1934, height=1047)
+        self.assertEqual(box(LEFT), self.page.evaluate("rect => { const p = ohifPlacement(rect); return [p.left, p.top, p.width, p.height]; }", left))
+
+    def test_23_with_the_monitors_chosen_a_window_laid_over_both_still_comes_back_over_both(self):
+        # Laid over both monitors by hand, 2 px wider than the two (its border): over both, so the chosen pair's place.
+        spanned = dict(left=0, top=0, width=3842, height=1040)
+        self.page.evaluate("pair => localStorage.setItem('kin.ohif.span.screens', JSON.stringify(pair))", [LEFT, RIGHT])
+        self.assertEqual([SPAN, [box(LEFT), box(RIGHT)]], self.page.evaluate(
+            "rect => [ohifPlacement(rect), spanTargets(ohifPlacement(rect)).map(s => [s.left, s.top, s.width, s.height])]", spanned))
+        self.open_kept_on_one_display(spanned, pair=[LEFT, RIGHT])
+        self.page.wait_for_function("text => __toasts.some(t => String(t.message) === text)", arg=REFUSED, timeout=20000)
+        self.page.evaluate("rect => __at(rect)", SPAN)
+        self.said(REACHED)
+        self.assertEqual(dict(rect=SPAN, pair=[box(LEFT), box(RIGHT)]), self.stored())
+        # A window on a display outside the chosen pair is not taken as that display's: the pair's place, as before.
+        self.displays([LEFT, RIGHT, THIRD])
+        self.assertEqual(SPAN, self.page.evaluate("rect => ohifPlacement(rect)", dict(left=THIRD['left'] - 2, top=0, width=1929, height=1047)))
 
 
 if __name__ == "__main__":
