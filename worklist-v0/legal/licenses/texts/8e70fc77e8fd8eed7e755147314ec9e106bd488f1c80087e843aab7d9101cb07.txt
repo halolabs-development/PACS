@@ -1,0 +1,1211 @@
+# OHIF embedded build (OrthancOHIF-1.4 in orthancteam/orthanc:24.12.0) — license comments retained in the shipped assets
+# image: orthancteam/orthanc@sha256:31b5e84b5ce30e8c771337bdbb333999db90a9a53cf78f85b9a632ded0357b07 (local image id = components.json source digest; remote tag digest the same on 2026-11-26)
+# binary: /usr/share/orthanc/plugins-available/libOrthancOHIF.so  sha256 bf4f06f06c1ff0d249f0c3764d617f7b485e5a827a6a8e93daf65ab81e0c3abd  12,921,536 bytes
+# method: every gzip member embedded in the .so was decompressed (342 members, 51,588,989 bytes: js 59 · css 27 · wasm 9 · png 63 · other 184); every /* … */ comment carrying a licence marker (@license, @preserve, Copyright, (c), MIT/BSD/Apache/ISC/MPL, SPDX) is listed once (deduplicated by content). 'member@N' = byte offset of the gzip member in the .so.
+# result: 117 distinct comments in 10 members. The shipped assets carry no source map content (2 .map names referenced, not embedded), so the full module list of the bundle is not recoverable from the shipped artifact — see INDEX.md.
+# extracted: 2026-11-26 (scripts scan_so_gzip.py)
+
+===== member@1199168
+/**\n * @license Complex.js v2.1.1 12/05/2020\n *\n * Copyright (c) 2020, Robert Eisele (robert@xarg.org)\n * Dual licensed under the MIT or GPL Version 2 licenses.\n **/
+
+===== member@1199168
+/*\n  MIT License http://www.opensource.org/licenses/mit-license.php\n  Author Tobias Koppers @sokra\n*/
+
+===== member@1199168
+/**\n * @license Fraction.js v4.2.0 05/03/2022\n * https://www.xarg.org/2014/03/rational-numbers-in-javascript/\n *\n * Copyright (c) 2021, Robert Eisele (robert@xarg.org)\n * Dual licensed under the MIT or GPL Version 2 licenses.\n **/
+
+===== member@1199168
+/*\r\n * Natural Sort algorithm for Javascript - Version 0.7 - Released under MIT license\r\n * Author: Jim Palmer (based on chunking idea from Dave Koelle)\r\n */
+
+===== member@1199168
+/**\n * @license\n * Lodash <https://lodash.com/>\n * Copyright OpenJS Foundation and other contributors <https://openjsf.org/>\n * Released under MIT license <https://lodash.com/license>\n * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>\n * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors\n */
+
+===== member@1199168
+/*\nCopyright 2019 David Bau.\n\nPermission is hereby granted, free of charge, to any person obtaining\na copy of this software and associated documentation files (the\n\"Software\"), to deal in the Software without restriction, including\nwithout limitation the rights to use, copy, modify, merge, publish,\ndistribute, sublicense, and/or sell copies of the Software, and to\npermit persons to whom the Software is furnished to do so, subject to\nthe following conditions:\n\nThe above copyright notice and this permission notice shall be\nincluded in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\nEXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF\nMERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.\nIN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY\nCLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,\nTORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE\nSOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n*/
+
+===== member@1199168
+/**\n     * Check if name is (A) new, (B) a match, or (C) a mismatch; and throw\n     * an error in case (C).\n     *\n     * @param { string | undefined } nameSoFar\n     * @param { string | undefined } newName\n     * @returns { string } updated name\n     */
+
+===== member@1199168
+/*!\r\n *  decimal.js v10.4.0\r\n *  An arbitrary-precision Decimal type for JavaScript.\r\n *  https://github.com/MikeMcl/decimal.js\r\n *  Copyright (c) 2022 Michael Mclaughlin <M8ch88l@gmail.com>\r\n *  MIT Licence\r\n */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix items and invokes the callback function f(Dij, Sij).\n   * Callback function invoked M*N times.\n   *\n   *\n   *          ┌  f(Dij, Sij)  ; S(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  f(Dij, 0)    ; otherwise\n   *\n   *\n   * @param {Matrix}   denseMatrix       The DenseMatrix instance (D)\n   * @param {Matrix}   sparseMatrix      The SparseMatrix instance (C)\n   * @param {Function} callback          The f(Dij,Sij) operation to invoke, where Dij = DenseMatrix(i,j) and Sij = SparseMatrix(i,j)\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(Sij,Dij)\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97477571\n   */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix A and SparseMatrix B nonzero items and invokes the callback function f(Aij, Bij).\n   * Callback function invoked MAX(NNZA, NNZB) times\n   *\n   *\n   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0 || B(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  0            ; otherwise\n   *\n   *\n   * @param {Matrix}   a                 The SparseMatrix instance (A)\n   * @param {Matrix}   b                 The SparseMatrix instance (B)\n   * @param {Function} callback          The f(Aij,Bij) operation to invoke\n   *\n   * @return {Matrix}                    SparseMatrix (C)\n   *\n   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294\n   */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).\n   * Callback function invoked NZ times (number of nonzero items in S).\n   *\n   *\n   *          ┌  f(Sij, b)  ; S(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  0          ; otherwise\n   *\n   *\n   * @param {Matrix}   s                 The SparseMatrix instance (S)\n   * @param {Scalar}   b                 The Scalar value\n   * @param {Function} callback          The f(Aij,b) operation to invoke\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)\n   *\n   * @return {Matrix}                    SparseMatrix (C)\n   *\n   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813\n   */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).\n   * Callback function invoked MxN times.\n   *\n   *\n   *          ┌  f(Sij, b)  ; S(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  f(0, b)    ; otherwise\n   *\n   *\n   * @param {Matrix}   s                 The SparseMatrix instance (S)\n   * @param {Scalar}   b                 The Scalar value\n   * @param {Function} callback          The f(Aij,b) operation to invoke\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813\n   */
+
+===== member@1199168
+/**\n   * Iterates over DenseMatrix items and invokes the callback function f(Aij..z, Bij..z).\n   * Callback function invoked MxN times.\n   *\n   * C(i,j,...z) = f(Aij..z, Bij..z)\n   *\n   * @param {Matrix}   a                 The DenseMatrix instance (A)\n   * @param {Matrix}   b                 The DenseMatrix instance (B)\n   * @param {Function} callback          The f(Aij..z,Bij..z) operation to invoke\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97658658\n   */
+
+===== member@1199168
+/**\n   * Iterates over DenseMatrix items and invokes the callback function f(Aij..z, b).\n   * Callback function invoked MxN times.\n   *\n   * C(i,j,...z) = f(Aij..z, b)\n   *\n   * @param {Matrix}   a                 The DenseMatrix instance (A)\n   * @param {Scalar}   b                 The Scalar value\n   * @param {Function} callback          The f(Aij..z,b) operation to invoke\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Aij..z)\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97659042\n   */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix nonzero items and invokes the callback function f(Dij, Sij).\n   * Callback function invoked NNZ times (number of nonzero items in SparseMatrix).\n   *\n   *\n   *          ┌  f(Dij, Sij)  ; S(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  Dij          ; otherwise\n   *\n   *\n   * @param {Matrix}   denseMatrix       The DenseMatrix instance (D)\n   * @param {Matrix}   sparseMatrix      The SparseMatrix instance (S)\n   * @param {Function} callback          The f(Dij,Sij) operation to invoke, where Dij = DenseMatrix(i,j) and Sij = SparseMatrix(i,j)\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(Sij,Dij)\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97477571\n   */
+
+===== member@1199168
+/**\n   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).\n   * Callback function invoked NZ times (number of nonzero items in S).\n   *\n   *\n   *          ┌  f(Sij, b)  ; S(i,j) !== 0\n   * C(i,j) = ┤\n   *          └  b          ; otherwise\n   *\n   *\n   * @param {Matrix}   s                 The SparseMatrix instance (S)\n   * @param {Scalar}   b                 The Scalar value\n   * @param {Function} callback          The f(Aij,b) operation to invoke\n   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)\n   *\n   * @return {Matrix}                    DenseMatrix (C)\n   *\n   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813\n   */
+
+===== member@1199168
+/*\n  Copyright © 2018 Andrew Powell\n\n  This Source Code Form is subject to the terms of the Mozilla Public\n  License, v. 2.0. If a copy of the MPL was not distributed with this\n  file, You can obtain one at http://mozilla.org/MPL/2.0/.\n\n  The above copyright notice and this permission notice shall be\n  included in all copies or substantial portions of this Source Code Form.\n*/
+
+===== member@1199168
+/*! pako 2.0.4 https://github.com/nodeca/pako @license (MIT AND Zlib) */
+
+===== member@1199168
+/*!\n * Determine if an object is a Buffer\n *\n * @author   Feross Aboukhadijeh <https://feross.org>\n * @license  MIT\n */
+
+===== member@1199168
+/**\n * lodash (Custom Build) <https://lodash.com/>\n * Build: `lodash modularize exports=\"npm\" -o ./`\n * Copyright jQuery Foundation and other contributors <https://jquery.org/>\n * Released under MIT license <https://lodash.com/license>\n * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>\n * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors\n */
+
+===== member@2978720
+/*!
+ *  decimal.js v10.4.0
+ *  An arbitrary-precision Decimal type for JavaScript.
+ *  https://github.com/MikeMcl/decimal.js
+ *  Copyright (c) 2022 Michael Mclaughlin <M8ch88l@gmail.com>
+ *  MIT Licence
+ */
+
+===== member@2978720
+/*!
+ * Determine if an object is a Buffer
+ *
+ * @author   Feross Aboukhadijeh <https://feross.org>
+ * @license  MIT
+ */
+
+===== member@2978720
+/**
+ * @license
+ * Lodash <https://lodash.com/>
+ * Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+ * Released under MIT license <https://lodash.com/license>
+ * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ */
+
+===== member@2978720
+/**
+ * @license Complex.js v2.1.1 12/05/2020
+ *
+ * Copyright (c) 2020, Robert Eisele (robert@xarg.org)
+ * Dual licensed under the MIT or GPL Version 2 licenses.
+ **/
+
+===== member@2978720
+/**
+ * @license Fraction.js v4.2.0 05/03/2022
+ * https://www.xarg.org/2014/03/rational-numbers-in-javascript/
+ *
+ * Copyright (c) 2021, Robert Eisele (robert@xarg.org)
+ * Dual licensed under the MIT or GPL Version 2 licenses.
+ **/
+
+===== member@5240256
+/*!
+         * The buffer module from node.js, for the browser.
+         *
+         * @author   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
+         * @license  MIT
+         */
+
+===== member@5240256
+/*!
+    Copyright (c) 2011, Yahoo! Inc. All rights reserved.
+    Code licensed under the BSD License:
+    http://developer.yahoo.com/yui/license.html
+    version: 2.9.0
+    */
+
+===== member@5240256
+/*! CryptoJS v3.1.2 core-fix.js
+         * code.google.com/p/crypto-js
+         * (c) 2009-2013 by Jeff Mott. All rights reserved.
+         * code.google.com/p/crypto-js/wiki/License
+         * THIS IS FIX of 'core.js' to fix Hmac issue.
+         * https://code.google.com/p/crypto-js/issues/detail?id=84
+         * https://crypto-js.googlecode.com/svn-history/r667/branches/3.x/src/core.js
+         */
+
+===== member@5240256
+/*! (c) Tom Wu | http://www-cs-students.stanford.edu/~tjw/jsbn/
+         */
+
+===== member@5240256
+/*! (c) Tom Wu | http://www-cs-students.stanford.edu/~tjw/jsbn/
+             */
+
+===== member@5240256
+/*! Mike Samuel (c) 2009 | code.google.com/p/json-sans-eval
+         */
+
+===== member@5333280
+/*!
+ * https://github.com/paulmillr/es6-shim
+ * @license es6-shim Copyright 2013-2016 by Paul Miller (http://paulmillr.com)
+ *   and contributors,  MIT License
+ * es6-shim: v0.35.4
+ * see https://github.com/paulmillr/es6-shim/blob/0.35.3/LICENSE
+ * Details and documentation:
+ * https://github.com/paulmillr/es6-shim/
+ */
+
+===== member@5420928
+/*! tailwindcss v3.2.4 | MIT License | https://tailwindcss.com*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkSphereMapperVS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkStickMapperVS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkPolyDataVS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkVolumeFS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkPolyDataFS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkPolyData2DFS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkPolyData2DVS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkImageResliceMapperVS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/*=========================================================================\n\n  Program:   Visualization Toolkit\n  Module:    vtkImageResliceMapperFS.glsl\n\n  Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen\n  All rights reserved.\n  See Copyright.txt or http://www.kitware.com/Copyright.htm for details.\n\n     This software is distributed WITHOUT ANY WARRANTY; without even\n     the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR\n     PURPOSE.  See the above copyright notice for more information.\n\n=========================================================================*/
+
+===== member@5459424
+/**
+ * @remix-run/router v1.19.2
+ *
+ * Copyright (c) Remix Software Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE.md file in the root directory of this source tree.
+ *
+ * @license MIT
+ */
+
+===== member@5459424
+/**
+ * The code in this file is copied from https://github.com/lukeed/clsx and modified to suit the needs of tailwind-merge better.
+ *
+ * Specifically:
+ * - Runtime code from https://github.com/lukeed/clsx/blob/v1.2.1/src/index.js
+ * - TypeScript types from https://github.com/lukeed/clsx/blob/v1.2.1/clsx.d.ts
+ *
+ * Original code has MIT license: Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)
+ */
+
+===== member@5459424
+/**
+ * @license lucide-react v0.379.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/******************************************************************************
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+***************************************************************************** */
+
+===== member@5459424
+/*
+The MIT License (MIT)
+
+Copyright (c) 2018-present, React Training LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
+
+===== member@5459424
+/*! *****************************************************************************
+Copyright (c) Microsoft Corporation. All rights reserved.
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at http://www.apache.org/licenses/LICENSE-2.0
+
+THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
+WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
+MERCHANTABLITY OR NON-INFRINGEMENT.
+
+See the Apache Version 2.0 License for specific language governing permissions
+and limitations under the License.
+***************************************************************************** */
+
+===== member@5459424
+/**
+ * SSR Window 4.0.2
+ * Better handling for window object in SSR environment
+ * https://github.com/nolimits4web/ssr-window
+ *
+ * Copyright 2021, Vladimir Kharlampidi
+ *
+ * Licensed under MIT
+ *
+ * Released on: December 13, 2021
+ */
+
+===== member@5459424
+/**
+ * Dom7 4.0.6
+ * Minimalistic JavaScript library for DOM manipulation, with a jQuery-compatible API
+ * https://framework7.io/docs/dom7.html
+ *
+ * Copyright 2023, Vladimir Kharlampidi
+ *
+ * Licensed under MIT
+ *
+ * Released on: February 2, 2023
+ */
+
+===== member@5459424
+/**
+ * Swiper 8.4.7
+ * Most modern mobile touch slider and framework with hardware accelerated transitions
+ * https://swiperjs.com
+ *
+ * Copyright 2014-2023 Vladimir Kharlampidi
+ *
+ * Released under the MIT License
+ *
+ * Released on: January 30, 2023
+ */
+
+===== member@5459424
+/**
+ * Swiper React 8.4.7
+ * Most modern mobile touch slider and framework with hardware accelerated transitions
+ * https://swiperjs.com
+ *
+ * Copyright 2014-2023 Vladimir Kharlampidi
+ *
+ * Released under the MIT License
+ *
+ * Released on: January 30, 2023
+ */
+
+===== member@5459424
+/*!
+ * The buffer module from node.js, for the browser.
+ *
+ * @author   Feross Aboukhadijeh <https://feross.org>
+ * @license  MIT
+ */
+
+===== member@5459424
+/*! cornerstone-math - 0.1.10 - 2022-06-09 | (c) 2017 Chris Hafey | https://github.com/cornerstonejs/cornerstoneMath */
+
+===== member@5459424
+/*
+* loglevel - https://github.com/pimterry/loglevel
+*
+* Copyright (c) 2013 Tim Perry
+* Licensed under the MIT license.
+*/
+
+===== member@5459424
+/*! pako 2.1.0 https://github.com/nodeca/pako @license (MIT AND Zlib) */
+
+===== member@5459424
+/**
+ * lodash (Custom Build) <https://lodash.com/>
+ * Build: `lodash modularize exports="npm" -o ./`
+ * Copyright jQuery Foundation and other contributors <https://jquery.org/>
+ * Released under MIT license <https://lodash.com/license>
+ * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ */
+
+===== member@5459424
+/*! dicom-parser - 1.8.12 - 2023-02-20 | (c) 2017 Chris Hafey | https://github.com/cornerstonejs/dicomParser */
+
+===== member@5459424
+/*!
+  Copyright (c) 2015 Jed Watson.
+  Based on code that is Copyright 2013-2015, Facebook, Inc.
+  All rights reserved.
+*/
+
+===== member@5459424
+/**
+ * Copyright 2015, Yahoo! Inc.
+ * Copyrights licensed under the New BSD License. See the accompanying LICENSE file for terms.
+ */
+
+===== member@5459424
+/*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> */
+
+===== member@5459424
+/**
+ * Lodash (Custom Build) <https://lodash.com/>
+ * Build: `lodash modularize exports="npm" -o ./`
+ * Copyright JS Foundation and other contributors <https://js.foundation/>
+ * Released under MIT license <https://lodash.com/license>
+ * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ */
+
+===== member@5459424
+/**
+ * Lodash (Custom Build) <https://lodash.com/>
+ * Build: `lodash modularize exports="npm" -o ./`
+ * Copyright OpenJS Foundation and other contributors <https://openjsf.org/>
+ * Released under MIT license <https://lodash.com/license>
+ * Based on Underscore.js 1.8.3 <http://underscorejs.org/LICENSE>
+ * Copyright Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ */
+
+===== member@5459424
+/**
+ * Copyright 2012-2017 Craig Campbell
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * Mousetrap is a simple keyboard shortcut library for Javascript with
+ * no external dependencies
+ *
+ * @version 1.6.5
+ * @url craig.is/killing/mice
+ */
+
+===== member@5459424
+/*!
+Copyright (c) 2011, Yahoo! Inc. All rights reserved.
+Code licensed under the BSD License:
+http://developer.yahoo.com/yui/license.html
+version: 2.9.0
+*/
+
+===== member@5459424
+/*! CryptoJS v3.1.2 core-fix.js
+ * code.google.com/p/crypto-js
+ * (c) 2009-2013 by Jeff Mott. All rights reserved.
+ * code.google.com/p/crypto-js/wiki/License
+ * THIS IS FIX of 'core.js' to fix Hmac issue.
+ * https://code.google.com/p/crypto-js/issues/detail?id=84
+ * https://crypto-js.googlecode.com/svn-history/r667/branches/3.x/src/core.js
+ */
+
+===== member@5459424
+/*! (c) Tom Wu | http://www-cs-students.stanford.edu/~tjw/jsbn/
+ */
+
+===== member@5459424
+/*! (c) Stefan Thomas | https://github.com/bitcoinjs/bitcoinjs-lib
+ */
+
+===== member@5459424
+/*! Mike Samuel (c) 2009 | code.google.com/p/json-sans-eval
+ */
+
+===== member@5459424
+/*!
+ * The buffer module from node.js, for the browser.
+ *
+ * @author   Feross Aboukhadijeh <http://feross.org>
+ * @license  MIT
+ */
+
+===== member@5459424
+/**
+ * Copyright (c) 2013-present, Facebook, Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/**
+ * @license React
+ * react-dom.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/** @license React v16.13.1
+ * react-is.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/*!
+ * Adapted from jQuery UI core
+ *
+ * http://jqueryui.com
+ *
+ * Copyright 2014 jQuery Foundation and other contributors
+ * Released under the MIT license.
+ * http://jquery.org/license
+ *
+ * http://api.jqueryui.com/category/ui-core/
+ */
+
+===== member@5459424
+/**
+ * @license React
+ * react-jsx-runtime.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/**
+ * @license React
+ * react.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/**
+ * Copyright (c) 2014-present, Facebook, Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/**
+ * @license React
+ * scheduler.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/*
+Copyright 2019 David Bau.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+*/
+
+===== member@5459424
+/*!
+ * validate.js 0.12.0
+ *
+ * (c) 2013-2017 Nicklas Ansman, 2013 Wrapp
+ * Validate.js may be freely distributed under the MIT license.
+ * For all details and documentation:
+ * http://validatejs.org/
+ */
+
+===== member@5459424
+/**
+ * React Router DOM v6.26.2
+ *
+ * Copyright (c) Remix Software Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE.md file in the root directory of this source tree.
+ *
+ * @license MIT
+ */
+
+===== member@5459424
+/**
+ * React Router v6.26.2
+ *
+ * Copyright (c) Remix Software Inc.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE.md file in the root directory of this source tree.
+ *
+ * @license MIT
+ */
+
+===== member@5459424
+/*!
+	Copyright (c) 2018 Jed Watson.
+	Licensed under the MIT License (MIT), see
+	http://jedwatson.github.io/classnames
+*/
+
+===== member@5459424
+/**
+ * @license
+ * Copyright 2019 Google LLC
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+===== member@5459424
+/**
+ * @license React
+ * react-jsx-runtime.development.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@5459424
+/******************************************************************************
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+***************************************************************************** */
+
+===== member@8942336
+/**
+ * @license Fraction.js v4.3.0 20/08/2023
+ * https://www.xarg.org/2014/03/rational-numbers-in-javascript/
+ *
+ * Copyright (c) 2023, Robert Eisele (robert@raw.org)
+ * Dual licensed under the MIT or GPL Version 2 licenses.
+ **/
+
+===== member@8942336
+/*
+ * Natural Sort algorithm for Javascript - Version 0.7 - Released under MIT license
+ * Author: Jim Palmer (based on chunking idea from Dave Koelle)
+ */
+
+===== member@8942336
+/**
+   * Check if name is (A) new, (B) a match, or (C) a mismatch; and throw
+   * an error in case (C).
+   *
+   * @param { string | undefined } nameSoFar
+   * @param { string | undefined } newName
+   * @returns { string } updated name
+   */
+
+===== member@8942336
+/*!
+ *  decimal.js v10.4.3
+ *  An arbitrary-precision Decimal type for JavaScript.
+ *  https://github.com/MikeMcl/decimal.js
+ *  Copyright (c) 2022 Michael Mclaughlin <M8ch88l@gmail.com>
+ *  MIT Licence
+ */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).
+   * Callback function invoked NZ times (number of nonzero items in S).
+   *
+   *
+   *          ┌  f(Sij, b)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  0          ; otherwise
+   *
+   *
+   * @param {Matrix}   s                 The SparseMatrix instance (S)
+   * @param {Scalar}   b                 The Scalar value
+   * @param {Function} callback          The f(Aij,b) operation to invoke
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).
+   * Callback function invoked MxN times.
+   *
+   *
+   *          ┌  f(Sij, b)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  f(0, b)    ; otherwise
+   *
+   *
+   * @param {Matrix}   s                 The SparseMatrix instance (S)
+   * @param {Scalar}   b                 The Scalar value
+   * @param {Function} callback          The f(Aij,b) operation to invoke
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813
+   */
+
+===== member@8942336
+/**
+   * Iterates over DenseMatrix items and invokes the callback function f(Aij..z, b).
+   * Callback function invoked MxN times.
+   *
+   * C(i,j,...z) = f(Aij..z, b)
+   *
+   * @param {Matrix}   a                 The DenseMatrix instance (A)
+   * @param {Scalar}   b                 The Scalar value
+   * @param {Function} callback          The f(Aij..z,b) operation to invoke
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Aij..z)
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97659042
+   */
+
+===== member@8942336
+/**
+   * Round a value towards plus infinity
+   * If `x` is complex, both real and imaginary part are rounded towards plus infinity.
+   * For matrices, the function is evaluated element wise.
+   *
+   * Syntax:
+   *
+   *    math.ceil(x)
+   *    math.ceil(x, n)
+   *
+   * Examples:
+   *
+   *    math.ceil(3.2)               // returns number 4
+   *    math.ceil(3.8)               // returns number 4
+   *    math.ceil(-4.2)              // returns number -4
+   *    math.ceil(-4.7)              // returns number -4
+   *
+   *    math.ceil(3.212, 2)          // returns number 3.22
+   *    math.ceil(3.288, 2)          // returns number 3.29
+   *    math.ceil(-4.212, 2)         // returns number -4.21
+   *    math.ceil(-4.782, 2)         // returns number -4.78
+   *
+   *    const c = math.complex(3.24, -2.71)
+   *    math.ceil(c)                 // returns Complex 4 - 2i
+   *    math.ceil(c, 1)              // returns Complex 3.3 - 2.7i
+   *
+   *    math.ceil([3.2, 3.8, -4.7])  // returns Array [4, 4, -4]
+   *    math.ceil([3.21, 3.82, -4.71], 1)  // returns Array [3.3, 3.9, -4.7]
+   *
+   * See also:
+   *
+   *    floor, fix, round
+   *
+   * @param  {number | BigNumber | Fraction | Complex | Array | Matrix} x  Number to be rounded
+   * @param  {number | BigNumber | Array} [n=0]                            Number of decimals
+   * @return {number | BigNumber | Fraction | Complex | Array | Matrix} Rounded value
+   */
+
+===== member@8942336
+/**
+   * Round a value towards zero.
+   * For matrices, the function is evaluated element wise.
+   *
+   * Syntax:
+   *
+   *    math.fix(x)
+   *    math.fix(x,n)
+   *
+   * Examples:
+   *
+   *    math.fix(3.2)                // returns number 3
+   *    math.fix(3.8)                // returns number 3
+   *    math.fix(-4.2)               // returns number -4
+   *    math.fix(-4.7)               // returns number -4
+   *
+   *    math.fix(3.12, 1)                // returns number 3.1
+   *    math.fix(3.18, 1)                // returns number 3.1
+   *    math.fix(-4.12, 1)               // returns number -4.1
+   *    math.fix(-4.17, 1)               // returns number -4.1
+   *
+   *    const c = math.complex(3.22, -2.78)
+   *    math.fix(c)                  // returns Complex 3 - 2i
+   *    math.fix(c, 1)               // returns Complex 3.2 -2.7i
+   *
+   *    math.fix([3.2, 3.8, -4.7])      // returns Array [3, 3, -4]
+   *    math.fix([3.2, 3.8, -4.7], 1)   // returns Array [3.2, 3.8, -4.7]
+   *
+   * See also:
+   *
+   *    ceil, floor, round
+   *
+   * @param  {number | BigNumber | Fraction | Complex | Array | Matrix} x    Number to be rounded
+   * @param  {number | BigNumber | Array} [n=0]                             Number of decimals
+   * @return {number | BigNumber | Fraction | Complex | Array | Matrix}     Rounded value
+   */
+
+===== member@8942336
+/**
+   * Round a value towards minus infinity.
+   * For matrices, the function is evaluated element wise.
+   *
+   * Syntax:
+   *
+   *    math.floor(x)
+   *    math.floor(x, n)
+   *
+   * Examples:
+   *
+   *    math.floor(3.2)              // returns number 3
+   *    math.floor(3.8)              // returns number 3
+   *    math.floor(-4.2)             // returns number -5
+   *    math.floor(-4.7)             // returns number -5
+   *
+   *    math.floor(3.212, 2)          // returns number 3.21
+   *    math.floor(3.288, 2)          // returns number 3.28
+   *    math.floor(-4.212, 2)         // returns number -4.22
+   *    math.floor(-4.782, 2)         // returns number -4.79
+   *
+   *    const c = math.complex(3.24, -2.71)
+   *    math.floor(c)                 // returns Complex 3 - 3i
+   *    math.floor(c, 1)              // returns Complex 3.2 -2.8i
+   *
+   *    math.floor([3.2, 3.8, -4.7])       // returns Array [3, 3, -5]
+   *    math.floor([3.21, 3.82, -4.71], 1)  // returns Array [3.2, 3.8, -4.8]
+   *
+   *    math.floor(math.tau, [2, 3])  // returns Array [6.28, 6.283]
+   *
+   *    // Note that floor(array, array) currently not implemented.
+   *
+   * See also:
+   *
+   *    ceil, fix, round
+   *
+   * @param  {number | BigNumber | Fraction | Complex | Array | Matrix} x  Number to be rounded
+   * @param  {number | BigNumber | Array} [n=0]                            Number of decimals
+   * @return {number | BigNumber | Fraction | Complex | Array | Matrix} Rounded value
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix nonzero items and invokes the callback function f(Dij, Sij).
+   * Callback function invoked NNZ times (number of nonzero items in SparseMatrix).
+   *
+   *
+   *          ┌  f(Dij, Sij)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  0            ; otherwise
+   *
+   *
+   * @param {Matrix}   denseMatrix       The DenseMatrix instance (D)
+   * @param {Matrix}   sparseMatrix      The SparseMatrix instance (S)
+   * @param {Function} callback          The f(Dij,Sij) operation to invoke, where Dij = DenseMatrix(i,j) and Sij = SparseMatrix(i,j)
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(Sij,Dij)
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97477571
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix items and invokes the callback function f(Dij, Sij).
+   * Callback function invoked M*N times.
+   *
+   *
+   *          ┌  f(Dij, Sij)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  f(Dij, 0)    ; otherwise
+   *
+   *
+   * @param {Matrix}   denseMatrix       The DenseMatrix instance (D)
+   * @param {Matrix}   sparseMatrix      The SparseMatrix instance (C)
+   * @param {Function} callback          The f(Dij,Sij) operation to invoke, where Dij = DenseMatrix(i,j) and Sij = SparseMatrix(i,j)
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(Sij,Dij)
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97477571
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and SparseMatrix B nonzero items and invokes the callback function f(Aij, Bij).
+   * Callback function invoked MAX(NNZA, NNZB) times
+   *
+   *
+   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0 || B(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  0            ; otherwise
+   *
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@8942336
+/**
+   * Iterates over DenseMatrix items and invokes the callback function f(Aij..z, Bij..z).
+   * Callback function invoked MxN times.
+   *
+   * C(i,j,...z) = f(Aij..z, Bij..z)
+   *
+   * @param {Matrix}   a                 The DenseMatrix instance (A)
+   * @param {Matrix}   b                 The DenseMatrix instance (B)
+   * @param {Function} callback          The f(Aij..z,Bij..z) operation to invoke
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97658658
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix nonzero items and invokes the callback function f(Dij, Sij).
+   * Callback function invoked NNZ times (number of nonzero items in SparseMatrix).
+   *
+   *
+   *          ┌  f(Dij, Sij)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  Dij          ; otherwise
+   *
+   *
+   * @param {Matrix}   denseMatrix       The DenseMatrix instance (D)
+   * @param {Matrix}   sparseMatrix      The SparseMatrix instance (S)
+   * @param {Function} callback          The f(Dij,Sij) operation to invoke, where Dij = DenseMatrix(i,j) and Sij = SparseMatrix(i,j)
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(Sij,Dij)
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97477571
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and SparseMatrix B nonzero items and invokes the callback function f(Aij, Bij).
+   * Callback function invoked MAX(NNZA, NNZB) times
+   *
+   *
+   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0 && B(i,j) !== 0
+   * C(i,j) = ┤  A(i,j)       ; A(i,j) !== 0 && B(i,j) === 0
+   *          └  B(i,j)       ; A(i,j) === 0
+   *
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix S nonzero items and invokes the callback function f(Sij, b).
+   * Callback function invoked NZ times (number of nonzero items in S).
+   *
+   *
+   *          ┌  f(Sij, b)  ; S(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  b          ; otherwise
+   *
+   *
+   * @param {Matrix}   s                 The SparseMatrix instance (S)
+   * @param {Scalar}   b                 The Scalar value
+   * @param {Function} callback          The f(Aij,b) operation to invoke
+   * @param {boolean}  inverse           A true value indicates callback should be invoked f(b,Sij)
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * https://github.com/josdejong/mathjs/pull/346#issuecomment-97626813
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and SparseMatrix B nonzero items and invokes the callback function f(Aij, Bij).
+   * Callback function invoked (Anz U Bnz) times, where Anz and Bnz are the nonzero elements in both matrices.
+   *
+   *
+   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0 && B(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  0            ; otherwise
+   *
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and invokes the callback function f(Aij, Bij).
+   * Callback function invoked NZA times, number of nonzero elements in A.
+   *
+   *
+   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0
+   * C(i,j) = ┤
+   *          └  0            ; otherwise
+   *
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and SparseMatrix B items (zero and nonzero) and invokes the callback function f(Aij, Bij).
+   * Callback function invoked MxN times.
+   *
+   * C(i,j) = f(Aij, Bij)
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    DenseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@8942336
+/**
+   * Squeeze a matrix, remove inner and outer singleton dimensions from a matrix.
+   *
+   * Syntax:
+   *
+   *     math.squeeze(x)
+   *
+   * Examples:
+   *
+   *     math.squeeze([3])           // returns 3
+   *     math.squeeze([[3]])         // returns 3
+   *
+   *     const A = math.zeros(3, 1)    // returns [[0], [0], [0]] (size 3x1)
+   *     math.squeeze(A)             // returns [0, 0, 0] (size 3)
+   *
+   *     const B = math.zeros(1, 3)    // returns [[0, 0, 0]] (size 1x3)
+   *     math.squeeze(B)             // returns [0, 0, 0] (size 3)
+   *
+   *     // only inner and outer dimensions are removed
+   *     const C = math.zeros(2, 1, 3) // returns [[[0, 0, 0]], [[0, 0, 0]]] (size 2x1x3)
+   *     math.squeeze(C)             // returns [[[0, 0, 0]], [[0, 0, 0]]] (size 2x1x3)
+   *
+   * See also:
+   *
+   *     subset
+   *
+   * @param {Matrix | Array} x      Matrix to be squeezed
+   * @return {Matrix | Array} Squeezed matrix
+   */
+
+===== member@8942336
+/**
+   * Round a value towards the nearest rounded value.
+   * For matrices, the function is evaluated element wise.
+   *
+   * Syntax:
+   *
+   *    math.round(x)
+   *    math.round(x, n)
+   *    math.round(unit, valuelessUnit)
+   *    math.round(unit, n, valuelessUnit)
+   *
+   * Examples:
+   *
+   *    math.round(3.22)             // returns number 3
+   *    math.round(3.82)             // returns number 4
+   *    math.round(-4.2)             // returns number -4
+   *    math.round(-4.7)             // returns number -5
+   *    math.round(3.22, 1)          // returns number 3.2
+   *    math.round(3.88, 1)          // returns number 3.9
+   *    math.round(-4.21, 1)         // returns number -4.2
+   *    math.round(-4.71, 1)         // returns number -4.7
+   *    math.round(math.pi, 3)       // returns number 3.142
+   *    math.round(123.45678, 2)     // returns number 123.46
+   *
+   *    const c = math.complex(3.2, -2.7)
+   *    math.round(c)                // returns Complex 3 - 3i
+   *
+   *    const unit = math.unit('3.241 cm')
+   *    const cm = math.unit('cm')
+   *    const mm = math.unit('mm')
+   *    math.round(unit, 1, cm)      // returns Unit 3.2 cm
+   *    math.round(unit, 1, mm)      // returns Unit 32.4 mm
+   *
+   *    math.round([3.2, 3.8, -4.7]) // returns Array [3, 4, -5]
+   *
+   * See also:
+   *
+   *    ceil, fix, floor
+   *
+   * @param  {number | BigNumber | Fraction | Complex | Unit | Array | Matrix} x  Value to be rounded
+   * @param  {number | BigNumber | Array} [n=0]                            Number of decimals
+   * @param  {Unit} [valuelessUnit]                                        A valueless unit
+   * @return {number | BigNumber | Fraction | Complex | Array | Matrix} Rounded value
+   */
+
+===== member@8942336
+/**
+   * Iterates over SparseMatrix A and SparseMatrix B nonzero items and invokes the callback function f(Aij, Bij).
+   * Callback function invoked MAX(NNZA, NNZB) times
+   *
+   *
+   *          ┌  f(Aij, Bij)  ; A(i,j) !== 0 && B(i,j) !== 0
+   * C(i,j) = ┤  A(i,j)       ; A(i,j) !== 0 && B(i,j) === 0
+   *          └  0            ; otherwise
+   *
+   *
+   * @param {Matrix}   a                 The SparseMatrix instance (A)
+   * @param {Matrix}   b                 The SparseMatrix instance (B)
+   * @param {Function} callback          The f(Aij,Bij) operation to invoke
+   *
+   * @return {Matrix}                    SparseMatrix (C)
+   *
+   * see https://github.com/josdejong/mathjs/pull/346#issuecomment-97620294
+   */
+
+===== member@9619616
+/*! *****************************************************************************
+Copyright (c) Microsoft Corporation.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+***************************************************************************** */
+
+===== member@9987296
+/*!
+ * html2canvas 1.4.1 <https://html2canvas.hertzen.com>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ */
+
+===== member@9987296
+/*
+ * css-line-break 2.1.0 <https://github.com/niklasvh/css-line-break#readme>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ */
+
+===== member@9987296
+/*
+ * utrie 1.0.2 <https://github.com/niklasvh/utrie>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ */
+
+===== member@9987296
+/*
+ * base64-arraybuffer 1.0.2 <https://github.com/niklasvh/base64-arraybuffer>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ */
+
+===== member@9987296
+/*
+ * text-segmentation 1.0.3 <https://github.com/niklasvh/text-segmentation>
+ * Copyright (c) 2022 Niklas von Hertzen <https://hertzen.com>
+ * Released under MIT License
+ */
+
+===== member@11752640
+/**
+ * @license React
+ * use-sync-external-store-shim.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+===== member@11752640
+/**
+ * @license React
+ * use-sync-external-store-shim/with-selector.production.min.js
+ *
+ * Copyright (c) Facebook, Inc. and its affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
