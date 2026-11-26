@@ -111,7 +111,8 @@ export class PacsReportEvidence {
       const inserts = this.citationInputs(body.insert);
       const rows = await this.findings.readableFindings(tx, c, uid, inserts.map(insert => insert.findingId));
       const byId = new Map<string, any>(rows.map((row: any) => [row.id, row]));
-      const entries = inserts.map(insert => this.verifiedEntry(uid, insert, byId.get(insert.findingId), content));
+      const own = await this.ownStudies(tx, uid, inserts, rows);
+      const entries = inserts.map(insert => this.verifiedEntry(uid, insert, byId.get(insert.findingId), content, own));
       if (!lineBlockOccurrences(content[inserts[0].field], inserts.map(insert => insert.insertedText).join('\n')))
         throw new ConflictException({ code: 'REPORT_CITATION_TEXT',
           message: '삽입한 문구가 그 칸의 본문에 줄 단위로 그대로 있지 않습니다' });
@@ -265,11 +266,19 @@ export class PacsReportEvidence {
     // `Finding.studyUid === uid`는 이 메서드가 uid로 묻는 것 자체가 보장한다 —
     // 다른 검사의 소견은 애초에 답에 들어오지 않는다.
     const [row] = await this.findings.readableFindings(tx, c, uid, [insert.findingId]);
-    return { ...this.verifiedEntry(uid, insert, row, content), cid: randomUUID(), insertedAt: new Date().toISOString(), insertedBy: c.actor };
+    const own = await this.ownStudies(tx, uid, [insert], row ? [row] : []);
+    return { ...this.verifiedEntry(uid, insert, row, content, own), cid: randomUUID(), insertedAt: new Date().toISOString(), insertedBy: c.actor };
+  }
+
+  /** Include Measurements의 「이 검사의 표식」에 드는 판독 UID의 원본들 — 측정 줄이 다른 study의 표식을 담을 때만 읽는다. */
+  private async ownStudies(tx: any, uid: string, inserts: ReturnType<typeof citationInsertInput>[], rows: any[]): Promise<string[]> {
+    const other = inserts.some(insert => insert.measurement) && rows.some(row =>
+      citationArray(row?.sources).some((s: any) => s && s.kind !== 'job' && s.studyUid !== uid));
+    return other ? this.findings.ownStudies(tx, uid) : [];
   }
 
   /** 읽어 온 소견 행 하나에 대한 삽입 판정(단건·여러 건 공통). 증언 칸(`cid`·시각·사람)은 부른 쪽이 채운다. */
-  private verifiedEntry(uid: string, insert: ReturnType<typeof citationInsertInput>, row: any, content: any) {
+  private verifiedEntry(uid: string, insert: ReturnType<typeof citationInsertInput>, row: any, content: any, own: readonly string[] = []) {
     // 읽을 수 없는 소견과 없는 소견은 **같은 답**이다. 어느 쪽인지 말하면 그 자체가 정보다.
     if (!row) throw new ConflictException({ code: 'REPORT_CITATION_SOURCE',
       message: '그 소견을 인용할 수 없습니다 — 소견 목록을 다시 불러오세요' });
@@ -299,7 +308,7 @@ export class PacsReportEvidence {
      */
     if (insert.measurement) {
       const sources = citationArray(row.sources), links = citationArray(row.links);
-      const eligible = sources.map((s: any, i: number) => measurementEligible(s, links[i]?.linkState, uid) ? i : -1).filter(i => i >= 0);
+      const eligible = sources.map((s: any, i: number) => measurementEligible(s, links[i]?.linkState, uid, own) ? i : -1).filter(i => i >= 0);
       if (eligible.length !== insert.measurement.sources.length || eligible.some((n, i) => n !== insert.measurement!.sources[i]))
         throw new ConflictException({ code: 'REPORT_CITATION_STALE',
           message: '측정값을 넣을 출처가 그 사이 바뀌었습니다 — 미리보기를 다시 열어 확인한 뒤 인용하세요' });

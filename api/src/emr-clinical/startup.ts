@@ -19,6 +19,7 @@ import { clinicalRouteSources } from './sources';
 import type { ClinicalContextSource } from './runtime';
 import { FindingService } from '../finding.service';
 import { findingSources } from '../emr-source/finding';
+import { examOriginalUid } from '../exam-merge.service';
 
 const ONLINE_CLINICAL_SERVICES = Symbol('OnlineClinicalServices');
 /** The composed C2 administrative facade (manage only): it has no decrypt or sign capability. */
@@ -120,8 +121,16 @@ export function createCurrentClinicalContext(prisma: PrismaService, requests: Re
       // This snapshot binds the currently observed original patient to the
       // managing institution. It is not an A fixed-version/retention lookup.
       // WORKLIST-SPLIT-UID: the rule (no resource, two patient resources, unreadable patient) is the archive reader's
-      // studyPatientIdentity, which E's per-response source check applies as well.
-      const patientId = await orthanc.studyPatientIdentity(uid);
+      // studyPatientIdentity, which E's per-response source check applies as well. A split part's own UID names no archive
+      // resource: only then is its patient its original's (examOriginalUid); the record keeps the part's UID.
+      let patientId: string;
+      try { patientId = await orthanc.studyPatientIdentity(uid); }
+      catch (error) {
+        if (!(error instanceof NotFoundException)) throw error;
+        const original = await examOriginalUid(tx, uid);
+        if (original === uid) throw error;
+        patientId = await orthanc.studyPatientIdentity(original);
+      }
       return { ...current, patient: studyPatientLink(current.managingInstitutionId, patientId) };
     },
   };

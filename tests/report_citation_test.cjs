@@ -64,7 +64,7 @@ const EPOCH = '0a1b2c3d-0000-4000-8000-00000000000a';
 const { TransactionLocks, fixedRecord, fixedRecordKey } = require('./transaction_locks.cjs');
 
 function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor, updatedBySub: CALLER.sub, findings: 'HEAD', conclusion: '', recommendation: '' },
-  versions = new Map(), draft = null, readable = READABLE, readableAll = false, bytes = null, fail = null,
+  versions = new Map(), draft = null, readable = READABLE, readableAll = false, own = null, bytes = null, fail = null,
   refuseTxRequire = false, checkError = fail_error() } = {}) {
   const writes = [], audits = [], raw = [], calls = [], created = [];
   // S7-U5: the caller's draft row as the store holds it, with its boundary; the study row carries the draft epoch.
@@ -175,7 +175,9 @@ function fixture({ state = STATE, report = { version: 4, updatedBy: CALLER.actor
     if (ids.length > 64) throw Object.assign(new Error('readableFindings asked for ' + ids.length + ' ids'), { cap: true });
     if (readableAll) return ids.map(id => ({ id, revision: 1, hidden: false, sources: [], links: [] }));
     return readable.filter(row => uid === UID && ids.includes(row.id));
-  } };
+  },
+  // The reading's own originals (an ordinary study: itself; `own` names a split part's or merged exam's originals).
+  ownStudies: async (_tx, uid) => { calls.push({ call: 'ownStudies', uid }); return own || [uid]; } };
   const keycloak = { usersInGroupWithRole: async () => [] };
   // The document that read this fixture's study: every mutation carries its account and the boundary it read, and a
   // draft PUT the whole snapshot - a keep list the case does not name is the draft's current list (nothing dropped).
@@ -894,6 +896,21 @@ test('TEST-B23-MEASUREMENT-STALE: a source set other than every source the rule 
   const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: hidden });
   assert.equal((await refusal(put(f, { findings: MTEXT, insert: MINSERT }), 409)).code, 'REPORT_CITATION_STALE');
   assert.deepEqual(f.writes, []);
+});
+
+test('TEST-B23-MEASUREMENT-EXAM: a mark on an original of the reading\'s own exam (a split part\'s original) is this reading\'s, not a comparison study\'s', async () => {
+  // Source 2 is on OTHER, here the original the reading UID was split from: the rule admits it, so the line must carry it.
+  const f = fixture({ draft: { baseVersion: 4, citations: [] }, readable: MEASURED, own: [OTHER] });
+  await put(f, { findings: MTEXT, insert: { ...MINSERT, measurementSources: [0, 1, 2] } });
+  assert.deepEqual(stored(f)[0].measurementSources, [0, 1, 2]);
+  assert.deepEqual(f.calls.filter(c => c.call === 'ownStudies').map(c => c.uid), [UID]);
+  const short = fixture({ draft: { baseVersion: 4, citations: [] }, readable: MEASURED, own: [OTHER] });
+  assert.equal((await refusal(put(short, { findings: MTEXT, insert: MINSERT }), 409)).code, 'REPORT_CITATION_STALE');
+  // Every source on the reading UID itself: the membership is not read at all (an ordinary study pays nothing more).
+  const plain = fixture({ draft: { baseVersion: 4, citations: [] }, readable: [{ ...MEASURED[0], sources: MEASURED[0].sources.filter((_, i) => i !== 2),
+    links: MEASURED[0].links.filter((_, i) => i !== 2) }] });
+  await put(plain, { findings: MTEXT, insert: MINSERT });
+  assert.deepEqual(plain.calls.filter(c => c.call === 'ownStudies'), []);
 });
 
 test('TEST-B23-MEASUREMENT-MANY: more image marks than the citation-entry count is not a limit on the source set', async () => {

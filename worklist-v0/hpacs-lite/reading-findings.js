@@ -235,12 +235,15 @@ window.KinReadingFindings = function (app) {
   const windows = () => guarded(() => { const rows = app.windows(); return Array.isArray(rows) ? rows : []; }, []);
   const windowOwner = popup => guarded(() => { const fn = popup.kinViewerWindowOwner; return typeof fn === 'function' ? fn.call(popup) : null; }, null);
   const scopeOf = href => guarded(() => window.KinViewerWindows.scope(href, location.origin), null);
+  // The report UID a viewer opened on an exam reads (its kinExamScopes reference); null for a viewer opened without one.
+  const readingOf = scope => guarded(() => { const ref = scope && scope.exam ? JSON.parse(scope.exam) : null;
+    return ref && ref.current && typeof ref.current.reportUid === 'string' ? ref.current.reportUid : null; }, null);
   function embeddedView(frame) {
     const view = sessionView();
     try {
       const t = app.workspace.viewerTarget();
       if (!t || t.frame !== frame) return { ...view, error: true };
-      return { ...view, kind: 'embedded', ref: frame, window: t.window, document: t.document, scope: t.studies.join(','), attached: true, closed: false,
+      return { ...view, kind: 'embedded', ref: frame, window: t.window, document: t.document, scope: t.studies.join(','), reading: readingOf(scopeOf(t.href)), attached: true, closed: false,
         visible: !!(t.active && t.sameTarget && t.loaded && !t.inert && !t.hidden), windowOwner: null, ...viewerFacts(t.window, t.document) };
     } catch (_) { return { ...view, error: true }; }
   }
@@ -249,7 +252,7 @@ window.KinReadingFindings = function (app) {
     try {
       if (popup.closed) return { ...view, kind: 'window', ref: popup, closed: true, error: true };
       const doc = popup.document, scope = scopeOf(popup.location.href), row = windows().find(r => r.popup === popup);
-      return { ...view, kind: 'window', ref: popup, window: popup, document: doc, scope: scope ? scope.studies.join(',') : null,
+      return { ...view, kind: 'window', ref: popup, window: popup, document: doc, scope: scope ? scope.studies.join(',') : null, reading: readingOf(scope),
         attached: !!row && row.index === index && !row.pending, closed: false, visible: true, windowOwner: windowOwner(popup), ...viewerFacts(popup, doc) };
     } catch (_) { return { ...view, error: true }; }
   }
@@ -278,10 +281,11 @@ window.KinReadingFindings = function (app) {
   function choose(study, comparison, exact) {
     const plain = { uid: study, comparison: comparison || null, exact: exact || null, workspace: null, windows: [] }, popups = new Map(), slots = new Map();
     const t = guarded(() => app.workspace.viewerTarget(), null);
-    if (t) plain.workspace = { active: !!t.active, sameTarget: !!t.sameTarget, loaded: !!t.loaded, inert: !!t.inert, hidden: !!t.hidden, studies: [...t.studies] };
+    if (t) plain.workspace = { active: !!t.active, sameTarget: !!t.sameTarget, loaded: !!t.loaded, inert: !!t.inert, hidden: !!t.hidden, studies: [...t.studies],
+      reading: readingOf(scopeOf(t.href)) };
     for (const row of windows()) {
       const scope = row && row.scope, entry = { index: row.index, attached: !!row.popup, closed: false, pending: !!row.pending,
-        ready: false, owner: 'unknown', studies: scope && Array.isArray(scope.studies) ? [...scope.studies] : [] };
+        ready: false, owner: 'unknown', studies: scope && Array.isArray(scope.studies) ? [...scope.studies] : [], reading: readingOf(scope) };
       if (row.popup) {
         entry.closed = guarded(() => row.popup.closed === true, true);
         entry.ready = !!(row.status && row.status.kind === 'viewer' && row.status.ready === true);
@@ -319,10 +323,11 @@ window.KinReadingFindings = function (app) {
     // A saved location opens only in a viewer showing exactly its studies (S2-L2b); a comparison 2D source only in a viewer that
     // shows both studies (S2-B2).
     const located = !!source && source.kind === 'job';
-    const comparison = source && !located && source.studyUid !== st.uid ? row.comparison : null;
+    // A source of the reading's own exam (a split part's original, a merged exam's other original) is not a comparison study.
+    const comparison = source && !located && source.studyUid !== st.uid && !st.own.includes(source.studyUid) ? row.comparison : null;
     setResult(located ? kinSayEn("저장 작업 복원 중…") : kinSayEn("영상 이동 중… 결과를 확인하고 있습니다."), 'pending', false);
     await commands.run({
-      expected: { owner: live() ? owner() : null, sub: sub(), uid: st.uid, generation: st.generation },
+      expected: { owner: live() ? owner() : null, sub: sub(), uid: st.uid, generation: st.generation, own: [...st.own] },
       source: source || null, comparison,
       choose: () => choose(st.uid, comparison, located ? source.studies : null),
       announce: (value, choice) => { work.commit(at, () => {
@@ -372,7 +377,7 @@ window.KinReadingFindings = function (app) {
     if (refusal) { setResult(refusal, 'refused', false); return; }
     // Include Measurements (opt-in in the preview): every source of this revision the report rule admits, in source order, with
     // the name and value text this list already shows. The image numbers are read only if the person turns the box on.
-    const measurements = row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid)
+    const measurements = row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid, st.own)
       ? [{ sourceIndex: i, ...command.measurementOf(s), studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame }] : []);
     const opened = app.cite({ uid: st.uid, findingId: row.id, findingRevision: row.revision,
       sourceIndex: index, sourceLabel: source.description, linkState: source.linkState,
@@ -446,7 +451,7 @@ window.KinReadingFindings = function (app) {
         sourceLabel: chosen.primary ? source.description : kinSay('{0} (대표 출처를 쓸 수 없어 이 출처로 인용)', source.description),
         linkState: source.linkState, headRevision: source.headRevision === undefined ? null : source.headRevision,
         block: citation.assembleBlock(row), sentence: citation.sentenceBlock(row),
-        measurements: row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid)
+        measurements: row.sources.flatMap((s, i) => citation.measurementEligible(s, st.uid, st.own)
           ? [{ sourceIndex: i, ...command.measurementOf(s), studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame }] : []) };
     });
     const opened = app.cite({ uid: st.uid, items,
