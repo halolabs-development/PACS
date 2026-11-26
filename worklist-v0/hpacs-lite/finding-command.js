@@ -90,7 +90,9 @@
   }
   const INVALID = { invalid: true };
   // One server item to a plain row. Anything unexpected invalidates the whole page: no partial list.
-  function rowOf(item, study) {
+  // `own`: the originals of the exam this reading UID is written on (the list's ownStudies — a split part's original, every original
+  // of a merged exam). A source of one of them is this reading's own image: neither a comparison study nor foreign.
+  function rowOf(item, study, own = []) {
     if (!item || typeof item !== 'object' || !uuid(item.id) || item.studyUid !== study || !count(item.revision) ||
         typeof item.hidden !== 'boolean' || !item.item || typeof item.item !== 'object') throw INVALID;
     const body = item.item, sources = body.sources, primary = body.primary === undefined ? 0 : body.primary;
@@ -104,7 +106,7 @@
     const serverLinks = Array.isArray(item.links) ? item.links : [];
     // The server admits at most one comparison study per finding, a saved location's whole study set included.
     const named = sources.flatMap(s => s && s.kind === 'job' ? (version >= 2 && Array.isArray(s.studies) ? s.studies : [null]) : [s && s.studyUid]);
-    const comparisons = new Set(named.filter(value => value !== study));
+    const comparisons = new Set(named.filter(value => value !== study && !own.includes(value)));
     if (comparisons.size > 1) throw INVALID;
     return {
       id: item.id, revision: item.revision, hidden: item.hidden, title: body.title, text: body.text, primary,
@@ -135,7 +137,7 @@
         const source = { itemId: s.itemId, revision: s.revision, studyUid: s.studyUid, seriesUid: s.seriesUid, sopUid: s.sopUid, frame: s.frame,
           kind: s.kind, label: s.label, values: Array.isArray(s.values) ? [...s.values] : null, calculator: text(s.calculator) ? s.calculator : null,
           linkState: status.linkState, linkLabel: status.label, linkText: status.text, headRevision: count(status.headRevision) ? status.headRevision : null,
-          foreign: s.studyUid !== study };
+          foreign: s.studyUid !== study && !own.includes(s.studyUid) };
         source.description = describeSource(source);
         return source;
       }),
@@ -158,14 +160,15 @@
     const label = deps.label || plainLabel;
     const work = root.KinWorkContext;
     let resume = false;
-    const s = { owner: null, uid: null, generation: 0, readSequence: 0, includeHidden: false, loading: false, status: 'none', message: label(LIST_TEXT.none), rows: [], ended: false };
+    // `own`: the reading's own originals as the last list named them ([] for an ordinary study).
+    const s = { owner: null, uid: null, generation: 0, readSequence: 0, includeHidden: false, loading: false, status: 'none', message: label(LIST_TEXT.none), rows: [], own: [], ended: false };
     const changed = () => { try { deps.changed && deps.changed(); } catch (_) {} };
     const set = (status, rows) => { s.status = status; s.message = LIST_TEXT[status] ? label(LIST_TEXT[status]) : ""; if (rows) s.rows = rows; };
     function context(owner, study) {
       if (s.ended) return false;
       const next = text(owner) && owner && uid(study) ? [owner, study] : [null, null];
       if (next[0] === s.owner && next[1] === s.uid) return false;
-      [s.owner, s.uid] = next; s.generation++; s.readSequence++; s.loading = false;
+      [s.owner, s.uid] = next; s.generation++; s.readSequence++; s.loading = false; s.own = [];
       set(s.uid ? 'idle' : 'none', []); changed(); return true;
     }
     async function load() {
@@ -175,27 +178,31 @@
       const current = () => work.admits(at) && !s.ended && ticket.owner === s.owner && ticket.uid === s.uid && ticket.generation === s.generation && ticket.seq === s.readSequence;
       s.loading = true; set(s.status === 'ready' || s.status === 'reloading' ? 'reloading' : 'loading'); changed();
       try {
-        const items = [], cursors = new Set(); let cursor = null, pages = 0;
+        const items = [], cursors = new Set(); let cursor = null, pages = 0, own = null;
         do {
           const page = await deps.fetch(listPath(ticket.uid, ticket.includeHidden, cursor), at);
           if (!current()) return false;
           pages++;
           const next = page && page.nextCursor;
+          // A grouped reading names its own originals on every page, the same each time; an ordinary one names none.
+          const named = page && page.ownStudies === undefined ? [] : page && page.ownStudies;
           if (!page || !Array.isArray(page.items) ||
-              !(next === null || uuid(next)) || (next && cursors.has(next))) throw INVALID;
+              !(next === null || uuid(next)) || (next && cursors.has(next)) ||
+              !Array.isArray(named) || !named.every(uid) || (own !== null && own.join(',') !== named.join(','))) throw INVALID;
+          own = [...named];
           items.push(...page.items);
           if (next) cursors.add(next);
           cursor = next;
         } while (cursor);
-        const rows = items.map(item => rowOf(item, ticket.uid)).filter(row => ticket.includeHidden || !row.hidden);
+        const rows = items.map(item => rowOf(item, ticket.uid, own)).filter(row => ticket.includeHidden || !row.hidden);
         if (!current()) return false;
-        work.commit(at, () => { set('ready', rows);
+        work.commit(at, () => { set('ready', rows); s.own = own;
         s.message = rows.length ? label('{n0}개 소견 · 읽기 전용이며 판독문과 별개입니다.', rows.length) : label('이 검사에 표시할 소견이 없습니다.'); });
         return true;
       } catch (error) {
         if (!current()) return false;
         const status = error && error.status;
-        work.commit(at, () => { set((status === 403 && !String(error.code || '').startsWith('AUTH_')) || status === 404 ? 'denied' : 'failed', []); });
+        work.commit(at, () => { set((status === 403 && !String(error.code || '').startsWith('AUTH_')) || status === 404 ? 'denied' : 'failed', []); s.own = []; });
         return false;
       } finally {
         work.commit(at, () => { if (current()) { s.loading = false; changed(); } });
@@ -236,13 +243,15 @@
     const exact = snapshot.exact === undefined || snapshot.exact === null ? null : snapshot.exact;
     if (exact !== null && (!Array.isArray(exact) || exact.length < 1 || exact.length > 2 || exact[0] !== study || !exact.every(uid) ||
         new Set(exact).size !== exact.length || other !== null)) return { kind: 'refused', reason: 'invalid' };
-    const shows = list => exact !== null ? Array.isArray(list) && list.length === exact.length && list.every((value, index) => value === exact[index])
-      : has(list, study) && (other === null || has(list, other));
+    // A viewer opened on an exam (`reading`: its report UID) shows that reading and no other: a split part's window is told apart
+    // from the other part's, which shows the same original. Any other viewer shows the studies of its address.
+    const shows = (list, reading) => exact !== null ? Array.isArray(list) && list.length === exact.length && list.every((value, index) => value === exact[index])
+      : (reading ? reading === study : has(list, study)) && (other === null || has(list, other));
     const w = snapshot.workspace;
-    if (w && w.active && w.sameTarget && shows(w.studies)) {
+    if (w && w.active && w.sameTarget && shows(w.studies, w.reading)) {
       return !w.loaded || w.inert || w.hidden ? { kind: 'refused', reason: 'loading' } : { kind: 'embedded' };
     }
-    const windows = (Array.isArray(snapshot.windows) ? snapshot.windows : []).filter(x => x && shows(x.studies));
+    const windows = (Array.isArray(snapshot.windows) ? snapshot.windows : []).filter(x => x && shows(x.studies, x.reading));
     const attached = windows.filter(x => x.attached && !x.closed), detached = windows.filter(x => !x.attached);
     if (attached.length + detached.length > 1) return { kind: 'refused', reason: 'ambiguous' };
     if (attached.length === 1) {
@@ -266,7 +275,8 @@
     if (!view || view.live !== true) return 'session';
     if (view.owner !== expected.owner || view.sub !== expected.sub || view.uid !== expected.uid || view.selection !== expected.uid ||
         view.generation !== expected.generation) return 'superseded';
-    if (view.error || view.closed || !view.attached || !text(view.scope) || !view.scope.split(',').includes(expected.uid)) return 'no-viewer';
+    if (view.error || view.closed || !view.attached || !text(view.scope) ||
+        (view.reading ? view.reading !== expected.uid : !view.scope.split(',').includes(expected.uid))) return 'no-viewer';
     if (cross === 'location' && view.scope !== expected.studies.join(',')) return 'saved-view-viewer';
     if (!view.visible) return 'loading';
     if (!view.historyPresent) return 'tool-missing';
@@ -375,14 +385,23 @@
       if (!target) return finish(refusal('invalid'));
       // Never substitute the selected study for a source of another study (review C7); the only other
       // study is the row's own comparison study, and it goes to that study's viewport alone.
-      const cross = target.studyUid !== expected.uid;
-      if (cross && (!uid(job.comparison) || job.comparison !== target.studyUid)) return finish(refusal('foreign'));
+      // An original of the reading's own exam (expected.own: a split part's original, a merged exam's originals) is this reading's
+      // own image, in the viewer opened on this reading, and needs no comparison study of the row. Where it goes is links.routeOf,
+      // the rule the viewer's own Findings panel follows: `cross` = through the activation of its viewport (crossNavigate).
+      const own = Array.isArray(expected.own) && expected.own.length > 0 ? expected.own : [expected.uid];
+      const mine = own.includes(target.studyUid);
+      const comparison = uid(job.comparison) ? job.comparison : '';
+      if (links.routeOf(target.studyUid, expected.uid, own, comparison, '') === 'foreign') return finish(refusal('foreign'));
       const choice = safe(job.choose);
       if (!choice || choice.kind === 'refused') return finish(refusal(choice && choice.reason ? choice.reason : 'no-viewer'));
-      const before = safe(choice.probe), reason = precheck(before, expected, cross);
+      const before = safe(choice.probe);
+      const active = before && uid(before.historyScope) ? before.historyScope : '';
+      const cross = links.routeOf(target.studyUid, expected.uid, own, comparison, active) === 'activate';
+      const reason = precheck(before, expected, cross);
       if (reason) return finish(refusal(reason));
       let pending, settled = false, phase = 'before';
-      const marked = result => cross ? { ...result, phase } : result;
+      // The phase names a comparison viewport on arrival; an own original's arrival is the ordinary one (a refusal keeps it).
+      const marked = result => cross && !(mine && result.ok) ? { ...result, phase } : result;
       const live = () => !settled && seq === sequence && sameIdentity(before, safe(choice.probe), cross);
       const control = { stopped: () => live() ? null : 'superseded', phase: name => { phase = name; },
         wait: ms => new Promise(resolve => later(resolve, ms)) };
