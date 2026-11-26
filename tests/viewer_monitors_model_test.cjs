@@ -85,6 +85,27 @@ test('split: two 2x1 monitors keep rule cell order per monitor, not the screen o
   assert.deepEqual(s.applied,[0,1]);assert.deepEqual(s.hidden,[]);
 });
 
+test('order: each monitor\'s rows, then the monitor, then across - also where one monitor\'s images start higher',()=>{
+  // Monitor 1 with both rows on top, monitor 2 with its toolbar at the bottom: monitor 2's images start higher.
+  const r=rule(['a','b','c','d','e','f','g','h'],[monitor('2x2'),monitor('2x2',{thumbs:'none',toolbar:'bottom'})],2,4);
+  const regions=[{monitor:0,left:0,right:1000},{monitor:1,left:1000,right:2000}],column={left:0,right:2000,top:0,bottom:1000};
+  const s=plan.split(model,r,regions,column,{left:0,top:0,width:2000,height:1000});
+  assert.ok(s.areas[1].y<s.areas[0].y);
+  const cells=s.rects.map((rect,i)=>({...rect,viewportId:'v'+s.cells[i]}));
+  // On screen (top to bottom) monitor 2's top row comes first; as the plain 2 x 4 it stands for, monitor 1's does.
+  assert.deepEqual(cells.map(c=>c.viewportId).slice(0,2),['v4','v5']);
+  assert.deepEqual(plan.order(cells,s.areas).map(c=>c.viewportId),['v0','v1','v4','v5','v2','v3','v6','v7']);
+  // Laid again from that order (fit), every cell is back on its own rectangle.
+  const back=plan.fit(s.areas,2,4),own=plan.order(cells,s.areas);
+  own.forEach((c,i)=>assert.deepEqual(back[i],{x:c.x,y:c.y,width:c.width,height:c.height},c.viewportId));
+  // A plain grid keeps its order; so does any list without a rule's monitor areas.
+  const plain=Array.from({length:8},(_,i)=>({viewportId:'p'+i,x:(i%4)/4,y:Math.floor(i/4)/2,width:0.25,height:0.5}));
+  assert.deepEqual(plan.order(plain,s.areas),plain);
+  const listed=[cells[3],cells[0],cells[2],cells[1]];
+  assert.deepEqual(plan.order(listed,null),listed);
+  assert.deepEqual(plan.order(listed,[s.areas[0]]),listed);
+});
+
 test('split: a monitor without a toolbar gives the original to the next; no toolbar anywhere keeps it on top',()=>{
   const regions=[{monitor:0,left:0,right:1000},{monitor:1,left:1000,right:2000}],column={left:0,right:2000,top:0,bottom:1000},grid={left:0,top:0,width:2000,height:1000};
   const r=rule(['a','b'],[monitor('1x1',{toolbar:'none',thumbs:'none'}),monitor('1x1',{toolbar:'bottom',thumbs:'none'})],1,2);

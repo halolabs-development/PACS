@@ -428,7 +428,10 @@ class MonitorHangingDOMTest(unittest.TestCase):
         pick(1, 2, 2)
         cells = self.laid_on_monitors(page, 1)
         self.assertEqual([[c[0], c[5]] for c in tops], [[c[0], c[5]] for c in cells])
-        # 1 x 1: one cell on each monitor (the one column is made two, then laid); the reader's cell stays the first.
+        # 1 x 1 picked from the four cells of 2 x 2: one cell on each monitor (the one column is made two, then laid); the
+        # top left cell stays the first.
+        pick(2, 2, 4)
+        self.laid_on_monitors(page, 2)
         first = page.evaluate('synCells()')[0]
         page.evaluate('synMenu(1, 1)')
         page.wait_for_function('() => synGridState().rows === 1 && synGridState().rects.length === 2', timeout=6000, polling=250)

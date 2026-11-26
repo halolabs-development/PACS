@@ -344,7 +344,10 @@ window.KinViewerPatientTabs = (() => {
   }
   function capture() {
     if (!current) return;
-    const state = services.viewportGridService.getState(), cells = [...state.viewports.values()];
+    // The cells in the order of the plain grid they are put back as (position by position): under a rule standing on two
+    // monitors, each monitor's own rows (KinViewerMonitorPlan.order), so every cell comes back on its monitor and place.
+    const state = services.viewportGridService.getState(), listed = [...state.viewports.values()];
+    const cells = window.KinViewerMonitorPlan?.order ? window.KinViewerMonitorPlan.order(listed, window.KinViewerMonitorRows?.areas) : listed;
     // Restore the supported regular stack grid, including its image/camera.
     // Other native modes reopen through their normal mode/HP initialization.
     if (state.layout.layoutType !== 'grid' || cells.length !== state.layout.numRows * state.layout.numCols) { current.view = null; return; }

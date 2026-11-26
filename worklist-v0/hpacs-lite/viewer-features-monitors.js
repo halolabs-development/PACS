@@ -161,6 +161,26 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
     return rects;
   }
 
+  // The cells of the native grid in the order of the plain grid they stand for, where that order becomes places again: a
+  // patient tab keeps its cells in this order and puts them back as a plain grid, position by position, which a standing
+  // rule then lays on its monitors (fit: row by row, left to right across the monitors). With a rule's monitor areas
+  // (split's areas, two or more) a cell belongs to the area its centre is over, and the order is its row inside that
+  // monitor, then the monitor (left to right), then its place across: one monitor's images may start higher than the
+  // other's, so the order on screen (top to bottom) can list the right monitor's cells before the left's. Without such
+  // areas the cells are kept in the order they are listed (the plain grid's own).
+  function order(cells, areas) {
+    const list = Array.isArray(cells) ? [...cells] : [];
+    if (!Array.isArray(areas) || areas.length < 2 || !areas.every(a => a && finite(a.x, a.width)) ||
+        !list.every(c => c && finite(c.x, c.y, c.width))) return list;
+    const lefts = areas.map(a => a.x).sort((a, b) => a - b), key = v => Math.round(v * 1e4);
+    const monitor = c => { const centre = c.x + c.width / 2; let m = 0; lefts.forEach((left, i) => { if (centre >= left) m = i; }); return m; };
+    const tops = new Map();
+    for (const c of list) { const m = monitor(c); if (!tops.has(m)) tops.set(m, new Set()); tops.get(m).add(key(c.y)); }
+    const row = c => [...tops.get(monitor(c))].sort((a, b) => a - b).indexOf(key(c.y));
+    return list.map((c, i) => ({ c, i, row: row(c), m: monitor(c) }))
+      .sort((a, b) => a.row - b.row || a.m - b.m || a.c.x - b.c.x || a.i - b.i).map(e => e.c);
+  }
+
   // Which monitor (index into screens) a window rectangle stands on: the display holding its centre.
   function monitorOf(screens, rect) {
     if (!rect || !finite(rect.left, rect.top, rect.width, rect.height)) return -1;
@@ -227,7 +247,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, monitorOf, validRects, place, edges, pair };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, fit, order, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);

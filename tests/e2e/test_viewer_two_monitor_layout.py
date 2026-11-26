@@ -47,6 +47,35 @@ DESK_RULE_ID = '88888888-8888-4888-8888-888888888888'
 DESK_RULES = json.loads(json.dumps(TWO_MONITOR_RULES).replace(TWO_MONITOR_RULE_ID, DESK_RULE_ID))
 DESK_RULES['rules'][0]['name'] = 'Reading Desk'
 DESK_RULES['rules'][0]['monitors']['list'][0].update(thumbs='left', toolbar='bottom')
+# Monitor 1 with its strip and toolbar on top, monitor 2 with no strip and its toolbar (a fixed copy) at the bottom: monitor
+# 2's images start higher than monitor 1's. One cell on each monitor.
+HIGH_RULE_ID = '77777777-7777-4777-8777-777777777777'
+HIGH_RULES = json.loads(json.dumps(TWO_MONITOR_RULES).replace(TWO_MONITOR_RULE_ID, HIGH_RULE_ID))
+HIGH_RULES['rules'][0]['name'] = 'Monitor 2 Higher'
+HIGH_RULES['rules'][0]['monitors']['list'][1].update(thumbs='none', toolbar='bottom')
+# Each cell as [monitor (1 left of the display edge, 2 right), its row on that monitor, the image it has drawn], monitor by
+# monitor and top to bottom. Independent of the product's order: the real screens and the cells as placed in the grid.
+SIDES = '''async () => { const d = await getScreenDetails(), left = screenX + (outerWidth - innerWidth) / 2;
+  const seams = [...new Set(Array.from(d.screens).flatMap(s => [s.left, s.left + s.width]))].map(x => x - left).filter(x => x >= 1 && x <= innerWidth - 1);
+  const g = document.querySelector('[data-cy="viewport-grid"]')?.getBoundingClientRect();
+  if (seams.length !== 1 || !g) return null;
+  const cells = [...services.viewportGridService.getState().viewports.values()].map(c => ({ id: c.viewportId, y: c.y,
+    monitor: g.left + (c.x + c.width / 2) * g.width < seams[0] ? 1 : 2,
+    image: services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCornerstoneImage?.()?.imageId || null }));
+  const row = c => new Set(cells.filter(o => o.monitor === c.monitor && o.y < c.y - 1e-4).map(o => Math.round(o.y * 1e4))).size;
+  return cells.map(c => [c.monitor, row(c), c.image, c.id]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(c => c.slice(0, 3)); }'''
+# The same with each cell's id in place of its image.
+SIDE_IDS = SIDES.replace('.map(c => c.slice(0, 3))', '.map(c => [c[0], c[1], c[3]])')
+# One cell shows the given display set on the given image, as a reader drops a series into it and scrolls to that image:
+# true once that very image is drawn there.
+PUT = '''async ([id, uid, index]) => { services.viewportGridService.setDisplaySetsForViewport({ viewportId: id, displaySetInstanceUIDs: [uid] });
+  const series = services.displaySetService.getDisplaySetByUID(uid).SeriesInstanceUID, end = Date.now() + 30000, pause = () => new Promise(r => setTimeout(r, 100));
+  const view = () => services.cornerstoneViewportService.getCornerstoneViewport(id);
+  const on = () => { const image = view()?.getCornerstoneImage?.()?.imageId; return !!image && cornerstone.metaData.get('instance', image)?.SeriesInstanceUID === series; };
+  while (Date.now() < end && !on()) await pause();
+  const v = view(); if (!v) return false; await v.setImageIdIndex(index);
+  while (Date.now() < end && v.getCornerstoneImage?.()?.imageId !== v.getImageIds()[index]) await pause();
+  return on() && v.getCornerstoneImage?.()?.imageId === v.getImageIds()[index]; }'''
 # Each monitor holds `each` cells, none across the display edge and none under the rows on either monitor (the series
 # strip, the toolbar and their fixed copies). Independent of the product: real screens, the panes and rows as drawn.
 LAID = '''async each => { const d = await getScreenDetails(), left = screenX + (outerWidth - innerWidth) / 2;
@@ -521,8 +550,18 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertGreater(last, 0)
         viewer.wait_for_function('([id, last]) => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex() === last', arg=[first[0], last])
         viewer.wait_for_timeout(1500)
-        drawn = 'id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageId?.() || null'
-        image = viewer.evaluate(drawn, first[0])
+        # The image each cell has drawn (its rendered image, not only the index it was asked for).
+        drawn = 'id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCornerstoneImage?.()?.imageId || null'
+        seam = viewer.evaluate(SEAM_STATE)['seams'][0] / viewer.evaluate('innerWidth')
+        # Before any Layout pick: the left cell on its last image, the right one on another image of the study.
+        applied = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])
+        self.assertEqual(first[0], applied[0][0])
+        self.until(viewer, '([a, b]) => [a, b].every(id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCornerstoneImage?.()?.imageId)',
+                   [applied[0][0], applied[1][0]])
+        sides = [viewer.evaluate(drawn, c[0]) for c in applied]
+        self.assertTrue(all(sides), sides)
+        self.assertNotEqual(sides[0], sides[1])
+        image = sides[0]
         # 2 x 2: two cells on each monitor's images; the first cell keeps its image.
         self.layout(viewer, 'Layout-1-1')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
@@ -530,12 +569,12 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         viewer.wait_for_timeout(2500)
         self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
         self.assertEqual(last, viewer.evaluate('id => services.cornerstoneViewportService.getCornerstoneViewport(id)?.getCurrentImageIdIndex()', first[0]))
-        # The top cell of each monitor (the 2 x 2's top row) and the image each has drawn.
-        seam = viewer.evaluate(SEAM_STATE)['seams'][0] / viewer.evaluate('innerWidth')
+        # The top cell of each monitor (the 2 x 2's top row): the cells the rule left, each with the image it had drawn.
         cells = viewer.evaluate(GRID)['cells']
         tops = [min((c for c in cells if c[1] + c[3] <= seam + 0.001), key=lambda c: c[2]), min((c for c in cells if c[1] >= seam - 0.001), key=lambda c: c[2])]
-        self.assertEqual(first[0], tops[0][0])
+        self.assertEqual([c[0] for c in applied], [c[0] for c in tops])
         images = [viewer.evaluate(drawn, c[0]) for c in tops]
+        self.assertEqual(sides, images)
         # 1 x 2 (four cells to two): the top row stays, one cell on each monitor's images, each with the image it has drawn.
         self.layout(viewer, 'Layout-1-0')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
@@ -546,12 +585,120 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.assertEqual([c[0] for c in tops], [c[0] for c in now])
         self.assertEqual(images, [viewer.evaluate(drawn, c[0]) for c in now])
         self.assertEqual(image, images[0])
-        # 1 x 1: one cell on each monitor.
+        # 1 x 1 picked from the four cells of 2 x 2: one cell on each monitor, the left one the cell the rule left there.
+        self.layout(viewer, 'Layout-1-1')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.until(viewer, LAID, 2)
+        viewer.wait_for_timeout(2500)
         self.layout(viewer, 'Layout-0-0')
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
         self.until(viewer, LAID, 1)
         viewer.wait_for_timeout(2500)
         self.assertTrue(viewer.evaluate(LAID, 1), json.dumps(viewer.evaluate(SEAM_STATE)))
+        now = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])
+        self.assertEqual(first[0], now[0][0])
+        self.assertEqual(image, viewer.evaluate(drawn, now[0][0]))
+
+    def apply_rule(self, viewer, rules, name):
+        tab = viewer.locator('#kin-workspace-dock nav button[aria-controls=kin-viewer-layout]')
+        expect(tab).to_be_visible(timeout=45000)
+        if tab.get_attribute('aria-expanded') != 'true':
+            tab.click()
+        expect(viewer.locator('#kin-hp-new')).to_be_visible(timeout=45000)
+        viewer.locator('#kin-hp-import').set_input_files(dict(name=name, mimeType='application/json', buffer=json.dumps(rules).encode('utf-8')))
+        expect(viewer.locator('#kin-hp-status')).to_contain_text('초안으로 가져왔습니다')
+        viewer.locator('#kin-hp-apply').click()
+        expect(viewer.locator('#kin-hp-status')).to_contain_text('Monitors: 적용 Monitor 1·Monitor 2.', timeout=45000)
+        self.until(viewer, '() => !KinViewerMonitors.reaching()')
+
+    def tab_round_trip(self, p, viewer, a, b):
+        """The next patient from the list in the same window, then back to the first patient by its tab in the viewer."""
+        self.choose(p, b)
+        p.locator('#m-filmbox').click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + b.uid + '**', timeout=45000)
+        self.shows(viewer, b.uid)
+        viewer.wait_for_timeout(2500)
+        tabs = viewer.locator('.kin-patient-tabs > [role=tablist] [role=tab]')
+        expect(tabs).to_have_count(2)
+        tabs.first.click()
+        viewer.wait_for_url('**StudyInstanceUIDs=' + a.uid + '**', timeout=45000)
+        self.shows(viewer, a.uid)
+        self.until(viewer, '() => !KinViewerPatientTabs.settling()')
+
+    def comes_back(self, viewer, before):
+        """Every cell back on its monitor, in its row there, with the image it had drawn (the cell ids are new)."""
+        try:
+            viewer.wait_for_function('async before => JSON.stringify(await (' + SIDES + ')()) === JSON.stringify(before)', arg=before, timeout=30000, polling=500)
+        except Exception:
+            pass
+        viewer.wait_for_timeout(2500)
+        self.assertEqual(before, viewer.evaluate(SIDES), json.dumps(viewer.evaluate(SEAM_STATE)))
+
+    def test_two_16_where_monitor_2s_images_start_higher_a_tab_round_trip_keeps_each_cell_on_its_monitor(self):
+        # Monitor 1 with its strip and toolbar on top, monitor 2 with its toolbar at the bottom and no strip: monitor 2's
+        # image starts higher. The rule applied over both displays; then the next patient and back by the tab.
+        p, viewer, a, b = self.setup_viewer('TWO16')
+        self.stretch(viewer)
+        self.shows(viewer, a.uid)
+        self.apply_rule(viewer, HIGH_RULES, 'high.json')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
+        self.until(viewer, LAID, 1)
+        # The left cell on the last image of its series: the two monitors show different images.
+        left = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])[0]
+        self.shows(viewer, a.uid, left[0])
+        viewer.evaluate('''async id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          await v.setImageIdIndex(v.getImageIds().length - 1); }''', left[0])
+        viewer.wait_for_timeout(2500)
+        before = viewer.evaluate(SIDES)
+        self.assertEqual([1, 2], [c[0] for c in before], before)
+        self.assertTrue(all(c[2] for c in before), before)
+        self.assertNotEqual(before[0][2], before[1][2])
+        tops = viewer.evaluate('''() => [...services.viewportGridService.getState().viewports.values()].sort((a, b) => a.x - b.x).map(c => c.y)''')
+        self.assertGreater(tops[0], tops[1], 'monitor 2 starts higher')
+        self.tab_round_trip(p, viewer, a, b)
+        self.comes_back(viewer, before)
+        self.assertTrue(viewer.evaluate(LAID, 1), json.dumps(viewer.evaluate(SEAM_STATE)))
+
+    def test_two_17_a_cell_enlarged_and_put_back_then_a_tab_round_trip_keeps_each_cell_on_its_monitor(self):
+        # The same rule; 2 x 2 from the Layout menu (two rows on each monitor), each cell on its own image; a double click
+        # fills monitor 2 with one cell and the next puts its two back; then the next patient and back by the tab.
+        p, viewer, a, b = self.setup_viewer('TWO17')
+        self.stretch(viewer)
+        self.shows(viewer, a.uid)
+        self.apply_rule(viewer, HIGH_RULES, 'high.json')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
+        self.until(viewer, LAID, 1)
+        viewer.wait_for_timeout(1500)
+        self.layout(viewer, 'Layout-1-1')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.until(viewer, LAID, 2)
+        viewer.wait_for_timeout(2500)
+        # Cell k (monitor by monitor, top to bottom) shows series k % 2 of the study on its image k // 2.
+        cells = viewer.evaluate(SIDE_IDS)
+        self.assertEqual([[1, 0], [1, 1], [2, 0], [2, 1]], [c[:2] for c in cells], cells)
+        sets = viewer.evaluate('''uid => services.displaySetService.getActiveDisplaySets().filter(s => s.StudyInstanceUID === uid && s.images?.length > 1)
+          .sort((x, y) => (x.SeriesNumber ?? 0) - (y.SeriesNumber ?? 0)).map(s => s.displaySetInstanceUID)''', a.uid)
+        self.assertGreaterEqual(len(sets), 2, sets)
+        for k, cell in enumerate(cells):
+            self.assertTrue(viewer.evaluate(PUT, [cell[2], sets[k % 2], k // 2]), cell)
+        viewer.wait_for_timeout(2500)
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
+        before = viewer.evaluate(SIDES)
+        self.assertEqual([[1, 0], [1, 1], [2, 0], [2, 1]], [c[:2] for c in before], before)
+        self.assertEqual(4, len({c[2] for c in before if c[2]}), before)
+        # Monitor 2's top cell: the double click fills that monitor, the next puts its two cells back.
+        high = next(c for c in viewer.evaluate(GRID)['cells'] if c[0] == cells[2][2])
+        x, y = self.cell_centre(viewer, high)
+        viewer.mouse.dblclick(x, y)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
+        viewer.wait_for_timeout(1500)
+        viewer.mouse.dblclick(x, y)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.comes_back(viewer, before)
+        self.tab_round_trip(p, viewer, a, b)
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.comes_back(viewer, before)
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
 
 
 def load_tests(loader, tests, pattern):

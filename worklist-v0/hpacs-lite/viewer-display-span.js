@@ -164,13 +164,12 @@ window.KinViewerDisplaySpan = (() => {
       // A cell that shows a set shows it as a drawn image stack (not a PDF, a report or a series still loading): looked at
       // again each second.
       if (!showing.every(shows) || holder() || dividing || Date.now() - laid < 2000) { owed = true; return; }
-      // Cell i of the plain grid (top to bottom, left to right) takes rectangle i and keeps its place and its order in
-      // that grid: its place key (positionId) - the next Layout pick keeps the cells of the places it still has, as from
-      // the plain grid - and its position in the native list (a patient tab keeps and puts back the cells in that order;
-      // one monitor's images may start higher than the other's, so the order on screen is not that). The registered
-      // copy is in the order on screen (top to bottom, then left to right), as the rule registers its split and as the
-      // readers of kinViewerSplitRects compare it.
-      const ordered = [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
+      // Cell i of the plain grid (its order: plan.order, the one a patient tab keeps) takes rectangle i and keeps its
+      // place and its order in that grid: its place key (positionId) - the next Layout pick keeps the cells of the places
+      // it still has, as from the plain grid - and its position in the native list. The registered copy is in the order
+      // on screen (top to bottom, then left to right), as the rule registers its split and as the readers of
+      // kinViewerSplitRects compare it.
+      const ordered = plan.order([...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0)), areas);
       const pairs = ordered.map((cell, index) => ({ cell, rect: rects[index], positionId: (index % cols) + '-' + Math.floor(index / cols) }));
       dividing = true; laid = Date.now();
       window.kinViewerSplitRects = pairs.map(pair => ({ ...pair.rect }))
