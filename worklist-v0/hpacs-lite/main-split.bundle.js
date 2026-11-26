@@ -12344,7 +12344,13 @@ ${v.reason ? `<div class="vr">사유: <span translate="no">${esc(v.reason)}</spa
         // A missing display is not a successful new layout. The launch path
         // suspends saving until the user moves/resizes the remaining window.
         if (!span) return defaultOhifRect(currentScreenRect());
-        return stored && rectInsideScreen(stored, span) ? stored : span;
+        if (!stored) return span;
+        if (rectInsideScreen(stored, span)) return stored;
+        // A window over one of the chosen displays only (KinViewerDisplayLayout.covered, the judgement below) - it filled
+        // that display by its edges, its resize border a few px past it - is that display's, as with no displays chosen.
+        const over = KinViewerDisplayLayout.covered(stored, screensCache);
+        return over.length === 1 && selected.some(s => KinViewerDisplayLayout.identity(s) === KinViewerDisplayLayout.identity(over[0]))
+          ? clampOhifRect(stored, over) : span;
       }
       // Also restore a manually spanned window without fitting it to one screen. Spanned is the one judgement of a window
       // over two displays (KinViewerDisplayLayout.covered, as spanReached judges a dragged window): a window that filled
