@@ -656,17 +656,32 @@ class MonitorHangingDOMTest(unittest.TestCase):
         # display edge is no longer where those areas met. The same four cells then stand as the plain 1 x 4, whose
         # middle the window keeps on the display edge: each monitor its two cells, none across the edge.
         rule = [monitor('1x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='none', toolbar='bottom')]
+        # Where the second cell ends and the third begins (client px): the plain 1 x 4's middle edge.
+        middle = lambda: page.evaluate('() => { const cells = synCells(); return [Math.round(cells[1][3]), Math.round(cells[2][1])]; }')
+
+        def resized(width):
+            """The window at this width, the rule's rows gone, and the plain 1 x 4 standing with its middle on the display edge."""
+            page.set_viewport_size({'width': width, 'height': 900})
+            page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+            page.wait_for_function('''seam => { const cells = synCells(), last = synLayouts.at(-1);
+              return cells.length === 4 && !last.layoutOptions && Math.round(cells[1][3]) === seam && Math.round(cells[2][1]) === seam; }''',
+                                   arg=SEAM, timeout=8000, polling=100)
+            page.wait_for_timeout(500)
+
         page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
         self.apply(page, rule, 2)
         self.pick(page, 1, 4, 4)
-        before = self.on_monitors(page)
-        self.assertEqual([2, 2], [len(before[0]), len(before[1])])
-        stock = page.evaluate('synStock')
-        # Where the second cell ends and the third begins (client px): the plain 1 x 4's middle edge.
-        middle = lambda: page.evaluate('() => { const cells = synCells(); return [Math.round(cells[1][3]), Math.round(cells[2][1])]; }')
-        page.set_viewport_size({'width': 1100, 'height': 900})
-        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
-        page.wait_for_timeout(4500)
+        one, two = self.on_monitors(page)
+        self.assertEqual([2, 2], [len(one), len(two)])
+        # Whatever the cells show by then: a PDF put into monitor 1's first cell after the pick (no image stack, and never
+        # one), monitor 2's second cell still loading its series, the two others drawn image stacks. Nothing is made or
+        # chosen: the four cells are only asked for again as they are.
+        page.evaluate("""([document, loading]) => { synSets.set('pdf', { displaySetInstanceUID: 'pdf', Modality: 'DOC' });
+          putSeries(document, 'pdf'); synLoading(loading); }""", [one[0][0], two[1][0]])
+        page.wait_for_timeout(1000)
+        before, stock = self.on_monitors(page), page.evaluate('synStock')
+        self.assertEqual('pdf', before[0][0][1])
+        resized(1100)
         # (on_monitors fails on a cell across the display edge.)
         self.assertEqual(before, self.on_monitors(page))
         self.assertEqual([SEAM, SEAM], middle())
@@ -676,29 +691,10 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertEqual(stock, page.evaluate('synStock'))
         # From then on the cells follow the display edge like any plain grid: the window made wider again.
         count = page.evaluate('synLayouts.length')
-        page.set_viewport_size({'width': 1300, 'height': 900})
-        page.wait_for_timeout(2500)
+        resized(1300)
         self.assertEqual(before, self.on_monitors(page))
         self.assertEqual([SEAM, SEAM], middle())
         self.assertEqual(count, page.evaluate('synLayouts.length'))
-
-        # Whatever the cells show by then: a PDF put into monitor 1's first cell after the pick (no image stack, and never
-        # one), monitor 2's second cell still loading its series. The four cells are only asked for again as they are.
-        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
-        self.apply(page, rule, 2)
-        self.pick(page, 1, 4, 4)
-        one, two = self.on_monitors(page)
-        page.evaluate("""([document, loading]) => { synSets.set('pdf', { displaySetInstanceUID: 'pdf', Modality: 'DOC' });
-          putSeries(document, 'pdf'); synLoading(loading); }""", [one[0][0], two[1][0]])
-        page.wait_for_timeout(1500)
-        before = self.on_monitors(page)
-        self.assertEqual('pdf', before[0][0][1])
-        page.set_viewport_size({'width': 1100, 'height': 900})
-        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
-        page.wait_for_timeout(4500)
-        self.assertEqual(before, self.on_monitors(page))
-        self.assertEqual([SEAM, SEAM], middle())
-        self.assertEqual([1, 4, None], [page.evaluate('synLayouts.at(-1)')[key] for key in ('numRows', 'numCols', 'layoutOptions')])
 
         # A plain grid that arrived under the rule (a prior opened in a new grid) and was laid on its monitors: the same.
         page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
@@ -708,12 +704,10 @@ class MonitorHangingDOMTest(unittest.TestCase):
             findOrCreateViewport: index => ({ displaySetInstanceUIDs: [sets[index].displaySetInstanceUID], viewportOptions: { viewportId: 'new-' + index } }) }); }""")
         page.wait_for_function('synGridState().rects.length === 4')
         page.wait_for_function('!!synLayouts.at(-1).layoutOptions', timeout=8000, polling=100)
-        page.wait_for_timeout(2500)
+        page.wait_for_timeout(1000)
         before = self.on_monitors(page)
         self.assertEqual(([['new-0', 'ds-1'], ['new-1', 'ds-2']], [['new-2', 'ds-3'], ['new-3', 'ds-4']]), before)
-        page.set_viewport_size({'width': 1100, 'height': 900})
-        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
-        page.wait_for_timeout(4500)
+        resized(1100)
         self.assertEqual(before, self.on_monitors(page))
         self.assertEqual([SEAM, SEAM], middle())
 
@@ -723,7 +717,7 @@ class MonitorHangingDOMTest(unittest.TestCase):
         split, count = page.evaluate('synGridState()'), page.evaluate('synLayouts.length')
         page.set_viewport_size({'width': 1100, 'height': 900})
         page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
-        page.wait_for_timeout(4500)
+        page.wait_for_timeout(3000)
         self.assertEqual(split, page.evaluate('synGridState()'))
         self.assertEqual(count, page.evaluate('synLayouts.length'))
 
