@@ -72,10 +72,10 @@ builds the incident scope and the export from rows read back from
 `emr_access.access_entry`. Pure failures use no fake durable receipt. UNKNOWN is
 queried only under the original operation ID and is never retried as a new event.
 
-REQ-A-DURABLE / A-PG-COMMIT remains partial until A2/A3's real routes prove
-COMMIT before their first clinical byte and lost-reply resolution. REQ-A-TARGET
-/ A-HTTP-BODY and REQ-A-OUTCOME / A-HTTP-OUTCOME require the real Nest routes;
-renderer acceptance belongs to A5. Empty fixture endpoints do not close them.
+The real Nest routes below prove them (Module A numbers no RISK): REQ-A-DURABLE, REQ-A-TARGET and REQ-A-OUTCOME → no numbered RISK → `tests/emr/a/report_reads_test.py` (A2, cases A-PG-COMMIT, A-HTTP-BODY, A-HTTP-OUTCOME); REQ-A-DURABLE and REQ-A-OUTCOME → no numbered RISK → `tests/emr/a/viewing_set_test.py` (A3, cases A-PG-COMMIT, A-HTTP-OUTCOME).
+Both commit every target before the first clinical byte; A2 also resolves a
+lost COMMIT reply. Renderer acceptance belongs to A5. Empty fixture endpoints
+do not close them.
 The current workflow is `validate.yml`; the order's `emr-b.yml` is absent.
 
 ## A2 report history reads

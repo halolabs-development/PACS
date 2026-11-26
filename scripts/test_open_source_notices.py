@@ -226,6 +226,45 @@ class OpenSourceNoticesTest(unittest.TestCase):
         self.assertEqual({r['version'] for r in images}, {r['version'] for r in gaps})
         self.assertTrue(all(r['missing'] for r in gaps))
 
+    def test_image_inventory_replaces_the_generic_gap_only_with_matching_bytes(self):
+        listing, dump = 'name\tversion\nlibc6\t2.36\n', '===== libc6 /usr/share/doc/libc6/copyright\nCopyright Example\n'
+        self.write('worklist-v0/legal/licenses/texts/list.txt', listing)
+        self.write('worklist-v0/legal/licenses/texts/dump.txt', dump)
+        digest = lambda body: hashlib.sha256(body.encode()).hexdigest()
+        record = {'inventory': [dict(name='Package list', path='texts/list.txt', sha256=digest(listing))],
+                  'files': [dict(name='Copyright files', path='texts/dump.txt', sha256=digest(dump))]}
+        key = 'Distribution packages in node:22-slim@node:22-slim'
+
+        def row():
+            return next(r for r in self.collect()['components'] if r['name'] == 'Distribution packages in node:22-slim')
+        self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: record}}))
+        self.assertEqual((row()['missing'], row()['scope']), ([], 'Image package inventory'))
+        self.assertIn('licenses/texts/list.txt', notices.render(self.collect()).decode())
+        # What the inventory still lacks stays counted.
+        self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: dict(record, missing=['SYN gap'])}}))
+        self.assertEqual(row()['missing'], ['SYN gap'])
+        # A changed package list is no inventory: the generic gap comes back with the broken file.
+        self.write('worklist-v0/legal/licenses/texts/list.txt', listing + 'libssl3\t3.0\n')
+        self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: record}}))
+        self.assertEqual(row()['scope'], 'Unresolved image package inventory')
+        self.assertEqual(len(row()['missing']), 2)
+        # A list taken by replaying a Dockerfile counts only while that Dockerfile is the one it was taken by.
+        self.write('worklist-v0/legal/licenses/texts/list.txt', listing)
+        bound = dict(record, inventory_inputs={'api/Dockerfile': digest('FROM node:22-slim AS base\nFROM base AS production\n')})
+        self.write('worklist-v0/legal/licenses/catalog.json', json.dumps({'components': {key: bound}}))
+        self.assertEqual(row()['missing'], [])
+        self.write('api/Dockerfile', 'FROM node:22-slim AS base\nRUN apt-get install -y curl\nFROM base AS production\n')
+        self.assertEqual(row()['scope'], 'Unresolved image package inventory')
+        self.assertIn('패키지 목록을 만든 뒤 바뀐 입력: api/Dockerfile', row()['missing'])
+
+    def test_viewer_decoder_is_inventoried_from_its_build_pin(self):
+        self.write('scripts/build-sof3-wasm.py', 'LIBJPEG_TURBO = {"version": "3.2.1", "url": "https://example/libjpeg-turbo-3.2.1.tar.gz", "sha256": "abc"}\n')
+        row = next(r for r in self.collect()['components'] if r['name'] == 'libjpeg-turbo')
+        self.assertEqual((row['section'], row['version'], row['release_sha256']), ('OHIF', '3.2.1', 'abc'))
+        self.assertTrue(row['missing'])
+        self.write('scripts/build-sof3-wasm.py', 'LIBJPEG_TURBO = {"version": "3.3.0", "url": "u", "sha256": "d"}\n')
+        self.assertEqual(next(r['version'] for r in self.collect()['components'] if r['name'] == 'libjpeg-turbo'), '3.3.0')
+
 
 if __name__ == '__main__':
     unittest.main()

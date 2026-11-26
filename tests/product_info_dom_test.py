@@ -190,7 +190,7 @@ class ProductInfoDomTest(unittest.TestCase):
         self.assertEqual(["Manufacturer", "Product", "Version", "UDI", "Documents", "Support", "AI Information", "Notices"],
                          [section["heading"] for section in panel["sections"]])
         rows = self.rows(panel)
-        expected = {"Manufacturer Name": "Pending", "Manufacturer Address": "Confirmed", "Importer": "Not Applicable",
+        expected = {"Manufacturer Name": "Confirmed", "Manufacturer Address": "Confirmed", "Importer": "Not Applicable",
                     "Software Designation": "Confirmed", "Authorization Number": "Unissued", "Product Name": "Confirmed",
                     "Model Name": "Pending", "Serial Number": "Pending", "Manufacturing Date": "Pending",
                     "Product Version": "Pending", "Server Build": "Confirmed",

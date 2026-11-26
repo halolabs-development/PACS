@@ -9,7 +9,7 @@ test('inventory requests indexed UID/institution; invalid identity rejects',asyn
  assert.equal(args[0],'/tools/find');assert.deepEqual(args[1],{Level:'Study',Query:{},ResponseContent:['RequestedTags'],RequestedTags:['StudyInstanceUID','InstitutionName','ReferringPhysicianName','RequestingPhysician']});
  for(const invalid of [[identity('1,2')],[identity('')],[{}],{}]){o.get=async()=>invalid;await assert.rejects(o.studyIdentities(),e=>e.getStatus()===503);}
 });
-// WORKLIST-SPLIT-UID TEST-WSU-01: one row per original Study resource. A UID that two patient resources share is two
+// WORKLIST-SPLIT-UID REQ-WSU-01 -> RISK-WSU-01 -> TEST-WSU-01: one row per original Study resource. A UID that two patient resources share is two
 // rows in either answer order (the consumer groups them), and the normal UIDs stay as they were.
 test('TEST-WSU-01 inventory keeps every resource of a shared UID in both answer orders',async()=>{
  const o=new OrthancService(),patient=(uid,pid,inst)=>({RequestedTags:{StudyInstanceUID:uid,InstitutionName:inst,PatientID:pid,StudyDate:'20261001',ModalitiesInStudy:'CT'}});
