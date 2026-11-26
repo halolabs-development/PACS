@@ -141,6 +141,23 @@ test('lay: monitors holding different grids - a monitor with fewer rows has no c
   assert.equal(plan.fit(areas,1,3),null,'an odd number of columns is not shared between two monitors');
 });
 
+test('registered: the areas a split was registered with, only while the cells stand in its very rectangles',()=>{
+  const areas=[{x:0.05,y:0.1,width:0.4,height:0.9},{x:0.5,y:0,width:0.5,height:0.95}];
+  const out=plan.lay(areas,[{rows:1,cols:2},{rows:1,cols:2}]);
+  const rects=out.cells.map(({x,y,width,height})=>({x,y,width,height})),on={rects,areas};
+  // The cells as the native grid lists them (any order), standing in those rectangles.
+  const cells=[2,0,3,1].map(i=>({...rects[i],viewportId:'v'+i}));
+  assert.equal(plan.registered(cells,rects,on),areas);
+  assert.deepEqual(plan.laid(cells,plan.registered(cells,rects,on)).shapes,[{rows:1,cols:2},{rows:1,cols:2}]);
+  // Another list registered since (a copy is not that list), no companion, or areas that are none: nothing.
+  assert.equal(plan.registered(cells,rects.map(r=>({...r})),on),null);
+  assert.equal(plan.registered(cells,rects,null),null);
+  assert.equal(plan.registered(cells,rects,{rects,areas:null}),null);
+  // The cells stand elsewhere now (a plain grid picked since), or are not as many.
+  assert.equal(plan.registered(cells.map((c,i)=>({...c,x:i/4,y:0,width:1/4,height:1})),rects,on),null);
+  assert.equal(plan.registered(cells.slice(1),rects,on),null);
+  assert.equal(plan.registered(null,rects,on),null);
+});
 test('keyed: the cells by the place keys they carry, only when each has its own',()=>{
   const cells=[{viewportId:'b',positionId:'1-0'},{viewportId:'c',positionId:'0-1'},{viewportId:'a',positionId:'0-0'},{viewportId:'d',positionId:'1-1'}];
   assert.deepEqual(plan.keyed(cells).map(c=>c.viewportId),['a','b','c','d']);

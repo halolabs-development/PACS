@@ -650,6 +650,65 @@ class MonitorHangingDOMTest(unittest.TestCase):
         self.assertEqual([SEAM, SEAM], seam())
         self.assertEqual(3, page.evaluate('synGridState().rects.length'))
 
+    def test_07i_a_layout_laid_under_a_rule_follows_the_display_edge_once_the_rules_rows_are_taken_back(self):
+        # One cell on each monitor; 1 x 4 picked under the rule: two columns on each monitor's image area. Then the window
+        # is made narrower: the rule's rows are taken back (its areas were measured for the window as it was), and the
+        # display edge is no longer where those areas met. The same four cells then stand as the plain 1 x 4, whose
+        # middle the window keeps on the display edge: each monitor its two cells, none across the edge.
+        rule = [monitor('1x1', thumbs='top', toolbar='top'), monitor('1x1', thumbs='none', toolbar='bottom')]
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, rule, 2)
+        self.pick(page, 1, 4, 4)
+        before = self.on_monitors(page)
+        self.assertEqual([2, 2], [len(before[0]), len(before[1])])
+        stock = page.evaluate('synStock')
+        # Where the second cell ends and the third begins (client px): the plain 1 x 4's middle edge.
+        middle = lambda: page.evaluate('() => { const cells = synCells(); return [Math.round(cells[1][3]), Math.round(cells[2][1])]; }')
+        page.set_viewport_size({'width': 1100, 'height': 900})
+        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+        page.wait_for_timeout(4500)
+        # (on_monitors fails on a cell across the display edge.)
+        self.assertEqual(before, self.on_monitors(page))
+        self.assertEqual([SEAM, SEAM], middle())
+        # Asked for as the plain grid, every cell the viewport it was; the stock command did not run.
+        last = page.evaluate('synLayouts.at(-1)')
+        self.assertEqual([1, 4, None], [last['numRows'], last['numCols'], last['layoutOptions']])
+        self.assertEqual(stock, page.evaluate('synStock'))
+        # From then on the cells follow the display edge like any plain grid: the window made wider again.
+        count = page.evaluate('synLayouts.length')
+        page.set_viewport_size({'width': 1300, 'height': 900})
+        page.wait_for_timeout(2500)
+        self.assertEqual(before, self.on_monitors(page))
+        self.assertEqual([SEAM, SEAM], middle())
+        self.assertEqual(count, page.evaluate('synLayouts.length'))
+
+        # A plain grid that arrived under the rule (a prior opened in a new grid) and was laid on its monitors: the same.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, rule, 2)
+        page.evaluate("""() => { const sets = synServices.displaySetService.getActiveDisplaySets();
+          synServices.viewportGridService.setLayout({ numRows: 1, numCols: 4,
+            findOrCreateViewport: index => ({ displaySetInstanceUIDs: [sets[index].displaySetInstanceUID], viewportOptions: { viewportId: 'new-' + index } }) }); }""")
+        page.wait_for_function('synGridState().rects.length === 4')
+        page.wait_for_function('!!synLayouts.at(-1).layoutOptions', timeout=8000, polling=100)
+        page.wait_for_timeout(2500)
+        before = self.on_monitors(page)
+        self.assertEqual(([['new-0', 'ds-1'], ['new-1', 'ds-2']], [['new-2', 'ds-3'], ['new-3', 'ds-4']]), before)
+        page.set_viewport_size({'width': 1100, 'height': 900})
+        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+        page.wait_for_timeout(4500)
+        self.assertEqual(before, self.on_monitors(page))
+        self.assertEqual([SEAM, SEAM], middle())
+
+        # The rule's own split is not the window's to lay again: it stays as the rule left it, as before.
+        page = self.open(displays=(OFF_MIDDLE, SEAM), grid=GRID)
+        self.apply(page, rule, 2)
+        split, count = page.evaluate('synGridState()'), page.evaluate('synLayouts.length')
+        page.set_viewport_size({'width': 1100, 'height': 900})
+        page.wait_for_function("!document.body.hasAttribute('data-kin-monitor-rows')")
+        page.wait_for_timeout(4500)
+        self.assertEqual(split, page.evaluate('synGridState()'))
+        self.assertEqual(count, page.evaluate('synLayouts.length'))
+
     def test_07f_without_a_rules_rows_the_layout_menu_is_the_stock_command(self):
         # The same window over two displays with no rule applied: every pick runs the stock command, which keeps cells by
         # their column in the whole window, and nothing lays rectangles of its own.
@@ -1141,6 +1200,7 @@ class PatientTabsOnMonitorsDOMTest(unittest.TestCase):
             self.assertEqual(self.where(before), self.where(layout['cells']))
         # One cell on each monitor: the plain 1 x 2, the left monitor's series on the left.
         before, asked = self.round_trip([monitor('1x1'), monitor('1x1', thumbs='none', toolbar='bottom')], trips=2)
+        self.assertEqual(2, len(asked), 'a later round trip lost the screen')
         for layout in asked:
             self.assertEqual({'rows': 1, 'cols': 2, 'keys': None}, {key: layout[key] for key in ('rows', 'cols', 'keys')})
             self.assertEqual(self.where(before), self.where(layout['cells']))

@@ -171,7 +171,7 @@ window.KinViewerDisplaySpan = (() => {
       const ordered = [...cells].sort((a, b) => (a.y ?? 0) - (b.y ?? 0) || (a.x ?? 0) - (b.x ?? 0));
       const pairs = ordered.map((cell, index) => ({ cell, rect: rects[index], positionId: (index % cols) + '-' + Math.floor(index / cols) }));
       dividing = true; laid = Date.now();
-      register(pairs.map(pair => pair.rect), areas);
+      moored = register(pairs.map(pair => pair.rect), areas);
       // Each cell stays the viewport it is: its id, what it shows and how.
       Promise.resolve().then(() => grid.setLayout({ numRows: rows, numCols: cols, activeViewportId: state.activeViewportId, isHangingProtocolLayout: false,
         layoutOptions: pairs.map(pair => ({ ...pair.rect, positionId: pair.positionId })),
@@ -183,6 +183,41 @@ window.KinViewerDisplaySpan = (() => {
       const list = rects.map(({ x, y, width, height }) => ({ x, y, width, height })).sort((a, b) => Math.abs(a.y - b.y) > 1e-6 ? a.y - b.y : a.x - b.x);
       window.kinViewerSplitRects = list;
       window.kinViewerSplitAreas = { rects: list, areas: areas.map(area => ({ ...area })) };
+      return list;
+    }
+    // moored: the rectangles this window laid on a rule's image areas (fitMonitors, monitorPick), as registered. Those
+    // areas were measured for the window as it was when the rule was applied, and hold only while its rows stand. The
+    // rows are taken back when the window or its image column changes (a resize, a side panel) or the rule is cleared:
+    // nothing keeps the edge between those areas on the display edge then. So once no rule's rows stand and the cells
+    // still stand in those rectangles, the same cells - every one the viewport it is, what it shows and how - are asked
+    // for once more as the plain grid of each monitor's rows and all their columns (row by row, monitor by monitor, as
+    // KinViewerMonitorPlan.lay orders them): each monitor a half of the grid, whose middle edge is kept on the display
+    // edge as for any plain grid (placeGrid), whatever changes next. Under fitMonitors' conditions: every cell a drawn
+    // image stack or empty, nothing else owning the screen (asked again once that ends, at most once per 2 s).
+    // The rule's own split is not this window's: it stays as the rule left it until the rule is applied again, as before.
+    let moored = null;
+    function unmoor() {
+      if (!moored) return;
+      const plan = window.KinViewerMonitorPlan, grid = services.viewportGridService;
+      // Another split was registered since (a rule applied, a patient tab's screen, a Job): no longer this window's.
+      if (window.kinViewerSplitRects !== moored || typeof plan?.registered !== 'function' || typeof grid.setLayout !== 'function') { moored = null; return; }
+      if (holder() || dividing || Date.now() - laid < 2000) { owed = true; return; }
+      const state = grid.getState(), cells = [...state.viewports.values()];
+      const areas = (state.layout?.layoutType ?? 'grid') === 'grid' ? plan.registered(cells, moored, window.kinViewerSplitAreas) : null;
+      // The cells stand elsewhere now (another layout was picked since): looked at again when the grid changes.
+      const stood = areas && areas.length === 2 ? plan.laid(cells, areas) : null;
+      const shape = stood?.shapes[0];
+      if (!stood || !stood.shapes.every(other => other.rows === shape.rows && other.cols === shape.cols) || mammography()) return;
+      const showing = cells.filter(cell => (cell.displaySetInstanceUIDs || []).length);
+      if (showing.some(cell => (cell.viewportOptions?.viewportType ?? 'stack') !== 'stack')) return;
+      if (!showing.every(shows)) { owed = true; return; }
+      const target = plan.lay(areas.map((_, index) => ({ x: index / areas.length, y: 0, width: 1 / areas.length, height: 1 })), stood.shapes);
+      if (!target) return;
+      const at = place => place.monitor + ':' + place.row + ':' + place.col;
+      const standing = new Map(cells.map((cell, index) => [at(stood.places[index]), cell]));
+      dividing = true; laid = Date.now(); moored = null;
+      Promise.resolve().then(() => grid.setLayout({ numRows: target.numRows, numCols: target.numCols, activeViewportId: state.activeViewportId, isHangingProtocolLayout: false,
+        findOrCreateViewport: index => same(standing.get(at(target.cells[index]))) })).catch(() => {}).then(() => { dividing = false; schedule(); });
     }
     // A cell asked for again as the viewport it is: its id, what it shows and how.
     function same(cell) {
@@ -229,7 +264,7 @@ window.KinViewerDisplaySpan = (() => {
         if (old && !used.has(old.viewportOptions.viewportId) && old.displaySetInstanceUIDs.every(known)) next[index] = take(same(old));
       });
       target.cells.forEach((place, index) => { if (!next[index]) next[index] = fresh(shown); });
-      register(target.cells, areas);
+      moored = register(target.cells, areas);
       // The active cell stays the active one while it is still on screen; else the grid chooses (as for the stock command).
       const active = next.some(cell => cell.viewportOptions?.viewportId === state.activeViewportId) ? { activeViewportId: state.activeViewportId } : {};
       Promise.resolve(grid.setLayout({ numRows: target.numRows, numCols: target.numCols, ...active, isHangingProtocolLayout: false,
@@ -543,12 +578,14 @@ window.KinViewerDisplaySpan = (() => {
       // strip on each monitor itself (viewer-features-monitors.js): its split is left as it made it, a layout picked from
       // the Layout menu afterwards is laid on its monitors by monitorPick, a plain grid that arrives otherwise (a prior
       // opened in a new grid, a saved plain layout) by fitMonitors, and those two rows are copied where it says. The
-      // patient tabs, which it does not place, keep following Second Display.
+      // patient tabs, which it does not place, keep following Second Display. Once its rows are gone, what this window
+      // laid on its monitors goes back to the plain grid, whose middle follows the display edge (unmoor).
       const placed = window.KinViewerMonitorRows || null;
       const list = seams();
       if (placed && style.textContent) style.textContent = '';
       if (placed) fitMonitors(placed);
       const seam = placed ? null : placeGrid(list);
+      if (!placed) unmoor();
       const rowSeam = seam ?? list.find(x => x > window.innerWidth / 4 && x < window.innerWidth * 3 / 4) ?? null;
       for (const spec of ROWS) {
         const fixed = placed && spec.side ? placed.copies?.[spec.name] || null : undefined;

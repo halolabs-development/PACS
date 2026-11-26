@@ -212,6 +212,16 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
         new Set(places.map(p => [p.monitor, p.row, p.col].join(':'))).size !== places.length) return null;
     return { shapes, places };
   }
+  // The monitors' areas registered with this screen's split (rects: kinViewerSplitRects; on: its companion
+  // kinViewerSplitAreas, { rects: that very list, areas }) while the cells of the native grid still stand in those
+  // rectangles - the areas they were laid on, against which they are read (laid), also once the rule's rows are gone.
+  // null otherwise: nothing registered so, or the cells stand elsewhere now.
+  function registered(cells, rects, on) {
+    if (!Array.isArray(cells) || !Array.isArray(rects) || rects.length !== cells.length || !on || on.rects !== rects || !boxes(on.areas)) return null;
+    const sorted = list => [...list].sort((a, b) => a.y - b.y || a.x - b.x), near = (a, b) => Math.abs(a - b) < 1e-4;
+    const mine = sorted(cells), theirs = sorted(rects);
+    return mine.every((cell, index) => ['x', 'y', 'width', 'height'].every(key => near(cell[key], theirs[index][key]))) ? on.areas : null;
+  }
   // The cells in the order of the place keys they carry (positionId 'col-row': row by row, then column), when every cell
   // has a key of its own - the cells a rule left once nothing tells the monitors apart any more (the window on one
   // display). null otherwise.
@@ -286,7 +296,7 @@ function kinHtml(t, ...p) { const l = typeof window === 'object' && window && wi
       return (Math.min(area.bottom, s.top + s.height) - Math.max(area.top, s.top)) * 2 >= area.bottom - area.top; });
   }
 
-  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, lay, fit, laid, keyed, monitorOf, validRects, place, edges, pair };
+  const plan = { THICKNESS, MIN_REGION, regions, target, bands, split, lay, fit, laid, registered, keyed, monitorOf, validRects, place, edges, pair };
   if (typeof module === 'object' && module.exports) module.exports = plan;
   if (root) root.KinViewerMonitorPlan = plan;
 })(typeof window === 'object' ? window : null);

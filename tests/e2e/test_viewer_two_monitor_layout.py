@@ -97,6 +97,9 @@ PLACES = SIDES.replace("return cells.map(c => [c.monitor, row(c), c.image, c.id]
   "const col = c => new Set(cells.filter(o => o.monitor === c.monitor && o.x < c.x - 1e-4).map(o => Math.round(o.x * 1e4))).size;"
   " return cells.map(c => [c.monitor, row(c), col(c), c.image]).sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]); }").replace('id: c.viewportId, y: c.y,', 'id: c.viewportId, y: c.y, x: c.x,')
 assert PLACES != SIDES and 'col(c)' in PLACES and 'x: c.x' in PLACES
+# The same with each cell's id in place of its image.
+PLACE_IDS = PLACES.replace('col(c), c.image]', 'col(c), c.id]')
+assert PLACE_IDS != PLACES
 # Every cell that shows a series has drawn an image of it (a cell just made has finished loading).
 DRAWN = '''() => [...services.viewportGridService.getState().viewports.values()].every(c => !(c.displaySetInstanceUIDs || []).length ||
   !!services.cornerstoneViewportService.getCornerstoneViewport(c.viewportId)?.getCornerstoneImage?.()?.imageId)'''
@@ -867,6 +870,51 @@ class ViewerTwoMonitorLayoutE2E(ViewerSpanSeamEmulatedE2E):
         self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 3')
         self.comes_back(viewer, before)
         self.assertTrue(viewer.evaluate(LAID, [2, 1]), json.dumps(viewer.evaluate(SEAM_STATE)))
+
+    def test_two_21_a_layout_picked_under_the_rule_follows_the_display_edge_once_its_rows_are_taken_back(self):
+        # The same rule, one cell on each monitor, a different image in each; 1 x 4 from the Layout menu: two columns on
+        # each monitor's image area. Then the reader makes the window narrower from its left, still over both displays: the
+        # rule's rows go back to the account's, and the display edge is no longer where the rule's areas met. The four
+        # cells stay the cells they were - each on its monitor, in its column, on its image - as the plain 1 x 4, whose
+        # middle the window keeps on the display edge: none lies across it.
+        p, viewer, a, b = self.setup_viewer('TWO21')
+        left, _ = self.displays
+        self.stretch(viewer)
+        self.shows(viewer, a.uid)
+        self.apply_rule(viewer, HIGH_RULES, 'high.json')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 2')
+        self.until(viewer, LAID, 1)
+        first = sorted(viewer.evaluate(GRID)['cells'], key=lambda c: c[1])[0]
+        self.shows(viewer, a.uid, first[0])
+        viewer.evaluate('''async id => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id);
+          await v.setImageIdIndex(v.getImageIds().length - 1); }''', first[0])
+        viewer.wait_for_timeout(2500)
+        self.layout(viewer, 'Layout-3-0')
+        self.until(viewer, '() => services.viewportGridService.getState().viewports.size === 4')
+        self.until(viewer, LAID, 2)
+        self.until(viewer, DRAWN)
+        viewer.wait_for_timeout(2500)
+        wide, ids = viewer.evaluate(PLACES), viewer.evaluate(PLACE_IDS)
+        self.assertEqual([[1, 0, 0], [1, 0, 1], [2, 0, 0], [2, 0, 1]], [c[:3] for c in wide], wide)
+        self.assertTrue(wide[0][3] and wide[2][3] and wide[0][3] != wide[2][3], wide)
+        self.assertEqual(4, len({c[3] for c in ids}), ids)
+        self.assertTrue(viewer.evaluate("() => document.body.hasAttribute('data-kin-monitor-rows')"))
+        # The window made narrower from its left: the display edge is no longer in its middle, and the rows are taken back.
+        self.bounds(viewer, dict(left=left['left'] + 400, top=0, width=3440, height=1080))
+        self.until(viewer, "() => !document.body.hasAttribute('data-kin-monitor-rows')")
+        self.until(viewer, ON_SEAM)
+        self.comes_back(viewer, wide, PLACES)
+        self.assertEqual(ids, viewer.evaluate(PLACE_IDS))
+        self.assertTrue(viewer.evaluate(ON_SEAM), json.dumps(viewer.evaluate(SEAM_STATE)))
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
+        grid = viewer.evaluate(GRID)
+        self.assertEqual([1, 4], [grid['rows'], grid['cols']])
+        # And it follows the edge from then on: the window over the whole of both displays again.
+        self.bounds(viewer, dict(left=left['left'], top=0, width=3840, height=1080))
+        self.until(viewer, ON_SEAM)
+        self.comes_back(viewer, wide, PLACES)
+        self.assertEqual(ids, viewer.evaluate(PLACE_IDS))
+        self.assertTrue(viewer.evaluate(LAID, 2), json.dumps(viewer.evaluate(SEAM_STATE)))
 
 
 def load_tests(loader, tests, pattern):

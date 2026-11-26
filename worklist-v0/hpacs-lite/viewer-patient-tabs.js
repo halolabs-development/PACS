@@ -342,16 +342,6 @@ window.KinViewerPatientTabs = (() => {
         : kinText("판독 화면이 {0}의 검사를 열었는지 확인하지 못했고({1})", to.patient.name, why)), current?.patient.name || kinText("없음"))) };
     } finally { if (moving === ticket) moving = null; }
   }
-  // The monitors' areas the cells on screen were laid on, when they stand in the rectangles registered for this screen
-  // with such areas (kinViewerSplitRects and kinViewerSplitAreas: an applied Hanging Protocol's split, a layout laid on
-  // its monitors, a screen this module put back) - also once the rule's rows are gone. null otherwise.
-  function registeredAreas(cells) {
-    const rects = window.kinViewerSplitRects, on = window.kinViewerSplitAreas;
-    if (!Array.isArray(rects) || rects.length !== cells.length || !on || on.rects !== rects || !Array.isArray(on.areas)) return null;
-    const sorted = list => [...list].sort((a, b) => a.y - b.y || a.x - b.x), near = (a, b) => Math.abs(a - b) < 1e-4;
-    const mine = sorted(cells), theirs = sorted(rects);
-    return mine.every((cell, index) => ['x', 'y', 'width', 'height'].every(key => near(cell[key], theirs[index][key]))) ? on.areas : null;
-  }
   function capture() {
     if (!current) return;
     const state = services.viewportGridService.getState(), listed = [...state.viewports.values()];
@@ -360,10 +350,12 @@ window.KinViewerPatientTabs = (() => {
     // it - is kept as each monitor's rows and columns and every cell's monitor and place there, read from where the cells
     // stand (KinViewerMonitorPlan.laid) on the monitors' areas: the image areas of the rule whose rows stand, or - no rule's
     // rows standing (taken back when the window moved, or by a patient switch) - the areas the cells were laid on, while
-    // they still stand in the rectangles registered with them (registeredAreas).
+    // they still stand in the rectangles registered with them (KinViewerMonitorPlan.registered: an applied Hanging
+    // Protocol's split, a layout laid on its monitors, a screen this module put back).
     let stood = null;
     try {
-      const standing = window.KinViewerMonitorRows?.areas, areas = Array.isArray(standing) && standing.length >= 2 ? standing : registeredAreas(listed);
+      const standing = window.KinViewerMonitorRows?.areas, areas = Array.isArray(standing) && standing.length >= 2 ? standing
+        : plan?.registered?.(listed, window.kinViewerSplitRects, window.kinViewerSplitAreas) || null;
       if (areas && typeof plan?.laid === 'function') stood = plan.laid(listed, areas);
     } catch (_) { stood = null; }
     // Any other screen is kept as the plain grid of its rows and columns, position by position: the cells as listed, or by
