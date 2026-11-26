@@ -8863,7 +8863,7 @@
           "name": "LICENSE/NOTICE entries inside the jars",
           "path": "texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt",
           "sha256": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
-          "source": "extracted from the image (see the file header)"
+          "source": "extracted from the quay.io/keycloak/keycloak:26.7.3 image (the jars under its lib/; the image of the package list beside it)"
         },
         {
           "name": "OpenJDK 21 legal notices",
@@ -10132,7 +10132,7 @@
     "scripts/build-sof3-wasm.py": "811ea8584a61ecaccb99b4ef53f145153a619a413f6cce625d0b0f30d5afc032",
     "scripts/sof3/kin_sof3.c": "7645ce429e01514a4f152e1d0c0f3c2150bee32a0f135be88c39573647799ea2",
     "tests/fixtures/asr/Dockerfile": "96765ceaaa32a3e648b30600466e413a0056f54f8b243dbe0e0c2c33a4545df1",
-    "worklist-v0/legal/licenses/catalog.json": "4b3ed7bbdabc052ceb7a45dd5404804c1fd2794f23c11ca976dbb80170a26a9b",
+    "worklist-v0/legal/licenses/catalog.json": "163a20bb576f95fd4a63bad035954f5551abec482ef4639b0c88cd39f5e5e183",
     "worklist-v0/legal/licenses/gateway-resolution.json": "207d59463b27bb752cff221107ba09db4547a74a859fb996661e327dc6da60d7",
     "worklist-v0/legal/licenses/orthanc-build-matrix-24.12.0.json": "44634b06fb56d94013c80b77df9c882a0029391ea17510ee41368ebfb76cd59f",
     "worklist-v0/legal/licenses/print-resolution.json": "cb8c52f4c63aeda100c647a966586ca861bfaa2392d650ecceeafdfb805f751c",

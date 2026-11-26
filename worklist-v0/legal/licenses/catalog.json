@@ -6671,7 +6671,7 @@
           "name": "LICENSE/NOTICE entries inside the jars",
           "path": "texts/90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2.txt",
           "sha256": "90039ce09bbb8ee1b4d9e00bf23ffba6c5d23feae6108fea85378834d663ddc2",
-          "source": "extracted from the image (see the file header)"
+          "source": "extracted from the quay.io/keycloak/keycloak:26.7.3 image (the jars under its lib/; the image of the package list beside it)"
         },
         {
           "name": "OpenJDK 21 legal notices",
