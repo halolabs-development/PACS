@@ -5977,6 +5977,7 @@ window.KinLanguageTerms = {
     ["Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.", "A Key Image cannot be made in Unfolded view. Press it in Folded (Cine) view.", "m"],
     ["Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a slab is shown. Set Slab Thickness to 1 slice, then press it.", "m"],
     ["MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a MIP, MinIP, Average or thick slab is shown. Switch to MPR (default thickness), then press it.", "m"],
+    ["동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.", "A Key Image cannot be made in a video cell: the frame on the screen cannot be confirmed.", "m"],
     ["Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요.", "Does not move to the original image while a slab is shown. Set Slab Thickness to 1 slice, then press again.", "m"],
     ["이 {0}를 표시하지 못했습니다.", "Could not display this {0}.", "m"],
     ["{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", "{0}This viewer does not support displaying {1} yet. The original image series can still be opened.", "m"],
@@ -11892,26 +11893,15 @@ function kinCreateViewerHistory() {
     //   while the image before stays on the screen; the loaded image is drawn a moment later still. So the image the cell
     //   holds must be the one named and the cell must have finished drawing it. Laid out as tiles (Navigate: Tile, Unfolded)
     //   the named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
-    //   A paused video cell names the frame nearest its position (round(time × fps)) while the screen shows the frame the
-    //   position is in (floor): in the second half of a frame the two differ, so the cell is first put at the start of the
-    //   frame on the screen (the picture stays) and the reader presses again. Nothing is shown yet while it seeks or before
-    //   it has a frame. (A playing video names a frame range, which is no Key Image.)
+    //   A video cell turns its playback time into a frame number with a rate it works out itself (frames ÷ duration,
+    //   rounded), which need not be the rate the video was recorded at, so the frame on the screen cannot be confirmed
+    //   there: a video cell never makes a Key Image.
     //   A volume cell (MPR) has no loaded-image read and names the original slice it shows, as before; but a projection
     //   (MIP, MinIP, Average or a thick slab) draws several slices, not that one.
     function keyImageNotShown(v, r) {
       const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
       if (!v) return '';
-      if (v.type === 'video') {
-        const video = v.videoElement;
-        if (!video) return '';
-        if (video.seeking || !(video.readyState >= 2)) return NOT_SHOWN;
-        const at = video.currentTime * v.fps;
-        if (Number.isFinite(at) && at - Math.floor(at) >= 0.5 && Math.ceil(at) - at > 1e-6) {
-          try { Promise.resolve(v.setFrameNumber(Math.floor(at) + 1)).catch(() => {}); } catch (_) {}
-          return NOT_SHOWN;
-        }
-        return '';
-      }
+      if (v.type === 'video') return kinText("동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.");
       if (v.type !== 'stack' && typeof v.getCornerstoneImage !== 'function') {
         let blend = 0, thickness = 0;
         try { blend = v.getActors?.()?.[0]?.actor?.getMapper?.()?.getBlendMode?.() ?? 0; thickness = 2 * (v.getSlabThickness?.() ?? 0); } catch (_) {}
@@ -12338,8 +12328,9 @@ function kinCreateViewerHistory() {
         group.setToolActive(tools[kind], { bindings: [{ mouseButton: ct.Enums.MouseBindings.Primary }] });
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
-        const r = current(); if (!r || r.study !== scope) return;
-        const why = keyImageNotShown(viewport(), r);
+        const v = viewport(), r = current();
+        if (v?.type !== 'video' && (!r || r.study !== scope)) return;
+        const why = keyImageNotShown(v, r);
         if (why) { status.textContent = why; return; }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);

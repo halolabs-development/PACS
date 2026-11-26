@@ -270,25 +270,27 @@ test('Add Key Image makes nothing in Tile, Unfolded or Slab views, which do not 
   assert.equal((await saveKey(h, 'stack view', 's')).frame, 1);
 });
 
-test('Add Key Image in a paused video cell keeps the frame on the screen, and makes nothing while the video seeks', async () => {
+test('Add Key Image makes nothing in a video cell, whose frame on the screen cannot be confirmed, and says so', async () => {
   const h = await harness(); h.pages.set('1', []); await h.click('Refresh');
   const before = sections(h);
-  // The pinned video cell: 30 frames a second; it names the frame nearest its position (round) and shows the frame the
-  // position is in (floor); setFrameNumber(n) puts the position at the start of frame n.
-  const video = { seeking: true, readyState: 4, currentTime: 2 / 30 };
+  const VIDEO = /동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다/;
+  // The pinned video cell turns time into a frame with its own rate (frames ÷ duration, rounded: 30 for a 29.97 fps video)
+  // and names round(time × rate) + 1; the frame on the screen is the recorded one at that time.
+  const video = { seeking: false, readyState: 4, currentTime: 2 / 30 };
   const moves = [];
   h.volumeCell(); Object.assign(h.viewport, { type: 'video', videoElement: video, fps: 30,
     getCurrentImageId: () => `/studies/1/series/1.2/instances/1.3/frames/${Math.round(video.currentTime * 30) + 1}`,
     setFrameNumber: async n => { moves.push(n); video.currentTime = (n - 1) / 30; } });
-  await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.match(h.text(), NOT_SHOWN);
-  // Paused in the second half of frame 3 (it names frame 4): the cell goes to the start of frame 3 and nothing is made.
-  video.seeking = false; video.currentTime = 2.6 / 30;
-  await h.click('Add Key Image');
-  assert.equal(sections(h), before); assert.deepEqual(moves, [3]);
-  assert.equal((await saveKey(h, 'video frame', 'v')).frame, 3);
-  // In the first half of a frame the frame named is the frame shown.
-  assert.equal(moves.length, 1);
+  // Paused at the start of a frame, in the second half of one, at 10.005 s of a 29.97 fps video, while seeking, before its
+  // first frame, and without a video element or a frame in its image id: nothing is made, nothing is sent, the cell stays.
+  for (const set of [() => {}, () => { video.currentTime = 2.6 / 30; }, () => { video.currentTime = 10.005; },
+    () => { video.seeking = true; }, () => { video.seeking = false; video.readyState = 1; },
+    () => { delete h.viewport.videoElement; h.viewport.getCurrentImageId = () => '/studies/1/series/1.2/instances/1.3'; }]) {
+    set(); await h.click('Add Key Image');
+    assert.equal(sections(h), before); assert.match(h.text(), VIDEO);
+  }
+  assert.deepEqual(moves, []);
+  assert.equal(h.calls.filter(c => c.options.method === 'POST').length, 0);
 });
 
 test('Add Key Image makes nothing in a volume cell drawing a projection (MIP, MinIP, Average or a thick slab)', async () => {

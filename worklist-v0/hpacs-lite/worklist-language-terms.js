@@ -5631,6 +5631,7 @@ window.KinLanguageTerms = {
     ["Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.", "A Key Image cannot be made in Unfolded view. Press it in Folded (Cine) view.", "m"],
     ["Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a slab is shown. Set Slab Thickness to 1 slice, then press it.", "m"],
     ["MIP·MinIP·Average나 두꺼운 단면을 보는 동안에는 Key Image를 만들 수 없습니다. MPR(기본 두께)로 바꾼 뒤 누르세요.", "A Key Image cannot be made while a MIP, MinIP, Average or thick slab is shown. Switch to MPR (default thickness), then press it.", "m"],
+    ["동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.", "A Key Image cannot be made in a video cell: the frame on the screen cannot be confirmed.", "m"],
     ["Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요.", "Does not move to the original image while a slab is shown. Set Slab Thickness to 1 slice, then press again.", "m"],
     ["이 {0}를 표시하지 못했습니다.", "Could not display this {0}.", "m"],
     ["{0}이 뷰어는 아직 {1} 표시를 지원하지 않습니다. 원본 영상 시리즈는 그대로 열어 볼 수 있습니다.", "{0}This viewer does not support displaying {1} yet. The original image series can still be opened.", "m"],
