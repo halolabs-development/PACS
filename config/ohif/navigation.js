@@ -43,7 +43,7 @@ function kinViewerNumberOnArrival(v, index, from, arrived) {
 // after an await is re-taken against the current session and never against a copy. The result is
 // { ok: true, highlighted, annotation } or { ok: false, reason }; it never throws, never changes the
 // URL study set and never reslices a volume viewport (3D cursor stays off).
-const KIN_NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'frame-missing', 'superseded', 'tool-missing'];
+const KIN_NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'slab', 'frame-missing', 'superseded', 'tool-missing'];
 async function kinViewerNavigateTo(env, target) {
   const refusal = reason => ({ ok: false, reason });
   const uid = s => typeof s === 'string' && s.length <= 64 && /^[0-9]+(?:\.[0-9]+)+$/.test(s);
@@ -64,6 +64,8 @@ async function kinViewerNavigateTo(env, target) {
   } catch (_) { return refusal('tool-missing'); }
   if (sets.length !== 1) return refusal('series-missing');
   const viewportId = env.services.viewportGridService.getActiveViewportId();
+  // A cell drawing a slab (the mean of several slices) would not show the frame even on arrival: refuse before moving.
+  if (env.slab?.(viewportId)) return refusal('slab');
   const stack = v => v && v.type === 'stack' && typeof v.getImageIds === 'function' && typeof v.setImageIdIndex === 'function';
   const first = env.viewport();
   // A volume/MPR viewport has no stack image list to index: refuse instead of reslicing or retargeting.

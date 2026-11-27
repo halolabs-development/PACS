@@ -441,7 +441,10 @@ class ViewerMgE2E(ViewerUXPriorsE2E):
 
     def frame_index(self, page, cell, index):
         page.evaluate('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).setImageIdIndex(n)', [cell, index])
-        page.wait_for_function('([id, n]) => services.cornerstoneViewportService.getCornerstoneViewport(id).getCurrentImageId().endsWith("/frames/" + (n + 1))', arg=[cell, index])
+        # The frame is on the screen: the cell holds it and finished drawing it (the image a Key Image then names).
+        page.wait_for_function('''([id, n]) => { const v = services.cornerstoneViewportService.getCornerstoneViewport(id), f = "/frames/" + (n + 1);
+            return v.getCurrentImageId().endsWith(f) && !!v.getCornerstoneImage?.()?.imageId?.endsWith(f) &&
+                v.viewportStatus === cornerstone.Enums.ViewportStatus.RENDERED; }''', arg=[cell, index], timeout=30000)
 
     def go_to_image(self, page, start, title, sop, frame):
         page.evaluate('id => services.viewportGridService.setActiveViewportId(id)', start)

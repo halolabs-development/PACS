@@ -786,6 +786,45 @@ function kinCreateViewerHistory() {
     const matches = (r, item) => r?.study === scope && r.seriesUid === item.seriesUid && r.sopUid === item.sopUid && r.frame === item.frame;
     const current = () => reference(viewport()?.getCurrentImageId?.());
     const valid = ticket => !ended && ticket === generation && (!current() || current().study === scope);
+    // Why a Key Image naming `r` would not be the image the reader sees in cell `v`, if so ('' when it is). The one rule of
+    // Add Key Image (it fixes series, SOP and frame when pressed; Save sends only those). A Key Image names one original
+    // image, and the report's readers open exactly that image, so it is made only where the pixels on the screen are
+    // confirmed to be that image's own. One cell can confirm that, a stack cell:
+    //   it draws the pixels of one original image and holds that image (its loaded-image read). It names the image it was
+    //   asked for as soon as that load starts and keeps naming it after the load fails, while the image before stays on
+    //   the screen: the image it holds must be the one named. A loader that shows an image in steps hands the cell a
+    //   coarser version first, under the same image id: the image held must have arrived in full. The image held is drawn
+    //   a moment after it arrives, and the cell's drawing state can still be the one left by a draw of the image before:
+    //   the cell must have drawn, with no draw of it still to come. Laid out as tiles (Navigate: Tile, Unfolded) the
+    //   named image may be off the grid, and a slab is drawn as the mean of several slices: neither shows one image.
+    // No other cell can:
+    //   a volume cell (MPR, a projection, 3D) draws a plane sampled again from the volume. It names the original slice
+    //   nearest that plane, but nothing it reads says the pixels drawn are that slice's own (a plane beside or tilted
+    //   through the slice is a blend, and how exactly the renderer samples is not its to read), and a plane across the
+    //   slices is no original image at all. A video cell turns its playback time into a frame number with a rate it works
+    //   out itself (frames ÷ duration, rounded), which need not be the rate the video was recorded at.
+    // Any other cell kind, and any state it cannot read, makes nothing.
+    function keyImageNotShown(v, r) {
+      const NOT_SHOWN = kinText("고른 영상이 아직 이 칸에 표시되지 않아 Key Image를 만들지 않았습니다. 영상이 표시된 뒤 다시 누르세요.");
+      if (v?.type === 'video') return kinText("동영상 칸에서는 화면의 프레임을 확정할 수 없어 Key Image를 만들 수 없습니다.");
+      if (v && ['orthographic', 'perspective', 'volume3d'].includes(v.type)) return kinText("MPR·3D 칸에서는 Key Image를 만들 수 없습니다. 일반 영상 칸에서 누르세요.");
+      if (!v || !r || v.type !== 'stack') return NOT_SHOWN;
+      // Tile, Unfolded and Slab are this viewer's own views; where one is loaded but cannot say how the cell is laid out,
+      // nothing is made.
+      let laid = null, slab = false;
+      try { laid = window.kinNavigate?.laid?.(v.id) || null; } catch (_) { return NOT_SHOWN; }
+      try { slab = window.kinMgSlab?.on?.(v.id) === true; } catch (_) { return NOT_SHOWN; }
+      if (laid === 'unfolded') return kinText("Unfolded 보기에서는 Key Image를 만들 수 없습니다. Folded (Cine) 보기에서 누르세요.");
+      if (laid) return kinText("Tile 보기에서는 Key Image를 만들 수 없습니다. Stack 보기에서 누르세요.");
+      if (slab) return kinText("Slab을 보는 동안에는 Key Image를 만들 수 없습니다. Slab Thickness를 1 slice로 바꾼 뒤 누르세요.");
+      // Drawn: the cell says so, and its renderer holds no draw of it for the next frame (it lists the cells still to draw).
+      let waiting = null, image = null;
+      try { waiting = v.getRenderingEngine?.()?._needsRender; image = v.getCornerstoneImage?.() || null; } catch (_) { return NOT_SHOWN; }
+      if (v.viewportStatus !== (cs.Enums?.ViewportStatus?.RENDERED || 'rendered') || typeof v.id !== 'string' || typeof waiting?.has !== 'function' || waiting.has(v.id)) return NOT_SHOWN;
+      // In full: the loader states it for every image it hands over; an image that does not say is not taken as whole.
+      if (!image || typeof image.imageQualityStatus !== 'number' || !(image.imageQualityStatus >= (cs.Enums?.ImageQualityStatus?.FULL_RESOLUTION ?? 8))) return NOT_SHOWN;
+      return matches(reference(image.imageId), r) ? '' : NOT_SHOWN;
+    }
     // S5-U2b-R-003 F01. 목록 읽기는 요청할 때 어느 목록인지 정해진다: writer의 작성자 목록(숨김 포함 전체) 또는 clinician의 확정 목록.
     // 답은 그 읽기(세대·순번)의 것이고 문서가 지금도 같은 목록을 읽을 때만 그린다 — clinician-only 경계(clinicianBoundary)가 어떤
     // 이유로 돌지 못했어도(settle은 감시자의 실패를 삼킨다) 전환 뒤에 도착한 작성자 목록은 그려지지 않는다.
@@ -1080,7 +1119,7 @@ function kinCreateViewerHistory() {
     // stops it. Whatever the end, the opening hold is let go (Auto Save View may then save the view as the user leaves it).
     let entryTried = false;
     const ENTRY_REASON = { 'series-missing': kinText("이 창에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
-      'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다."), 'viewport-missing': kinText("그 검사를 보이는 영상 칸이 없습니다."),
+      'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다."), slab: kinText("Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요."), 'viewport-missing': kinText("그 검사를 보이는 영상 칸이 없습니다."),
       'viewport-ambiguous': kinText("그 검사를 보이는 영상 칸이 여럿이라 하나로 정하지 못했습니다."), timeout: kinText("15초 안에 영상이 준비되지 않았습니다."),
       superseded: kinText("다른 영상 칸을 골라 이동을 멈췄습니다."), ended: kinText("로그인이 종료되었습니다.") };
     const ENTRY_MARK = { shown: kinText("표식을 강조했습니다."), key: kinText("키 이미지입니다."), missing: kinText("그 표식은 지금 저장 항목에 없습니다(숨김 또는 삭제)."),
@@ -1198,7 +1237,12 @@ function kinCreateViewerHistory() {
         group.setToolActive(tools[kind], { bindings: [{ mouseButton: ct.Enums.MouseBindings.Primary }] });
       }, !writable({}));
       button(actions, 'Add Key Image', () => {
-        const r = current(); if (!r || r.study !== scope) return;
+        const v = viewport(), r = current();
+        // A stack cell with no image of this study (none yet, or another study's) makes nothing and says nothing, as
+        // before; any other cell kind makes none and says so.
+        if ((!v || v.type === 'stack') && (!r || r.study !== scope)) return;
+        const why = keyImageNotShown(v, r);
+        if (why) { status.textContent = why; return; }
         const e = { id: crypto.randomUUID(), editing: true, draft: { schemaVersion: 1, kind: 'key', seriesUid: r.seriesUid, sopUid: r.sopUid, frame: r.frame, title: '', description: '' } };
         entries.set(e.id, e); row(e);
         // Saved on its own once its fields are left (autoReady): the title is where the reader goes first.
@@ -1799,7 +1843,9 @@ function kinCreateViewerHistory() {
     const navigationEnv = { services, viewport, reference, matches, hydrate, highlight,
       ended: () => ended, scope: () => scope, busy: () => suspended || held(),
       generation: () => generation, valid, navigation: () => navigation, beginNavigation: () => ++navigation,
-      delay: () => new Promise(resolve => setTimeout(resolve, 100)) };
+      delay: () => new Promise(resolve => setTimeout(resolve, 100)),
+      // A breast tomosynthesis cell drawing a slab shows the mean of several slices, never the one saved image.
+      slab: id => { try { return window.kinMgSlab?.on?.(id) === true; } catch (_) { return false; } } };
     const navigateTo = target => kinViewerNavigateTo(navigationEnv, target);
     const activateStudy = study => kinViewerActivateStudy(navigationEnv, study);
     // The active viewport and the frame it shows: the Findings section's arrival proof after an activation.
@@ -1814,7 +1860,7 @@ function kinCreateViewerHistory() {
       const outcome = await navigateTo({ studyUid: scope, seriesUid: e.draft.seriesUid, sopUid: e.draft.sopUid, frame: e.draft.frame });
       if (outcome.ok || !valid(generation) || entries.get(e.id) !== e) return;
       const message = { 'series-missing': kinText("현재 검사에서 원본 시리즈를 찾을 수 없습니다."), 'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
-        'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요.") }[outcome.reason];
+        'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요."), slab: kinText("Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요.") }[outcome.reason];
       if (message) { e.message = message; row(e); }
     }
     // Read-only view of the saved heads for the Findings section: only saved rows are linkable and

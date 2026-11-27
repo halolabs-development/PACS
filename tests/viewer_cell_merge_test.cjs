@@ -212,7 +212,8 @@ function fixture({ rows = 2, cols = 2, restoresPresentation = false, breakLayout
         const request = payload.findOrCreateViewport(position);
         if (!request) continue;
         const id = request.viewportOptions.viewportId;
-        next.set(id, { viewportId: id, x, y, width, height, displaySetInstanceUIDs: [...request.displaySetInstanceUIDs], viewportOptions: request.viewportOptions });
+        // A place key asked for is kept on the cell, as the pinned grid keeps it.
+        next.set(id, { viewportId: id, x, y, width, height, ...(option?.positionId ? { positionId: option.positionId } : {}), displaySetInstanceUIDs: [...request.displaySetInstanceUIDs], viewportOptions: request.viewportOptions });
       }
       for (const id of [...viewports.keys()]) if (!next.has(id)) viewports.delete(id);
       let rebuiltPlane = false;
@@ -1252,6 +1253,18 @@ test('a registered split is maximized on one monitor and put back with its own r
   assert.equal(back.ok, true, back.message);
   assert.deepEqual(layoutOf(x.state), before);
   assert.deepEqual(x.calls.at(-1).layoutOptions, SPLIT);
+});
+
+test('a registered split put back after a maximize: each cell keeps its place key', async () => {
+  const x = monitorFixture([.5]), KEYS = ['0-0', '1-0', '2-0', '3-0', '0-1', '1-1', '2-1', '3-1'];
+  await x.services.viewportGridService.setLayout({ numRows: 2, numCols: 4, layoutOptions: SPLIT.map((b, i) => ({ ...b, positionId: KEYS[i] })), activeViewportId: 'A',
+    findOrCreateViewport: index => ({ displaySetInstanceUIDs: ['ds-' + 'ABCDEFGH'[index]], viewportOptions: x.cells.get('ABCDEFGH'[index]).viewportOptions }) });
+  x.win.kinViewerSplitRects = clone(SPLIT);
+  assert.equal((await x.controller.merge('maximize', 'C')).ok, true);
+  const back = await x.controller.unmerge();
+  assert.equal(back.ok, true, back.message);
+  assert.deepEqual(x.calls.at(-1).layoutOptions, SPLIT.map((b, i) => ({ ...b, positionId: KEYS[i] })));
+  assert.deepEqual([...x.state.viewports.values()].map(cell => cell.positionId), KEYS);
 });
 
 test('displays that do not answer in time, or fail, are not taken as one: nothing is dispatched', async () => {

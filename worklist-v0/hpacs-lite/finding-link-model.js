@@ -17,7 +17,7 @@
     missing: kinText("표식을 이 검사에서 찾을 수 없습니다. 소견의 사본은 유지됩니다."),
   };
   const REFERENCE_TEXT = { verified: 'Verified', unverified: 'Unverified' };
-  const NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'frame-missing', 'superseded', 'tool-missing'];
+  const NAVIGATION_REASONS = ['invalid', 'ended', 'scope', 'busy', 'series-missing', 'viewport-unsupported', 'slab', 'frame-missing', 'superseded', 'tool-missing'];
   // Viewport activation refusals of config/ohif.js (kinViewerActivateStudy) and every reason a Go to Image
   // into the other study of the same viewer can end with, the caller's 15 s bound included (S2-B2).
   const ACTIVATION_REASONS = ['invalid', 'ended', 'viewport-missing', 'viewport-ambiguous', 'viewport-unsupported', 'tool-missing'];
@@ -29,6 +29,7 @@
     busy: kinText("현재 검사 접근과 보관 작업을 확인한 후 이동하세요."),
     'series-missing': kinText("현재 검사에서 원본 시리즈를 찾을 수 없습니다."),
     'viewport-unsupported': kinText("현재 화면은 원본 프레임 목록이 없는 MPR/볼륨 화면입니다. 일반 프레임 화면을 선택한 뒤 이동하세요."),
+    slab: kinText("Slab을 보는 동안에는 원본 영상으로 이동하지 않습니다. Slab Thickness를 1 slice로 바꾼 뒤 다시 누르세요."),
     'frame-missing': kinText("원본 프레임을 열지 못했습니다."),
     superseded: kinText("이동 중 화면이 바뀌어 이 이동을 취소했습니다. 다시 시도하세요."),
     'tool-missing': kinText("영상 이동 도구가 준비되지 않았습니다. 뷰어를 다시 여세요."),
