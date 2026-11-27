@@ -1791,6 +1791,23 @@ class ReportFlowPage(unittest.TestCase):
                          "Load the latest report from the server? (What you were writing will be copied to the clipboard)", question)
         self.assertEqual([], re.findall(r"[가-힣]", question))
 
+    def test_the_same_account_refusal_toast_follows_a_language_change(self):
+        """The toast carries the sentence, not a string fixed in the language of the moment: answered No, it stays up and
+        reads in the language chosen next."""
+        self.open()
+        self.open_study(h.PATIENT_B)
+        self.type("SYN window two")
+        self.settle(300)
+        self.site.store[h.UID_B]["report"] = {"version": 1, "rs": "T", "findings": "SYN window one", "conclusion": "", "recommendation": ""}
+        mine = "다른 창에서 이 계정으로 v1을 저장했습니다. 이 창의 글은 그대로 있습니다."
+        self.site.commit_answers = [(409, {"code": "REPORT_VERSION_CONFLICT", "message": mine, "head": {"version": 1, "mine": True}})]
+        self.page.evaluate("() => { window.confirm = () => false; }")
+        self.page.evaluate("() => commitReport('approve')")
+        expect(self.page.locator("#toast")).to_have_text(mine)
+        self.page.evaluate("KinLanguage.restore({version:1,worklist:'en',reading:'en'})")
+        expect(self.page.locator("#toast")).to_have_text("v1 was saved from another window of this account. The text in this window is unchanged.")
+        self.assertEqual("SYN window two", self.page.locator("#findings").input_value())
+
 
 # Each mutant is a one-off copy of one bundle source (or main.html) served to the page; the product tree is never written.
 MUTANTS = [
